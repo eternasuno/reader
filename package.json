@@ -1,0 +1,27 @@
+{
+  "name": "template",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SolidJS SPA and Effect HTTP API starter with Better Auth and embedded SurrealDB.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "check": "biome check",
+    "dev": "turbo run dev",
+    "prepare": "effect-tsgo patch",
+    "start": "turbo run start",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@effect/tsgo": "^0.48.0",
+    "turbo": "2.11.7",
+    "typescript": "catalog:"
+  }
+}
