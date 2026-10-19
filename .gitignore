@@ -70,3 +70,6 @@ devenv.local.yaml
 
 # direnv
 .direnv
+
+.maki
+.data

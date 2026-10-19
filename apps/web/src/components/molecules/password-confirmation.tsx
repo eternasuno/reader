@@ -9,25 +9,25 @@ export const PasswordConfirmation = () => {
       <FormInput
         id="password"
         name="password"
-        label="Password"
+        label="密码"
         type="password"
         autocomplete="new-password"
         minlength={8}
         required
         onInput={(event) => setPassword(event.currentTarget.value)}
         onChange={(event) => setPassword(event.currentTarget.value)}
-        hint="Password must be at least 8 characters."
+        hint="密码至少 8 位。"
       />
       <FormInput
         id="confirm"
         name="confirm"
-        label="Confirm password"
+        label="确认密码"
         type="password"
         autocomplete="new-password"
         pattern={RegExp.escape(password())}
-        title="Passwords must match."
+        title="两次输入的密码不一致。"
         required
-        hint="Passwords must match."
+        hint="两次输入的密码不一致。"
       />
     </div>
   );

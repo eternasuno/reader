@@ -21,11 +21,10 @@ export const sessionMiddleware = HttpRouter.middleware<{
     return (handler) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const webRequest = yield* HttpServerRequest.toWeb(request);
         const session = yield* Effect.tryPromise({
           try: () =>
             auth.api.getSession({
-              headers: webRequest.headers,
+              headers: new Headers(request.headers),
               returnHeaders: true,
             }),
           catch: (cause) => new AuthUnavailable({ cause }),

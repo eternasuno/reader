@@ -1,7 +1,10 @@
 import { NodeRuntime } from '@effect/platform-node';
 import { Data, Effect, Runtime } from 'effect';
+import { articlesSchema } from './infrastructure/articles';
 import { authOptions } from './infrastructure/auth.ts';
 import { Database, DatabaseLive } from './infrastructure/db';
+import { feedsSchema } from './infrastructure/feeds';
+import { linksSchema } from './infrastructure/links';
 
 export class SchemaUnsupported extends Data.TaggedError('SchemaUnsupported')<{
   message: string;
@@ -20,6 +23,7 @@ export const migrate = Effect.gen(function* () {
 
   return yield* Effect.tryPromise(async () => {
     const schema = await createSchema(options);
+    await db.query(linksSchema + feedsSchema + articlesSchema);
 
     if (schema.code.length > 0) {
       await db.query(schema.code);

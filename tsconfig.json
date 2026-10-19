@@ -19,7 +19,11 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "allowedUnstableApis": ["effect/http"]
+        "allowedUnstableApis": [
+          "effect/http",
+          "effect/http-api",
+          "effect/reactivity"
+        ]
       }
     ],
     "resolveJsonModule": true,

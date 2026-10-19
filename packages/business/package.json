@@ -1,0 +1,19 @@
+{
+  "name": "@reader/business",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "4.0.0"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.0",
+    "vitest": "catalog:",
+    "typescript": "catalog:",
+    "@types/node": "catalog:"
+  }
+}

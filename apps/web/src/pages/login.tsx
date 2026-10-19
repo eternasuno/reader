@@ -17,12 +17,12 @@ const Login = () => {
   });
 
   return (
-    <AuthPage title="Sign in">
+    <AuthPage title="登录">
       <LoginForm />
-      <p class="text-center">
-        Don&apos;t have an account?{' '}
-        <a href="/register" class="link">
-          Create one
+      <p class="text-center text-sm text-base-content/70">
+        还没有账号？{' '}
+        <a href="/register" class="link link-neutral">
+          去注册
         </a>
       </p>
     </AuthPage>

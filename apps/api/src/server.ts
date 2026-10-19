@@ -11,6 +11,7 @@ import { HttpRouter } from 'effect/http';
 import { AppLive } from './app';
 import { AuthLive } from './infrastructure/auth';
 import { DatabaseLive } from './infrastructure/db';
+import { FeedSchedulerLive } from './infrastructure/feed-scheduler';
 import { staticRoutes } from './routes/static';
 
 const DEFAULT_PORT = 3001;
@@ -20,6 +21,8 @@ const server = NodeHttpServer.layerConfig(createServer, {
 });
 
 const dependencies = Layer.mergeAll(
+  DatabaseLive,
+  FeedSchedulerLive.pipe(Layer.provide(DatabaseLive)),
   AuthLive.pipe(Layer.provide(DatabaseLive)),
   NodeFileSystem.layer,
   NodePath.layer,

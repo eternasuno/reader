@@ -49,25 +49,25 @@ export const RegisterForm = () => {
           event.preventDefault();
         }
       }}
-      class="flex flex-col gap-4"
+      class="flex flex-col gap-4 [&_.btn]:btn-neutral [&_.btn]:whitespace-nowrap"
     >
       <FormInput
         id="name"
         name="name"
-        label="Name"
+        label="昵称"
         autocomplete="name"
         pattern={'.*\\S.*'}
         required
-        hint="Enter your name."
+        hint="请输入昵称。"
       />
       <FormInput
         id="email"
         name="email"
-        label="Email"
+        label="邮箱"
         type="email"
         autocomplete="email"
         required
-        hint="Enter a valid email address."
+        hint="请输入有效邮箱。"
       />
       <PasswordConfirmation />
       <FormError
@@ -77,8 +77,8 @@ export const RegisterForm = () => {
       />
       <SubmitButton
         pending={!!submission.pending}
-        label="Create account"
-        pendingLabel="Creating account…"
+        label="注册"
+        pendingLabel="注册中…"
       />
     </form>
   );

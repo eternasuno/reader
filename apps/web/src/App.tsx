@@ -6,7 +6,7 @@ const App = () => (
   <Router
     root={(props) => (
       <>
-        <h1 class="sr-only">Solid Surreal Starter</h1>
+        <h1 class="sr-only">稍后阅读</h1>
         {props.children}
       </>
     )}

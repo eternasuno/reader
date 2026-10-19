@@ -40,25 +40,25 @@ export const LoginForm = () => {
           event.preventDefault();
         }
       }}
-      class="flex flex-col gap-4"
+      class="flex flex-col gap-4 [&_.btn]:btn-neutral [&_.btn]:whitespace-nowrap"
     >
       <FormInput
         required
         id="email"
         name="email"
-        label="Email"
+        label="邮箱"
         type="email"
         autocomplete="email"
-        hint="Enter a valid email address."
+        hint="请输入有效邮箱。"
       />
       <FormInput
         required
         id="password"
         name="password"
-        label="Password"
+        label="密码"
         type="password"
         autocomplete="current-password"
-        hint="Enter your password."
+        hint="请输入密码。"
       />
       <FormError
         message={
@@ -67,8 +67,8 @@ export const LoginForm = () => {
       />
       <SubmitButton
         pending={!!submission.pending}
-        label="Sign in"
-        pendingLabel="Signing in…"
+        label="登录"
+        pendingLabel="登录中…"
       />
     </form>
   );

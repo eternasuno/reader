@@ -3,12 +3,12 @@ import { AuthPage } from '../components/templates/auth-page';
 
 const Register = () => {
   return (
-    <AuthPage title="Create an account">
+    <AuthPage title="注册">
       <RegisterForm />
-      <p class="text-center">
-        Already have an account?{' '}
-        <a href="/login" class="link">
-          Sign in
+      <p class="text-center text-sm text-base-content/70">
+        已有账号？{' '}
+        <a href="/login" class="link link-neutral">
+          去登录
         </a>
       </p>
     </AuthPage>
