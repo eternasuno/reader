@@ -1,6 +1,7 @@
 import { action, useAction, useSubmission } from '@solidjs/router';
 import { Show } from 'solid-js';
 import type { SessionState } from '../../lib/auth';
+import { Button } from '../atoms/button';
 import { FormError } from '../atoms/form-error';
 
 export const SessionLoading = () => (
@@ -52,7 +53,7 @@ export const SessionCard = (props: SessionCardProps) => {
                 }
               />
               <div class="card-actions justify-end">
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     if (!logout.pending) {
@@ -70,7 +71,7 @@ export const SessionCard = (props: SessionCardProps) => {
                     />
                   </Show>
                   <span>{logout.pending ? 'Signing out…' : 'Sign out'}</span>
-                </button>
+                </Button>
               </div>
             </>
           )}
@@ -88,13 +89,13 @@ export const SessionErrorCard = (props: { session: SessionState }) => (
         message={props.session.error?.message ?? 'Failed to load your session.'}
       />
       <div class="card-actions justify-end">
-        <button
+        <Button
           type="button"
           class="btn"
           onClick={() => void props.session.refetch()}
         >
           Try again
-        </button>
+        </Button>
       </div>
     </div>
   </section>

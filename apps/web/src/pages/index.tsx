@@ -9,6 +9,7 @@ import {
   type Setter,
   Show,
 } from 'solid-js';
+import { Button } from '../components/atoms/button';
 import { ReaderIcon } from '../components/atoms/reader-icon';
 import { ArticleReader } from '../components/organisms/article-reader';
 import { FeedReader } from '../components/organisms/feed-reader';
@@ -17,7 +18,11 @@ import { ReadingList } from '../components/organisms/reading-list';
 import { WorkspaceNav } from '../components/organisms/workspace-nav';
 import { authClient } from '../lib/auth';
 import type { ReadingLink } from '../lib/links';
-import { useDeferredReaderRefresh, useTriggerFocus } from './reader-lifecycle';
+import {
+  focusWhenReady,
+  useDeferredReaderRefresh,
+  useTriggerFocus,
+} from './reader-lifecycle';
 import {
   type Scope,
   type Selectable,
@@ -36,25 +41,6 @@ const toSelection = (kind: Selection['kind'], item: Selectable): Selection => ({
 
 const keyFor = (selection: SelectionState, kind: Selection['kind']) =>
   selection?.kind === kind ? selection.key : undefined;
-
-const isNarrowViewport = () => window.matchMedia('(max-width: 1000px)').matches;
-
-const hasOpenDialog = () => document.querySelector('dialog[open]') !== null;
-
-const focusIfVisible = (element: HTMLElement | undefined) => {
-  if (!element) return;
-  if (!element.isConnected) return;
-  if (element.getClientRects().length === 0) return;
-  element.focus();
-};
-
-const focusWhenReady = (getTarget: () => HTMLElement | undefined) => {
-  if (!isNarrowViewport() || hasOpenDialog()) return;
-  queueMicrotask(() => {
-    if (hasOpenDialog()) return;
-    focusIfVisible(getTarget());
-  });
-};
 
 const visibleListHeading = () =>
   Array.from(
@@ -192,7 +178,10 @@ const pickFeed = (model: WorkspaceModel, key: string) => {
 };
 
 const WorkspaceList = (props: { readonly model: WorkspaceModel }) => (
-  <section class="workspace-list" aria-label="文章列表">
+  <section
+    class="workspace-list min-w-0 overflow-y-auto border-r border-base-300 bg-base-100 px-6 [scrollbar-width:thin] max-sm:col-start-1 max-sm:row-start-2 max-sm:group-data-[nav=true]/workspace:hidden max-lg:group-data-[reading=true]/workspace:hidden"
+    aria-label="文章列表"
+  >
     <div hidden={props.model.scope() !== 'later'}>
       <ReadingList
         selectedKey={keyFor(props.model.selection(), 'link')}
@@ -212,11 +201,14 @@ const WorkspaceList = (props: { readonly model: WorkspaceModel }) => (
 );
 
 const WorkspaceReader = (props: { readonly model: WorkspaceModel }) => (
-  <section class="workspace-reader" aria-label="正文">
+  <section
+    class="workspace-reader min-w-0 overflow-y-auto [scrollbar-width:thin] max-sm:col-start-1 max-sm:row-start-2 max-sm:group-data-[nav=true]/workspace:hidden max-lg:hidden max-lg:group-data-[reading=true]/workspace:block"
+    aria-label="正文"
+  >
     <Show
       when={props.model.selection()}
       fallback={
-        <div class="reader-empty">
+        <div class="grid h-full place-items-center text-center text-sm tracking-wide text-[#929295]">
           <p>未选择文章</p>
         </div>
       }
@@ -253,11 +245,16 @@ const ShellDialog = (props: {
       }}
       onClose={props.onClose}
       aria-label={props.label}
+      class="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-xl overflow-y-auto rounded-lg border border-[#424045] bg-base-100 p-6 text-base-content shadow-2xl backdrop:bg-black/60"
     >
-      <form method="dialog">
-        <button type="submit" class="btn btn-ghost btn-sm" aria-label="关闭">
+      <form method="dialog" class="flex justify-end">
+        <Button
+          type="submit"
+          class="btn btn-ghost min-h-11 px-3 py-2"
+          aria-label="关闭"
+        >
           <ReaderIcon name="close" />
-        </button>
+        </Button>
       </form>
       {props.children}
     </dialog>
@@ -268,32 +265,37 @@ const Workspace = () => {
   const model = useWorkspace();
   return (
     <div
-      class="reader-workspace"
-      classList={{
-        'mobile-reading': model.selection() !== undefined,
-        'nav-open': model.navOpen(),
-      }}
+      class="group/workspace grid h-dvh grid-cols-[16rem_24rem_minmax(0,1fr)] overflow-hidden bg-[#121212] font-sans text-sm text-base-content max-xl:grid-cols-[12rem_20rem_minmax(0,1fr)] max-lg:grid-cols-[14rem_minmax(0,1fr)] max-sm:grid-cols-1 max-sm:grid-rows-[3.25rem_minmax(0,1fr)]"
+      data-reading={model.selection() !== undefined}
+      data-nav={model.navOpen()}
     >
-      <div class="workspace-mobile-bar">
-        <button
+      <div class="hidden items-center justify-between gap-2 border-b border-base-300 bg-base-100 px-2 max-sm:flex">
+        <Button
           type="button"
+          class="grid size-11 cursor-pointer place-items-center"
           aria-label="切换导航"
           aria-expanded={model.navOpen()}
           onClick={() => model.setNavOpen(!model.navOpen())}
         >
           <ReaderIcon name={model.navOpen() ? 'close' : 'menu'} />
-        </button>
+        </Button>
         <span>
           留白{' '}
           <span class="text-base-content/40">
             / {model.scope() === 'rss' ? '全部文章' : '稍后阅读'}
           </span>
         </span>
-        <button type="button" aria-label="设置" onClick={model.openSettings}>
+        <Button
+          class="grid size-11 cursor-pointer place-items-center"
+          type="button"
+          aria-label="设置"
+          onClick={model.openSettings}
+        >
           <ReaderIcon name="settings" />
-        </button>
+        </Button>
       </div>
       <WorkspaceNav
+        class="max-sm:col-start-1 max-sm:row-start-2 max-sm:hidden max-sm:group-data-[nav=true]/workspace:flex"
         scope={model.scope()}
         feedKey={model.feedKey()}
         feedRevision={model.feedRevision()}

@@ -1,7 +1,13 @@
 import { A } from '@solidjs/router';
 import { Show } from 'solid-js';
 import type { ReadingLink } from '../../lib/links';
-import { EntryTime } from './list-toolbar';
+import { Button } from '../atoms/button';
+import {
+  EntryMeta,
+  EntrySurface,
+  EntryTitle,
+  EntryUnreadButton,
+} from './list-entry';
 
 type ReadingItemProps = {
   readonly item: ReadingLink;
@@ -14,47 +20,35 @@ type ReadingItemProps = {
 
 const hostOf = (url: string): string => new URL(url).hostname;
 
-const ReadingItemMeta = (props: { item: ReadingLink }) => (
-  <span class="entry-source">
-    <span>{hostOf(props.item.url)}</span>
-    <EntryTime value={props.item.createdAt} />
-  </span>
-);
-
 const ReadingItemActions = (props: ReadingItemProps) => (
-  <div class="flex gap-5">
+  <div class="relative z-1 flex gap-5">
     <A href={`/read/link/${props.item.key}`} class="hover:underline">
       站内阅读
     </A>
-    <button
+    <Button
       type="button"
       class="hover:text-base-content underline-offset-4 hover:underline"
       disabled={props.pending}
       onClick={() => props.onToggle(props.item)}
     >
       {props.item.read ? '恢复未读' : '标记已读'}
-    </button>
-    <button
+    </Button>
+    <Button
       type="button"
       class="hover:text-base-content underline-offset-4 hover:underline"
       disabled={props.pending}
       onClick={() => props.onDelete(props.item)}
     >
       删除
-    </button>
+    </Button>
   </div>
 );
 
 const StandaloneTitle = (props: { item: ReadingLink }) => (
-  <a
-    class="entry-title block text-lg font-medium leading-relaxed break-words hover:underline underline-offset-4"
-    href={props.item.url}
-    target="_blank"
-    rel="noopener noreferrer"
-  >
+  <EntryTitle href={props.item.url} target="_blank" rel="noopener noreferrer">
     {props.item.title}
     <span class="sr-only">（在新标签页打开）</span>
-  </a>
+  </EntryTitle>
 );
 
 const SelectableTitle = (props: ReadingItemProps) => {
@@ -79,14 +73,13 @@ const SelectableTitle = (props: ReadingItemProps) => {
   };
 
   return (
-    <a
-      class="entry-title block text-base font-medium leading-relaxed break-words hover:underline underline-offset-4"
+    <EntryTitle
       href={`/read/link/${props.item.key}`}
-      aria-current={selected() || undefined}
+      current={selected()}
       onClick={handleSelect}
     >
       {props.item.title}
-    </a>
+    </EntryTitle>
   );
 };
 
@@ -96,15 +89,25 @@ export const ReadingItem = (props: ReadingItemProps) => {
     props.selectedKey !== undefined && props.item.key === props.selectedKey;
 
   return (
-    <li
-      class="reading-entry"
-      classList={{
-        'entry-selected': integrated() && selected(),
-        'entry-unread': !props.item.read,
-      }}
+    <EntrySurface
+      component="li"
+      read={props.item.read}
+      selected={integrated() && selected()}
     >
       <Show when={integrated()}>
-        <ReadingItemMeta item={props.item} />
+        <EntryMeta
+          source={hostOf(props.item.url)}
+          time={props.item.createdAt}
+        />
+      </Show>
+      <Show when={integrated() && !props.item.read}>
+        <EntryUnreadButton
+          label={props.item.title}
+          pending={props.pending}
+          onMarkRead={() => {
+            if (!props.item.read) props.onToggle(props.item);
+          }}
+        />
       </Show>
       <Show
         when={integrated()}
@@ -123,7 +126,10 @@ export const ReadingItem = (props: ReadingItemProps) => {
         class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-base-content/55"
         hidden={integrated()}
       >
-        <ReadingItemMeta item={props.item} />
+        <EntryMeta
+          source={hostOf(props.item.url)}
+          time={props.item.createdAt}
+        />
         <Show when={!integrated()}>
           <ReadingItemActions
             item={props.item}
@@ -133,6 +139,6 @@ export const ReadingItem = (props: ReadingItemProps) => {
           />
         </Show>
       </div>
-    </li>
+    </EntrySurface>
   );
 };

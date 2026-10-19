@@ -2,6 +2,7 @@ import { useAtomSet, useAtomValue } from '@effect/atom-solid/Hooks';
 import { Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { makeSettingsAtoms, readerError } from '../../lib/reader';
+import { Button } from '../atoms/button';
 
 const SettingsStatus = (props: {
   configured: boolean | undefined;
@@ -45,28 +46,28 @@ const SettingsKeyForm = (props: {
       placeholder="输入新的 Jina API Key"
       disabled={props.pending}
     />
-    <button
+    <Button
       class="btn btn-neutral"
       type="submit"
       disabled={props.pending}
       aria-busy={props.pending}
     >
       {props.pending ? '保存中…' : '保存'}
-    </button>
+    </Button>
   </form>
 );
 
 const SettingsDelete = (props: { disabled: boolean; onDelete: () => void }) => (
   <div class="mt-2 flex items-center justify-between gap-3">
     <p class="text-xs text-base-content/50">Key 加密保存，不会回显。</p>
-    <button
+    <Button
       class="link text-sm"
       type="button"
       disabled={props.disabled}
       onClick={props.onDelete}
     >
       删除 Key
-    </button>
+    </Button>
   </div>
 );
 

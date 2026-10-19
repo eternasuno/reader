@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
+import stylesheetUrl from '../../index.css?url';
 import { articleFrameHeight } from '../../lib/article-frame';
 
 const randomSecret = () =>
@@ -6,13 +7,69 @@ const randomSecret = () =>
     byte.toString(16).padStart(2, '0')
   ).join('');
 
+const escapeAttribute = (value: string) =>
+  value.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+
+const styleSource = () => {
+  const { origin } = window.location;
+
+  return origin && origin !== 'null'
+    ? `'unsafe-inline' ${origin}`
+    : "'unsafe-inline'";
+};
+
+const contentClasses: Readonly<Record<string, string>> = {
+  img: 'inline align-baseline h-auto! max-w-full! object-contain',
+  video: 'inline align-baseline h-auto! max-w-full!',
+  svg: 'inline max-w-full align-baseline',
+  p: 'my-[1em]',
+  h1: 'my-[0.67em] text-[2em] font-bold',
+  h2: 'my-[0.83em] text-[1.5em] font-bold',
+  h3: 'my-[1em] text-[1.17em] font-bold',
+  h4: 'my-[1.33em] text-[1em] font-bold',
+  h5: 'my-[1.67em] text-[0.83em] font-bold',
+  h6: 'my-[2.33em] text-[0.67em] font-bold',
+  ul: 'my-[1em] list-disc pl-10',
+  ol: 'my-[1em] list-decimal pl-10',
+  dl: 'my-[1em]',
+  dd: 'ml-10',
+  figure: 'mx-0 my-[1em]',
+  a: 'text-inherit underline',
+  pre: 'my-[1em] overflow-auto whitespace-pre-wrap bg-[#242424] p-[1em]',
+  table: 'max-w-full border-collapse',
+  td: 'border border-[#3a3a3a] p-[.4em]',
+  th: 'border border-[#3a3a3a] p-[.4em] text-center font-bold',
+  blockquote: 'my-[1em] ml-0 mr-10 border-l-2 border-[#3a3a3a] pl-[1em]',
+};
+
+const scopeContent = (html: string) => {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  for (const element of parsed.body.querySelectorAll('*')) {
+    const classes = contentClasses[element.localName];
+    if (classes === undefined) {
+      element.removeAttribute('class');
+    } else {
+      element.setAttribute('class', classes);
+    }
+  }
+
+  return parsed.body.innerHTML;
+};
+
+const articleBodyClass =
+  'flow-root mx-auto max-w-3xl bg-[#121212] text-[#d4d4d8] font-[system-ui,sans-serif] text-lg leading-[1.9] [overflow-wrap:anywhere] max-sm:text-base';
+
 export const ArticleFrame = (props: { html: string }) => {
   let frame!: HTMLIFrameElement;
   const [height, setHeight] = createSignal<number>();
   const document = createMemo(() => {
     const nonce = randomSecret();
     const token = randomSecret();
-    const html = props.html;
+    const html = scopeContent(props.html);
+    const stylesheetHref = new URL(stylesheetUrl, window.location.href).href;
+    const href = import.meta.env.DEV
+      ? `${stylesheetHref}${stylesheetHref.includes('?') ? '&' : '?'}direct`
+      : stylesheetHref;
     const reporter = `addEventListener('DOMContentLoaded', () => {
       const body = document.body;
       let pending = 0;
@@ -43,7 +100,7 @@ export const ArticleFrame = (props: { html: string }) => {
 
     return {
       token,
-      srcdoc: `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:dark;background:#121212}body{display:flow-root;height:auto;min-height:0;max-width:760px;margin:0 auto;padding:0;font:18px/1.9 system-ui,sans-serif;color:#d4d4d8;overflow-wrap:anywhere;box-sizing:border-box}img,video{max-width:100%!important;height:auto!important}img{object-fit:contain}figure{margin-inline:0}svg{max-width:100%}a{color:inherit}pre{overflow:auto;background:#242424;padding:1em;white-space:pre-wrap}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid #3a3a3a;padding:.4em}blockquote{border-left:3px solid #3a3a3a;margin-left:0;padding-left:1em}@media(max-width:640px){body{font-size:17px}}</style><script nonce="${nonce}">${reporter}</script></head><body>${html}</body></html>`,
+      srcdoc: `<!doctype html><html class="scheme-dark bg-[#121212]!"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http:; style-src ${styleSource()}; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'"><link rel="stylesheet" href="${escapeAttribute(href)}"><script nonce="${nonce}">${reporter}</script></head><body class="${articleBodyClass}">${html}</body></html>`,
     };
   });
 
@@ -62,8 +119,12 @@ export const ArticleFrame = (props: { html: string }) => {
     <iframe
       ref={frame}
       title="文章正文"
-      class="article-reader-frame w-full bg-[#121212]"
-      style={{ height: height() === undefined ? '65vh' : `${height()}px` }}
+      class="block h-(--article-height) w-full rounded-none border-0 bg-[#121212]"
+      style={`--article-height:${
+        height() === undefined
+          ? '65vh'
+          : `${height()! / Number.parseFloat(getComputedStyle(window.document.documentElement).fontSize)}rem`
+      }`}
       scrolling={height() === undefined ? 'auto' : 'no'}
       sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
       referrerpolicy="no-referrer"

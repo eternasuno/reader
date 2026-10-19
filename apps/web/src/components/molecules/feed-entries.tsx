@@ -3,9 +3,15 @@ import { A } from '@solidjs/router';
 import { Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { For, Show } from 'solid-js';
+import { Button } from '../atoms/button';
 import type { FeedReaderModel } from '../organisms/feed-reader';
 import { ReadingPager } from '../organisms/reading-pager';
-import { EntryTime } from './list-toolbar';
+import {
+  EntryMeta,
+  EntrySurface,
+  EntryTitle,
+  EntryUnreadButton,
+} from './list-entry';
 
 const selectEntry = (
   event: MouseEvent,
@@ -32,11 +38,11 @@ const FeedEntryActions = (props: {
   readonly model: FeedReaderModel;
   readonly item: FeedArticle;
 }) => (
-  <div class="mt-3 flex gap-4 text-xs">
+  <div class="relative z-1 mt-3 flex gap-4 text-xs">
     <A class="link" href={`/read/feed/${props.item.key}`}>
       站内阅读
     </A>
-    <button
+    <Button
       class="link"
       type="button"
       disabled={props.model.pending()}
@@ -49,15 +55,15 @@ const FeedEntryActions = (props: {
       }
     >
       {props.item.read ? '标为未读' : '标为已读'}
-    </button>
-    <button
+    </Button>
+    <Button
       class="link"
       type="button"
       disabled={props.model.pending()}
       onClick={() => void props.model.save(props.item.key)}
     >
       保存到稍后读
-    </button>
+    </Button>
   </div>
 );
 
@@ -89,7 +95,7 @@ const FeedThumbnail = (props: { readonly description: string | undefined }) => (
         <Show when={thumbnail}>
           {(url) => (
             <img
-              class="entry-thumbnail"
+              class="float-right mt-2 ml-3 h-14 w-16 rounded-sm object-cover"
               src={url()}
               alt=""
               loading="lazy"
@@ -110,24 +116,22 @@ const FeedEntryTitle = (props: {
   <Show
     when={props.onSelect !== undefined}
     fallback={
-      <a
-        class="entry-title text-base font-medium leading-relaxed hover:underline"
+      <EntryTitle
         href={props.item.url}
         target="_blank"
         rel="noopener noreferrer"
       >
         {props.item.title}
-      </a>
+      </EntryTitle>
     }
   >
-    <a
-      class="entry-title text-base font-medium leading-relaxed hover:underline"
+    <EntryTitle
       href={`/read/feed/${props.item.key}`}
-      aria-current={props.selected ? true : undefined}
+      current={props.selected}
       onClick={(event) => selectEntry(event, props.onSelect, props.item)}
     >
       {props.item.title}
-    </a>
+    </EntryTitle>
   </Show>
 );
 
@@ -140,19 +144,33 @@ const FeedEntry = (props: {
   const integrated = () => props.onSelect !== undefined;
 
   return (
-    <article
-      class="feed-entry reading-entry"
-      classList={{ 'entry-unread': !props.item.read }}
+    <EntrySurface
+      component="article"
+      read={props.item.read}
+      selected={props.selected}
     >
-      <p class="entry-source">
-        <span>
-          {Option.getOrUndefined(
+      <EntryMeta
+        source={
+          Option.getOrUndefined(
             AsyncResult.value(props.model.feeds())
           )?.items.find((feed) => feed.key === props.item.feedKey)?.title ??
-            new URL(props.item.url).hostname}
-        </span>
-        <EntryTime value={props.item.publishedAt} />
-      </p>
+          new URL(props.item.url).hostname
+        }
+        time={props.item.publishedAt}
+      />
+      <Show when={!props.item.read}>
+        <EntryUnreadButton
+          label={props.item.title}
+          pending={props.model.pending()}
+          onMarkRead={() => {
+            void props.model.run({
+              _tag: 'Mark',
+              key: props.item.key,
+              read: true,
+            });
+          }}
+        />
+      </Show>
       <FeedEntryTitle
         item={props.item}
         onSelect={props.onSelect}
@@ -173,7 +191,7 @@ const FeedEntry = (props: {
       <Show when={!integrated()}>
         <FeedEntryActions model={props.model} item={props.item} />
       </Show>
-    </article>
+    </EntrySurface>
   );
 };
 
@@ -219,13 +237,13 @@ const FeedArticlesBody = (props: {
 const FeedArticlesError = (props: { readonly model: FeedReaderModel }) => (
   <p class="py-10" role="alert">
     文章加载失败。
-    <button
+    <Button
       class="link ml-2"
       type="button"
       onClick={props.model.reloadArticles}
     >
       重试
-    </button>
+    </Button>
   </p>
 );
 

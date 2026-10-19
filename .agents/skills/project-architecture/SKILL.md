@@ -19,6 +19,16 @@ description: Follow the client architecture and resource-lifecycle constraints w
 - Components and `src/pages` own presentation, native form validation, conversion from `FormData` to logic-layer parameters, submission state, and navigation. Organize components into `atoms`, `molecules`, `organisms`, and `templates`.
 - `src/lib/auth.ts` initializes the single official Better Auth Solid client and exports authentication operations using that client directly. Adapter initialization and inferred session types are allowed here; invoke reactive hooks only in the presentation layer.
 
+## UI Styling and Focus
+
+- Use Tailwind for all expressible presentation; keep `index.css` limited to Tailwind/daisyUI configuration and theme tokens. Do not reintroduce component CSS, `@apply`, giant class constants, or sprawling descendant selectors; simplify utilities and extract cohesive repeated UI components.
+- Prefer built-in sizing and breakpoint scales over incidental precision. Necessary custom fixed dimensions use rem except thin borders. Dynamic iframe height and generated anchor names may be passed as runtime CSS values.
+- All buttons compose `components/atoms/button.tsx`; only that base component renders the native button. `IconButton`, navigation buttons, and submit buttons retain specialized semantics but share rounded-rectangle geometry and a pale hover background with a soft shadow. Do not reintroduce circular hover surfaces or independent button hover implementations. Preserve sizes, selected/primary/destructive states, native form behavior, refs, labels, and disabled/loading behavior.
+- List titles have no hover underline; use the full-width list surface for hover feedback. Keep the open-original action in the overflow menu, not the reader toolbar.
+- Keep responsive layout in Tailwind. Recover focus from actual visibility and current focus, not JavaScript media queries mirroring CSS breakpoints; preserve valid focus and open dialogs.
+- Keep article content isolated inside its sandboxed iframe. Sharing compiled Tailwind must preserve CSP, sandboxing, content isolation, and resize-message authentication; verify stylesheet loading and typography in a real browser.
+- Verify relevant hover, focus, selected, and disabled states. Full-width list surfaces must contain unread-button hit areas, and unread controls must not activate article links. Confirm actual browser viewport dimensions before claiming mobile verification.
+
 ## Solid Session Subscription
 
 Create the browser auth client with `createAuthClient` from `better-auth/solid`. Call `authClient.useSession()` inside the component's owned scope and read its returned accessor directly. The official adapter owns reactive updates and subscription cleanup; do not implement a separate signal or subscription bridge.

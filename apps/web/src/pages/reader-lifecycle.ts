@@ -27,3 +27,28 @@ export const useTriggerFocus = (fallback: () => void) => {
 
   return { disconnect, watch };
 };
+
+const hasOpenDialog = () => document.querySelector('dialog[open]') !== null;
+
+const focusIfVisible = (element: HTMLElement | undefined) => {
+  if (!element) return;
+  if (!element.isConnected) return;
+  if (element.getClientRects().length === 0) return;
+  element.focus();
+};
+
+export const focusWhenReady = (getTarget: () => HTMLElement | undefined) => {
+  queueMicrotask(() => {
+    if (hasOpenDialog()) return;
+
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      active !== document.body &&
+      active.getClientRects().length > 0
+    )
+      return;
+
+    focusIfVisible(getTarget());
+  });
+};

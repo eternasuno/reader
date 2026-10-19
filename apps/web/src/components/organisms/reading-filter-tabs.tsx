@@ -1,4 +1,5 @@
 import { For } from 'solid-js';
+import { Button } from '../atoms/button';
 
 type ReadingFilterTabsProps = {
   read: boolean;
@@ -15,7 +16,7 @@ const ReadingTabButton = (
   const active = () => props.read === props.value;
   const select = () => props.onSelect(props.value);
   return (
-    <button
+    <Button
       type="button"
       class={tabClass(active())}
       aria-pressed={active()}
@@ -23,7 +24,7 @@ const ReadingTabButton = (
       disabled={props.pending}
     >
       {props.value ? '已读' : '未读'}
-    </button>
+    </Button>
   );
 };
 

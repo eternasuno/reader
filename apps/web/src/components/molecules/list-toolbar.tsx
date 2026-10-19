@@ -1,4 +1,6 @@
-import { createUniqueId, Show } from 'solid-js';
+import { createUniqueId, type JSX, Show } from 'solid-js';
+import { Button } from '../atoms/button';
+import { IconButton } from '../atoms/icon-button';
 import { ReaderIcon } from '../atoms/reader-icon';
 
 type ListToolbarProps = {
@@ -14,21 +16,23 @@ type ListToolbarProps = {
 
 export const ListToolbar = (props: ListToolbarProps) => {
   return (
-    <nav class="workspace-list-heading" aria-label={`${props.title}清单工具`}>
-      <h2 tabindex="-1">{props.title}</h2>
-      <span class="list-loaded-count" title="当前页已加载条目数">
+    <nav
+      class="workspace-list-heading sticky top-0 z-3 flex h-13 items-center gap-2 -mx-6 border-b border-base-300 bg-base-100 px-4"
+      aria-label={`${props.title}清单工具`}
+    >
+      <h2 class="min-w-0 truncate text-sm font-semibold" tabindex="-1">
+        {props.title}
+      </h2>
+      <span
+        class="mr-auto whitespace-nowrap text-xs text-base-content opacity-55"
+        title="当前页已加载条目数"
+      >
         {props.count === undefined ? '加载中' : `已加载 ${props.count} 项`}
       </span>
       <Show when={props.onAdd}>
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm btn-square"
-          aria-label="添加链接"
-          title="添加链接"
-          onClick={() => props.onAdd?.()}
-        >
+        <IconButton label="添加链接" onClick={() => props.onAdd?.()}>
           <ReaderIcon name="plus" />
-        </button>
+        </IconButton>
       </Show>
       <ListOptions {...props} />
     </nav>
@@ -37,46 +41,24 @@ export const ListToolbar = (props: ListToolbarProps) => {
 
 const ListOptions = (props: ListToolbarProps) => {
   const id = createUniqueId();
+  const anchor = { '--menu-anchor': `--${id}` } as JSX.CSSProperties;
   let menu!: HTMLUListElement;
 
   return (
     <>
-      <button
-        type="button"
-        class="btn btn-ghost btn-sm btn-square"
-        aria-label="清单选项"
-        title="清单选项"
-        popovertarget={id}
-        style={{ 'anchor-name': `--${id}` }}
-      >
+      <IconButton label="清单选项" popoverTarget={id} anchorName={`--${id}`}>
         <ReaderIcon name="more" />
-      </button>
+      </IconButton>
       <ul
         ref={menu}
         id={id}
         popover="auto"
-        class="dropdown menu list-options rounded-box bg-base-200 shadow-lg"
-        style={{ 'position-anchor': `--${id}` }}
+        class="dropdown menu fixed inset-auto top-[anchor(bottom)] right-[anchor(right)] z-10 my-1 w-44 rounded-box bg-base-200 shadow-lg [position-anchor:var(--menu-anchor)]"
+        style={anchor}
       >
         <ListOptionItems {...props} close={() => menu.hidePopover()} />
       </ul>
     </>
-  );
-};
-
-export const EntryTime = (props: { readonly value: string }) => {
-  const label = () => {
-    const seconds = Math.max(0, (Date.now() - Date.parse(props.value)) / 1000);
-    if (seconds < 60) return '刚刚';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}分前`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`;
-    if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}天前`;
-    return new Date(props.value).toLocaleDateString('zh-CN');
-  };
-  return (
-    <time datetime={props.value} title={new Date(props.value).toLocaleString()}>
-      {label()}
-    </time>
   );
 };
 
@@ -85,7 +67,7 @@ const ListOptionItems = (
 ) => (
   <>
     <li>
-      <button
+      <Button
         type="button"
         disabled={props.pending}
         onClick={() => {
@@ -94,11 +76,11 @@ const ListOptionItems = (
         }}
       >
         刷新已存清单
-      </button>
+      </Button>
     </li>
     <Show when={props.onRefreshFeed}>
       <li>
-        <button
+        <Button
           type="button"
           disabled={props.pending}
           onClick={() => {
@@ -107,7 +89,7 @@ const ListOptionItems = (
           }}
         >
           刷新订阅源
-        </button>
+        </Button>
       </li>
     </Show>
     <ListReadOptions {...props} />
@@ -125,24 +107,24 @@ const ListReadOptions = (
   return (
     <>
       <li>
-        <button
+        <Button
           type="button"
           disabled={props.pending}
           aria-pressed={!props.read}
           onClick={() => filter(false)}
         >
           未读 {props.read ? '' : '✓'}
-        </button>
+        </Button>
       </li>
       <li>
-        <button
+        <Button
           type="button"
           disabled={props.pending}
           aria-pressed={props.read}
           onClick={() => filter(true)}
         >
           已读 {props.read ? '✓' : ''}
-        </button>
+        </Button>
       </li>
     </>
   );

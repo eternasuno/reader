@@ -8,6 +8,7 @@ import { Cause, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { createEffect, onCleanup, Show, untrack } from 'solid-js';
 import { makeReadingAtoms, type ReadingLink } from '../../lib/links';
+import { Button } from '../atoms/button';
 import { ListToolbar } from '../molecules/list-toolbar';
 import { READER_DATA_CHANGED } from './article-reader-model';
 import { ReadingAddForm } from './reading-add-form';
@@ -109,9 +110,9 @@ const ReadingContent = (props: ReadingContentProps) => {
       fallback={
         <p class="py-12" role="alert">
           暂时无法加载清单。
-          <button class="link ml-3" type="button" onClick={props.model.refresh}>
+          <Button class="link ml-3" type="button" onClick={props.model.refresh}>
             重试
-          </button>
+          </Button>
         </p>
       }
     >
@@ -193,9 +194,9 @@ export const ReadingList = (props: ReadingListProps) => {
         aria-label="添加链接"
       >
         <form method="dialog" class="flex justify-end">
-          <button type="submit" class="btn btn-ghost btn-sm">
+          <Button type="submit" class="btn btn-ghost btn-sm">
             关闭
-          </button>
+          </Button>
         </form>
         <ReadingAddForm
           pending={model.pending()}

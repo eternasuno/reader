@@ -1,4 +1,5 @@
 import { Show } from 'solid-js';
+import { Button } from './button';
 
 type SubmitButtonProps = {
   pending: boolean;
@@ -7,7 +8,7 @@ type SubmitButtonProps = {
 };
 
 export const SubmitButton = (props: SubmitButtonProps) => (
-  <button
+  <Button
     type="submit"
     class="btn"
     disabled={props.pending}
@@ -17,5 +18,5 @@ export const SubmitButton = (props: SubmitButtonProps) => (
       <span class="loading loading-spinner loading-sm" aria-hidden="true" />
     </Show>
     <span>{props.pending ? props.pendingLabel : props.label}</span>
-  </button>
+  </Button>
 );

@@ -1,3 +1,5 @@
+import { Button } from '../atoms/button';
+
 type ReadingAddFormProps = {
   pending: boolean;
   error: string;
@@ -38,14 +40,14 @@ export const ReadingAddForm = (props: ReadingAddFormProps) => (
         placeholder="粘贴文章链接…"
         disabled={props.pending}
       />
-      <button
+      <Button
         class="btn btn-neutral"
         type="submit"
         disabled={props.pending}
         aria-busy={props.pending}
       >
         {props.pending ? '处理中…' : '添加链接'}
-      </button>
+      </Button>
     </form>
     <p role="status" class="mt-2 min-h-5 text-sm text-error">
       {props.error}

@@ -2,6 +2,7 @@ import type { Feed } from '@reader/api';
 import { Cause, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { For, Show } from 'solid-js';
+import { Button } from '../atoms/button';
 import type { FeedReaderModel } from './feed-reader';
 
 const errorMessage = (result: AsyncResult.AsyncResult<unknown, unknown>) => {
@@ -19,7 +20,7 @@ const errorMessage = (result: AsyncResult.AsyncResult<unknown, unknown>) => {
 
 export const FeedReadTabs = (props: { model: FeedReaderModel }) => (
   <div class="flex gap-4 text-sm">
-    <button
+    <Button
       type="button"
       class={
         props.model.query().read
@@ -31,8 +32,8 @@ export const FeedReadTabs = (props: { model: FeedReaderModel }) => (
       }
     >
       未读
-    </button>
-    <button
+    </Button>
+    <Button
       type="button"
       class={
         props.model.query().read
@@ -44,7 +45,7 @@ export const FeedReadTabs = (props: { model: FeedReaderModel }) => (
       }
     >
       已读
-    </button>
+    </Button>
   </div>
 );
 
@@ -72,7 +73,7 @@ const FeedRow = (props: { model: FeedReaderModel; feed: Feed }) => {
         </Show>
       </div>
       <div class="flex shrink-0 items-center gap-1">
-        <button
+        <Button
           type="button"
           class="btn btn-ghost btn-xs"
           disabled={props.model.pending()}
@@ -81,15 +82,15 @@ const FeedRow = (props: { model: FeedReaderModel; feed: Feed }) => {
           }
         >
           刷新
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           class="btn btn-ghost btn-xs"
           disabled={props.model.pending()}
           onClick={confirmUnsubscribe}
         >
           取消订阅
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -126,13 +127,13 @@ export const FeedSubscriptions = (props: { model: FeedReaderModel }) => {
         fallback={
           <p role="alert" class="py-3 text-sm text-error">
             订阅源加载失败。
-            <button
+            <Button
               type="button"
               class="link ml-2"
               onClick={props.model.reloadFeeds}
             >
               重试
-            </button>
+            </Button>
           </p>
         }
       >
@@ -175,14 +176,14 @@ export const FeedSubscribeForm = (props: { model: FeedReaderModel }) => (
       aria-label="订阅地址"
       disabled={props.model.pending()}
     />
-    <button
+    <Button
       class="btn btn-neutral"
       type="submit"
       disabled={props.model.pending()}
       aria-busy={props.model.pending()}
     >
       {props.model.pending() ? '处理中…' : '订阅'}
-    </button>
+    </Button>
   </form>
 );
 

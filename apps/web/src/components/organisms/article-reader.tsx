@@ -1,6 +1,5 @@
 import { useParams } from '@solidjs/router';
 import { createSignal, Show } from 'solid-js';
-import './article-reader.css';
 import {
   ReaderActions,
   ReaderContent,
@@ -186,7 +185,7 @@ const ReaderBody = (props: ReaderBodyProps) => {
   const view = useReaderView(props.selection, stores, notices);
   useAutoMark(props.selection, stores, notices);
   return (
-    <section class="article-reader-pane">
+    <section class="m-0 min-h-full w-full">
       <ReaderHeader
         title={view.title()}
         url={view.url()}
@@ -199,7 +198,7 @@ const ReaderBody = (props: ReaderBodyProps) => {
         stores={stores}
         notices={notices}
       />
-      <div class="article-reader-content">
+      <div class="mx-auto flex max-w-208 flex-col gap-4 px-6 py-8 max-sm:px-4 max-sm:py-6">
         <ReaderTitle title={view.title()} url={view.url()} />
         <ReaderSourceLink url={view.url()} />
         <Show when={view.status()}>
