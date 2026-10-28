@@ -5,10 +5,16 @@ import {
 } from '@effect/atom-solid/Hooks';
 import { Exit, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import { createEffect, createSignal } from 'solid-js';
+import { createEffect, createSignal, onCleanup } from 'solid-js';
 import { makeFeedAtoms } from '../../lib/feeds';
 import { makeReadingAtoms } from '../../lib/links';
 import { makeReaderAtoms, readerError } from '../../lib/reader';
+import {
+  notifyReaderDataChanged,
+  publishReadStatus,
+  READER_READ_STATUS_CHANGED,
+  readStatusFromEvent,
+} from './reader-status';
 
 export type ReaderSelection = {
   kind: 'link' | 'feed';
@@ -16,12 +22,6 @@ export type ReaderSelection = {
   title: string;
   url: string;
   read: boolean;
-};
-
-export const READER_DATA_CHANGED = 'reader-data-changed';
-
-export const notifyReaderDataChanged = () => {
-  window.dispatchEvent(new CustomEvent(READER_DATA_CHANGED));
 };
 
 export const useReaderStores = (kind: ReaderSelection['kind'], key: string) => {
@@ -52,9 +52,19 @@ export const useReaderStores = (kind: ReaderSelection['kind'], key: string) => {
 
 export type ReaderStores = ReturnType<typeof useReaderStores>;
 
-export const useReaderNotices = (initialRead: boolean) => {
-  const [read, setRead] = createSignal(initialRead);
+export const useReaderNotices = (selection: ReaderSelection) => {
+  const [read, setRead] = createSignal(selection.read);
   const [notice, setNotice] = createSignal('');
+  const handleReadStatus = (event: Event) => {
+    const change = readStatusFromEvent(event);
+    if (change?.kind === selection.kind && change.key === selection.key)
+      setRead(change.read);
+  };
+  window.addEventListener(READER_READ_STATUS_CHANGED, handleReadStatus);
+  onCleanup(() => {
+    window.removeEventListener(READER_READ_STATUS_CHANGED, handleReadStatus);
+  });
+
   return { read, setRead, notice, setNotice };
 };
 
@@ -79,8 +89,13 @@ export const useAutoMark = (
     attempted = true;
     notices.setRead(loaded.read);
     if (loaded.read) return;
+
     void runMark(stores, selection.kind, selection.key, true).then((exit) => {
-      if (exit._tag === 'Success') notices.setRead(true);
+      publishReadStatus(exit, {
+        kind: selection.kind,
+        key: selection.key,
+        read: true,
+      });
     });
   });
 };
@@ -143,7 +158,6 @@ export const makeMarkHandler =
     stores: ReaderStores,
     busy: () => boolean,
     read: () => boolean,
-    setRead: (value: boolean) => void,
     setNotice: (value: string) => void
   ) =>
   async () => {
@@ -151,12 +165,15 @@ export const makeMarkHandler =
     if (busy() || selection.url === '') {
       return;
     }
+
     setNotice('');
-    const exit = await runMark(stores, selection.kind, selection.key, !read());
-    if (exit._tag === 'Success') {
-      setRead(!read());
-      notifyReaderDataChanged();
-    }
+    const next = !read();
+    const exit = await runMark(stores, selection.kind, selection.key, next);
+    publishReadStatus(exit, {
+      kind: selection.kind,
+      key: selection.key,
+      read: next,
+    });
   };
 
 export const makeDeleteHandler =

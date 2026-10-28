@@ -44,13 +44,17 @@ export const makeReadingAtoms = (layer = LinksClientLive) => {
     Effect.fnUntraced(function* (input, get) {
       const client = yield* LinksClient;
 
-      if (input._tag === 'Add') {
-        yield* client.links.add({ payload: { url: input.url } });
-        get.set(query, { read: false, page: 0 });
-      } else if (input._tag === 'Mark') {
+      if (input._tag === 'Mark') {
         yield* client.links.mark({
           payload: { key: input.key, read: input.read },
         });
+
+        return;
+      }
+
+      if (input._tag === 'Add') {
+        yield* client.links.add({ payload: { url: input.url } });
+        get.set(query, { read: false, page: 0 });
       } else {
         yield* client.links.remove({ payload: { key: input.key } });
       }

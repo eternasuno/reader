@@ -6,11 +6,15 @@ import {
 } from '@effect/atom-solid/Hooks';
 import { Cause, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import { createEffect, onCleanup, Show, untrack } from 'solid-js';
+import { createEffect, Show, untrack } from 'solid-js';
 import { makeReadingAtoms, type ReadingLink } from '../../lib/links';
 import { Button } from '../atoms/button';
 import { ListToolbar } from '../molecules/list-toolbar';
-import { READER_DATA_CHANGED } from './article-reader-model';
+import {
+  createReadStatusProjection,
+  publishReadStatus,
+  useReaderDataRefresh,
+} from './reader-status';
 import { ReadingAddForm } from './reading-add-form';
 import { ReadingEntries } from './reading-entries';
 import { ReadingPager } from './reading-pager';
@@ -25,17 +29,13 @@ const useReadingList = () => {
   const atoms = makeReadingAtoms();
   const [query, setQuery] = useAtom(() => atoms.query);
   const result = useAtomValue(() => atoms.page);
+  const page = () => Option.getOrUndefined(AsyncResult.value(result()));
+  const items = createReadStatusProjection('link', () => page()?.items);
   const mutation = useAtomValue(() => atoms.command);
   const run = useAtomSet(() => atoms.command, { mode: 'promiseExit' });
   const refresh = useAtomRefresh(() => atoms.page);
   const pending = () => mutation().waiting;
-  const handleExternalChange = () => {
-    refresh();
-  };
-  window.addEventListener(READER_DATA_CHANGED, handleExternalChange);
-  onCleanup(() => {
-    window.removeEventListener(READER_DATA_CHANGED, handleExternalChange);
-  });
+  useReaderDataRefresh(refresh);
   const add = async (url: string, form: HTMLFormElement) => {
     if (pending()) {
       return false;
@@ -51,9 +51,12 @@ const useReadingList = () => {
     return false;
   };
   const toggle = (item: ReadingLink) => {
-    if (!pending()) {
-      void run({ _tag: 'Mark', key: item.key, read: !item.read });
-    }
+    if (pending()) return;
+
+    const read = !item.read;
+    void run({ _tag: 'Mark', key: item.key, read }).then((exit) => {
+      publishReadStatus(exit, { kind: 'link', key: item.key, read });
+    });
   };
   const remove = (item: ReadingLink) => {
     if (!pending() && window.confirm('确定删除这个链接？此操作无法撤销。')) {
@@ -65,6 +68,8 @@ const useReadingList = () => {
     query,
     setQuery,
     result,
+    page,
+    items,
     mutation,
     pending,
     add,
@@ -101,7 +106,7 @@ type ReadingContentProps = {
 
 const ReadingContent = (props: ReadingContentProps) => {
   const result = () => props.model.result();
-  const page = () => Option.getOrUndefined(AsyncResult.value(result()));
+  const page = () => props.model.page();
   const hasCached = () => page() !== undefined;
 
   return (
@@ -128,7 +133,7 @@ const ReadingContent = (props: ReadingContentProps) => {
       >
         <ReadingEntries
           read={props.model.query().read}
-          items={page()?.items}
+          items={props.model.items()}
           pending={props.model.pending()}
           onToggle={props.model.toggle}
           onDelete={props.model.remove}
@@ -153,10 +158,10 @@ const ReadingContent = (props: ReadingContentProps) => {
 
 export const ReadingList = (props: ReadingListProps) => {
   const model = useReadingList();
-  const loaded = () => Option.getOrUndefined(AsyncResult.value(model.result()));
+  const loaded = () => model.page()?.items;
   let published: readonly ReadingLink[] | undefined;
   createEffect(() => {
-    const items = loaded()?.items;
+    const items = model.items();
     if (items && items !== published) {
       published = items;
       untrack(() => props.onItems?.(items));
@@ -180,7 +185,7 @@ export const ReadingList = (props: ReadingListProps) => {
     <>
       <ListToolbar
         title="稍后阅读"
-        count={loaded()?.items.length}
+        count={loaded()?.length}
         read={model.query().read}
         pending={model.pending()}
         onAdd={openAddDialog}

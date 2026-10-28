@@ -81,6 +81,8 @@ export const makeFeedAtoms = (layer = LinksClientLive) => {
     Effect.fnUntraced(function* (input, get) {
       const client = yield* LinksClient;
       yield* runFeedMutation(client, input);
+      if (input._tag === 'Mark') return;
+
       resetQueryOnUnsubscribe(get, query, input);
       get.refresh(feeds);
       get.refresh(articles);

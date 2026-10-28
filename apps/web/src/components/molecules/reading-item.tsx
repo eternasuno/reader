@@ -4,9 +4,9 @@ import type { ReadingLink } from '../../lib/links';
 import { Button } from '../atoms/button';
 import {
   EntryMeta,
+  EntryReadToggle,
   EntrySurface,
   EntryTitle,
-  EntryUnreadButton,
 } from './list-entry';
 
 type ReadingItemProps = {
@@ -100,13 +100,12 @@ export const ReadingItem = (props: ReadingItemProps) => {
           time={props.item.createdAt}
         />
       </Show>
-      <Show when={integrated() && !props.item.read}>
-        <EntryUnreadButton
+      <Show when={integrated()}>
+        <EntryReadToggle
           label={props.item.title}
+          read={props.item.read}
           pending={props.pending}
-          onMarkRead={() => {
-            if (!props.item.read) props.onToggle(props.item);
-          }}
+          onToggle={() => props.onToggle(props.item)}
         />
       </Show>
       <Show

@@ -7,22 +7,17 @@ import {
 import type { FeedArticle } from '@reader/api';
 import { Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import {
-  createEffect,
-  createSignal,
-  For,
-  onCleanup,
-  Show,
-  untrack,
-} from 'solid-js';
+import { createEffect, createSignal, For, Show, untrack } from 'solid-js';
 import { makeFeedAtoms } from '../../lib/feeds';
 import { FeedArticles } from '../molecules/feed-entries';
 import { ListToolbar } from '../molecules/list-toolbar';
-import {
-  notifyReaderDataChanged,
-  READER_DATA_CHANGED,
-} from './article-reader-model';
 import { FeedManagement, FeedReadTabs } from './feed-subscriptions';
+import {
+  createReadStatusProjection,
+  notifyReaderDataChanged,
+  publishReadStatus,
+  useReaderDataRefresh,
+} from './reader-status';
 
 const subscribeFeed = (
   run: (input: {
@@ -62,23 +57,24 @@ const useFeeds = () => {
   const [query, setQuery] = useAtom(() => atoms.query);
   const feeds = useAtomValue(() => atoms.feeds);
   const articles = useAtomValue(() => atoms.articles);
+  const page = () => Option.getOrUndefined(AsyncResult.value(articles()));
+  const items = createReadStatusProjection('feed', () => page()?.items);
   const mutation = useAtomValue(() => atoms.command);
   const rawRun = useAtomSet(() => atoms.command, { mode: 'promiseExit' });
   const reloadFeeds = useAtomRefresh(() => atoms.feeds);
   const reloadArticles = useAtomRefresh(() => atoms.articles);
-  const handleExternalChange = () => {
-    reloadFeeds();
-    reloadArticles();
-  };
-  window.addEventListener(READER_DATA_CHANGED, handleExternalChange);
-  onCleanup(() => {
-    window.removeEventListener(READER_DATA_CHANGED, handleExternalChange);
-  });
+  useReaderDataRefresh(reloadFeeds, reloadArticles);
   const run = async (...args: Parameters<typeof rawRun>) => {
     const exit = await rawRun(...args);
     if (exit._tag === 'Success') {
       notifyReaderDataChanged();
     }
+    return exit;
+  };
+  const mark = async (key: string, read: boolean) => {
+    const exit = await rawRun({ _tag: 'Mark', key, read });
+    publishReadStatus(exit, { kind: 'feed', key, read });
+
     return exit;
   };
   const [notice, setNotice] = createSignal('');
@@ -91,8 +87,11 @@ const useFeeds = () => {
     setQuery,
     feeds,
     articles,
+    page,
+    items,
     mutation,
     run,
+    mark,
     reloadFeeds,
     reloadArticles,
     subscribe,
@@ -114,11 +113,10 @@ export type FeedReaderProps = {
 
 const useFeedReader = (props: FeedReaderProps) => {
   const model = useFeeds();
-  const loaded = () =>
-    Option.getOrUndefined(AsyncResult.value(model.articles()));
+  const loaded = () => model.items();
   let published: readonly FeedArticle[] | undefined;
   createEffect(() => {
-    const items = loaded()?.items;
+    const items = loaded();
     if (items && items !== published) {
       published = items;
       untrack(() => props.onItems?.(items));
@@ -172,7 +170,7 @@ const FeedReaderContent = (input: {
         <Show when={integrated()} fallback={<StandaloneFeeds model={model} />}>
           <ListToolbar
             title={feedTitle()}
-            count={loaded()?.items.length}
+            count={loaded()?.length}
             read={model.query().read}
             pending={model.pending()}
             onRefresh={model.reloadArticles}

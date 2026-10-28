@@ -20,7 +20,7 @@ import { authClient } from '../lib/auth';
 import type { ReadingLink } from '../lib/links';
 import {
   focusWhenReady,
-  useDeferredReaderRefresh,
+  usePeriodicReaderRefresh,
   useTriggerFocus,
 } from './reader-lifecycle';
 import {
@@ -54,7 +54,6 @@ const useSelectionMemory = (
   selection: Accessor<SelectionState>,
   setSelection: Setter<SelectionState>
 ) => {
-  useDeferredReaderRefresh(selection);
   const navigate = useNavigate();
   let lastTrigger: HTMLElement | undefined;
   const triggerFocus = useTriggerFocus(focusListHeading);
@@ -102,6 +101,7 @@ const useWorkspaceRoute = (
 ) => useRouteSync(setScope, setSelection, useLocation(), useParams());
 
 const useWorkspace = () => {
+  usePeriodicReaderRefresh();
   const navigate = useNavigate();
   const [scope, setScope] = createSignal<Scope>('later');
   const [feedKey, setFeedKey] = createSignal('');

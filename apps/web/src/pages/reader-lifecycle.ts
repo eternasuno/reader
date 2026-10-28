@@ -1,12 +1,9 @@
-import { type Accessor, createEffect, on, onCleanup } from 'solid-js';
-import { notifyReaderDataChanged } from '../components/organisms/article-reader-model';
+import { onCleanup } from 'solid-js';
+import { notifyReaderDataChanged } from '../components/organisms/reader-status';
 
-export const useDeferredReaderRefresh = (selection: Accessor<unknown>) => {
-  createEffect(
-    on(selection, (current, previous) => {
-      if (previous && !current) notifyReaderDataChanged();
-    })
-  );
+export const usePeriodicReaderRefresh = () => {
+  const timer = setInterval(notifyReaderDataChanged, 5 * 60 * 1000);
+  onCleanup(() => clearInterval(timer));
 };
 
 export const useTriggerFocus = (fallback: () => void) => {

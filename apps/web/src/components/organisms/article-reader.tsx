@@ -121,7 +121,6 @@ const readerHandlers = (props: {
     props.stores,
     props.view.busy,
     props.notices.read,
-    props.notices.setRead,
     props.notices.setNotice
   ),
   onDelete: makeDeleteHandler(
@@ -181,7 +180,7 @@ const ReaderHeader = (props: {
 
 const ReaderBody = (props: ReaderBodyProps) => {
   const stores = useReaderStores(props.selection.kind, props.selection.key);
-  const notices = useReaderNotices(props.selection.read);
+  const notices = useReaderNotices(props.selection);
   const view = useReaderView(props.selection, stores, notices);
   useAutoMark(props.selection, stores, notices);
   return (

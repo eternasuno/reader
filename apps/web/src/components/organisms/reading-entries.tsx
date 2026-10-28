@@ -1,4 +1,4 @@
-import { For, Show } from 'solid-js';
+import { Index, Show } from 'solid-js';
 import type { ReadingLink } from '../../lib/links';
 import { ReadingItem } from '../molecules/reading-item';
 
@@ -31,10 +31,10 @@ export const ReadingEntries = (props: ReadingEntriesProps) => (
     fallback={<ReadingEmpty read={props.read} />}
   >
     <ul class="reading-entries">
-      <For each={props.items}>
+      <Index each={props.items}>
         {(item) => (
           <ReadingItem
-            item={item}
+            item={item()}
             pending={props.pending}
             onToggle={props.onToggle}
             onDelete={props.onDelete}
@@ -42,7 +42,7 @@ export const ReadingEntries = (props: ReadingEntriesProps) => (
             selectedKey={props.selectedKey}
           />
         )}
-      </For>
+      </Index>
     </ul>
   </Show>
 );

@@ -68,21 +68,34 @@ export const EntryMeta = (props: {
   </p>
 );
 
-export const EntryUnreadButton = (props: {
+export const EntryReadToggle = (props: {
   readonly label: string;
+  readonly read: boolean;
   readonly pending: boolean;
-  readonly onMarkRead: () => void;
+  readonly onToggle: () => void;
 }) => (
   <Button
     type="button"
-    class="absolute top-8 left-0 z-2 grid size-7 cursor-pointer place-items-center rounded-full bg-transparent text-base-content disabled:cursor-wait"
-    aria-label={`标为已读：${props.label}`}
-    title="标为已读"
+    class="absolute top-8 left-0 z-2 grid size-7 cursor-pointer place-items-center bg-transparent text-base-content disabled:cursor-wait [&]:rounded-full!"
+    aria-label={
+      props.read
+        ? `已读：${props.label}，点击标为未读`
+        : `未读：${props.label}，点击标为已读`
+    }
+    classList={{
+      'opacity-0 group-hover:opacity-100 focus-visible:opacity-100': props.read,
+    }}
+    aria-pressed={props.read}
+    title={props.read ? '已读，点击标为未读' : '未读，点击标为已读'}
     disabled={props.pending}
     onClick={() => {
-      if (!props.pending) props.onMarkRead();
+      if (!props.pending) props.onToggle();
     }}
   >
-    <span class="size-1.5 rounded-full bg-current opacity-70" />
+    <span
+      class="size-2 rounded-full border border-current opacity-70"
+      classList={{ 'bg-current': !props.read }}
+      aria-hidden="true"
+    />
   </Button>
 );

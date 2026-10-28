@@ -2,15 +2,15 @@ import type { FeedArticle } from '@reader/api';
 import { A } from '@solidjs/router';
 import { Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import { For, Show } from 'solid-js';
+import { Index, Show } from 'solid-js';
 import { Button } from '../atoms/button';
 import type { FeedReaderModel } from '../organisms/feed-reader';
 import { ReadingPager } from '../organisms/reading-pager';
 import {
   EntryMeta,
+  EntryReadToggle,
   EntrySurface,
   EntryTitle,
-  EntryUnreadButton,
 } from './list-entry';
 
 const selectEntry = (
@@ -46,13 +46,7 @@ const FeedEntryActions = (props: {
       class="link"
       type="button"
       disabled={props.model.pending()}
-      onClick={() =>
-        void props.model.run({
-          _tag: 'Mark',
-          key: props.item.key,
-          read: !props.item.read,
-        })
-      }
+      onClick={() => void props.model.mark(props.item.key, !props.item.read)}
     >
       {props.item.read ? '标为未读' : '标为已读'}
     </Button>
@@ -68,11 +62,11 @@ const FeedEntryActions = (props: {
 );
 
 const FeedThumbnail = (props: { readonly description: string | undefined }) => (
-  <Show when={props.description}>
+  <Show keyed when={props.description}>
     {(description) => {
       // Parse inertly; never attach feed markup or copy its attributes.
       const document = new DOMParser().parseFromString(
-        description(),
+        description,
         'text/html'
       );
       document
@@ -158,19 +152,12 @@ const FeedEntry = (props: {
         }
         time={props.item.publishedAt}
       />
-      <Show when={!props.item.read}>
-        <EntryUnreadButton
-          label={props.item.title}
-          pending={props.model.pending()}
-          onMarkRead={() => {
-            void props.model.run({
-              _tag: 'Mark',
-              key: props.item.key,
-              read: true,
-            });
-          }}
-        />
-      </Show>
+      <EntryReadToggle
+        label={props.item.title}
+        read={props.item.read}
+        pending={props.model.pending()}
+        onToggle={() => void props.model.mark(props.item.key, !props.item.read)}
+      />
       <FeedEntryTitle
         item={props.item}
         onSelect={props.onSelect}
@@ -203,7 +190,7 @@ const FeedArticlesBody = (props: {
   readonly selectedKey?: string | undefined;
 }) => (
   <>
-    <For
+    <Index
       each={props.items}
       fallback={
         <p class="py-12 text-sm text-base-content/50">
@@ -214,14 +201,14 @@ const FeedArticlesBody = (props: {
       {(item) => (
         <FeedEntry
           model={props.model}
-          item={item}
+          item={item()}
           onSelect={props.onSelect}
           selected={
-            props.selectedKey !== undefined && props.selectedKey === item.key
+            props.selectedKey !== undefined && props.selectedKey === item().key
           }
         />
       )}
-    </For>
+    </Index>
     <ReadingPager
       page={props.model.query().page}
       pending={props.model.pending()}
@@ -274,7 +261,7 @@ export const FeedArticles = (props: {
         >
           <FeedArticlesBody
             model={props.model}
-            items={page()?.items}
+            items={props.model.items()}
             hasMore={page()?.hasMore}
             onSelect={props.onSelect}
             selectedKey={props.selectedKey}
