@@ -11,6 +11,7 @@ import {
 } from 'solid-js';
 import { Button } from '../components/atoms/button';
 import { ReaderIcon } from '../components/atoms/reader-icon';
+import { Dialog } from '../components/molecules/dialog';
 import { ArticleReader } from '../components/organisms/article-reader';
 import { FeedReader } from '../components/organisms/feed-reader';
 import { ReaderSettings } from '../components/organisms/reader-settings';
@@ -212,8 +213,14 @@ const WorkspaceReader = (props: { readonly model: WorkspaceModel }) => (
     <Show
       when={props.model.selection()}
       fallback={
-        <div class="grid h-full place-items-center text-center text-sm tracking-wide text-[#929295]">
-          <p>未选择文章</p>
+        <div class="grid h-full place-items-center px-6 text-center">
+          <div class="flex flex-col items-center gap-4">
+            <ReaderIcon name="reading" class="size-10 text-base-content/25" />
+            <p class="text-sm text-base-content/60">未选择文章</p>
+            <p class="text-xs text-base-content/60">
+              从左侧选择一篇文章，开始阅读
+            </p>
+          </div>
         </div>
       }
       keyed
@@ -230,42 +237,9 @@ const WorkspaceReader = (props: { readonly model: WorkspaceModel }) => (
   </section>
 );
 
-const ShellDialog = (props: {
-  readonly open: boolean;
-  readonly label: string;
-  readonly onClose: () => void;
-  readonly children: JSX.Element;
-}) => {
-  let ref!: HTMLDialogElement;
-  createEffect(() => {
-    if (!props.open && ref.open) ref.close();
-    else if (props.open && !ref.open) ref.showModal();
-  });
-  return (
-    <dialog
-      ref={(element) => {
-        ref = element;
-      }}
-      onClose={props.onClose}
-      aria-label={props.label}
-      class="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-xl overflow-y-auto rounded-lg border border-[#424045] bg-base-100 p-6 text-base-content shadow-2xl backdrop:bg-black/60"
-    >
-      <form method="dialog" class="flex justify-end">
-        <Button
-          type="submit"
-          class="btn btn-ghost min-h-11 px-3 py-2"
-          aria-label="关闭"
-        >
-          <ReaderIcon name="close" />
-        </Button>
-      </form>
-      {props.children}
-    </dialog>
-  );
-};
-
 const Workspace = () => {
   const model = useWorkspace();
+
   return (
     <div
       class="group/workspace grid h-dvh grid-cols-[16rem_24rem_minmax(0,1fr)] overflow-hidden bg-[#121212] font-sans text-sm text-base-content max-xl:grid-cols-[12rem_20rem_minmax(0,1fr)] max-lg:grid-cols-[14rem_minmax(0,1fr)] max-sm:grid-cols-1 max-sm:grid-rows-[3.25rem_minmax(0,1fr)]"
@@ -306,20 +280,20 @@ const Workspace = () => {
       />
       <WorkspaceList model={model} />
       <WorkspaceReader model={model} />
-      <ShellDialog
+      <Dialog
         open={model.location.pathname === '/settings'}
         label="设置"
         onClose={() => closeSettings(model)}
       >
         <ReaderSettings />
-      </ShellDialog>
-      <ShellDialog
+      </Dialog>
+      <Dialog
         open={model.manageOpen()}
         label="添加订阅"
         onClose={() => model.closeManage()}
       >
         <FeedReader management />
-      </ShellDialog>
+      </Dialog>
     </div>
   );
 };

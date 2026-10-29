@@ -105,7 +105,9 @@ export const VirtualScroller = <T,>(props: VirtualScrollerProps<T>) => {
               {(item) => (
                 <div
                   data-index={row().index}
-                  ref={(element) => virtualizer.measureElement(element)}
+                  ref={(element) => {
+                    onMount(() => virtualizer.measureElement(element));
+                  }}
                   class="absolute top-0 left-0 w-full"
                   style={{ transform: `translateY(${row().start}px)` }}
                 >

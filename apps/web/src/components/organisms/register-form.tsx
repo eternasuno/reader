@@ -49,7 +49,7 @@ export const RegisterForm = () => {
           event.preventDefault();
         }
       }}
-      class="flex flex-col gap-4 [&_.btn]:btn-neutral [&_.btn]:whitespace-nowrap"
+      class="flex flex-col gap-4"
     >
       <FormInput
         id="name"

@@ -10,7 +10,8 @@ type SubmitButtonProps = {
 export const SubmitButton = (props: SubmitButtonProps) => (
   <Button
     type="submit"
-    class="btn"
+    class="btn btn-neutral whitespace-nowrap"
+    variant="solid"
     disabled={props.pending}
     aria-busy={props.pending ? 'true' : 'false'}
   >

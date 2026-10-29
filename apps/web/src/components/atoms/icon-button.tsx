@@ -15,7 +15,7 @@ export const IconButton = (props: {
   <Button
     ref={props.ref}
     type="button"
-    class="inline-grid size-8 shrink-0 cursor-pointer place-items-center rounded-full border-0 bg-transparent p-0 text-base-content shadow-none transition-colors disabled:cursor-not-allowed disabled:text-base-content/40"
+    class="inline-grid size-8 shrink-0 place-items-center border-0 bg-transparent p-0 text-base-content/85 shadow-none disabled:text-base-content/30 pointer-coarse:size-10"
     disabled={props.disabled}
     popovertarget={props.popoverTarget}
     style={props.anchorName ? `anchor-name:${props.anchorName}` : undefined}

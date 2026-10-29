@@ -155,9 +155,9 @@ const WorkspaceNavView = (input: NavSourceProps) => (
     aria-label="阅读导航"
     class={`flex min-h-0 min-w-0 flex-col gap-1 overflow-hidden border-r border-base-300 bg-base-100 px-3 pb-3 ${input.props.class ?? ''}`}
   >
-    <header class="mb-2 flex min-h-16 shrink-0 items-center justify-between gap-2 px-2">
+    <header class="mb-2 flex h-13 shrink-0 items-center justify-between gap-2 px-2">
       <h1 class="flex items-center gap-2.5 text-xl font-semibold tracking-[0.08em]">
-        <ReaderIcon name="feed" class="size-7 text-[#d5a15c]" />
+        <ReaderIcon name="feed" class="size-6 text-brand" />
         留白
       </h1>
       <WorkspaceAccountMenu
@@ -166,7 +166,7 @@ const WorkspaceNavView = (input: NavSourceProps) => (
       />
     </header>
     <WorkspaceSourceNav props={input.props} nav={input.nav} />
-    <div class="mt-5 flex shrink-0 items-center justify-between pl-3 text-xs tracking-[0.06em] text-[#a2a2a7]">
+    <div class="mt-5 flex shrink-0 items-center justify-between pl-3 text-xs tracking-[0.06em] text-base-content/60">
       <span>订阅源</span>
       <NavButton
         class="w-9 justify-center"

@@ -5,6 +5,7 @@ import { Button } from '../atoms/button';
 import { IconButton } from '../atoms/icon-button';
 import { ReaderIcon, ReadStatusIcon } from '../atoms/reader-icon';
 import { ArticleFrame } from '../molecules/article-frame';
+import { MenuCheckbox } from '../molecules/menu-checkbox';
 
 export { ArticleFrame } from '../molecules/article-frame';
 
@@ -140,7 +141,7 @@ const ReaderOverflow = (
     id={props.popoverId}
     popover="auto"
     aria-label="更多文章操作"
-    class="dropdown dropdown-end menu w-52 max-w-[calc(100vw-2rem)] rounded-box border border-base-200 bg-base-100 p-2 shadow-lg"
+    class="dropdown dropdown-end menu w-52 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-2 shadow-xl"
     style={`position-anchor:${props.anchor}`}
   >
     <li>
@@ -157,25 +158,15 @@ const ReaderOverflow = (
       </Button>
     </li>
     <li>
-      <Button
-        type="button"
-        aria-pressed={props.webpage}
+      <MenuCheckbox
+        label="内嵌网页视图"
+        checked={props.webpage}
         disabled={!props.url}
-        onClick={() => {
+        onChange={() => {
           props.closePopover();
           props.onToggleWebpage();
         }}
-      >
-        <span
-          class="flex size-4.5 items-center justify-center rounded-sm border border-current"
-          aria-hidden="true"
-        >
-          <Show when={props.webpage}>
-            <ReaderIcon name="check" class="size-3.5" />
-          </Show>
-        </span>
-        内嵌网页视图
-      </Button>
+      />
     </li>
     <Show when={props.url}>
       <li>
@@ -240,7 +231,7 @@ export const ReaderActions = (props: ReaderActionsProps) => {
   return (
     <nav
       aria-label="文章操作"
-      class="z-10 flex h-13 shrink-0 items-center gap-1 border-b border-base-200 bg-base-100 px-4 max-sm:px-2"
+      class="z-10 flex h-13 shrink-0 items-center gap-1 border-b border-base-300 bg-base-100 px-4 max-sm:gap-0 max-sm:px-2"
     >
       <Show when={props.onBack}>
         {(back) => (
@@ -251,20 +242,22 @@ export const ReaderActions = (props: ReaderActionsProps) => {
             label="返回"
             onClick={() => back()()}
           >
-            <ReaderIcon name="close" />
+            <ReaderIcon name="back" />
           </IconButton>
         )}
       </Show>
       <ReaderNavigation {...props} />
-      <div class="ms-auto flex items-center gap-1">
+      <div class="ms-auto flex items-center gap-1 max-sm:gap-0">
         <ReaderPrimaryActions {...props} />
-        <IconButton
-          popoverTarget={popoverId}
-          anchorName={anchor}
-          label="更多操作"
-        >
-          <ReaderIcon name="more" />
-        </IconButton>
+        <div class="ml-1 border-l border-base-300 pl-1">
+          <IconButton
+            popoverTarget={popoverId}
+            anchorName={anchor}
+            label="更多操作"
+          >
+            <ReaderIcon name="more" />
+          </IconButton>
+        </div>
         <ReaderOverflow
           {...props}
           popoverId={popoverId}

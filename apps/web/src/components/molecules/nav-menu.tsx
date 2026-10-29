@@ -2,6 +2,7 @@ import { createUniqueId, type JSX, Show } from 'solid-js';
 import { Button } from '../atoms/button';
 import { UnreadCount } from '../atoms/nav-item';
 import { ReaderIcon } from '../atoms/reader-icon';
+import { MenuCheckbox } from './menu-checkbox';
 
 export const NavMenuMeta = (props: {
   readonly count: number | undefined;
@@ -36,7 +37,7 @@ export const NavMenuActions = (props: {
     <li>
       <Button
         type="button"
-        class="flex w-full items-center justify-start gap-3 px-3 py-2 text-left"
+        class="flex w-full items-center justify-start gap-3 px-3 py-2 text-left disabled:opacity-40"
         disabled={props.busy}
         onClick={props.onRefresh}
       >
@@ -47,28 +48,20 @@ export const NavMenuActions = (props: {
     <li>
       <Button
         type="button"
-        class="flex w-full items-center justify-start gap-3 px-3 py-2 text-left"
+        class="flex w-full items-center justify-start gap-3 px-3 py-2 text-left disabled:opacity-40"
         disabled={props.busy}
         onClick={props.onMarkAll}
       >
-        <ReaderIcon name="check" class="size-5 shrink-0" />
+        <ReaderIcon name="checks" class="size-5 shrink-0" />
         <span>全部标记为已读</span>
       </Button>
     </li>
     <li class="my-1 border-t border-base-300 pt-1">
-      <label class="flex w-full cursor-pointer items-center justify-start gap-3 px-3 py-2 text-left">
-        <span class="grid size-5 shrink-0 place-items-center">
-          <input
-            type="checkbox"
-            class="checkbox checkbox-xs"
-            checked={props.onlyUnread}
-            onChange={(event) =>
-              props.onOnlyUnreadChange(event.currentTarget.checked)
-            }
-          />
-        </span>
-        <span>只显示未读</span>
-      </label>
+      <MenuCheckbox
+        label="只显示未读"
+        checked={props.onlyUnread}
+        onChange={props.onOnlyUnreadChange}
+      />
     </li>
     {props.actions}
   </>
@@ -103,7 +96,7 @@ export const PopoverMenu = (props: {
         id={id}
         popover="auto"
         aria-label={props.menuLabel}
-        class="dropdown menu fixed inset-auto top-[anchor(bottom)] right-[anchor(right)] z-10 my-1 w-52 rounded-box border border-base-300 bg-base-100 p-2 text-sm text-base-content shadow-xl"
+        class="dropdown menu fixed inset-auto top-[anchor(bottom)] right-[anchor(right)] z-10 my-1 w-52 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-2 text-sm text-base-content shadow-xl"
         style={`position-anchor:${anchor}`}
       >
         {props.children(closeMenu)}

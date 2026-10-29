@@ -14,7 +14,7 @@ import type { LinkCommand, ReadingLink } from '../../lib/links';
 import type { MarkLoadedResult } from '../../lib/mark-loaded';
 import { useInfiniteLoader } from '../../pages/infinite-loader';
 import { useWorkspaceData } from '../../pages/workspace-state';
-import { Button } from '../atoms/button';
+import { Dialog } from '../molecules/dialog';
 import { ListToolbar } from '../molecules/list-toolbar';
 import {
   createReadStatusProjection,
@@ -197,16 +197,11 @@ type ReadingListProps = {
 type ReadingModel = ReturnType<typeof useReadingList>;
 
 const ReadingToolbar = (props: { readonly model: ReadingModel }) => {
-  let addDialog!: HTMLDialogElement;
-  const openAddDialog = () => {
-    if (!addDialog.open) {
-      addDialog.showModal();
-    }
-  };
+  const [addOpen, setAddOpen] = createSignal(false);
   const handleAdd = (url: string, form: HTMLFormElement) => {
     void props.model.add(url, form).then((added) => {
       if (added) {
-        addDialog.close();
+        setAddOpen(false);
       }
     });
   };
@@ -221,28 +216,22 @@ const ReadingToolbar = (props: { readonly model: ReadingModel }) => {
         pending={props.model.pending()}
         error={resultError(props.model.mutation()) || props.model.markError()}
         onRefresh={props.model.refresh}
-        onAdd={openAddDialog}
+        onAdd={() => setAddOpen(true)}
         onMarkAll={() => void props.model.markAll()}
         onMarkLoaded={() => void props.model.markLoaded()}
         onOnlyUnreadChange={props.model.data.setOnlyUnread}
       />
-      <dialog
-        ref={(element) => {
-          addDialog = element;
-        }}
-        aria-label="添加链接"
+      <Dialog
+        open={addOpen()}
+        label="添加链接"
+        onClose={() => setAddOpen(false)}
       >
-        <form method="dialog" class="flex justify-end">
-          <Button type="submit" class="btn btn-ghost btn-sm">
-            关闭
-          </Button>
-        </form>
         <ReadingAddForm
           pending={props.model.pending()}
           error={resultError(props.model.mutation())}
           onAdd={handleAdd}
         />
-      </dialog>
+      </Dialog>
     </>
   );
 };

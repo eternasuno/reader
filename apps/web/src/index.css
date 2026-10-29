@@ -1,4 +1,8 @@
 @import "tailwindcss";
+@theme {
+  --color-brand: #d5a15c;
+}
+
 @plugin "daisyui" {
   themes: blackwhite --default;
 }
@@ -13,9 +17,14 @@
   --color-base-content: #dddddf;
   --color-primary: #c9afe9;
   --color-primary-content: #20172b;
+  --color-error: #f28b82;
+  --color-error-content: #2b1110;
   --color-neutral: #5e4774;
   --color-neutral-content: #f2eafa;
   --radius-box: 0.5rem;
   --radius-field: 0.3rem;
   --radius-selector: 0.3rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
 }

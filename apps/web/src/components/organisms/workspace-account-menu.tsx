@@ -25,12 +25,12 @@ const SignOutButton = () => {
   return (
     <>
       <NavButton
-        class="w-full justify-between gap-3"
+        class="w-full justify-start gap-3"
         disabled={leaving()}
         onClick={() => void signOut()}
       >
-        <span>{leaving() ? '退出中…' : '退出登录'}</span>
         <ReaderIcon name="logout" />
+        <span>{leaving() ? '退出中…' : '退出登录'}</span>
       </NavButton>
       <Show when={error()}>
         {(message) => (
@@ -54,38 +54,38 @@ export const WorkspaceAccountMenu = (props: {
   return (
     <>
       <IconButton label="用户菜单" popoverTarget={id} anchorName={anchor}>
-        <ReaderIcon name="user" class="size-6" />
+        <ReaderIcon name="user" />
       </IconButton>
       <ul
         ref={menu}
         id={id}
         popover="auto"
         aria-label="用户操作"
-        class="dropdown menu fixed inset-auto top-[anchor(bottom)] right-[anchor(right)] z-10 my-2 w-56 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-2 text-sm text-base-content shadow-xl"
+        class="dropdown menu fixed inset-auto top-[anchor(bottom)] right-[anchor(right)] z-10 my-2 w-52 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-2 text-sm text-base-content shadow-xl"
         style={`position-anchor:${anchor}`}
       >
         <li>
           <NavButton
-            class="w-full justify-between gap-3"
+            class="w-full justify-start gap-3"
             onClick={() => {
               menu.hidePopover();
               props.onSettings();
             }}
           >
-            设置
             <ReaderIcon name="settings" />
+            <span>设置</span>
           </NavButton>
         </li>
         <li>
           <NavButton
-            class="w-full justify-between gap-3"
+            class="w-full justify-start gap-3"
             onClick={() => {
               menu.hidePopover();
               props.onManage();
             }}
           >
-            添加订阅
-            <ReaderIcon name="feed" />
+            <ReaderIcon name="plus" />
+            <span>添加订阅</span>
           </NavButton>
         </li>
         <li class="mt-2 border-t border-base-300 pt-2">

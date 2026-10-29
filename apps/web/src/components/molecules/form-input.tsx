@@ -1,4 +1,5 @@
 import { type ComponentProps, splitProps } from 'solid-js';
+import { Input } from '../atoms/input';
 
 type FormInputProps = Omit<ComponentProps<'input'>, 'children' | 'class'> & {
   id: string;
@@ -22,9 +23,9 @@ export const FormInput = (props: FormInputProps) => {
         >
           {props.hint}
         </div>
-        <input
+        <Input
           {...inputProps}
-          class="input validator w-full [form.submitted_&:invalid]:input-error"
+          class="validator w-full [form.submitted_&:invalid]:input-error [form.submitted_&:invalid]:border-error [form.submitted_&:invalid]:outline-error"
           aria-describedby={[props['aria-describedby'], `${props.id}-hint`]
             .filter(Boolean)
             .join(' ')}

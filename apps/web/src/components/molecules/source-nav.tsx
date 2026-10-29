@@ -25,7 +25,10 @@ export const SourceNavRow = (props: SourceNavRowProps) => (
       active={props.active}
       onClick={props.onPick}
     >
-      <ReaderIcon name={props.icon} class="w-5 shrink-0 text-[#aaa3b2]" />
+      <ReaderIcon
+        name={props.icon}
+        class={`size-5 shrink-0 ${props.active ? 'text-neutral-content' : 'text-base-content/65'}`}
+      />
       <span class="min-w-0 flex-1 truncate">{props.label}</span>
       <NavMenuMeta pending={props.pending} count={props.count} />
     </NavButton>

@@ -11,7 +11,7 @@ export const EntrySurface = (props: {
 }) => (
   <Dynamic
     component={props.component}
-    class="group relative flow-root -mx-6 px-7 py-4 hover:bg-base-content/5 data-[selected=true]:not-hover:bg-base-content/8"
+    class="group relative flow-root -mx-6 px-7 py-4 hover:bg-base-content/5 data-[selected=true]:bg-neutral/30 data-[selected=true]:shadow-[inset_2px_0_var(--color-primary)]"
     data-read={props.read ? 'true' : 'false'}
     data-selected={props.selected ? 'true' : undefined}
   >
@@ -28,7 +28,7 @@ export const EntryTitle = (props: {
   readonly children: JSX.Element;
 }) => (
   <a
-    class="entry-title block wrap-anywhere text-sm font-[450] leading-[1.55] text-base-content after:absolute after:inset-0 after:content-[''] group-data-[read=false]:font-semibold"
+    class="entry-title line-clamp-3 wrap-anywhere text-sm font-[450] leading-[1.55] text-base-content after:absolute after:inset-0 after:content-[''] group-data-[read=false]:font-semibold"
     href={props.href}
     target={props.target}
     rel={props.rel}
@@ -65,7 +65,7 @@ export const EntryMeta = (props: {
   readonly source: string;
   readonly time: string;
 }) => (
-  <p class="mb-1 flex items-center justify-between gap-3 text-xs leading-[1.6] text-base-content/55">
+  <p class="mb-1 flex items-center justify-between gap-3 text-xs leading-[1.6] text-base-content/60">
     <span class="min-w-0 truncate">{props.source}</span>
     <EntryTime value={props.time} />
   </p>

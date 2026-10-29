@@ -110,7 +110,10 @@ const FeedNavRow = (props: {
       active={props.active}
       onClick={props.onPick}
     >
-      <ReaderIcon name="feed" class="w-5 shrink-0 text-[#aaa3b2]" />
+      <ReaderIcon
+        name="feed"
+        class={`size-5 shrink-0 ${props.active ? 'text-neutral-content' : 'text-base-content/65'}`}
+      />
       <span class="min-w-0 flex-1 truncate">{props.feed.title}</span>
       <NavMenuMeta
         pending={props.pendingLabel}
@@ -143,7 +146,7 @@ export const FeedNavList = (props: FeedNavListProps) => (
   >
     <For
       each={props.feeds}
-      fallback={<li class="p-3 text-xs text-[#929295]">尚未订阅</li>}
+      fallback={<li class="p-3 text-xs text-base-content/60">尚未订阅</li>}
     >
       {(feed) => (
         <FeedNavRow

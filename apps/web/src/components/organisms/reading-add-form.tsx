@@ -1,4 +1,5 @@
 import { Button } from '../atoms/button';
+import { Input } from '../atoms/input';
 
 type ReadingAddFormProps = {
   pending: boolean;
@@ -30,8 +31,8 @@ export const ReadingAddForm = (props: ReadingAddFormProps) => (
       <label class="sr-only" for="link-url">
         文章网址
       </label>
-      <input
-        class="input input-bordered min-w-48 flex-1"
+      <Input
+        class="min-w-48 flex-1"
         id="link-url"
         name="url"
         type="url"
@@ -42,6 +43,7 @@ export const ReadingAddForm = (props: ReadingAddFormProps) => (
       />
       <Button
         class="btn btn-neutral"
+        variant="solid"
         type="submit"
         disabled={props.pending}
         aria-busy={props.pending}

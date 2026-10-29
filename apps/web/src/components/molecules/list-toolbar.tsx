@@ -27,7 +27,7 @@ export const ListToolbar = (props: ListToolbarProps) => (
         {props.title}
       </h2>
       <span
-        class="mr-auto whitespace-nowrap text-xs tabular-nums text-base-content opacity-55"
+        class="mr-auto whitespace-nowrap text-xs tabular-nums text-base-content/60"
         title="未读文章总数"
       >
         {props.unread === undefined ? '…' : props.unread}
@@ -49,7 +49,7 @@ export const ListToolbar = (props: ListToolbarProps) => (
         busy={props.pending}
         onClick={props.onMarkLoaded}
       >
-        <ReaderIcon name="check" />
+        <ReaderIcon name="markAbove" />
       </IconButton>
       <PopoverMenu
         label={`${props.title} 更多操作`}

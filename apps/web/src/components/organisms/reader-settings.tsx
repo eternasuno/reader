@@ -3,6 +3,7 @@ import { Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { makeSettingsAtoms, readerError } from '../../lib/reader';
 import { Button } from '../atoms/button';
+import { Input } from '../atoms/input';
 
 const SettingsStatus = (props: {
   configured: boolean | undefined;
@@ -34,20 +35,21 @@ const SettingsKeyForm = (props: {
     <label class="sr-only" for="jina-key">
       Jina API Key
     </label>
-    <input
+    <Input
       id="jina-key"
       type="password"
       name="key"
       required
       maxLength={2048}
       autocomplete="off"
-      class="input input-bordered min-w-0 flex-1"
+      class="min-w-0 flex-1"
       aria-label="Jina API Key"
       placeholder="输入新的 Jina API Key"
       disabled={props.pending}
     />
     <Button
       class="btn btn-neutral"
+      variant="solid"
       type="submit"
       disabled={props.pending}
       aria-busy={props.pending}

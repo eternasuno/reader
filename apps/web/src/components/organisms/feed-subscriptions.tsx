@@ -1,5 +1,6 @@
 import { resultError } from '../../lib/errors';
 import { Button } from '../atoms/button';
+import { Input } from '../atoms/input';
 import type { FeedReaderModel } from './feed-reader';
 
 export const FeedSubscribeForm = (props: { model: FeedReaderModel }) => (
@@ -15,8 +16,8 @@ export const FeedSubscribeForm = (props: { model: FeedReaderModel }) => (
     <label class="sr-only" for="feed-url">
       订阅地址
     </label>
-    <input
-      class="input input-bordered min-w-0 flex-1"
+    <Input
+      class="min-w-0 flex-1"
       id="feed-url"
       name="url"
       type="url"
@@ -28,6 +29,7 @@ export const FeedSubscribeForm = (props: { model: FeedReaderModel }) => (
     />
     <Button
       class="btn btn-neutral"
+      variant="solid"
       type="submit"
       disabled={props.model.pending()}
       aria-busy={props.model.pending()}
