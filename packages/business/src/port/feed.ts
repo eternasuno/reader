@@ -54,13 +54,24 @@ export class FeedRepository extends Context.Service<
       feedKey: string,
       read: boolean,
       offset: number,
-      limit: number
+      limit: number,
+      all?: boolean,
+      before?: string,
+      beforeKey?: string
     ) => Effect.Effect<readonly FeedArticle[], FeedRepositoryError>;
     readonly mark: (
       owner: string,
       key: string,
       read: boolean
     ) => Effect.Effect<boolean, FeedRepositoryError>;
+    readonly markAll: (
+      owner: string,
+      feedKey: string
+    ) => Effect.Effect<void, FeedRepositoryError>;
+    readonly markLoaded: (
+      owner: string,
+      keys: readonly string[]
+    ) => Effect.Effect<void, FeedRepositoryError>;
     readonly article: (
       owner: string,
       key: string

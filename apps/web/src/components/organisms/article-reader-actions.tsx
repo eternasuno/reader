@@ -1,10 +1,9 @@
-import { A } from '@solidjs/router';
 import { AsyncResult } from 'effect/reactivity';
 import { createUniqueId, onMount, Show } from 'solid-js';
 import { focusWhenReady } from '../../pages/reader-lifecycle';
 import { Button } from '../atoms/button';
 import { IconButton } from '../atoms/icon-button';
-import { ReaderIcon } from '../atoms/reader-icon';
+import { ReaderIcon, ReadStatusIcon } from '../atoms/reader-icon';
 import { ArticleFrame } from '../molecules/article-frame';
 
 export { ArticleFrame } from '../molecules/article-frame';
@@ -71,7 +70,6 @@ type ReaderActionsProps = {
   onMark: () => void;
   onDelete: () => void;
   onSave: () => void;
-  onSettings?: (() => void) | undefined;
 };
 
 const markLabel = (read: boolean) => (read ? '标为未读' : '标为已读');
@@ -110,7 +108,7 @@ const ReaderPrimaryActions = (props: ReaderActionsProps) => (
       }
       onClick={() => void props.onMark()}
     >
-      <ReaderIcon name={props.read ? 'unread' : 'read'} />
+      <ReadStatusIcon read={props.read} class="size-4.5" />
     </IconButton>
   </>
 );
@@ -172,30 +170,6 @@ const ReaderOverflow = (
         </Button>
       </li>
     </Show>
-    <li>
-      <Show
-        when={props.onSettings}
-        fallback={
-          <A href="/settings" onClick={props.closePopover}>
-            <ReaderIcon name="settings" />
-            设置 Jina Key
-          </A>
-        }
-      >
-        {(settings) => (
-          <Button
-            type="button"
-            onClick={() => {
-              props.closePopover();
-              settings()();
-            }}
-          >
-            <ReaderIcon name="settings" />
-            设置 Jina Key
-          </Button>
-        )}
-      </Show>
-    </li>
   </ul>
 );
 
@@ -231,7 +205,7 @@ export const ReaderActions = (props: ReaderActionsProps) => {
   return (
     <nav
       aria-label="文章操作"
-      class="sticky top-0 z-10 flex h-13 items-center gap-1 border-b border-base-200 bg-base-100 px-4 max-sm:px-2"
+      class="z-10 flex h-13 shrink-0 items-center gap-1 border-b border-base-200 bg-base-100 px-4 max-sm:px-2"
     >
       <Show when={props.onBack}>
         {(back) => (

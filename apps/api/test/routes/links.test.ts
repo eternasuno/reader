@@ -69,13 +69,8 @@ const verifyCrossSite = async (handler: Handler, cookie: string) => {
   expect(response.status).toBe(403);
 };
 
-const verifyRoutes = async (handler: Handler) => {
-  expect((await handler(new Request(`${origin}/api/links`))).status).toBe(401);
-  const alice = await signIn(handler, 'alice@example.com');
-  const bob = await signIn(handler, 'bob@example.com');
-  await verifyCrossSite(handler, alice);
-
-  const call = (method: string, cookie: string, body?: object) =>
+const callLinks =
+  (handler: Handler) => (method: string, cookie: string, body?: object) =>
     handler(
       new Request('http://localhost:3001/api/links', {
         method,
@@ -83,6 +78,48 @@ const verifyRoutes = async (handler: Handler) => {
         ...(body ? { body: JSON.stringify(body) } : {}),
       })
     );
+
+const readUnreadCount = (handler: Handler) => (cookie: string) =>
+  handler(
+    new Request(`${origin}/api/links/unread-count`, { headers: { cookie } })
+  );
+
+const readLinks = (handler: Handler) => (cookie: string, query: string) =>
+  handler(new Request(`${origin}/api/links${query}`, { headers: { cookie } }));
+
+const markAllLinks =
+  (handler: Handler) =>
+  (cookie: string, requestOrigin = origin) =>
+    handler(
+      new Request(`${origin}/api/links/mark-all`, {
+        method: 'POST',
+        headers: {
+          cookie,
+          origin: requestOrigin,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      })
+    );
+
+type LinkCall = (
+  method: string,
+  cookie: string,
+  body?: object
+) => Promise<Response>;
+type CookieRequest = (cookie: string) => Promise<Response>;
+type QueryRequest = (cookie: string, query: string) => Promise<Response>;
+type MarkAllRequest = (
+  cookie: string,
+  requestOrigin?: string
+) => Promise<Response>;
+
+const verifyLinkCrud = async (
+  call: LinkCall,
+  unread: CookieRequest,
+  alice: string,
+  bob: string
+) => {
   expect(
     (await call('POST', alice, { url: 'javascript:alert(1)' })).status
   ).toBe(400);
@@ -91,6 +128,8 @@ const verifyRoutes = async (handler: Handler) => {
   const item = await savedItem(saved);
 
   expect((await call('POST', alice, { url: item.url })).status).toBe(409);
+  expect(await (await unread(alice)).json()).toEqual({ count: 1 });
+  expect(await (await unread(bob)).json()).toEqual({ count: 0 });
   expect(await (await call('GET', bob)).json()).toEqual({
     items: [],
     hasMore: false,
@@ -102,11 +141,129 @@ const verifyRoutes = async (handler: Handler) => {
   expect(
     (await call('PATCH', alice, { key: item.key, read: true })).status
   ).toBe(200);
+  expect(await (await unread(alice)).json()).toEqual({ count: 0 });
   expect(await (await call('GET', alice)).json()).toEqual({
     items: [],
     hasMore: false,
   });
+  expect(
+    (await call('PATCH', alice, { key: item.key, read: false })).status
+  ).toBe(200);
+  expect(await (await unread(alice)).json()).toEqual({ count: 1 });
   expect((await call('DELETE', alice, { key: item.key })).status).toBe(200);
+  expect(await (await unread(alice)).json()).toEqual({ count: 0 });
+};
+
+const seedBulkLinks = async (call: LinkCall, alice: string, bob: string) => {
+  for (const suffix of ['a', 'b', 'c']) {
+    expect(
+      (
+        await call('POST', alice, {
+          url: `http://127.0.0.1/bulk-${suffix}`,
+        })
+      ).status
+    ).toBe(201);
+  }
+  expect(
+    (await call('POST', bob, { url: 'http://127.0.0.1/bob-bulk' })).status
+  ).toBe(201);
+};
+
+const verifyAllAndOffset = async (read: QueryRequest, alice: string) => {
+  const allPage = (await (
+    await read(alice, '?all=true&read=false')
+  ).json()) as {
+    items: { key: string; createdAt: string; read: boolean }[];
+  };
+  expect(allPage.items).toHaveLength(3);
+  const expectedRest = allPage.items.slice(1).map(({ key }) => key);
+  const newest = allPage.items[0];
+  const cursorPage = (await (
+    await read(
+      alice,
+      `?all=true&read=false&before=${encodeURIComponent(newest?.createdAt ?? '')}&beforeKey=${newest?.key ?? ''}`
+    )
+  ).json()) as { items: { key: string }[] };
+  expect(cursorPage.items.map(({ key }) => key)).toEqual(expectedRest);
+  const offsetPage = (await (
+    await read(alice, '?all=true&read=false&offset=1')
+  ).json()) as { items: { key: string }[] };
+  expect(offsetPage.items.map(({ key }) => key)).toEqual(expectedRest);
+
+  return allPage.items[1]?.key ?? '';
+};
+
+const verifyBulkScope = async (
+  call: LinkCall,
+  unread: CookieRequest,
+  read: QueryRequest,
+  markAll: MarkAllRequest,
+  alice: string,
+  bob: string,
+  middle: string
+) => {
+  expect(await (await markAll(alice)).json()).toEqual({ ok: true });
+  expect(await (await unread(alice)).json()).toEqual({ count: 0 });
+  expect(await (await unread(bob)).json()).toEqual({ count: 1 });
+  expect(
+    (await call('PATCH', alice, { key: middle, read: false })).status
+  ).toBe(200);
+  expect(await (await unread(alice)).json()).toEqual({ count: 1 });
+  expect(
+    (
+      (await (await read(alice, '?read=false')).json()) as {
+        items: { key: string }[];
+      }
+    ).items.map(({ key }) => key)
+  ).toEqual([middle]);
+  const allItems = (await (
+    await read(alice, '?all=true&read=false')
+  ).json()) as { items: { read: boolean }[] };
+  expect(allItems.items.some(({ read }) => read)).toBe(true);
+  expect(allItems.items.some(({ read }) => !read)).toBe(true);
+  expect(await (await markAll(bob)).json()).toEqual({ ok: true });
+  expect(await (await unread(bob)).json()).toEqual({ count: 0 });
+};
+
+const verifyRoutes = async (handler: Handler) => {
+  expect((await handler(new Request(`${origin}/api/links`))).status).toBe(401);
+  expect(
+    (await handler(new Request(`${origin}/api/links/unread-count`))).status
+  ).toBe(401);
+  expect(
+    (
+      await handler(
+        new Request(`${origin}/api/links/mark-all`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        })
+      )
+    ).status
+  ).toBe(401);
+  const alice = await signIn(handler, 'alice@example.com');
+  const bob = await signIn(handler, 'bob@example.com');
+  await verifyCrossSite(handler, alice);
+  const markAll = markAllLinks(handler);
+  expect((await markAll(alice, 'https://untrusted.example')).status).toBe(403);
+
+  await verifyLinkCrud(
+    callLinks(handler),
+    readUnreadCount(handler),
+    alice,
+    bob
+  );
+  await seedBulkLinks(callLinks(handler), alice, bob);
+  const middle = await verifyAllAndOffset(readLinks(handler), alice);
+  await verifyBulkScope(
+    callLinks(handler),
+    readUnreadCount(handler),
+    readLinks(handler),
+    markAll,
+    alice,
+    bob,
+    middle
+  );
 };
 
 it.effect('authenticates and isolates reading-list HTTP operations', () =>

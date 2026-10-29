@@ -15,6 +15,7 @@ import { ArticleReader } from '../components/organisms/article-reader';
 import { FeedReader } from '../components/organisms/feed-reader';
 import { ReaderSettings } from '../components/organisms/reader-settings';
 import { ReadingList } from '../components/organisms/reading-list';
+import { WorkspaceAccountMenu } from '../components/organisms/workspace-account-menu';
 import { WorkspaceNav } from '../components/organisms/workspace-nav';
 import { authClient } from '../lib/auth';
 import type { ReadingLink } from '../lib/links';
@@ -31,6 +32,7 @@ import {
   useReaderNavigation,
   useRouteSync,
 } from './reader-navigation';
+import { WorkspaceDataProvider } from './workspace-state';
 
 const scopePath = (scope: Scope): string => (scope === 'rss' ? '/rss' : '/');
 
@@ -179,18 +181,20 @@ const pickFeed = (model: WorkspaceModel, key: string) => {
 
 const WorkspaceList = (props: { readonly model: WorkspaceModel }) => (
   <section
-    class="workspace-list min-w-0 overflow-y-auto border-r border-base-300 bg-base-100 px-6 [scrollbar-width:thin] max-sm:col-start-1 max-sm:row-start-2 max-sm:group-data-[nav=true]/workspace:hidden max-lg:group-data-[reading=true]/workspace:hidden"
+    class="workspace-list min-h-0 min-w-0 overflow-hidden border-r border-base-300 bg-base-100 max-sm:col-start-1 max-sm:row-start-2 max-sm:group-data-[nav=true]/workspace:hidden max-lg:group-data-[reading=true]/workspace:hidden"
     aria-label="文章列表"
   >
-    <div hidden={props.model.scope() !== 'later'}>
+    <div class="h-full min-h-0" hidden={props.model.scope() !== 'later'}>
       <ReadingList
+        active={props.model.scope() === 'later'}
         selectedKey={keyFor(props.model.selection(), 'link')}
         onSelect={props.model.selectLink}
         onItems={props.model.readerNavigation.onLinkItems}
       />
     </div>
-    <div hidden={props.model.scope() !== 'rss'}>
+    <div class="h-full min-h-0" hidden={props.model.scope() !== 'rss'}>
       <FeedReader
+        active={props.model.scope() === 'rss'}
         feedKey={props.model.feedKey()}
         selectedKey={keyFor(props.model.selection(), 'feed')}
         onSelect={props.model.selectFeed}
@@ -202,7 +206,7 @@ const WorkspaceList = (props: { readonly model: WorkspaceModel }) => (
 
 const WorkspaceReader = (props: { readonly model: WorkspaceModel }) => (
   <section
-    class="workspace-reader min-w-0 overflow-y-auto [scrollbar-width:thin] max-sm:col-start-1 max-sm:row-start-2 max-sm:group-data-[nav=true]/workspace:hidden max-lg:hidden max-lg:group-data-[reading=true]/workspace:block"
+    class="workspace-reader min-h-0 min-w-0 overflow-hidden max-sm:col-start-1 max-sm:row-start-2 max-sm:group-data-[nav=true]/workspace:hidden max-lg:hidden max-lg:group-data-[reading=true]/workspace:block"
     aria-label="正文"
   >
     <Show
@@ -217,7 +221,6 @@ const WorkspaceReader = (props: { readonly model: WorkspaceModel }) => (
       {(selection) => (
         <ArticleReader
           selection={selection}
-          onSettings={props.model.openSettings}
           onPrevious={props.model.readerNavigation.previous()}
           onNext={props.model.readerNavigation.next()}
           onBack={() => clearSelection(props.model)}
@@ -285,14 +288,10 @@ const Workspace = () => {
             / {model.scope() === 'rss' ? '全部文章' : '稍后阅读'}
           </span>
         </span>
-        <Button
-          class="grid size-11 cursor-pointer place-items-center"
-          type="button"
-          aria-label="设置"
-          onClick={model.openSettings}
-        >
-          <ReaderIcon name="settings" />
-        </Button>
+        <WorkspaceAccountMenu
+          onSettings={model.openSettings}
+          onManage={() => model.setManageOpen(true)}
+        />
       </div>
       <WorkspaceNav
         class="max-sm:col-start-1 max-sm:row-start-2 max-sm:hidden max-sm:group-data-[nav=true]/workspace:flex"
@@ -316,7 +315,7 @@ const Workspace = () => {
       </ShellDialog>
       <ShellDialog
         open={model.manageOpen()}
-        label="订阅管理"
+        label="添加订阅"
         onClose={() => model.closeManage()}
       >
         <FeedReader management />
@@ -348,7 +347,9 @@ export const ReaderPage = (_props: {
           <Show when={session().data?.user.id} keyed>
             {(_userId) => (
               <RegistryProvider>
-                <Workspace />
+                <WorkspaceDataProvider>
+                  <Workspace />
+                </WorkspaceDataProvider>
               </RegistryProvider>
             )}
           </Show>

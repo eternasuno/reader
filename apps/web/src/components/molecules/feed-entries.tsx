@@ -2,10 +2,10 @@ import type { FeedArticle } from '@reader/api';
 import { A } from '@solidjs/router';
 import { Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import { Index, Show } from 'solid-js';
+import { Show } from 'solid-js';
 import { Button } from '../atoms/button';
+import { InfiniteEntries } from '../molecules/infinite-entries';
 import type { FeedReaderModel } from '../organisms/feed-reader';
-import { ReadingPager } from '../organisms/reading-pager';
 import {
   EntryMeta,
   EntryReadToggle,
@@ -64,7 +64,6 @@ const FeedEntryActions = (props: {
 const FeedThumbnail = (props: { readonly description: string | undefined }) => (
   <Show keyed when={props.description}>
     {(description) => {
-      // Parse inertly; never attach feed markup or copy its attributes.
       const document = new DOMParser().parseFromString(
         description,
         'text/html'
@@ -82,9 +81,10 @@ const FeedThumbnail = (props: { readonly description: string | undefined }) => (
           if (url.protocol === 'https:' || url.protocol === 'http:')
             thumbnail = url.href;
         } catch {
-          /* Invalid image addresses are omitted. */
+          thumbnail = undefined;
         }
       }
+
       return (
         <Show when={thumbnail}>
           {(url) => (
@@ -136,6 +136,10 @@ const FeedEntry = (props: {
   readonly selected?: boolean | undefined;
 }) => {
   const integrated = () => props.onSelect !== undefined;
+  const source = () =>
+    Option.getOrUndefined(AsyncResult.value(props.model.feeds()))?.items.find(
+      (feed) => feed.key === props.item.feedKey
+    )?.title ?? new URL(props.item.url).hostname;
 
   return (
     <EntrySurface
@@ -143,15 +147,7 @@ const FeedEntry = (props: {
       read={props.item.read}
       selected={props.selected}
     >
-      <EntryMeta
-        source={
-          Option.getOrUndefined(
-            AsyncResult.value(props.model.feeds())
-          )?.items.find((feed) => feed.key === props.item.feedKey)?.title ??
-          new URL(props.item.url).hostname
-        }
-        time={props.item.publishedAt}
-      />
+      <EntryMeta source={source()} time={props.item.publishedAt} />
       <EntryReadToggle
         label={props.item.title}
         read={props.item.read}
@@ -163,7 +159,6 @@ const FeedEntry = (props: {
         onSelect={props.onSelect}
         selected={props.selected}
       />
-
       <FeedThumbnail description={props.item.description} />
       <Show when={props.item.description}>
         {(description) => (
@@ -182,92 +177,44 @@ const FeedEntry = (props: {
   );
 };
 
-const FeedArticlesBody = (props: {
-  readonly model: FeedReaderModel;
-  readonly items: readonly FeedArticle[] | undefined;
-  readonly hasMore: boolean | undefined;
-  readonly onSelect?: ((item: FeedArticle) => void) | undefined;
-  readonly selectedKey?: string | undefined;
-}) => (
-  <>
-    <Index
-      each={props.items}
-      fallback={
-        <p class="py-12 text-sm text-base-content/50">
-          这里还没有{props.model.query().read ? '已读' : '未读'}文章。
-        </p>
-      }
-    >
-      {(item) => (
-        <FeedEntry
-          model={props.model}
-          item={item()}
-          onSelect={props.onSelect}
-          selected={
-            props.selectedKey !== undefined && props.selectedKey === item().key
-          }
-        />
-      )}
-    </Index>
-    <ReadingPager
-      page={props.model.query().page}
-      pending={props.model.pending()}
-      hasMore={props.hasMore}
-      onPrevious={() =>
-        props.model.setQuery((q) => ({ ...q, page: q.page - 1 }))
-      }
-      onNext={() => props.model.setQuery((q) => ({ ...q, page: q.page + 1 }))}
-    />
-  </>
-);
-
-const FeedArticlesError = (props: { readonly model: FeedReaderModel }) => (
-  <p class="py-10" role="alert">
-    文章加载失败。
-    <Button
-      class="link ml-2"
-      type="button"
-      onClick={props.model.reloadArticles}
-    >
-      重试
-    </Button>
-  </p>
-);
-
 export const FeedArticles = (props: {
   readonly model: FeedReaderModel;
+  readonly active?: boolean | undefined;
   readonly onSelect?: ((item: FeedArticle) => void) | undefined;
   readonly selectedKey?: string | undefined;
 }) => {
-  const result = () => props.model.articles();
-  const page = () => Option.getOrUndefined(AsyncResult.value(result()));
-  const ready = () =>
-    page() !== undefined ||
-    (!result().waiting && !AsyncResult.isInitial(result()));
+  const state = () => props.model.articles();
+  const items = () => props.model.items() ?? [];
+  const onlyUnread = () => props.model.query().onlyUnread;
 
   return (
-    <section aria-label="RSS 文章">
-      <Show
-        when={!AsyncResult.isFailure(result())}
-        fallback={<FeedArticlesError model={props.model} />}
+    <section class="flex min-h-0 flex-1 flex-col" aria-label="RSS 文章">
+      <InfiniteEntries
+        items={items()}
+        state={state()}
+        active={props.active ?? true}
+        getKey={(item) => item.key}
+        estimateSize={148}
+        emptyTitle={onlyUnread() ? '没有未读文章' : '还没有文章'}
+        emptyHint={
+          onlyUnread()
+            ? '取消「只显示未读」可以查看全部历史。'
+            : '刷新订阅源后再来看看。'
+        }
+        onLoadMore={props.model.loadMore}
+        onRetry={props.model.retry}
       >
-        <Show
-          when={ready()}
-          fallback={
-            <p class="py-10" role="status">
-              正在加载文章…
-            </p>
-          }
-        >
-          <FeedArticlesBody
+        {(item) => (
+          <FeedEntry
             model={props.model}
-            items={props.model.items()}
-            hasMore={page()?.hasMore}
+            item={item}
             onSelect={props.onSelect}
-            selectedKey={props.selectedKey}
+            selected={
+              props.selectedKey !== undefined && props.selectedKey === item.key
+            }
           />
-        </Show>
-      </Show>
+        )}
+      </InfiniteEntries>
     </section>
   );
 };

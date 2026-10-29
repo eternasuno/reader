@@ -38,14 +38,14 @@ const runCommand = (db: Surreal, sql: string, bindings: Bindings) =>
 const selectFeeds = (db: Surreal, owner: string) =>
   queryRows<Feed[]>(
     db,
-    'SELECT key, url, title, updatedAt, error FROM feed WHERE owner = $owner ORDER BY title;',
+    'SELECT key, url, title, updatedAt, error, array::len((SELECT VALUE key FROM feed_article WHERE owner = $owner AND feedKey = $parent.key AND read = false)) AS unreadCount FROM feed WHERE owner = $owner ORDER BY title;',
     { owner }
   );
 
 const selectFeed = (db: Surreal, owner: string, key: string) =>
   queryRows<Feed[]>(
     db,
-    'SELECT key, url, title, updatedAt, error FROM feed WHERE owner = $owner AND key = $key;',
+    'SELECT key, url, title, updatedAt, error, array::len((SELECT VALUE key FROM feed_article WHERE owner = $owner AND feedKey = $parent.key AND read = false)) AS unreadCount FROM feed WHERE owner = $owner AND key = $key;',
     { owner, key }
   ).pipe(Effect.map((items) => items[0]));
 
@@ -55,7 +55,11 @@ const insertFeed = (db: Surreal, owner: string, url: string, title: string) =>
       db,
       'UPSERT type::record("feed", $key) SET owner = $owner, key = $key, url = $url, title = $title, updatedAt = "", error = "" WHERE owner = NONE RETURN AFTER;',
       { owner, url, title, key: hash(owner, url) }
-    ).pipe(Effect.map((items) => items[0]))
+    ).pipe(
+      Effect.map((items) =>
+        items[0] ? { ...items[0], unreadCount: 0 } : undefined
+      )
+    )
   );
 
 const deleteFeedRows = (db: Surreal, owner: string, key: string) =>
@@ -146,12 +150,33 @@ const selectArticles = (
   feedKey: string,
   read: boolean,
   offset: number,
-  limit: number
+  limit: number,
+  all: boolean,
+  before: string,
+  beforeKey: string
 ) =>
   queryRows<FeedArticle[]>(
     db,
-    'SELECT key, feedKey, url, title, publishedAt, read, description FROM feed_article WHERE owner = $owner AND ($feedKey = "" OR feedKey = $feedKey) AND read = $read ORDER BY publishedAt DESC, key DESC LIMIT $limit START $offset;',
-    { owner, feedKey, read, offset, limit }
+    'SELECT key, feedKey, url, title, publishedAt, read, description FROM feed_article WHERE owner = $owner AND ($feedKey = "" OR feedKey = $feedKey) AND ($all = true OR read = $read) AND ($before = "" OR publishedAt < $before OR (publishedAt = $before AND key < $beforeKey)) ORDER BY publishedAt DESC, key DESC LIMIT $limit START $offset;',
+    { owner, feedKey, read, all, before, beforeKey, offset, limit }
+  );
+
+const updateAllArticlesRead = (db: Surreal, owner: string, feedKey: string) =>
+  runCommand(
+    db,
+    'UPDATE feed_article SET read = true WHERE owner = $owner AND ($feedKey = "" OR feedKey = $feedKey) AND read = false;',
+    { owner, feedKey }
+  );
+
+const updateLoadedArticlesRead = (
+  db: Surreal,
+  owner: string,
+  keys: readonly string[]
+) =>
+  runCommand(
+    db,
+    'UPDATE feed_article SET read = true WHERE owner = $owner AND key IN $keys AND read = false;',
+    { owner, keys }
   );
 
 const updateArticleRead = (
@@ -192,9 +217,30 @@ export const FeedRepositoryLive = Layer.effect(
       sync: (owner, key, feed, initial, now) =>
         syncFeed(db, owner, key, feed, initial, now),
       failure: (owner, key, message) => failFeed(db, owner, key, message),
-      articles: (owner, feedKey, read, offset, limit) =>
-        selectArticles(db, owner, feedKey, read, offset, limit),
+      articles: (
+        owner,
+        feedKey,
+        read,
+        offset,
+        limit,
+        all = false,
+        before = '',
+        beforeKey = ''
+      ) =>
+        selectArticles(
+          db,
+          owner,
+          feedKey,
+          read,
+          offset,
+          limit,
+          all,
+          before,
+          beforeKey
+        ),
       mark: (owner, key, read) => updateArticleRead(db, owner, key, read),
+      markAll: (owner, feedKey) => updateAllArticlesRead(db, owner, feedKey),
+      markLoaded: (owner, keys) => updateLoadedArticlesRead(db, owner, keys),
       article: (owner, key) => selectArticle(db, owner, key),
       subscriptions: selectSubscriptions(db),
     });

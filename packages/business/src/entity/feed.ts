@@ -6,6 +6,7 @@ export const Feed = Schema.Struct({
   title: Schema.String,
   updatedAt: Schema.String,
   error: Schema.String,
+  unreadCount: Schema.Number,
 });
 
 export type Feed = typeof Feed.Type;

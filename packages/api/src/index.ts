@@ -37,6 +37,10 @@ export class LinksUnavailable extends Schema.TaggedError<LinksUnavailable>()(
 
 const key = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 
+const loadedKeys = Schema.Struct({
+  keys: Schema.Array(key).check(Schema.isMaxLength(5000)),
+});
+
 const unauthorized = Schema.Struct({
   error: Schema.Literal('Unauthorized'),
 }).pipe(HttpApiSchema.status(401));
@@ -46,12 +50,19 @@ const forbidden = Schema.Struct({
 }).pipe(HttpApiSchema.status(403));
 
 const links = HttpApiGroup.make('links').add(
+  HttpApiEndpoint.get('unreadCount', '/api/links/unread-count', {
+    success: Schema.Struct({ count: Schema.Number }),
+    error: [LinksUnavailable.pipe(HttpApiSchema.status(500)), unauthorized],
+  }),
   HttpApiEndpoint.get('list', '/api/links', {
     query: {
       read: Schema.optional(Schema.Boolean),
       offset: Schema.optional(
         Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100000 }))
       ),
+      all: Schema.optional(Schema.Boolean),
+      before: Schema.optional(Schema.String),
+      beforeKey: Schema.optional(Schema.String),
     },
     success: LinkPage,
     error: [LinksUnavailable.pipe(HttpApiSchema.status(500)), unauthorized],
@@ -76,6 +87,24 @@ const links = HttpApiGroup.make('links').add(
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: [
       LinkNotFound.pipe(HttpApiSchema.status(404)),
+      LinksUnavailable.pipe(HttpApiSchema.status(500)),
+      unauthorized,
+      forbidden,
+    ],
+  }),
+  HttpApiEndpoint.post('markAll', '/api/links/mark-all', {
+    payload: Schema.Struct({}),
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: [
+      LinksUnavailable.pipe(HttpApiSchema.status(500)),
+      unauthorized,
+      forbidden,
+    ],
+  }),
+  HttpApiEndpoint.post('markLoaded', '/api/links/mark-loaded', {
+    payload: loadedKeys,
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: [
       LinksUnavailable.pipe(HttpApiSchema.status(500)),
       unauthorized,
       forbidden,
@@ -123,22 +152,16 @@ const feeds = HttpApiGroup.make('feeds').add(
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: [...feedErrors, FeedNotFound.pipe(HttpApiSchema.status(404))],
   }),
-  HttpApiEndpoint.post('refresh', '/api/feeds/refresh', {
-    payload: feedKey,
-    success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [
-      ...feedErrors,
-      FeedNotFound.pipe(HttpApiSchema.status(404)),
-      FeedFetchError.pipe(HttpApiSchema.status(422)),
-    ],
-  }),
   HttpApiEndpoint.get('articles', '/api/feeds/articles', {
     query: {
       feedKey: Schema.String,
-      read: Schema.Boolean,
-      offset: Schema.Int.check(
-        Schema.isBetween({ minimum: 0, maximum: 100000 })
+      read: Schema.optional(Schema.Boolean),
+      offset: Schema.optional(
+        Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100000 }))
       ),
+      all: Schema.optional(Schema.Boolean),
+      before: Schema.optional(Schema.String),
+      beforeKey: Schema.optional(Schema.String),
     },
     success: FeedPage,
     error: feedErrors,
@@ -147,6 +170,16 @@ const feeds = HttpApiGroup.make('feeds').add(
     payload: Schema.Struct({ key, read: Schema.Boolean }),
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: [...feedErrors, FeedNotFound.pipe(HttpApiSchema.status(404))],
+  }),
+  HttpApiEndpoint.post('markAll', '/api/feeds/articles/mark-all', {
+    payload: Schema.Struct({ feedKey: Schema.String }),
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: feedErrors,
+  }),
+  HttpApiEndpoint.post('markLoaded', '/api/feeds/articles/mark-loaded', {
+    payload: loadedKeys,
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: feedErrors,
   }),
   HttpApiEndpoint.post('save', '/api/feeds/articles/save', {
     payload: feedKey,

@@ -13,8 +13,14 @@ export class LinkRepository extends Context.Service<
       owner: string,
       read: boolean,
       offset: number,
-      limit: number
+      limit: number,
+      all?: boolean,
+      before?: string,
+      beforeKey?: string
     ) => Effect.Effect<readonly ReadingLink[], LinkRepositoryError>;
+    readonly unreadCount: (
+      owner: string
+    ) => Effect.Effect<number, LinkRepositoryError>;
     readonly insert: (
       owner: string,
       item: Omit<ReadingLink, 'key'>
@@ -24,6 +30,13 @@ export class LinkRepository extends Context.Service<
       key: string,
       read: boolean
     ) => Effect.Effect<boolean, LinkRepositoryError>;
+    readonly markAll: (
+      owner: string
+    ) => Effect.Effect<void, LinkRepositoryError>;
+    readonly markLoaded: (
+      owner: string,
+      keys: readonly string[]
+    ) => Effect.Effect<void, LinkRepositoryError>;
     readonly remove: (
       owner: string,
       key: string

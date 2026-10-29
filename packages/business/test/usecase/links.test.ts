@@ -1,10 +1,13 @@
 import { expect, it } from '@effect/vitest';
 import { Effect, Layer } from 'effect';
 import {
+  countUnreadLinks,
   LinkRepository,
   LinkTitle,
   listLinks,
+  markAllLinks,
   markLink,
+  markLoadedLinks,
   normalizeLink,
   removeLink,
   saveLink,
@@ -76,6 +79,91 @@ it.effect(
     );
   }
 );
+
+it.effect('counts unread links for the owner', () =>
+  Effect.gen(function* () {
+    expect(yield* countUnreadLinks('alice')).toEqual({ count: 3 });
+  }).pipe(
+    Effect.provide(
+      Layer.mock(LinkRepository, {
+        unreadCount: (owner) => {
+          expect(owner).toBe('alice');
+
+          return Effect.succeed(3);
+        },
+      })
+    )
+  )
+);
+
+const linkItems = Array.from({ length: 31 }, (_, index) => ({
+  key: String(index),
+  url: `https://example.com/${index}`,
+  title: String(index),
+  createdAt: '2026-01-01T00:00:00.000Z',
+  read: false,
+}));
+
+const linkRepositoryLayer = Layer.mock(LinkRepository, {
+  list: (owner, read, offset, limit, all, before, beforeKey) => {
+    expect([owner, read, offset, limit, all, before, beforeKey]).toEqual([
+      'alice',
+      false,
+      30,
+      31,
+      true,
+      '2026-01-01T00:00:00.000Z',
+      'cursor',
+    ]);
+
+    return Effect.succeed(linkItems);
+  },
+  markAll: (owner) => {
+    expect(owner).toBe('alice');
+
+    return Effect.void;
+  },
+});
+
+it.effect('forwards cursor pagination and marks all links for the owner', () =>
+  Effect.gen(function* () {
+    const page = yield* listLinks(
+      'alice',
+      false,
+      30,
+      true,
+      '2026-01-01T00:00:00.000Z',
+      'cursor'
+    );
+    expect(page.items).toHaveLength(30);
+    expect(page.hasMore).toBe(true);
+    expect(yield* markAllLinks('alice')).toEqual({ ok: true });
+  }).pipe(Effect.provide(linkRepositoryLayer))
+);
+
+it.effect('marks only the loaded keys through one owner-scoped update', () => {
+  const calls: (readonly [string, readonly string[]])[] = [];
+
+  return Effect.gen(function* () {
+    const keys = ['a'.repeat(64), 'b'.repeat(64)];
+    expect(yield* markLoadedLinks('alice', keys)).toEqual({ ok: true });
+    expect(yield* markLoadedLinks('alice', [])).toEqual({ ok: true });
+    expect(calls).toEqual([
+      ['alice', keys],
+      ['alice', []],
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(LinkRepository, {
+        markLoaded: (owner, keys) => {
+          calls.push([owner, keys]);
+
+          return Effect.void;
+        },
+      })
+    )
+  );
+});
 
 it('validates link protocols without stripping meaningful query parameters', () => {
   expect(normalizeLink(' https://example.com/a?token=x#part ')).toBe(

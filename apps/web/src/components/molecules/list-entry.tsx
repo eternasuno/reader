@@ -1,9 +1,10 @@
 import type { JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { Button } from '../atoms/button';
+import { ReadStatusIcon } from '../atoms/reader-icon';
 
 export const EntrySurface = (props: {
-  readonly component: 'article' | 'li';
+  readonly component: 'article' | 'li' | 'div';
   readonly read: boolean;
   readonly selected?: boolean | undefined;
   readonly children: JSX.Element;
@@ -45,8 +46,10 @@ export const EntryTime = (props: { readonly value: string }) => {
     if (seconds < 3600) return `${Math.floor(seconds / 60)}分前`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`;
     if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}天前`;
+
     return new Date(props.value).toLocaleDateString('zh-CN');
   };
+
   return (
     <time
       class="shrink-0"
@@ -92,10 +95,6 @@ export const EntryReadToggle = (props: {
       if (!props.pending) props.onToggle();
     }}
   >
-    <span
-      class="size-2 rounded-full border border-current opacity-70"
-      classList={{ 'bg-current': !props.read }}
-      aria-hidden="true"
-    />
+    <ReadStatusIcon read={props.read} />
   </Button>
 );

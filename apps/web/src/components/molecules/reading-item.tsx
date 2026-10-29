@@ -90,7 +90,7 @@ export const ReadingItem = (props: ReadingItemProps) => {
 
   return (
     <EntrySurface
-      component="li"
+      component="div"
       read={props.item.read}
       selected={integrated() && selected()}
     >

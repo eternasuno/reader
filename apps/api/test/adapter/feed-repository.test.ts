@@ -85,8 +85,14 @@ const verifyCoreFlows = Effect.gen(function* () {
   yield* repository.sync('alice', key, parsed, true, now);
   const items = yield* repository.articles('alice', '', false, 0, 40);
   expect(items).toHaveLength(30);
+  expect((yield* repository.list('alice'))[0]?.unreadCount).toBe(30);
+  expect(yield* repository.list('bob')).toEqual([]);
   const article = items[0]?.key ?? '';
   expect(yield* repository.mark('bob', article, true)).toBe(false);
+  yield* repository.mark('alice', article, true);
+  expect((yield* repository.list('alice'))[0]?.unreadCount).toBe(29);
+  yield* repository.mark('alice', article, false);
+  expect((yield* repository.list('alice'))[0]?.unreadCount).toBe(30);
   yield* repository.mark('alice', article, true);
   yield* repository.sync('alice', key, parsed, false, now);
   expect((yield* repository.article('alice', article))?.read).toBe(true);
@@ -137,10 +143,152 @@ const verifyRetentionCap = Effect.gen(function* () {
   expect(yield* repository.articles('alice', '', false, 0, 10)).toEqual([]);
 });
 
+const verifyCursorPaging = Effect.gen(function* () {
+  const repository = yield* FeedRepository;
+  const feed = yield* repository.create(
+    'alice',
+    'https://example.com/cursor-rss',
+    'News'
+  );
+  const key = feed?.key ?? '';
+  yield* repository.sync(
+    'alice',
+    key,
+    makeParsed(40),
+    false,
+    new Date(40000000).toISOString()
+  );
+  const first = yield* repository.articles('alice', '', false, 0, 30);
+  expect(first).toHaveLength(30);
+  const last = first[29];
+  for (const item of first.slice(0, 3)) {
+    expect(yield* repository.mark('alice', item.key, true)).toBe(true);
+  }
+
+  const cursor = yield* repository.articles(
+    'alice',
+    '',
+    false,
+    0,
+    30,
+    false,
+    last?.publishedAt ?? '',
+    last?.key ?? ''
+  );
+  expect(cursor).toHaveLength(10);
+  expect(cursor.some((item) => first.some(({ key }) => key === item.key))).toBe(
+    false
+  );
+  expect(yield* repository.articles('alice', '', false, 30, 30)).toHaveLength(
+    7
+  );
+  const all = yield* repository.articles('alice', '', false, 0, 40, true);
+  expect(all).toHaveLength(40);
+  expect(all.some((item) => item.read)).toBe(true);
+  expect(all.some((item) => !item.read)).toBe(true);
+});
+
+const verifyBulkMark = Effect.gen(function* () {
+  const repository = yield* FeedRepository;
+  const first = yield* repository.create(
+    'alice',
+    'https://example.com/first-rss',
+    'First'
+  );
+  const second = yield* repository.create(
+    'alice',
+    'https://example.com/second-rss',
+    'Second'
+  );
+  const bobFeed = yield* repository.create(
+    'bob',
+    'https://example.com/bob-rss',
+    'Bob'
+  );
+  const firstKey = first?.key ?? '';
+  const secondKey = second?.key ?? '';
+  const bobKey = bobFeed?.key ?? '';
+  const now = new Date().toISOString();
+  yield* repository.sync('alice', firstKey, makeParsed(5), true, now);
+  yield* repository.sync('alice', secondKey, makeParsed(5, 10), true, now);
+  yield* repository.sync('bob', bobKey, makeParsed(5, 20), true, now);
+
+  yield* repository.markAll('alice', firstKey);
+  expect(yield* repository.articles('alice', firstKey, false, 0, 10)).toEqual(
+    []
+  );
+  expect(
+    yield* repository.articles('alice', secondKey, false, 0, 10)
+  ).toHaveLength(5);
+  expect(yield* repository.articles('bob', '', false, 0, 10)).toHaveLength(5);
+
+  yield* repository.markAll('alice', '');
+  expect(yield* repository.articles('alice', '', false, 0, 20)).toEqual([]);
+  expect(yield* repository.articles('bob', '', false, 0, 10)).toHaveLength(5);
+
+  yield* repository.markAll('bob', bobKey);
+  expect(yield* repository.articles('bob', '', false, 0, 10)).toEqual([]);
+});
+
+const verifyLoadedMark = Effect.gen(function* () {
+  const repository = yield* FeedRepository;
+  const carol = yield* repository.create(
+    'carol',
+    'https://example.com/carol-rss',
+    'Carol'
+  );
+  const dave = yield* repository.create(
+    'dave',
+    'https://example.com/dave-rss',
+    'Dave'
+  );
+  const now = new Date(90000000).toISOString();
+  yield* repository.sync('carol', carol?.key ?? '', makeParsed(4), true, now);
+  yield* repository.sync('dave', dave?.key ?? '', makeParsed(2, 10), true, now);
+  const carolItems = yield* repository.articles(
+    'carol',
+    carol?.key ?? '',
+    false,
+    0,
+    10
+  );
+  const daveItems = yield* repository.articles('dave', '', false, 0, 10);
+  expect(carolItems).toHaveLength(4);
+  expect(daveItems).toHaveLength(2);
+  yield* repository.markLoaded('carol', []);
+  expect(yield* repository.articles('carol', '', false, 0, 10)).toHaveLength(4);
+  yield* repository.markLoaded('carol', [
+    carolItems[0]?.key ?? '',
+    carolItems[1]?.key ?? '',
+    daveItems[0]?.key ?? '',
+  ]);
+  expect(
+    (yield* repository.articles('carol', '', false, 0, 10)).map(
+      ({ key }) => key
+    )
+  ).toEqual([carolItems[2]?.key, carolItems[3]?.key]);
+  expect(
+    (yield* repository.articles('carol', '', true, 0, 10)).map(({ key }) => key)
+  ).toEqual([carolItems[0]?.key, carolItems[1]?.key]);
+  expect(yield* repository.articles('dave', '', false, 0, 10)).toHaveLength(2);
+});
+
 it.effect('deduplicates subscriptions and articles, preserves read state', () =>
   runWithDatabase(verifyCoreFlows)
 );
 
+it.effect('pages by strict cursor after earlier articles are marked read', () =>
+  runWithDatabase(verifyCursorPaging)
+);
+
+it.effect('marks unread articles for the owner and feed scope only', () =>
+  runWithDatabase(verifyBulkMark)
+);
+
 it.effect('caps articles at 500 and skips sync after unsubscribe', () =>
   runWithDatabase(verifyRetentionCap)
+);
+
+it.effect('marks only the loaded article keys for the owning reader', () =>
+  runWithDatabase(verifyLoadedMark)
 );

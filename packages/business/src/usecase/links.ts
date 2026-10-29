@@ -37,13 +37,32 @@ export const normalizeLink = (value: unknown): string => {
 export const listLinks = Effect.fn('business.listLinks')(function* (
   owner: string,
   read: boolean,
-  offset: number
+  offset: number,
+  all = false,
+  before = '',
+  beforeKey = ''
 ) {
   const repository = yield* LinkRepository;
-  const items = yield* repository.list(owner, read, offset, 31);
+  const items = yield* repository.list(
+    owner,
+    read,
+    offset,
+    31,
+    all,
+    before,
+    beforeKey
+  );
 
   return { items: items.slice(0, 30), hasMore: items.length > 30 };
 });
+
+export const countUnreadLinks = Effect.fn('business.countUnreadLinks')(
+  function* (owner: string) {
+    const repository = yield* LinkRepository;
+
+    return { count: yield* repository.unreadCount(owner) };
+  }
+);
 
 export const saveLink = Effect.fn('business.saveLink')(function* (
   owner: string,
@@ -83,6 +102,25 @@ export const markLink = Effect.fn('business.markLink')(function* (
   const repository = yield* LinkRepository;
 
   return yield* requireLink(yield* repository.mark(owner, key, read));
+});
+
+export const markAllLinks = Effect.fn('business.markAllLinks')(function* (
+  owner: string
+) {
+  const repository = yield* LinkRepository;
+  yield* repository.markAll(owner);
+
+  return { ok: true };
+});
+
+export const markLoadedLinks = Effect.fn('business.markLoadedLinks')(function* (
+  owner: string,
+  keys: readonly string[]
+) {
+  const repository = yield* LinkRepository;
+  yield* repository.markLoaded(owner, keys);
+
+  return { ok: true };
 });
 
 export const removeLink = Effect.fn('business.removeLink')(function* (

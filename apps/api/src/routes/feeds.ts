@@ -2,8 +2,9 @@ import { LinksUnavailable, ReaderApi } from '@reader/api';
 import {
   listFeedArticles,
   listFeeds,
+  markAllFeedArticles,
   markFeedArticle,
-  refreshFeed,
+  markLoadedFeedArticles,
   saveFeedArticle,
   subscribeFeed,
   unsubscribeFeed,
@@ -36,39 +37,47 @@ const failure = <A, E extends { readonly _tag: string }, R>(
     )
   );
 
+const withSession = <A, E, R>(use: (owner: string) => Effect.Effect<A, E, R>) =>
+  Effect.flatMap(Session, (user) => use(user.id));
+
 export const feedHandlers = HttpApiBuilder.group(ReaderApi, 'feeds', (group) =>
   group
-    .handle('list', () =>
-      Effect.flatMap(Session, (user) => listFeeds(user.id)).pipe(failure)
-    )
+    .handle('list', () => withSession(listFeeds).pipe(failure))
     .handle('subscribe', ({ payload }) =>
-      Effect.flatMap(Session, (user) =>
-        subscribeFeed(user.id, payload.url)
-      ).pipe(failure)
+      withSession((owner) => subscribeFeed(owner, payload.url)).pipe(failure)
     )
     .handle('unsubscribe', ({ payload }) =>
-      Effect.flatMap(Session, (user) =>
-        unsubscribeFeed(user.id, payload.key)
-      ).pipe(failure)
-    )
-    .handle('refresh', ({ payload }) =>
-      Effect.flatMap(Session, (user) => refreshFeed(user.id, payload.key)).pipe(
-        failure
-      )
+      withSession((owner) => unsubscribeFeed(owner, payload.key)).pipe(failure)
     )
     .handle('articles', ({ query }) =>
-      Effect.flatMap(Session, (user) =>
-        listFeedArticles(user.id, query.feedKey, query.read, query.offset)
+      withSession((owner) =>
+        listFeedArticles(
+          owner,
+          query.feedKey,
+          query.read ?? false,
+          query.offset ?? 0,
+          query.all ?? false,
+          query.before ?? '',
+          query.beforeKey ?? ''
+        )
       ).pipe(failure)
     )
     .handle('mark', ({ payload }) =>
-      Effect.flatMap(Session, (user) =>
-        markFeedArticle(user.id, payload.key, payload.read)
+      withSession((owner) =>
+        markFeedArticle(owner, payload.key, payload.read)
       ).pipe(failure)
     )
+    .handle('markAll', ({ payload }) =>
+      withSession((owner) => markAllFeedArticles(owner, payload.feedKey)).pipe(
+        failure
+      )
+    )
+    .handle('markLoaded', ({ payload }) =>
+      withSession((owner) => markLoadedFeedArticles(owner, payload.keys)).pipe(
+        failure
+      )
+    )
     .handle('save', ({ payload }) =>
-      Effect.flatMap(Session, (user) =>
-        saveFeedArticle(user.id, payload.key)
-      ).pipe(failure)
+      withSession((owner) => saveFeedArticle(owner, payload.key)).pipe(failure)
     )
 );

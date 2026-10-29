@@ -16,9 +16,13 @@ export type Selection = {
   readonly title: string;
   readonly url: string;
   readonly read: boolean;
+  readonly feedKey?: string | undefined;
 };
 export type SelectionState = Selection | undefined;
-export type Selectable = Pick<Selection, 'key' | 'title' | 'url' | 'read'>;
+export type Selectable = Pick<
+  Selection,
+  'key' | 'title' | 'url' | 'read' | 'feedKey'
+>;
 
 export const routeSelection = (
   path: string,

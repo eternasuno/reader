@@ -5,6 +5,7 @@ export const ArticleSource = Schema.Struct({
   url: Schema.String,
   read: Schema.Boolean,
   description: Schema.optional(Schema.String),
+  feedKey: Schema.optional(Schema.String),
 });
 
 export type ArticleSource = typeof ArticleSource.Type;

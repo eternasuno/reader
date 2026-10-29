@@ -1,95 +1,258 @@
+import type { FeedArticle } from '@reader/api';
 import { Effect } from 'effect';
 import { Atom } from 'effect/reactivity';
+import { errorText } from './errors';
+import {
+  appendPage,
+  applyLoadedRead,
+  applyReadAll,
+  beginLoad,
+  beginReset,
+  failLoad,
+  type InfiniteState,
+  initialInfiniteState,
+  type PageCursor,
+} from './infinite';
 import { LinksClient, LinksClientLive } from './links';
+import { markLoadedKeys } from './mark-loaded';
 
 export type FeedCommand =
   | { readonly _tag: 'Subscribe'; readonly url: string }
-  | { readonly _tag: 'Unsubscribe' | 'Refresh' | 'Save'; readonly key: string }
-  | { readonly _tag: 'Mark'; readonly key: string; readonly read: boolean };
+  | { readonly _tag: 'Unsubscribe' | 'Save'; readonly key: string }
+  | {
+      readonly _tag: 'Refresh';
+      readonly key: string;
+      readonly reload?: boolean;
+    }
+  | { readonly _tag: 'RefreshAll'; readonly reload?: boolean }
+  | { readonly _tag: 'Mark'; readonly key: string; readonly read: boolean }
+  | { readonly _tag: 'MarkAll'; readonly key: string }
+  | {
+      readonly _tag: 'MarkLoaded';
+      readonly keys: readonly string[];
+      readonly generation: number;
+    };
 
-type FeedQuery = {
-  feedKey: string;
-  read: boolean;
-  page: number;
+export type FeedQuery = {
+  readonly feedKey: string;
+  readonly onlyUnread: boolean;
 };
 
-const pageSize = 30;
+type LoadInput = { readonly reset: boolean };
 
-const resetFeedQuery: FeedQuery = { feedKey: '', read: false, page: 0 };
+type FeedState = {
+  readonly articles: Atom.Writable<InfiniteState<FeedArticle>>;
+  readonly query: Atom.Writable<FeedQuery>;
+};
 
-const feedQueryParams = (current: FeedQuery) => ({
-  feedKey: current.feedKey,
-  read: current.read,
-  offset: current.page * pageSize,
+type FeedCommandState = FeedState & {
+  readonly refreshFeeds: () => void;
+  readonly resetArticles: () => void;
+};
+
+const feedKey = (item: FeedArticle) => item.key;
+
+const feedCursor = (item: FeedArticle): PageCursor => ({
+  before: item.publishedAt,
+  beforeKey: item.key,
 });
 
-const runFeedMutation = (
+const listPage = (
   client: LinksClient['Service'],
-  input: FeedCommand
-) => {
-  if (input._tag === 'Subscribe') {
-    return client.feeds.subscribe({ payload: { url: input.url } });
-  }
-  if (input._tag === 'Unsubscribe') {
-    return client.feeds.unsubscribe({ payload: { key: input.key } });
-  }
-  if (input._tag === 'Refresh') {
-    return client.feeds.refresh({ payload: { key: input.key } });
-  }
-  if (input._tag === 'Mark') {
-    return client.feeds.mark({
-      payload: { key: input.key, read: input.read },
-    });
-  }
-  return client.feeds.save({ payload: { key: input.key } });
+  query: FeedQuery,
+  cursor: PageCursor | undefined
+) =>
+  client.feeds.articles({
+    query: {
+      feedKey: query.feedKey,
+      read: false,
+      all: !query.onlyUnread,
+      offset: 0,
+      ...(cursor ?? {}),
+    },
+  });
+
+const runFeedLoad = (
+  input: LoadInput,
+  get: Atom.FnContext,
+  context: FeedState
+) =>
+  Effect.gen(function* () {
+    const client = yield* LinksClient;
+    const before = get(context.articles);
+    const generation = input.reset ? before.generation + 1 : before.generation;
+    const next = input.reset ? beginReset(before) : beginLoad(before);
+
+    if (next === before) {
+      return before;
+    }
+
+    get.set(context.articles, next);
+    const page = yield* listPage(client, get(context.query), next.cursor).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          get.set(
+            context.articles,
+            failLoad(get(context.articles), errorText(error), generation)
+          );
+        })
+      )
+    );
+    const applied = appendPage(
+      get(context.articles),
+      page,
+      feedKey,
+      feedCursor,
+      generation
+    );
+    get.set(context.articles, applied);
+
+    return applied;
+  });
+
+const markAllArticles = (
+  key: string,
+  get: Atom.FnContext,
+  context: FeedCommandState
+) =>
+  Effect.gen(function* () {
+    const client = yield* LinksClient;
+    yield* client.feeds.markAll({ payload: { feedKey: key } });
+    const current = get(context.query);
+    const completeScope = key === '' || current.feedKey === key;
+    get.set(
+      context.articles,
+      applyReadAll(
+        get(context.articles),
+        current.onlyUnread,
+        (item) => key === '' || item.feedKey === key,
+        completeScope
+      )
+    );
+    context.refreshFeeds();
+  });
+
+const runFeedRefresh = (reload: boolean, context: FeedCommandState) => {
+  context.refreshFeeds();
+  if (reload) context.resetArticles();
 };
 
-const resetQueryOnUnsubscribe = (
+const runFeedMutation = (
+  input: Exclude<
+    FeedCommand,
+    { readonly _tag: 'Mark' | 'MarkAll' | 'MarkLoaded' }
+  >,
   get: Atom.FnContext,
-  query: Atom.Writable<FeedQuery>,
-  input: FeedCommand
-) => {
-  if (input._tag === 'Unsubscribe') {
-    get.set(query, resetFeedQuery);
-  }
-};
+  context: FeedCommandState
+) =>
+  Effect.gen(function* () {
+    const client = yield* LinksClient;
 
-const stepBackWhenEmpty = (
+    if (input._tag === 'Save') {
+      yield* client.feeds.save({ payload: { key: input.key } });
+
+      return;
+    }
+
+    if (input._tag === 'Refresh' || input._tag === 'RefreshAll') {
+      runFeedRefresh(input.reload === true, context);
+
+      return;
+    }
+
+    if (input._tag === 'Subscribe') {
+      yield* client.feeds.subscribe({ payload: { url: input.url } });
+    } else {
+      yield* client.feeds.unsubscribe({ payload: { key: input.key } });
+    }
+
+    context.refreshFeeds();
+
+    if (input._tag === 'Unsubscribe') {
+      get.set(context.query, { ...get(context.query), feedKey: '' });
+    }
+
+    context.resetArticles();
+  });
+
+const markLoadedArticles = (
+  input: Extract<FeedCommand, { readonly _tag: 'MarkLoaded' }>,
   get: Atom.FnContext,
-  query: Atom.Writable<FeedQuery>,
-  length: number
-) => {
-  const current = get(query);
-  if (length === 0 && current.page > 0) {
-    get.set(query, { ...current, page: current.page - 1 });
-  }
-};
+  context: FeedCommandState
+) =>
+  Effect.gen(function* () {
+    if (input.keys.length === 0) return { keys: [], failed: false, error: '' };
+
+    const client = yield* LinksClient;
+    const result = yield* markLoadedKeys(input.keys, (keys) =>
+      client.feeds.markLoaded({ payload: { keys } })
+    );
+    get.set(
+      context.articles,
+      applyLoadedRead(
+        get(context.articles),
+        result.keys,
+        feedKey,
+        input.generation
+      )
+    );
+    context.refreshFeeds();
+
+    return result;
+  });
+
+const runFeedCommand = (
+  input: FeedCommand,
+  get: Atom.FnContext,
+  context: FeedCommandState
+) =>
+  Effect.gen(function* () {
+    const client = yield* LinksClient;
+
+    if (input._tag === 'Mark') {
+      yield* client.feeds.mark({
+        payload: { key: input.key, read: input.read },
+      });
+
+      return;
+    }
+
+    if (input._tag === 'MarkAll') {
+      yield* markAllArticles(input.key, get, context);
+
+      return;
+    }
+
+    if (input._tag === 'MarkLoaded') {
+      return yield* markLoadedArticles(input, get, context);
+    }
+
+    yield* runFeedMutation(input, get, context);
+  });
 
 export const makeFeedAtoms = (layer = LinksClientLive) => {
   const runtime = Atom.runtime(layer);
-  const query = Atom.make<FeedQuery>({ feedKey: '', read: false, page: 0 });
+  const query = Atom.make<FeedQuery>({ feedKey: '', onlyUnread: true });
   const feeds = runtime.atom(() =>
     Effect.flatMap(LinksClient, (client) => client.feeds.list())
   );
-  const articles = runtime.atom((get) => {
-    const current = get(query);
-    return Effect.flatMap(LinksClient, (client) =>
-      client.feeds.articles({ query: feedQueryParams(current) })
-    );
-  });
+  const articles = Atom.make(initialInfiniteState<FeedArticle>());
+  const load = runtime.fn<LoadInput>()(
+    Effect.fnUntraced(function* (input, get) {
+      return yield* runFeedLoad(input, get, { articles, query });
+    }),
+    { concurrent: true }
+  );
   const command = runtime.fn<FeedCommand>()(
     Effect.fnUntraced(function* (input, get) {
-      const client = yield* LinksClient;
-      yield* runFeedMutation(client, input);
-      if (input._tag === 'Mark') return;
-
-      resetQueryOnUnsubscribe(get, query, input);
-      get.refresh(feeds);
-      get.refresh(articles);
-      const page = yield* get.result(articles, { suspendOnWaiting: true });
-      stepBackWhenEmpty(get, query, page.items.length);
+      return yield* runFeedCommand(input, get, {
+        articles,
+        query,
+        refreshFeeds: () => get.refresh(feeds),
+        resetArticles: () => get.set(load, { reset: true }),
+      });
     })
   );
 
-  return { query, feeds, articles, command };
+  return { query, feeds, articles, load, command };
 };

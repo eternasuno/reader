@@ -1,5 +1,7 @@
 import { useParams } from '@solidjs/router';
 import { createSignal, Show } from 'solid-js';
+import { readerError } from '../../lib/reader';
+import { ErrorToast, useErrorToast } from '../molecules/error-toast';
 import {
   ReaderActions,
   ReaderContent,
@@ -11,6 +13,7 @@ import {
   makeExtractHandler,
   makeMarkHandler,
   makeSaveHandler,
+  readerFeedKey,
   readerSourceState,
   toReaderBusy,
   toReaderItem,
@@ -27,11 +30,11 @@ export type ArticleSelection = {
   title: string;
   url: string;
   read: boolean;
+  feedKey?: string | undefined;
 };
 
 type ArticleReaderProps = {
   selection?: ArticleSelection | undefined;
-  onSettings?: (() => void) | undefined;
   onBack?: (() => void) | undefined;
   onPrevious?: (() => void) | undefined;
   onNext?: (() => void) | undefined;
@@ -39,7 +42,6 @@ type ArticleReaderProps = {
 
 type ReaderBodyProps = {
   selection: ArticleSelection;
-  onSettings?: (() => void) | undefined;
   onBack?: (() => void) | undefined;
   onPrevious?: (() => void) | undefined;
   onNext?: (() => void) | undefined;
@@ -52,6 +54,7 @@ const toSelectionFromParams = (
   if (!keyParam) {
     return undefined;
   }
+
   return {
     kind: kindParam === 'feed' ? 'feed' : 'link',
     key: keyParam,
@@ -93,6 +96,7 @@ const useReaderView = (
     }
   };
   const getSelection = () => ({ ...selection, url: url() });
+
   return {
     item,
     busy,
@@ -145,7 +149,6 @@ const ReaderHeader = (props: {
   onBack?: (() => void) | undefined;
   onPrevious?: (() => void) | undefined;
   onNext?: (() => void) | undefined;
-  onSettings?: (() => void) | undefined;
   view: ReturnType<typeof useReaderView>;
   stores: ReturnType<typeof useReaderStores>;
   notices: ReturnType<typeof useReaderNotices>;
@@ -173,18 +176,26 @@ const ReaderHeader = (props: {
       }
       read={props.notices.read()}
       {...readerHandlers(props)}
-      onSettings={props.onSettings}
     />
   </>
 );
 
 const ReaderBody = (props: ReaderBodyProps) => {
   const stores = useReaderStores(props.selection.kind, props.selection.key);
-  const notices = useReaderNotices(props.selection);
+  const source = toReaderSource(stores.content);
+  const notices = useReaderNotices(props.selection, () =>
+    readerFeedKey(props.selection, source())
+  );
   const view = useReaderView(props.selection, stores, notices);
+  const toast = useErrorToast(
+    () =>
+      stores.mutation().waiting ? undefined : readerError(stores.mutation()),
+    () => true
+  );
   useAutoMark(props.selection, stores, notices);
+
   return (
-    <section class="m-0 min-h-full w-full">
+    <section class="m-0 flex h-full min-h-0 w-full flex-col">
       <ReaderHeader
         title={view.title()}
         url={view.url()}
@@ -192,30 +203,36 @@ const ReaderBody = (props: ReaderBodyProps) => {
         onBack={props.onBack}
         onPrevious={props.onPrevious}
         onNext={props.onNext}
-        onSettings={props.onSettings}
         view={view}
         stores={stores}
         notices={notices}
       />
-      <div class="mx-auto flex max-w-208 flex-col gap-4 px-6 py-8 max-sm:px-4 max-sm:py-6">
-        <ReaderTitle title={view.title()} url={view.url()} />
-        <ReaderSourceLink url={view.url()} />
-        <Show when={view.status()}>
-          {(message) => (
-            <p
-              class="text-sm leading-relaxed text-base-content/60"
-              role="status"
-            >
-              {message()}
-            </p>
-          )}
-        </Show>
-        <ReaderContent
-          stores={stores}
-          item={view.item}
-          extracted={view.extracted()}
-        />
+      <div class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
+        <div class="mx-auto flex max-w-208 flex-col gap-4 px-6 py-8 max-sm:px-4 max-sm:py-6">
+          <ReaderTitle title={view.title()} url={view.url()} />
+          <ReaderSourceLink url={view.url()} />
+          <Show when={view.status()}>
+            {(message) => (
+              <p
+                class="text-sm leading-relaxed text-base-content/60"
+                role="status"
+              >
+                {message()}
+              </p>
+            )}
+          </Show>
+          <ReaderContent
+            stores={stores}
+            item={view.item}
+            extracted={view.extracted()}
+          />
+        </div>
       </div>
+      <Show when={toast.message()}>
+        {(message) => (
+          <ErrorToast message={message()} onDismiss={toast.dismiss} />
+        )}
+      </Show>
     </section>
   );
 };
@@ -226,8 +243,10 @@ export const ArticleReader = (props: ArticleReaderProps) => {
     props.selection ?? toSelectionFromParams(params.kind, params.key);
   const selectionKey = () => {
     const current = selection();
+
     return current ? `${current.kind}:${current.key}` : undefined;
   };
+
   return (
     <Show
       when={selectionKey()}
@@ -247,10 +266,10 @@ export const ArticleReader = (props: ArticleReaderProps) => {
         if (!current || `${current.kind}:${current.key}` !== key) {
           return null;
         }
+
         return (
           <ReaderBody
             selection={current}
-            onSettings={props.onSettings}
             onBack={props.onBack}
             onPrevious={props.onPrevious}
             onNext={props.onNext}

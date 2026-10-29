@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  hasUnread,
   projectReadStatus,
   publishReadStatus,
+  publishReadStatuses,
   READER_READ_STATUS_CHANGED,
   readStatusFromEvent,
   reconcileReadOverrides,
   recordReadOverride,
+  unreadKeys,
 } from '../../../src/components/organisms/reader-status';
 
 const items = [
@@ -55,6 +58,32 @@ describe('read status projection', () => {
     expect(matching).toEqual(new Map([['second', true]]));
     expect(projectReadStatus(items, matching)).toBe(items);
     expect(reconcileReadOverrides(items, matching)).toEqual(new Map());
+  });
+});
+
+describe('loaded read snapshots', () => {
+  it('selects unread keys and enablement from projected items', () => {
+    expect(unreadKeys(items)).toEqual(['first', 'third']);
+    expect(hasUnread(items)).toBe(true);
+    expect(unreadKeys([{ key: 'second', read: true }])).toEqual([]);
+    expect(hasUnread([])).toBe(false);
+  });
+
+  it('publishes one event per successful key only', () => {
+    const target = new EventTarget();
+    vi.stubGlobal('window', target);
+    const published: string[] = [];
+    target.addEventListener(READER_READ_STATUS_CHANGED, (event) => {
+      published.push(
+        (event as CustomEvent<{ readonly key: string }>).detail.key
+      );
+    });
+
+    publishReadStatuses({ _tag: 'Success' }, 'link', ['first', 'third']);
+    expect(published).toEqual(['first', 'third']);
+
+    publishReadStatuses({ _tag: 'Failure' }, 'link', ['second']);
+    expect(published).toEqual(['first', 'third']);
   });
 });
 
@@ -117,6 +146,22 @@ describe('read status reconciliation', () => {
     expect(
       reconcileReadOverrides([{ key: 'second', read: true }], overrides)
     ).toEqual(new Map());
+  });
+});
+
+describe('read status pagination', () => {
+  it('keeps local statuses for unchanged items when a later page is appended', () => {
+    const overrides = recordReadOverride(items, new Map(), {
+      kind: 'link',
+      key: 'first',
+      read: true,
+    });
+    const appended = [...items, { key: 'fourth', read: false }];
+    const reconciled = reconcileReadOverrides(appended, overrides, items);
+
+    expect(reconciled).toEqual(overrides);
+    expect(projectReadStatus(appended, reconciled)?.[0]?.read).toBe(true);
+    expect(projectReadStatus(appended, reconciled)?.[3]?.read).toBe(false);
   });
 });
 

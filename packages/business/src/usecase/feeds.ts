@@ -95,10 +95,22 @@ export const listFeedArticles = Effect.fn('feeds.articles')(function* (
   owner: string,
   feedKey: string,
   read: boolean,
-  offset: number
+  offset: number,
+  all = false,
+  before = '',
+  beforeKey = ''
 ) {
   const repository = yield* FeedRepository;
-  const items = yield* repository.articles(owner, feedKey, read, offset, 31);
+  const items = yield* repository.articles(
+    owner,
+    feedKey,
+    read,
+    offset,
+    31,
+    all,
+    before,
+    beforeKey
+  );
 
   return { items: items.slice(0, 30), hasMore: items.length > 30 };
 });
@@ -112,6 +124,26 @@ export const markFeedArticle = Effect.fn('feeds.mark')(function* (
   if (!(yield* repository.mark(owner, key, read))) {
     return yield* new FeedNotFound({ error: '文章不存在' });
   }
+
+  return { ok: true };
+});
+
+export const markAllFeedArticles = Effect.fn('feeds.markAll')(function* (
+  owner: string,
+  feedKey: string
+) {
+  const repository = yield* FeedRepository;
+  yield* repository.markAll(owner, feedKey);
+
+  return { ok: true };
+});
+
+export const markLoadedFeedArticles = Effect.fn('feeds.markLoaded')(function* (
+  owner: string,
+  keys: readonly string[]
+) {
+  const repository = yield* FeedRepository;
+  yield* repository.markLoaded(owner, keys);
 
   return { ok: true };
 });

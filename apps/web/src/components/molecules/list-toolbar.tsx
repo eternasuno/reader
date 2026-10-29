@@ -1,131 +1,87 @@
-import { createUniqueId, type JSX, Show } from 'solid-js';
-import { Button } from '../atoms/button';
+import { Show } from 'solid-js';
 import { IconButton } from '../atoms/icon-button';
 import { ReaderIcon } from '../atoms/reader-icon';
+import { NavMenuActions, PopoverMenu } from './nav-menu';
 
 type ListToolbarProps = {
   readonly title: string;
-  readonly count: number | undefined;
-  readonly read: boolean;
+  readonly unread: number | undefined;
+  readonly loadedUnread: boolean;
+  readonly onlyUnread: boolean;
   readonly pending: boolean;
-  readonly onFilter: (read: boolean) => void;
+  readonly error: string;
   readonly onRefresh: () => void;
-  readonly onRefreshFeed?: (() => void) | undefined;
+  readonly onMarkAll: () => void;
+  readonly onMarkLoaded: () => void;
+  readonly onOnlyUnreadChange: (value: boolean) => void;
   readonly onAdd?: (() => void) | undefined;
 };
 
-export const ListToolbar = (props: ListToolbarProps) => {
-  return (
+export const ListToolbar = (props: ListToolbarProps) => (
+  <>
     <nav
-      class="workspace-list-heading sticky top-0 z-3 flex h-13 items-center gap-2 -mx-6 border-b border-base-300 bg-base-100 px-4"
+      class="workspace-list-heading flex h-13 shrink-0 items-center gap-2 border-b border-base-300 bg-base-100 px-4"
       aria-label={`${props.title}清单工具`}
     >
       <h2 class="min-w-0 truncate text-sm font-semibold" tabindex="-1">
         {props.title}
       </h2>
       <span
-        class="mr-auto whitespace-nowrap text-xs text-base-content opacity-55"
-        title="当前页已加载条目数"
+        class="mr-auto whitespace-nowrap text-xs tabular-nums text-base-content opacity-55"
+        title="未读文章总数"
       >
-        {props.count === undefined ? '加载中' : `已加载 ${props.count} 项`}
+        {props.unread === undefined ? '…' : props.unread}
+        <span class="sr-only"> 篇未读文章</span>
       </span>
       <Show when={props.onAdd}>
-        <IconButton label="添加链接" onClick={() => props.onAdd?.()}>
+        <IconButton
+          label="添加链接"
+          disabled={props.pending}
+          onClick={() => props.onAdd?.()}
+        >
           <ReaderIcon name="plus" />
         </IconButton>
       </Show>
-      <ListOptions {...props} />
-    </nav>
-  );
-};
-
-const ListOptions = (props: ListToolbarProps) => {
-  const id = createUniqueId();
-  const anchor = { '--menu-anchor': `--${id}` } as JSX.CSSProperties;
-  let menu!: HTMLUListElement;
-
-  return (
-    <>
-      <IconButton label="清单选项" popoverTarget={id} anchorName={`--${id}`}>
-        <ReaderIcon name="more" />
+      <IconButton
+        label="将已加载文章标为已读"
+        title="将已加载文章标为已读"
+        disabled={props.pending || !props.loadedUnread}
+        busy={props.pending}
+        onClick={props.onMarkLoaded}
+      >
+        <ReaderIcon name="check" />
       </IconButton>
-      <ul
-        ref={menu}
-        id={id}
-        popover="auto"
-        class="dropdown menu fixed inset-auto top-[anchor(bottom)] right-[anchor(right)] z-10 my-1 w-44 rounded-box bg-base-200 shadow-lg [position-anchor:var(--menu-anchor)]"
-        style={anchor}
+      <PopoverMenu
+        label={`${props.title} 更多操作`}
+        menuLabel={`${props.title} 操作`}
+        triggerClass="inline-grid size-8 shrink-0 cursor-pointer place-items-center rounded-md bg-transparent p-0 text-base-content"
       >
-        <ListOptionItems {...props} close={() => menu.hidePopover()} />
-      </ul>
-    </>
-  );
-};
-
-const ListOptionItems = (
-  props: ListToolbarProps & { readonly close: () => void }
-) => (
-  <>
-    <li>
-      <Button
-        type="button"
-        disabled={props.pending}
-        onClick={() => {
-          props.onRefresh();
-          props.close();
-        }}
-      >
-        刷新已存清单
-      </Button>
-    </li>
-    <Show when={props.onRefreshFeed}>
-      <li>
-        <Button
-          type="button"
-          disabled={props.pending}
-          onClick={() => {
-            props.onRefreshFeed?.();
-            props.close();
-          }}
+        {(closeMenu) => (
+          <NavMenuActions
+            busy={props.pending}
+            onlyUnread={props.onlyUnread}
+            onRefresh={() => {
+              closeMenu();
+              props.onRefresh();
+            }}
+            onMarkAll={() => {
+              closeMenu();
+              props.onMarkAll();
+            }}
+            onOnlyUnreadChange={props.onOnlyUnreadChange}
+          />
+        )}
+      </PopoverMenu>
+    </nav>
+    <Show when={props.error}>
+      {(message) => (
+        <p
+          role="alert"
+          class="shrink-0 border-b border-base-300 bg-base-100 px-4 py-2 text-xs text-error"
         >
-          刷新订阅源
-        </Button>
-      </li>
+          {message()}
+        </p>
+      )}
     </Show>
-    <ListReadOptions {...props} />
   </>
 );
-
-const ListReadOptions = (
-  props: ListToolbarProps & { readonly close: () => void }
-) => {
-  const filter = (read: boolean) => {
-    props.onFilter(read);
-    props.close();
-  };
-
-  return (
-    <>
-      <li>
-        <Button
-          type="button"
-          disabled={props.pending}
-          aria-pressed={!props.read}
-          onClick={() => filter(false)}
-        >
-          未读 {props.read ? '' : '✓'}
-        </Button>
-      </li>
-      <li>
-        <Button
-          type="button"
-          disabled={props.pending}
-          aria-pressed={props.read}
-          onClick={() => filter(true)}
-        >
-          已读 {props.read ? '✓' : ''}
-        </Button>
-      </li>
-    </>
-  );
-};

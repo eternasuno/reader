@@ -1,85 +1,190 @@
-import { Effect, Exit, Layer } from 'effect';
-import { FetchHttpClient } from 'effect/http';
-import { AtomRegistry } from 'effect/reactivity';
+import { Exit } from 'effect';
 import { describe, expect, it } from 'vitest';
-import { makeFeedAtoms } from '../../src/lib/feeds';
-import { LinksClientLive } from '../../src/lib/links';
+import {
+  article,
+  articleRequests,
+  feed,
+  makeTest,
+  page,
+  runCommand,
+  runLoad,
+  settle,
+} from './feed-fixtures';
 
-const article = {
-  key: 'a'.repeat(64),
-  feedKey: 'feed',
-  url: 'https://example.com/article',
-  title: 'Article',
-  publishedAt: '2026-01-01T00:00:00.000Z',
-  read: false,
-};
-
-const makeTest = () => {
-  const requests: { method: string; path: string; body: unknown }[] = [];
-  const fetch: typeof globalThis.fetch = async (input, init) => {
-    expect(init?.credentials).toBe('include');
-    const url = new URL(String(input), 'http://localhost');
-    const method = init?.method ?? 'GET';
-    requests.push({
-      method,
-      path: url.pathname,
-      body: init?.body ? JSON.parse(String(init.body)) : undefined,
-    });
-    if (method === 'GET' && url.pathname === '/api/feeds') {
-      return Response.json({ items: [] });
-    }
-    if (method === 'GET' && url.pathname === '/api/feeds/articles') {
-      return Response.json({ items: [article], hasMore: false });
-    }
-
-    return Response.json({ ok: true });
-  };
-  const layer = LinksClientLive.pipe(
-    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))
-  );
-  const registry = AtomRegistry.make();
-  const atoms = makeFeedAtoms(layer);
-  registry.mount(atoms.feeds);
-  registry.mount(atoms.articles);
-
-  return { registry, atoms, requests };
-};
-
-describe('feed atoms', () => {
-  it('marks articles without refetching feeds or the article page', async () => {
-    const { registry, atoms, requests } = makeTest();
+describe('feed infinite pages', () => {
+  it('loads the selected feed with a published-time cursor', async () => {
+    const first = [article(1), article(2)];
+    const second = [article(2), article(3)];
+    const { registry, atoms, requests } = makeTest([
+      page(first, true),
+      page(second, false),
+    ]);
     try {
-      await Effect.runPromise(
-        AtomRegistry.getResult(registry, atoms.feeds, {
-          suspendOnWaiting: true,
-        })
-      );
-      await Effect.runPromise(
-        AtomRegistry.getResult(registry, atoms.articles, {
-          suspendOnWaiting: true,
-        })
-      );
+      registry.set(atoms.query, { feedKey: 'feed', onlyUnread: true });
+      await runLoad(registry, atoms, true);
+      const initial = articleRequests(requests)[0];
+      expect(initial?.params.get('feedKey')).toBe('feed');
+      expect(initial?.params.get('read')).toBe('false');
+      expect(initial?.params.get('all')).toBe('false');
+      expect(initial?.params.get('offset')).toBe('0');
+      expect(initial?.params.get('before')).toBeNull();
+      await runLoad(registry, atoms, false);
+      const next = articleRequests(requests)[1];
+      expect(next?.params.get('before')).toBe(first[1]?.publishedAt);
+      expect(next?.params.get('beforeKey')).toBe(first[1]?.key);
+      expect(
+        registry.get(atoms.articles).items.map((item) => item.key)
+      ).toEqual([first[0]?.key, first[1]?.key, second[1]?.key]);
+      expect(registry.get(atoms.articles).hasMore).toBe(false);
+    } finally {
+      registry.dispose();
+    }
+  });
+});
+
+describe('feed infinite reset', () => {
+  it('resets the cursor when only-unread is disabled', async () => {
+    const first = [article(1)];
+    const { registry, atoms, requests } = makeTest([page(first, false)]);
+    try {
+      await runLoad(registry, atoms, true);
+      registry.set(atoms.query, { feedKey: '', onlyUnread: false });
+      await runLoad(registry, atoms, true);
+      const last = articleRequests(requests)[1];
+      expect(last?.params.get('feedKey')).toBe('');
+      expect(last?.params.get('all')).toBe('true');
+      expect(last?.params.get('before')).toBeNull();
+      expect(last?.params.get('beforeKey')).toBeNull();
+    } finally {
+      registry.dispose();
+    }
+  });
+});
+
+describe('feed marks', () => {
+  it('marks articles without refetching feeds or the article page', async () => {
+    const first = [article(1)];
+    const key = first[0]?.key ?? '';
+    const { registry, atoms, requests } = makeTest([page(first, false)]);
+    try {
+      await runLoad(registry, atoms, true);
       const loaded = requests.length;
-      expect(loaded).toBe(2);
-      registry.set(atoms.command, {
+      const exit = await runCommand(registry, atoms, {
         _tag: 'Mark',
-        key: article.key,
+        key,
         read: true,
       });
-      const exit = await Effect.runPromiseExit(
-        AtomRegistry.getResult(registry, atoms.command, {
-          suspendOnWaiting: true,
-        })
-      );
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(
         requests.filter((request) => request.method === 'GET')
       ).toHaveLength(loaded);
-      expect(requests).toContainEqual({
-        method: 'PATCH',
-        path: '/api/feeds/articles',
-        body: { key: article.key, read: true },
+      expect(requests).toContainEqual(
+        expect.objectContaining({
+          method: 'PATCH',
+          path: '/api/feeds/articles',
+          body: { key, read: true },
+        })
+      );
+    } finally {
+      registry.dispose();
+    }
+  });
+});
+
+describe('feed all refresh', () => {
+  it('syncs feeds and reloads the current list without RSS refreshes', async () => {
+    const alpha = 'a'.repeat(64);
+    const beta = 'b'.repeat(64);
+    const { registry, atoms, requests } = makeTest(
+      [page([], false)],
+      [feed(alpha), feed(beta)]
+    );
+    try {
+      await runLoad(registry, atoms, true);
+      const exit = await runCommand(registry, atoms, {
+        _tag: 'RefreshAll',
+        reload: true,
       });
+      expect(Exit.isSuccess(exit)).toBe(true);
+      await settle();
+      expect(
+        requests.filter((request) => request.path === '/api/feeds/refresh')
+      ).toHaveLength(0);
+      expect(
+        requests.filter(
+          (request) => request.method === 'GET' && request.path === '/api/feeds'
+        ).length
+      ).toBeGreaterThan(1);
+      expect(articleRequests(requests)).toHaveLength(2);
+    } finally {
+      registry.dispose();
+    }
+  });
+});
+
+describe('feed scoped refresh', () => {
+  it('syncs counts without reloading a list outside this view', async () => {
+    const alpha = 'a'.repeat(64);
+    const { registry, atoms, requests } = makeTest(
+      [page([], false)],
+      [feed(alpha)]
+    );
+    try {
+      await runLoad(registry, atoms, true);
+      const loaded = articleRequests(requests).length;
+      const exit = await runCommand(registry, atoms, {
+        _tag: 'Refresh',
+        key: alpha,
+      });
+      expect(Exit.isSuccess(exit)).toBe(true);
+      await settle();
+      expect(articleRequests(requests)).toHaveLength(loaded);
+      expect(
+        requests.filter((request) => request.path === '/api/feeds/refresh')
+      ).toHaveLength(0);
+    } finally {
+      registry.dispose();
+    }
+  });
+});
+
+describe('feed all-feed bulk marks', () => {
+  it('marks all feeds with an empty feed key and clears unread articles', async () => {
+    const first = [article(1), article(2, 'other')];
+    const { registry, atoms, requests } = makeTest([page(first, true)]);
+    try {
+      await runLoad(registry, atoms, true);
+      const exit = await runCommand(registry, atoms, {
+        _tag: 'MarkAll',
+        key: '',
+      });
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests).toContainEqual(
+        expect.objectContaining({
+          method: 'POST',
+          path: '/api/feeds/articles/mark-all',
+          body: { feedKey: '' },
+        })
+      );
+      expect(registry.get(atoms.articles).items).toEqual([]);
+      expect(registry.get(atoms.articles).hasMore).toBe(false);
+    } finally {
+      registry.dispose();
+    }
+  });
+});
+
+describe('feed scoped bulk marks', () => {
+  it('keeps other feeds while marking a scoped feed from all articles', async () => {
+    const first = [article(1, 'feed'), article(2, 'other')];
+    const { registry, atoms } = makeTest([page(first, true)]);
+    try {
+      await runLoad(registry, atoms, true);
+      await runCommand(registry, atoms, { _tag: 'MarkAll', key: 'feed' });
+      expect(
+        registry.get(atoms.articles).items.map((item) => item.feedKey)
+      ).toEqual(['other']);
+      expect(registry.get(atoms.articles).hasMore).toBe(true);
     } finally {
       registry.dispose();
     }

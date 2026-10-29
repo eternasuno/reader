@@ -5,14 +5,24 @@ import {
 } from '@effect/atom-solid/Hooks';
 import { Exit, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import { createEffect, createSignal, onCleanup } from 'solid-js';
+import {
+  type Accessor,
+  createComputed,
+  createEffect,
+  createSignal,
+  onCleanup,
+} from 'solid-js';
 import { makeFeedAtoms } from '../../lib/feeds';
 import { makeReadingAtoms } from '../../lib/links';
 import { makeReaderAtoms, readerError } from '../../lib/reader';
 import {
+  type BulkReadStatusChange,
+  bulkReadMatches,
   notifyReaderDataChanged,
   publishReadStatus,
+  READER_BULK_READ_STATUS_CHANGED,
   READER_READ_STATUS_CHANGED,
+  readBulkStatusFromEvent,
   readStatusFromEvent,
 } from './reader-status';
 
@@ -22,6 +32,7 @@ export type ReaderSelection = {
   title: string;
   url: string;
   read: boolean;
+  feedKey?: string | undefined;
 };
 
 export const useReaderStores = (kind: ReaderSelection['kind'], key: string) => {
@@ -52,17 +63,59 @@ export const useReaderStores = (kind: ReaderSelection['kind'], key: string) => {
 
 export type ReaderStores = ReturnType<typeof useReaderStores>;
 
-export const useReaderNotices = (selection: ReaderSelection) => {
+export const readerFeedKey = (
+  selection: Pick<ReaderSelection, 'feedKey'>,
+  source: { readonly feedKey?: string | undefined } | undefined
+): string | undefined => selection.feedKey ?? source?.feedKey;
+
+export const useReaderNotices = (
+  selection: ReaderSelection,
+  feedKey: Accessor<string | undefined> = () => selection.feedKey
+) => {
   const [read, setRead] = createSignal(selection.read);
   const [notice, setNotice] = createSignal('');
+  let pending: BulkReadStatusChange[] = [];
   const handleReadStatus = (event: Event) => {
     const change = readStatusFromEvent(event);
     if (change?.kind === selection.kind && change.key === selection.key)
       setRead(change.read);
   };
+  const handleBulkReadStatus = (event: Event) => {
+    const change = readBulkStatusFromEvent(event);
+    if (!change) return;
+    const resolved = feedKey();
+    if (bulkReadMatches(change, selection, resolved)) {
+      setRead(change.read);
+      return;
+    }
+    if (
+      selection.kind === 'feed' &&
+      change.scope.kind === 'singlefeed' &&
+      resolved === undefined
+    ) {
+      pending.push(change);
+    }
+  };
+  createComputed(() => {
+    const resolved = feedKey();
+    if (resolved === undefined || pending.length === 0) return;
+    const events = pending;
+    pending = [];
+    for (const change of events) {
+      if (bulkReadMatches(change, selection, resolved)) setRead(change.read);
+    }
+  });
   window.addEventListener(READER_READ_STATUS_CHANGED, handleReadStatus);
+  window.addEventListener(
+    READER_BULK_READ_STATUS_CHANGED,
+    handleBulkReadStatus
+  );
   onCleanup(() => {
     window.removeEventListener(READER_READ_STATUS_CHANGED, handleReadStatus);
+    window.removeEventListener(
+      READER_BULK_READ_STATUS_CHANGED,
+      handleBulkReadStatus
+    );
   });
 
   return { read, setRead, notice, setNotice };
@@ -109,8 +162,11 @@ export const toReaderBusy = (stores: ReaderStores) => () =>
   stores.feedMutation().waiting;
 
 export const toReaderStatus =
-  (stores: ReaderStores, notice: () => string) => () =>
-    readerError(stores.mutation()) ||
+  (
+    stores: Pick<ReaderStores, 'content' | 'readingMutation' | 'feedMutation'>,
+    notice: () => string
+  ) =>
+  () =>
     readerError(stores.content()) ||
     readerError(stores.readingMutation()) ||
     readerError(stores.feedMutation()) ||

@@ -23,7 +23,7 @@ export const ArticleRepositoryLive = Layer.effect(
         query<ArticleSource[]>(
           kind === 'link'
             ? 'SELECT title, url, read FROM reading_link WHERE owner = $owner AND key = $key;'
-            : 'SELECT title, url, read, description FROM feed_article WHERE owner = $owner AND key = $key;',
+            : 'SELECT title, url, read, description, feedKey FROM feed_article WHERE owner = $owner AND key = $key;',
           { owner, key }
         ).pipe(Effect.map((items) => items[0])),
       source: (owner, kind, key) =>

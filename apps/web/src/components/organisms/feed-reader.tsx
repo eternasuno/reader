@@ -1,109 +1,189 @@
 import {
   useAtom,
-  useAtomRefresh,
+  useAtomMount,
   useAtomSet,
   useAtomValue,
 } from '@effect/atom-solid/Hooks';
 import type { FeedArticle } from '@reader/api';
-import { Option } from 'effect';
+import { type Exit, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import { createEffect, createSignal, For, Show, untrack } from 'solid-js';
-import { makeFeedAtoms } from '../../lib/feeds';
+import { createEffect, createSignal, on, Show, untrack } from 'solid-js';
+import { resultError } from '../../lib/errors';
+import type { FeedCommand } from '../../lib/feeds';
+import type { MarkLoadedResult } from '../../lib/mark-loaded';
+import { useInfiniteLoader } from '../../pages/infinite-loader';
+import { useWorkspaceData } from '../../pages/workspace-state';
 import { FeedArticles } from '../molecules/feed-entries';
 import { ListToolbar } from '../molecules/list-toolbar';
-import { FeedManagement, FeedReadTabs } from './feed-subscriptions';
+import { FeedManagement } from './feed-subscriptions';
 import {
   createReadStatusProjection,
+  feedBulkScope,
+  hasUnread,
   notifyReaderDataChanged,
+  publishBulkReadStatus,
   publishReadStatus,
-  useReaderDataRefresh,
+  publishReadStatuses,
+  unreadKeys,
 } from './reader-status';
 
+type RunFeed = (
+  input: FeedCommand
+) => Promise<Exit.Exit<MarkLoadedResult | undefined, unknown>>;
+
+const publishMark = async (run: RunFeed, key: string, read: boolean) => {
+  const exit = await run({ _tag: 'Mark', key, read });
+  publishReadStatus(exit, { kind: 'feed', key, read });
+
+  return exit;
+};
+
+const publishMarkAll = async (
+  run: RunFeed,
+  key: string,
+  items: readonly FeedArticle[]
+) => {
+  const exit = await run({ _tag: 'MarkAll', key });
+  if (exit._tag === 'Success') {
+    publishBulkReadStatus(exit, {
+      kind: 'feed',
+      keys: items
+        .filter((item) => key === '' || item.feedKey === key)
+        .map((item) => item.key),
+      read: true,
+      scope: feedBulkScope(key),
+    });
+  }
+
+  return exit;
+};
+
 const subscribeFeed = (
-  run: (input: {
-    readonly _tag: 'Subscribe';
-    readonly url: string;
-  }) => Promise<{ readonly _tag: string }>,
+  run: RunFeed,
   setNotice: (value: string) => void,
   form: HTMLFormElement
 ) => {
   const url = String(new FormData(form).get('url') ?? '').trim();
   setNotice('');
+
   return run({ _tag: 'Subscribe', url }).then((exit) => {
-    if (exit._tag === 'Success') {
-      form.reset();
-    }
+    if (exit._tag === 'Success') form.reset();
   });
 };
 
 const saveFeedArticle = (
-  run: (input: {
-    readonly _tag: 'Save';
-    readonly key: string;
-  }) => Promise<{ readonly _tag: string }>,
+  run: RunFeed,
   setNotice: (value: string) => void,
   key: string
 ) => {
   setNotice('');
+
   return run({ _tag: 'Save', key }).then((exit) => {
-    if (exit._tag === 'Success') {
-      setNotice('已保存到稍后读');
-    }
+    if (exit._tag === 'Success') setNotice('已保存到稍后读');
   });
 };
 
-const useFeeds = () => {
-  const atoms = makeFeedAtoms();
-  const [query, setQuery] = useAtom(() => atoms.query);
-  const feeds = useAtomValue(() => atoms.feeds);
-  const articles = useAtomValue(() => atoms.articles);
-  const page = () => Option.getOrUndefined(AsyncResult.value(articles()));
-  const items = createReadStatusProjection('feed', () => page()?.items);
-  const mutation = useAtomValue(() => atoms.command);
-  const rawRun = useAtomSet(() => atoms.command, { mode: 'promiseExit' });
-  const reloadFeeds = useAtomRefresh(() => atoms.feeds);
-  const reloadArticles = useAtomRefresh(() => atoms.articles);
-  useReaderDataRefresh(reloadFeeds, reloadArticles);
-  const run = async (...args: Parameters<typeof rawRun>) => {
-    const exit = await rawRun(...args);
-    if (exit._tag === 'Success') {
+const useFeedSource = () => {
+  const data = useWorkspaceData();
+  const [query, setQuery] = useAtom(() => data.feeds.query);
+  const feeds = useAtomValue(() => data.feeds.feeds);
+  const articles = useAtomValue(() => data.feeds.articles);
+  const mutation = useAtomValue(() => data.feeds.command);
+  const rawRun = useAtomSet(() => data.feeds.command, { mode: 'promiseExit' });
+  const load = useAtomSet(() => data.feeds.load, { mode: 'promiseExit' });
+  useAtomMount(() => data.feeds.load);
+  const items = createReadStatusProjection('feed', () => articles().items);
+  const pending = () => mutation().waiting;
+  const loader = useInfiniteLoader(articles, pending, (reset) =>
+    load({ reset })
+  );
+
+  return {
+    data,
+    query,
+    setQuery,
+    feeds,
+    articles,
+    mutation,
+    rawRun,
+    items,
+    pending,
+    ...loader,
+  };
+};
+
+const useFeedActions = (source: ReturnType<typeof useFeedSource>) => {
+  const [notice, setNotice] = createSignal('');
+  const [markError, setMarkError] = createSignal('');
+  const run = async (input: FeedCommand) => {
+    const exit = await source.rawRun(input);
+    if (exit._tag === 'Success' && input._tag === 'Save') {
       notifyReaderDataChanged();
     }
-    return exit;
-  };
-  const mark = async (key: string, read: boolean) => {
-    const exit = await rawRun({ _tag: 'Mark', key, read });
-    publishReadStatus(exit, { kind: 'feed', key, read });
 
     return exit;
   };
-  const [notice, setNotice] = createSignal('');
+  const mark = (key: string, read: boolean) => {
+    if (source.pending()) return Promise.resolve(undefined);
+
+    return publishMark(source.rawRun, key, read);
+  };
+  const markAll = (key: string) => {
+    if (source.pending()) return Promise.resolve(undefined);
+
+    return publishMarkAll(source.rawRun, key, source.items() ?? []);
+  };
+  const markLoaded = async () => {
+    if (source.pending()) return;
+
+    const keys = unreadKeys(source.items());
+    if (keys.length === 0) return;
+
+    setMarkError('');
+    const exit = await source.rawRun({
+      _tag: 'MarkLoaded',
+      keys,
+      generation: source.articles().generation,
+    });
+    if (exit._tag === 'Success' && exit.value) {
+      publishReadStatuses(exit, 'feed', exit.value.keys);
+      setMarkError(exit.value.error);
+    }
+  };
+  const refresh = async () => {
+    if (source.pending()) return;
+
+    await source.rawRun({ _tag: 'RefreshAll', reload: true });
+  };
   const subscribe = (form: HTMLFormElement) =>
     subscribeFeed(run, setNotice, form);
   const save = (key: string) => saveFeedArticle(run, setNotice, key);
 
   return {
-    query,
-    setQuery,
-    feeds,
-    articles,
-    page,
-    items,
-    mutation,
-    run,
+    notice,
+    markError,
     mark,
-    reloadFeeds,
-    reloadArticles,
+    markAll,
+    markLoaded,
+    refresh,
     subscribe,
     save,
-    notice,
-    pending: () => mutation().waiting,
+  };
+};
+
+const useFeeds = () => {
+  const source = useFeedSource();
+
+  return {
+    ...source,
+    ...useFeedActions(source),
   };
 };
 
 export type FeedReaderModel = ReturnType<typeof useFeeds>;
 
 export type FeedReaderProps = {
+  readonly active?: boolean | undefined;
   readonly onItems?: ((items: readonly FeedArticle[]) => void) | undefined;
   readonly onSelect?: ((item: FeedArticle) => void) | undefined;
   readonly selectedKey?: string | undefined;
@@ -112,6 +192,7 @@ export type FeedReaderProps = {
 };
 
 const useFeedReader = (props: FeedReaderProps) => {
+  const data = useWorkspaceData();
   const model = useFeeds();
   const loaded = () => model.items();
   let published: readonly FeedArticle[] | undefined;
@@ -122,30 +203,42 @@ const useFeedReader = (props: FeedReaderProps) => {
       untrack(() => props.onItems?.(items));
     }
   });
+  if (!props.management) {
+    createEffect(
+      on(
+        () =>
+          [
+            props.feedKey ?? '',
+            data.onlyUnread(),
+            props.active ?? true,
+          ] as const,
+        ([feedKey, onlyUnread, active]) => {
+          model.setQuery({ feedKey, onlyUnread });
+          if (active) model.reload();
+        }
+      )
+    );
+  }
   const feeds = () =>
-    Option.getOrUndefined(AsyncResult.value(model.feeds()))?.items ?? [];
-  const integrated = () => props.onSelect !== undefined;
-  const managing = () => props.management === true;
-
-  createEffect(() => {
-    const next = props.feedKey;
-    if (next === undefined) {
-      return;
-    }
-    if (model.query().feedKey !== next) {
-      model.setQuery((q) => ({ ...q, feedKey: next, page: 0 }));
-    }
-  });
-
+    Option.getOrUndefined(AsyncResult.value(model.feeds()))?.items;
+  const feedKey = () => props.feedKey ?? '';
   const feedTitle = () => {
-    const key = props.feedKey ?? model.query().feedKey;
-    if (!key) {
-      return '订阅文章';
-    }
-    return feeds().find((feed) => feed.key === key)?.title ?? 'RSS';
-  };
+    if (!feedKey()) return '全部文章';
 
-  return { model, loaded, feeds, integrated, managing, feedTitle };
+    return feeds()?.find((feed) => feed.key === feedKey())?.title ?? '订阅文章';
+  };
+  const unread = () => {
+    const items = feeds();
+    if (!items) return undefined;
+    if (!feedKey())
+      return items.reduce((total, feed) => total + feed.unreadCount, 0);
+
+    return items.find((feed) => feed.key === feedKey())?.unreadCount;
+  };
+  const managing = () => props.management === true;
+  const loadedUnread = () => hasUnread(model.items());
+
+  return { model, feeds, feedTitle, unread, managing, loadedUnread };
 };
 
 export const FeedReader = (props: FeedReaderProps) => {
@@ -160,75 +253,35 @@ const FeedReaderContent = (input: {
   readonly view: FeedReaderView;
   readonly props: FeedReaderProps;
 }) => {
-  const { model, loaded, integrated, managing, feedTitle } = input.view;
-  const props = input.props;
+  const { model, feedTitle, unread, managing, loadedUnread } = input.view;
 
   return (
     <Show
       when={managing()}
       fallback={
-        <Show when={integrated()} fallback={<StandaloneFeeds model={model} />}>
+        <div class="flex h-full min-h-0 flex-col">
           <ListToolbar
             title={feedTitle()}
-            count={loaded()?.length}
-            read={model.query().read}
+            unread={unread()}
+            loadedUnread={loadedUnread()}
+            onlyUnread={model.query().onlyUnread}
             pending={model.pending()}
-            onRefresh={model.reloadArticles}
-            onRefreshFeed={
-              (props.feedKey ?? model.query().feedKey)
-                ? () => {
-                    void model.run({
-                      _tag: 'Refresh',
-                      key: props.feedKey ?? model.query().feedKey,
-                    });
-                  }
-                : undefined
-            }
-            onFilter={(read) =>
-              model.setQuery((q) => ({ ...q, read, page: 0 }))
-            }
+            error={resultError(model.mutation()) || model.markError()}
+            onRefresh={() => void model.refresh()}
+            onMarkAll={() => void model.markAll(input.props.feedKey ?? '')}
+            onMarkLoaded={() => void model.markLoaded()}
+            onOnlyUnreadChange={model.data.setOnlyUnread}
           />
           <FeedArticles
             model={model}
-            onSelect={props.onSelect}
-            selectedKey={props.selectedKey}
+            active={input.props.active ?? true}
+            onSelect={input.props.onSelect}
+            selectedKey={input.props.selectedKey}
           />
-        </Show>
+        </div>
       }
     >
       <FeedManagement model={model} />
     </Show>
   );
 };
-
-const StandaloneFeeds = (props: { readonly model: FeedReaderModel }) => (
-  <>
-    <FeedManagement model={props.model} />
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-base-300 py-5">
-      <select
-        class="select w-auto max-w-full rounded-none"
-        aria-label="筛选订阅源"
-        value={props.model.query().feedKey}
-        onChange={(event) =>
-          props.model.setQuery((q) => ({
-            ...q,
-            feedKey: event.currentTarget.value,
-            page: 0,
-          }))
-        }
-      >
-        <option value="">全部订阅源</option>
-        <For
-          each={
-            Option.getOrUndefined(AsyncResult.value(props.model.feeds()))
-              ?.items ?? []
-          }
-        >
-          {(feed) => <option value={feed.key}>{feed.title}</option>}
-        </For>
-      </select>
-      <FeedReadTabs model={props.model} />
-    </div>
-    <FeedArticles model={props.model} />
-  </>
-);

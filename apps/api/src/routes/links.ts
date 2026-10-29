@@ -1,5 +1,13 @@
 import { LinksUnavailable, ReaderApi } from '@reader/api';
-import { listLinks, markLink, removeLink, saveLink } from '@reader/business';
+import {
+  countUnreadLinks,
+  listLinks,
+  markAllLinks,
+  markLink,
+  markLoadedLinks,
+  removeLink,
+  saveLink,
+} from '@reader/business';
 import { Effect, Layer } from 'effect';
 import { HttpServer } from 'effect/http';
 import { HttpApiBuilder } from 'effect/http-api';
@@ -26,39 +34,44 @@ const databaseFailure = <A, E extends { readonly _tag: string }, R>(
     )
   );
 
+const withSession = <A, E, R>(use: (owner: string) => Effect.Effect<A, E, R>) =>
+  Effect.flatMap(Session, (user) => use(user.id));
+
 export const linkHandlers = HttpApiBuilder.group(ReaderApi, 'links', (group) =>
   group
+    .handle('unreadCount', () =>
+      withSession(countUnreadLinks).pipe(databaseFailure)
+    )
     .handle('list', ({ query }) =>
-      Effect.gen(function* () {
-        const user = yield* Session;
-
-        return yield* listLinks(
-          user.id,
+      withSession((owner) =>
+        listLinks(
+          owner,
           query.read ?? false,
-          query.offset ?? 0
-        );
-      }).pipe(databaseFailure)
+          query.offset ?? 0,
+          query.all ?? false,
+          query.before ?? '',
+          query.beforeKey ?? ''
+        )
+      ).pipe(databaseFailure)
     )
     .handle('add', ({ payload }) =>
-      Effect.gen(function* () {
-        const user = yield* Session;
-
-        return yield* saveLink(user.id, payload.url);
-      }).pipe(databaseFailure)
+      withSession((owner) => saveLink(owner, payload.url)).pipe(databaseFailure)
     )
     .handle('mark', ({ payload }) =>
-      Effect.gen(function* () {
-        const user = yield* Session;
-
-        return yield* markLink(user.id, payload.key, payload.read);
-      }).pipe(databaseFailure)
+      withSession((owner) => markLink(owner, payload.key, payload.read)).pipe(
+        databaseFailure
+      )
+    )
+    .handle('markAll', () => withSession(markAllLinks).pipe(databaseFailure))
+    .handle('markLoaded', ({ payload }) =>
+      withSession((owner) => markLoadedLinks(owner, payload.keys)).pipe(
+        databaseFailure
+      )
     )
     .handle('remove', ({ payload }) =>
-      Effect.gen(function* () {
-        const user = yield* Session;
-
-        return yield* removeLink(user.id, payload.key);
-      }).pipe(databaseFailure)
+      withSession((owner) => removeLink(owner, payload.key)).pipe(
+        databaseFailure
+      )
     )
 );
 

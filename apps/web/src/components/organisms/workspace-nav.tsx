@@ -1,129 +1,25 @@
-import { useAtomRefresh, useAtomValue } from '@effect/atom-solid/Hooks';
-import { useNavigate } from '@solidjs/router';
+import {
+  useAtomRefresh,
+  useAtomSet,
+  useAtomValue,
+} from '@effect/atom-solid/Hooks';
+import type { Feed } from '@reader/api';
 import { Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import {
-  createEffect,
-  createSignal,
-  For,
-  type JSX,
-  on,
-  Show,
-  splitProps,
-} from 'solid-js';
-import { logout } from '../../lib/auth';
-import { makeFeedAtoms } from '../../lib/feeds';
-import { Button } from '../atoms/button';
+import { type Accessor, createEffect, on } from 'solid-js';
+import { useWorkspaceData } from '../../pages/workspace-state';
+import { NavButton } from '../atoms/nav-item';
 import { ReaderIcon } from '../atoms/reader-icon';
+import { FeedNavList } from '../molecules/feed-nav-list';
+import { SourceNavRow } from '../molecules/source-nav';
+import { WorkspaceAccountMenu } from './workspace-account-menu';
+import {
+  useFeedCommand,
+  useSourceCommand,
+  useUnreadRefresh,
+} from './workspace-nav-commands';
 
-const NavIcon = (props: Parameters<typeof ReaderIcon>[0]) => (
-  <ReaderIcon {...props} class="w-5 shrink-0 text-[#aaa3b2]" />
-);
-
-type NavButtonProps = JSX.ButtonHTMLAttributes<HTMLButtonElement> & {
-  readonly active?: boolean;
-};
-
-const NavButton = (props: NavButtonProps) => {
-  const [local, rest] = splitProps(props, ['class', 'active']);
-  return (
-    <Button
-      {...rest}
-      type="button"
-      aria-current={local.active ? 'page' : undefined}
-      class={`flex min-h-9 cursor-pointer items-center rounded px-2.5 py-2 text-left aria-[current=page]:bg-neutral aria-[current=page]:text-neutral-content max-sm:min-h-11 ${local.class ?? ''}`}
-    />
-  );
-};
-
-const SignOutButton = () => {
-  const navigate = useNavigate();
-  const [leaving, setLeaving] = createSignal(false);
-  const [error, setError] = createSignal('');
-  const signOut = async (): Promise<void> => {
-    setLeaving(true);
-    setError('');
-    try {
-      await logout();
-      navigate('/login');
-    } catch {
-      setError('退出失败，请重试');
-    } finally {
-      setLeaving(false);
-    }
-  };
-
-  return (
-    <>
-      <NavButton
-        class="gap-1.5"
-        disabled={leaving()}
-        onClick={() => void signOut()}
-      >
-        <ReaderIcon name="logout" />
-        {leaving() ? '退出中…' : '退出登录'}
-      </NavButton>
-      <Show when={error()}>
-        {(message) => (
-          <p role="alert" class="px-2.5 py-1">
-            {message()}
-          </p>
-        )}
-      </Show>
-    </>
-  );
-};
-
-const FeedNavList = (props: {
-  readonly activeKey: string;
-  readonly revision: number;
-  readonly onPick: (key: string) => void;
-}) => {
-  const atoms = makeFeedAtoms();
-  const feeds = useAtomValue(() => atoms.feeds);
-  const refresh = useAtomRefresh(() => atoms.feeds);
-  createEffect(() => {
-    if (props.revision >= 0) refresh();
-  });
-  const items = () =>
-    Option.getOrUndefined(AsyncResult.value(feeds()))?.items ?? [];
-  createEffect(
-    on([feeds, () => props.activeKey], ([result, activeKey]) => {
-      if (
-        activeKey &&
-        AsyncResult.isSuccess(result) &&
-        !result.waiting &&
-        !result.value.items.some((feed) => feed.key === activeKey)
-      ) {
-        props.onPick('');
-      }
-    })
-  );
-
-  return (
-    <ul aria-label="订阅源" class="mt-1 min-h-20 flex-1">
-      <For
-        each={items()}
-        fallback={<li class="p-3 text-xs text-[#929295]">尚未订阅</li>}
-      >
-        {(feed) => (
-          <li>
-            <NavButton
-              class="w-full gap-3"
-              active={feed.key === props.activeKey}
-              onClick={() => props.onPick(feed.key)}
-            >
-              <NavIcon name="feed" />
-              <span class="min-w-0 truncate">{feed.title}</span>
-            </NavButton>
-          </li>
-        )}
-      </For>
-    </ul>
-  );
-};
-
-export const WorkspaceNav = (props: {
+type WorkspaceNavProps = {
   readonly scope: 'later' | 'rss';
   readonly feedKey: string;
   readonly feedRevision: number;
@@ -133,56 +29,171 @@ export const WorkspaceNav = (props: {
   readonly onManage: () => void;
   readonly onPickFeed: (key: string) => void;
   readonly onSettings: () => void;
-}) => (
+};
+
+const useMissingFeedGuard = (
+  feeds: Accessor<
+    AsyncResult.AsyncResult<{ readonly items: readonly Feed[] }, unknown>
+  >,
+  activeKey: Accessor<string>,
+  onPick: (key: string) => void
+) => {
+  createEffect(
+    on([feeds, activeKey], ([result, key]) => {
+      if (
+        key &&
+        AsyncResult.isSuccess(result) &&
+        !result.waiting &&
+        !result.value.items.some((feed) => feed.key === key)
+      ) {
+        onPick('');
+      }
+    })
+  );
+};
+
+const useWorkspaceAtoms = () => {
+  const data = useWorkspaceData();
+
+  return {
+    data,
+    feeds: useAtomValue(() => data.feeds.feeds),
+    articles: useAtomValue(() => data.feeds.articles),
+    mutation: useAtomValue(() => data.feeds.command),
+    refreshFeeds: useAtomRefresh(() => data.feeds.feeds),
+    runFeed: useAtomSet(() => data.feeds.command, { mode: 'promiseExit' }),
+    unread: useAtomValue(() => data.reading.unread),
+    refreshUnread: useAtomRefresh(() => data.reading.unread),
+    linkArticles: useAtomValue(() => data.reading.state),
+    readingMutation: useAtomValue(() => data.reading.command),
+    runLink: useAtomSet(() => data.reading.command, { mode: 'promiseExit' }),
+  };
+};
+
+const useWorkspaceNav = (props: WorkspaceNavProps) => {
+  const sources = useWorkspaceAtoms();
+  const feedCommand = useFeedCommand(
+    sources.runFeed,
+    sources.articles,
+    () => sources.mutation().waiting
+  );
+  useUnreadRefresh(sources.refreshFeeds, sources.refreshUnread);
+  createEffect(() => {
+    if (props.feedRevision >= 0) sources.refreshFeeds();
+  });
+  const feedItems = () =>
+    Option.getOrUndefined(AsyncResult.value(sources.feeds()))?.items ?? [];
+  const feedUnread = () =>
+    feedItems().reduce((total, feed) => total + feed.unreadCount, 0);
+  const linkUnread = () =>
+    Option.getOrUndefined(AsyncResult.value(sources.unread()))?.count;
+  const feedBusy = () =>
+    sources.mutation().waiting || feedCommand.feedPending() !== undefined;
+  const sourceCommand = useSourceCommand({
+    runFeed: sources.runFeed,
+    runLink: sources.runLink,
+    feedBusy,
+    linkBusy: () => sources.readingMutation().waiting,
+    feedArticles: sources.articles,
+    linkArticles: sources.linkArticles,
+    rssActive: () => props.scope === 'rss',
+  });
+  useMissingFeedGuard(sources.feeds, () => props.feedKey, props.onPickFeed);
+
+  return {
+    feedItems,
+    feedUnread,
+    linkUnread,
+    feedBusy,
+    onlyUnread: sources.data.onlyUnread,
+    setOnlyUnread: sources.data.setOnlyUnread,
+    ...feedCommand,
+    ...sourceCommand,
+  };
+};
+
+type NavSourceProps = {
+  readonly props: WorkspaceNavProps;
+  readonly nav: ReturnType<typeof useWorkspaceNav>;
+};
+
+const WorkspaceSourceNav = (input: NavSourceProps) => (
+  <>
+    <SourceNavRow
+      icon="all"
+      label="全部文章"
+      active={input.props.scope === 'rss' && !input.props.feedKey}
+      count={input.nav.feedUnread()}
+      busy={input.nav.sourceBusy()}
+      onlyUnread={input.nav.onlyUnread()}
+      pending={input.nav.sourcePendingLabel('rss')}
+      error={input.nav.sourceErrorMessage('rss')}
+      onPick={input.props.onPickRss}
+      onRefresh={input.nav.refreshRss}
+      onMarkAll={input.nav.markAllRss}
+      onOnlyUnreadChange={input.nav.setOnlyUnread}
+    />
+    <SourceNavRow
+      icon="bookmark"
+      label="稍后阅读"
+      active={input.props.scope === 'later'}
+      count={input.nav.linkUnread()}
+      busy={input.nav.sourceBusy()}
+      onlyUnread={input.nav.onlyUnread()}
+      pending={input.nav.sourcePendingLabel('later')}
+      error={input.nav.sourceErrorMessage('later')}
+      onPick={input.props.onPickLater}
+      onRefresh={input.nav.refreshLater}
+      onMarkAll={input.nav.markAllLater}
+      onOnlyUnreadChange={input.nav.setOnlyUnread}
+    />
+  </>
+);
+
+const WorkspaceNavView = (input: NavSourceProps) => (
   <nav
     aria-label="阅读导航"
-    class={`flex min-w-0 flex-col gap-1 overflow-y-auto border-r border-base-300 bg-base-100 px-3 pb-3 ${props.class ?? ''}`}
+    class={`flex min-h-0 min-w-0 flex-col gap-1 overflow-hidden border-r border-base-300 bg-base-100 px-3 pb-3 ${input.props.class ?? ''}`}
   >
-    <h1 class="mb-2 flex min-h-16 items-center gap-2.5 px-2 text-xl font-semibold tracking-[0.08em]">
-      <ReaderIcon name="feed" class="size-7 text-[#d5a15c]" />
-      留白
-      <span class="ml-auto text-xs tracking-[0.15em] text-[#929295]">
-        READER
-      </span>
-    </h1>
-    <NavButton
-      class="w-full gap-3"
-      active={props.scope === 'later'}
-      onClick={props.onPickLater}
-    >
-      <NavIcon name="bookmark" />
-      稍后阅读
-    </NavButton>
-    <NavButton
-      class="w-full gap-3"
-      active={props.scope === 'rss' && !props.feedKey}
-      onClick={props.onPickRss}
-    >
-      <NavIcon name="all" />
-      全部文章
-    </NavButton>
-    <div class="mt-5 flex items-center justify-between pl-3 text-xs tracking-[0.06em] text-[#a2a2a7]">
+    <header class="mb-2 flex min-h-16 shrink-0 items-center justify-between gap-2 px-2">
+      <h1 class="flex items-center gap-2.5 text-xl font-semibold tracking-[0.08em]">
+        <ReaderIcon name="feed" class="size-7 text-[#d5a15c]" />
+        留白
+      </h1>
+      <WorkspaceAccountMenu
+        onSettings={input.props.onSettings}
+        onManage={input.props.onManage}
+      />
+    </header>
+    <WorkspaceSourceNav props={input.props} nav={input.nav} />
+    <div class="mt-5 flex shrink-0 items-center justify-between pl-3 text-xs tracking-[0.06em] text-[#a2a2a7]">
       <span>订阅源</span>
       <NavButton
         class="w-9 justify-center"
-        aria-label="管理订阅"
-        title="管理订阅"
-        onClick={props.onManage}
+        aria-label="添加订阅"
+        title="添加订阅"
+        onClick={input.props.onManage}
       >
         <ReaderIcon name="plus" />
       </NavButton>
     </div>
     <FeedNavList
-      activeKey={props.feedKey}
-      revision={props.feedRevision}
-      onPick={props.onPickFeed}
+      activeKey={input.props.feedKey}
+      rssActive={input.props.scope === 'rss'}
+      feeds={input.nav.feedItems()}
+      busy={input.nav.feedBusy()}
+      onlyUnread={input.nav.onlyUnread()}
+      pending={input.nav.feedPending()}
+      error={input.nav.feedError()}
+      onPick={input.props.onPickFeed}
+      onCommand={input.nav.runFeedCommand}
+      onOnlyUnreadChange={input.nav.setOnlyUnread}
     />
-    <div class="mt-auto flex flex-wrap border-t border-base-300 pt-3 text-xs text-[#a6a6ab]">
-      <NavButton class="gap-1.5" onClick={props.onSettings}>
-        <ReaderIcon name="settings" />
-        设置
-      </NavButton>
-      <SignOutButton />
-    </div>
   </nav>
 );
+
+export const WorkspaceNav = (props: WorkspaceNavProps) => {
+  const nav = useWorkspaceNav(props);
+
+  return <WorkspaceNavView props={props} nav={nav} />;
+};

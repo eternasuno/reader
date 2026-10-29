@@ -1,48 +1,49 @@
-import { Index, Show } from 'solid-js';
+import type { InfiniteState } from '../../lib/infinite';
 import type { ReadingLink } from '../../lib/links';
+import { InfiniteEntries } from '../molecules/infinite-entries';
 import { ReadingItem } from '../molecules/reading-item';
 
 type ReadingEntriesProps = {
-  readonly read: boolean;
+  readonly onlyUnread: boolean;
+  readonly active?: boolean | undefined;
   readonly items: readonly ReadingLink[] | undefined;
+  readonly state: InfiniteState<ReadingLink>;
   readonly pending: boolean;
   readonly onToggle: (item: ReadingLink) => void;
   readonly onDelete: (item: ReadingLink) => void;
+  readonly onLoadMore: () => void;
+  readonly onRetry: () => void;
   readonly onSelect?: ((item: ReadingLink) => void) | undefined;
   readonly selectedKey?: string | undefined;
 };
 
-const emptyHint = (read: boolean): string =>
-  read ? '读完后，手动标记一下。' : '添加一个链接，留给下次阅读。';
+const emptyHint = (onlyUnread: boolean): string =>
+  onlyUnread ? '读完后，手动标记一下。' : '添加一个链接，留给下次阅读。';
 
-const emptyTitle = (read: boolean): string =>
-  read ? '还没有已读文章' : '清单很轻，刚刚好。';
-
-const ReadingEmpty = (props: { read: boolean }) => (
-  <div class="py-20 text-center">
-    <p class="text-lg">{emptyTitle(props.read)}</p>
-    <p class="mt-3 text-sm text-base-content/50">{emptyHint(props.read)}</p>
-  </div>
-);
+const emptyTitle = (onlyUnread: boolean): string =>
+  onlyUnread ? '没有未读文章' : '清单很轻，刚刚好。';
 
 export const ReadingEntries = (props: ReadingEntriesProps) => (
-  <Show
-    when={props.items?.length}
-    fallback={<ReadingEmpty read={props.read} />}
+  <InfiniteEntries
+    items={props.items ?? []}
+    state={props.state}
+    active={props.active ?? true}
+    getKey={(item) => item.key}
+    estimateSize={108}
+    emptyTitle={emptyTitle(props.onlyUnread)}
+    emptyHint={emptyHint(props.onlyUnread)}
+    onLoadMore={props.onLoadMore}
+    onRetry={props.onRetry}
   >
-    <ul class="reading-entries">
-      <Index each={props.items}>
-        {(item) => (
-          <ReadingItem
-            item={item()}
-            pending={props.pending}
-            onToggle={props.onToggle}
-            onDelete={props.onDelete}
-            onSelect={props.onSelect}
-            selectedKey={props.selectedKey}
-          />
-        )}
-      </Index>
-    </ul>
-  </Show>
+    {(item) => (
+      <ReadingItem
+        item={item}
+        pending={props.pending}
+        onToggle={props.onToggle}
+        onDelete={props.onDelete}
+        onSelect={props.onSelect}
+        selectedKey={props.selectedKey}
+      />
+    )}
+  </InfiniteEntries>
 );
