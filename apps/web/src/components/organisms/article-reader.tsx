@@ -1,6 +1,7 @@
 import { useParams } from '@solidjs/router';
 import { createSignal, Show } from 'solid-js';
 import { readerError } from '../../lib/reader';
+import { WebpageFrame } from '../molecules/article-frame';
 import { ErrorToast, useErrorToast } from '../molecules/error-toast';
 import {
   ReaderActions,
@@ -79,6 +80,7 @@ const useReaderView = (
   const url = () => source()?.url || selection.url || item()?.url || '';
   const label = () => (item() ? '重新提取' : '提取正文');
   const [sourceMode, setSourceMode] = createSignal<'rss' | 'extracted'>();
+  const [webpage, setWebpage] = createSignal(false);
   const sourceState = () =>
     readerSourceState(!!item(), source()?.description, sourceMode());
   const extracted = () => sourceState().extracted;
@@ -86,9 +88,11 @@ const useReaderView = (
   const onExtract = async () => {
     if (await extract()) {
       setSourceMode('extracted');
+      setWebpage(false);
     }
   };
   const toggleSource = () => {
+    setWebpage(false);
     if (sourceState().canToggle) {
       setSourceMode(extracted() ? 'rss' : 'extracted');
     } else {
@@ -108,6 +112,8 @@ const useReaderView = (
     getSelection,
     extracted,
     sourceState,
+    webpage,
+    toggleWebpage: () => setWebpage((current) => !current),
     onExtract,
     toggleSource,
   };
@@ -169,6 +175,8 @@ const ReaderHeader = (props: {
       actionLabel={props.view.label()}
       canToggleSource={props.view.sourceState().canToggle}
       onToggleSource={props.view.toggleSource}
+      webpage={props.view.webpage()}
+      onToggleWebpage={props.view.toggleWebpage}
       sourceLabel={
         props.view.sourceState().canToggle
           ? (props.view.extracted() && '显示 RSS 内容') || '显示提取正文'
@@ -207,27 +215,34 @@ const ReaderBody = (props: ReaderBodyProps) => {
         stores={stores}
         notices={notices}
       />
-      <div class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
-        <div class="mx-auto flex max-w-208 flex-col gap-4 px-6 py-8 max-sm:px-4 max-sm:py-6">
-          <ReaderTitle title={view.title()} url={view.url()} />
-          <ReaderSourceLink url={view.url()} />
-          <Show when={view.status()}>
-            {(message) => (
-              <p
-                class="text-sm leading-relaxed text-base-content/60"
-                role="status"
-              >
-                {message()}
-              </p>
-            )}
-          </Show>
-          <ReaderContent
-            stores={stores}
-            item={view.item}
-            extracted={view.extracted()}
-          />
-        </div>
-      </div>
+      <Show
+        when={view.webpage()}
+        fallback={
+          <div class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
+            <div class="mx-auto flex max-w-208 flex-col gap-4 px-6 py-8 max-sm:px-4 max-sm:py-6">
+              <ReaderTitle title={view.title()} url={view.url()} />
+              <ReaderSourceLink url={view.url()} />
+              <Show when={view.status()}>
+                {(message) => (
+                  <p
+                    class="text-sm leading-relaxed text-base-content/60"
+                    role="status"
+                  >
+                    {message()}
+                  </p>
+                )}
+              </Show>
+              <ReaderContent
+                stores={stores}
+                item={view.item}
+                extracted={view.extracted()}
+              />
+            </div>
+          </div>
+        }
+      >
+        <WebpageFrame url={view.url()} />
+      </Show>
       <Show when={toast.message()}>
         {(message) => (
           <ErrorToast message={message()} onDismiss={toast.dismiss} />

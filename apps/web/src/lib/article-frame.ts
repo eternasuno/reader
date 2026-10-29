@@ -1,3 +1,23 @@
+export const webpageFrameUrl = (
+  value: string,
+  appOrigin: string
+): string | undefined => {
+  try {
+    const url = new URL(value);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.origin === appOrigin
+    )
+      return;
+
+    return url.href;
+  } catch {
+    return;
+  }
+};
+
 export const articleFrameHeight = (
   event: { source: unknown; data: unknown },
   frameWindow: unknown,

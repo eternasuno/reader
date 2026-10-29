@@ -1,5 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { articleFrameHeight } from '../../../src/lib/article-frame';
+import {
+  articleFrameHeight,
+  webpageFrameUrl,
+} from '../../../src/lib/article-frame';
+
+describe('inline webpage URLs', () => {
+  it('embeds only external HTTP(S) pages without credentials', () => {
+    const origin = 'https://reader.example.com';
+    expect(webpageFrameUrl('https://news.example.com/article', origin)).toBe(
+      'https://news.example.com/article'
+    );
+    expect(webpageFrameUrl('http://news.example.com/article', origin)).toBe(
+      'http://news.example.com/article'
+    );
+    for (const url of [
+      'https://reader.example.com/article',
+      '/article',
+      'javascript:alert(1)',
+      'data:text/html,test',
+      'https://user:pass@news.example.com/article',
+      'invalid',
+      '',
+    ]) {
+      expect(webpageFrameUrl(url, origin)).toBeUndefined();
+    }
+  });
+});
 
 describe('article frame resize messages', () => {
   const source = {};

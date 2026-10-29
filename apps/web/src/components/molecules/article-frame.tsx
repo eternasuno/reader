@@ -1,6 +1,12 @@
-import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  Show,
+} from 'solid-js';
 import stylesheetUrl from '../../index.css?url';
-import { articleFrameHeight } from '../../lib/article-frame';
+import { articleFrameHeight, webpageFrameUrl } from '../../lib/article-frame';
 
 const randomSecret = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(24)), (byte) =>
@@ -58,6 +64,43 @@ const scopeContent = (html: string) => {
 
 const articleBodyClass =
   'flow-root mx-auto max-w-3xl bg-[#121212] text-[#d4d4d8] font-[system-ui,sans-serif] text-lg leading-[1.9] [overflow-wrap:anywhere] max-sm:text-base';
+
+export const WebpageFrame = (props: { url: string }) => (
+  <div class="flex min-h-0 flex-1 flex-col">
+    <p class="shrink-0 border-b border-base-200 px-4 py-2 text-xs leading-relaxed text-base-content/60">
+      部分网站不允许内嵌或需要登录；若显示异常，请
+      <a
+        class="link mx-1"
+        href={props.url}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        打开原文
+      </a>
+      。
+    </p>
+    <Show
+      when={webpageFrameUrl(props.url, window.location.origin)}
+      fallback={
+        <p class="p-6 text-sm text-base-content/60">
+          此地址不支持安全内嵌，请使用上方链接打开原文。
+        </p>
+      }
+    >
+      {(url) => (
+        <iframe
+          title="内嵌原网页"
+          class="block min-h-0 w-full flex-1 border-0 bg-white"
+          src={url()}
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+          referrerpolicy="no-referrer"
+          allow="fullscreen"
+          allowfullscreen
+        />
+      )}
+    </Show>
+  </div>
+);
 
 export const ArticleFrame = (props: { html: string }) => {
   let frame!: HTMLIFrameElement;

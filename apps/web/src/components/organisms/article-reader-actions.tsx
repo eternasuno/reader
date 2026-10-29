@@ -58,6 +58,8 @@ type ReaderActionsProps = {
   onPrevious?: (() => void) | undefined;
   onNext?: (() => void) | undefined;
   onToggleSource: () => void;
+  webpage: boolean;
+  onToggleWebpage: () => void;
   sourceLabel: string;
   canToggleSource: boolean;
   canMark: boolean;
@@ -77,10 +79,22 @@ const markLabel = (read: boolean) => (read ? '标为未读' : '标为已读');
 const ReaderPrimaryActions = (props: ReaderActionsProps) => (
   <>
     <IconButton
-      disabled={props.extractDisabled && !props.canToggleSource}
-      label={props.extracting ? '正在提取…' : props.sourceLabel}
+      disabled={
+        !props.webpage && props.extractDisabled && !props.canToggleSource
+      }
+      label={
+        (props.webpage && '返回文章视图') ||
+        (props.extracting && '正在提取…') ||
+        props.sourceLabel
+      }
       busy={props.extracting}
-      onClick={props.onToggleSource}
+      onClick={() => {
+        if (props.webpage) {
+          props.onToggleWebpage();
+        } else {
+          props.onToggleSource();
+        }
+      }}
     >
       <Show
         when={!props.extracting}
@@ -140,6 +154,27 @@ const ReaderOverflow = (
       >
         <ReaderIcon name="extract" />
         {props.extracting ? '正在提取…' : props.actionLabel}
+      </Button>
+    </li>
+    <li>
+      <Button
+        type="button"
+        aria-pressed={props.webpage}
+        disabled={!props.url}
+        onClick={() => {
+          props.closePopover();
+          props.onToggleWebpage();
+        }}
+      >
+        <span
+          class="flex size-4.5 items-center justify-center rounded-sm border border-current"
+          aria-hidden="true"
+        >
+          <Show when={props.webpage}>
+            <ReaderIcon name="check" class="size-3.5" />
+          </Show>
+        </span>
+        内嵌网页视图
       </Button>
     </li>
     <Show when={props.url}>
