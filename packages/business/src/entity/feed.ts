@@ -6,7 +6,7 @@ export const Feed = Schema.Struct({
   title: Schema.String,
   updatedAt: Schema.String,
   error: Schema.String,
-  unreadCount: Schema.Number,
+  unreadCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 
 export type Feed = typeof Feed.Type;

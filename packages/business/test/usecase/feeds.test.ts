@@ -57,7 +57,7 @@ it.effect('does not fetch another account subscription', () =>
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        Layer.mock(FeedRepository, { find: () => Effect.succeed(undefined) }),
+        Layer.mock(FeedRepository, { find: () => Effect.undefined }),
         Layer.mock(FeedFetcher, {})
       )
     )

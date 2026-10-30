@@ -1,5 +1,5 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-solid/Hooks';
-import { Option } from 'effect';
+import { Exit, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { makeSettingsAtoms, readerError } from '../../lib/reader';
 import { Button } from '../atoms/button';
@@ -82,7 +82,7 @@ export const ReaderSettings = () => {
     Option.getOrUndefined(AsyncResult.value(status()))?.configured;
   const save = async (form: HTMLFormElement) => {
     const exit = await update(String(new FormData(form).get('key') ?? ''));
-    if (exit._tag === 'Success') {
+    if (Exit.isSuccess(exit)) {
       form.reset();
     }
   };

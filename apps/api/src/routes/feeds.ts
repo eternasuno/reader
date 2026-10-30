@@ -1,5 +1,7 @@
 import { LinksUnavailable, ReaderApi } from '@reader/api';
 import {
+  type FeedRepositoryError,
+  type LinkRepositoryError,
   listFeedArticles,
   listFeeds,
   markAllFeedArticles,
@@ -14,27 +16,18 @@ import { Effect } from 'effect';
 import { HttpApiBuilder } from 'effect/http-api';
 import { Session } from '../middleware/session';
 
-const failure = <A, E extends { readonly _tag: string }, R>(
-  effect: Effect.Effect<A, E, R>
+const failure = <A, E, R>(
+  effect: Effect.Effect<A, E | FeedRepositoryError | LinkRepositoryError, R>
 ) =>
   effect.pipe(
-    Effect.catchIf(
-      (
-        error
-      ): error is Extract<
-        E,
-        { readonly _tag: 'FeedRepositoryError' | 'LinkRepositoryError' }
-      > =>
-        error._tag === 'FeedRepositoryError' ||
-        error._tag === 'LinkRepositoryError',
-      (error) =>
-        Effect.logError('Feed operation failed', error).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new LinksUnavailable({ error: '暂时无法访问订阅，请稍后重试' })
-            )
+    Effect.catchTag(['FeedRepositoryError', 'LinkRepositoryError'], (error) =>
+      Effect.logError('Feed operation failed', error).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new LinksUnavailable({ error: '暂时无法访问订阅，请稍后重试' })
           )
         )
+      )
     )
   );
 

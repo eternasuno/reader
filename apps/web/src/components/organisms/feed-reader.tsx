@@ -5,7 +5,7 @@ import {
   useAtomValue,
 } from '@effect/atom-solid/Hooks';
 import type { FeedArticle } from '@reader/api';
-import { type Exit, Option } from 'effect';
+import { Exit, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { createEffect, createSignal, on, Show, untrack } from 'solid-js';
 import { resultError } from '../../lib/errors';
@@ -46,7 +46,7 @@ const publishMarkAll = async (
   items: readonly FeedArticle[]
 ) => {
   const exit = await run({ _tag: 'MarkAll', key });
-  if (exit._tag === 'Success') {
+  if (Exit.isSuccess(exit)) {
     publishBulkReadStatus(exit, {
       kind: 'feed',
       keys: items
@@ -68,7 +68,7 @@ const saveFeedArticle = (
   setNotice('');
 
   return run({ _tag: 'Save', key }).then((exit) => {
-    if (exit._tag === 'Success') setNotice('已保存到稍后读');
+    if (Exit.isSuccess(exit)) setNotice('已保存到稍后读');
   });
 };
 
@@ -110,7 +110,7 @@ const useFeedActions = (source: ReturnType<typeof useFeedSource>) => {
   const [markError, setMarkError] = createSignal('');
   const run = async (input: FeedCommand) => {
     const exit = await source.rawRun(input);
-    if (exit._tag === 'Success' && input._tag === 'Save') {
+    if (Exit.isSuccess(exit) && input._tag === 'Save') {
       notifyReaderDataChanged();
     }
 
@@ -138,7 +138,7 @@ const useFeedActions = (source: ReturnType<typeof useFeedSource>) => {
       keys,
       generation: source.articles().generation,
     });
-    if (exit._tag === 'Success' && exit.value) {
+    if (Exit.isSuccess(exit) && exit.value) {
       publishReadStatuses(exit, 'feed', exit.value.keys);
       setMarkError(exit.value.error);
     }

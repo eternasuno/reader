@@ -5,8 +5,7 @@ import {
   useAtomSet,
   useAtomValue,
 } from '@effect/atom-solid/Hooks';
-import type { Exit } from 'effect';
-import { Option } from 'effect';
+import { Exit, Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { createEffect, createSignal, on, untrack } from 'solid-js';
 import { resultError } from '../../lib/errors';
@@ -44,7 +43,7 @@ const addReadingLink = async (
 
   const exit = await run({ _tag: 'Add', url });
 
-  if (exit._tag === 'Success') {
+  if (Exit.isSuccess(exit)) {
     form.reset();
     return true;
   }
@@ -83,7 +82,7 @@ const markAllReadingLinks = async (
   if (pending()) return;
 
   const exit = await run({ _tag: 'MarkAll' });
-  if (exit._tag === 'Success') {
+  if (Exit.isSuccess(exit)) {
     publishBulkReadStatus(exit, {
       kind: 'link',
       keys: items.map((item) => item.key),
@@ -165,7 +164,7 @@ const useReadingActions = (source: ReturnType<typeof useReadingSource>) => {
       keys,
       generation: source.state().generation,
     });
-    if (exit._tag === 'Success' && exit.value) {
+    if (Exit.isSuccess(exit) && exit.value) {
       publishReadStatuses(exit, 'link', exit.value.keys);
       setMarkError(exit.value.error);
     }

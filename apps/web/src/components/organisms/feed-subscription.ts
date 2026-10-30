@@ -1,5 +1,5 @@
 import type { FeedPreview } from '@reader/api';
-import type { Exit } from 'effect';
+import { Exit } from 'effect';
 import { type Accessor, createSignal, onCleanup } from 'solid-js';
 import { exitError } from '../../lib/errors';
 import type { FeedCommand } from '../../lib/feeds';
@@ -40,7 +40,7 @@ const useFeedPreview = (run: PreviewRun) => {
     if (disposed || requestId !== current) return;
 
     setPending(false);
-    if (exit._tag === 'Success') {
+    if (Exit.isSuccess(exit)) {
       setPreview(exit.value);
 
       return;
@@ -78,7 +78,7 @@ const useFeedConfirm = (
     if (disposed) return exit;
 
     setPending(false);
-    if (exit._tag === 'Success') {
+    if (Exit.isSuccess(exit)) {
       reset();
       setNotice(`已订阅「${current.title}」`);
 

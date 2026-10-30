@@ -249,7 +249,7 @@ export const makeDeleteHandler =
     }
     setNotice('');
     const exit = await stores.runReading({ _tag: 'Delete', key });
-    if (exit._tag === 'Success') {
+    if (Exit.isSuccess(exit)) {
       notifyReaderDataChanged();
       onBack?.();
     }
@@ -268,7 +268,7 @@ export const makeSaveHandler =
     }
     setNotice('');
     const exit = await stores.runFeed({ _tag: 'Save', key });
-    if (exit._tag === 'Success') {
+    if (Exit.isSuccess(exit)) {
       setNotice('已保存到稍后读');
       notifyReaderDataChanged();
     }

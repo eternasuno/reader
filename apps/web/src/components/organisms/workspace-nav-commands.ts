@@ -1,5 +1,5 @@
 import type { FeedArticle } from '@reader/api';
-import { Cause, type Exit } from 'effect';
+import { Cause, Exit } from 'effect';
 import { type Accessor, createSignal, onCleanup, type Setter } from 'solid-js';
 import { errorText } from '../../lib/errors';
 import type { InfiniteState } from '../../lib/infinite';
@@ -87,7 +87,7 @@ const executeFeedCommand = async (
 
   try {
     const exit = await context.run(input);
-    if (exit._tag !== 'Success') {
+    if (Exit.isFailure(exit)) {
       context.setError({
         key: input.key,
         message: commandErrorMessage(exit.cause),
@@ -121,7 +121,7 @@ export const useFeedCommand = (
       setPending,
       setError,
     });
-    if (exit?._tag === 'Success' && input._tag === 'MarkAll') {
+    if (exit && Exit.isSuccess(exit) && input._tag === 'MarkAll') {
       publishBulkReadStatus(exit, {
         kind: 'feed',
         keys: snapshot
@@ -197,7 +197,7 @@ const executeSourceCommand = async <T>(
 
   try {
     const exit = await run(input);
-    if (exit._tag !== 'Success') {
+    if (Exit.isFailure(exit)) {
       context.setError({
         key: context.key,
         message: commandErrorMessage(exit.cause),
@@ -226,7 +226,7 @@ const runRssSourceCommand = async (
     input.runFeed,
     sourceContext('rss', state)
   );
-  if (exit?._tag === 'Success' && command._tag === 'MarkAll') {
+  if (exit && Exit.isSuccess(exit) && command._tag === 'MarkAll') {
     publishBulkReadStatus(exit, {
       kind: 'feed',
       keys: snapshot.map((item) => item.key),
@@ -248,7 +248,7 @@ const runLaterSourceCommand = async (
     input.runLink,
     sourceContext('later', state)
   );
-  if (exit?._tag === 'Success') {
+  if (exit && Exit.isSuccess(exit)) {
     publishBulkReadStatus(exit, {
       kind: 'link',
       keys: snapshot.map((item) => item.key),

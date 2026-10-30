@@ -35,7 +35,7 @@ it.effect(
         expect(item.read).toBe(false);
         expect(Number.isNaN(Date.parse(item.createdAt))).toBe(false);
 
-        return Effect.succeed(undefined);
+        return Effect.undefined;
       },
       mark: (owner, key, read) => {
         expect([owner, key, read]).toEqual(['alice', 'missing', true]);

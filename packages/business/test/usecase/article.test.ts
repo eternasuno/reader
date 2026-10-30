@@ -66,7 +66,7 @@ it.effect(
         Layer.mergeAll(
           unavailable,
           Layer.mock(ArticleRepository, {
-            metadata: () => Effect.succeed(undefined),
+            metadata: () => Effect.undefined,
           })
         )
       )
@@ -96,7 +96,7 @@ it.effect('does not extract automatically on a cache miss', () =>
               read: false,
               description: '<p>RSS</p>',
             }),
-          get: () => Effect.succeed(undefined),
+          get: () => Effect.undefined,
         })
       )
     )
