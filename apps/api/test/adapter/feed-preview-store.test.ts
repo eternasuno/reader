@@ -81,7 +81,7 @@ it.effect('drops expired previews when saving', () =>
     const store = yield* FeedPreviewStore;
     const expired = yield* store.save(pendingPreview('alice', 100), 0);
     yield* store.save(pendingPreview('bob', 500), 150);
-    expect(yield* store.find('alice', expired, 150)).toBeUndefined();
+    expect(yield* store.find('alice', expired, 0)).toBeUndefined();
   }).pipe(Effect.provide(FeedPreviewStoreLive))
 );
 

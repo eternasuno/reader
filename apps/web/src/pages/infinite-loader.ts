@@ -17,26 +17,28 @@ export const useInfiniteLoader = <T>(
   const reload = () => {
     void runPage(true);
   };
-  const requestMore = () => {
+  const requestMore = async () => {
     if (loadingMore) return;
 
     loadingMore = true;
-    void runPage(false).finally(() => {
+    try {
+      await runPage(false);
+    } finally {
       loadingMore = false;
-    });
+    }
   };
   const loadMore = () => {
     const current = state();
     if (current.error || current.loading || !current.hasMore || pending())
       return;
 
-    requestMore();
+    void requestMore();
   };
   const retry = () => {
     const current = state();
     if (current.loading) return;
 
-    if (current.initialized) requestMore();
+    if (current.initialized) void requestMore();
     else reload();
   };
 

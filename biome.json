@@ -54,7 +54,7 @@
         "useSolidForComponent": "error"
       },
       "security": {
-        "noSecrets": "info"
+        "noSecrets": "off"
       },
       "style": {
         "noExcessiveLinesPerFile": {

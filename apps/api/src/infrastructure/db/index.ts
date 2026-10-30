@@ -20,15 +20,14 @@ export class DatabaseConnectError extends Data.TaggedError(
   readonly cause: unknown;
 }> {}
 
-export const createSurreal = (config: DbConfig): Promise<Surreal> => {
+export const createSurreal = async (config: DbConfig): Promise<Surreal> => {
   const db = new Surreal({ engines: { ...createNodeEngines() }, codecOptions });
+  await db.connect(config.endpoint, {
+    namespace: config.namespace,
+    database: config.database,
+  });
 
-  return db
-    .connect(config.endpoint, {
-      namespace: config.namespace,
-      database: config.database,
-    })
-    .then(() => db);
+  return db;
 };
 
 export const DatabaseLive = Layer.effect(

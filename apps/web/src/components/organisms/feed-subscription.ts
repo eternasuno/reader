@@ -14,9 +14,7 @@ const useFeedPreview = (run: PreviewRun) => {
   const [pending, setPending] = createSignal(false);
   let requestId = 0;
   let form: HTMLFormElement | undefined;
-  let disposed = false;
   onCleanup(() => {
-    disposed = true;
     requestId += 1;
   });
   const clear = () => {
@@ -37,7 +35,7 @@ const useFeedPreview = (run: PreviewRun) => {
     setError('');
     setPending(true);
     const exit = await run(url);
-    if (disposed || requestId !== current) return;
+    if (requestId !== current) return;
 
     setPending(false);
     if (Exit.isSuccess(exit)) {

@@ -11,7 +11,7 @@ export const checkOrigin = HttpRouter.middleware()(
     return (handler) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const origin = request.headers['origin'];
+        const { origin } = request.headers;
 
         if (request.method !== 'GET' && origin && origin !== allowedOrigin) {
           return yield* HttpServerResponse.json(

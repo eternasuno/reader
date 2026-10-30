@@ -60,16 +60,15 @@ const publishMarkAll = async (
   return exit;
 };
 
-const saveFeedArticle = (
+const saveFeedArticle = async (
   run: RunFeed,
   setNotice: (value: string) => void,
   key: string
 ) => {
   setNotice('');
 
-  return run({ _tag: 'Save', key }).then((exit) => {
-    if (Exit.isSuccess(exit)) setNotice('已保存到稍后读');
-  });
+  const exit = await run({ _tag: 'Save', key });
+  if (Exit.isSuccess(exit)) setNotice('已保存到稍后读');
 };
 
 const useFeedSource = () => {

@@ -196,7 +196,7 @@ const redirectTarget = (
   redirects: number,
   maxRedirects: number
 ): Effect.Effect<URL, FetchFailure> => {
-  const location = response.headers['location'];
+  const { location } = response.headers;
 
   if (!location || redirects >= maxRedirects) {
     return Effect.fail(new FetchFailure({ message: 'Too many redirects' }));

@@ -131,7 +131,15 @@ export const ArticleFrame = (props: { html: string }) => {
       observer.observe(body);
       addEventListener('resize', schedule);
       addEventListener('load', schedule, true);
-      document.fonts.ready.then(schedule);
+      const reportFontsReady = async () => {
+        try {
+          await document.fonts.ready;
+          schedule();
+        } catch {
+          schedule();
+        }
+      };
+      void reportFontsReady();
       addEventListener('pagehide', () => {
         observer.disconnect();
         cancelAnimationFrame(pending);

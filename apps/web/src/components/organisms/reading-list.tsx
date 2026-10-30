@@ -52,7 +52,7 @@ const addReadingLink = async (
   return false;
 };
 
-const toggleReadingLink = (
+const toggleReadingLink = async (
   run: RunLink,
   pending: () => boolean,
   item: ReadingLink
@@ -60,9 +60,8 @@ const toggleReadingLink = (
   if (pending()) return;
 
   const read = !item.read;
-  void run({ _tag: 'Mark', key: item.key, read }).then((exit) => {
-    publishReadStatus(exit, { kind: 'link', key: item.key, read });
-  });
+  const exit = await run({ _tag: 'Mark', key: item.key, read });
+  publishReadStatus(exit, { kind: 'link', key: item.key, read });
 };
 
 const removeReadingLink = (
@@ -148,7 +147,7 @@ const useReadingActions = (source: ReturnType<typeof useReadingSource>) => {
   const add = (url: string, form: HTMLFormElement) =>
     addReadingLink(source.run, source.pending, url, form);
   const toggle = (item: ReadingLink) =>
-    toggleReadingLink(source.run, source.pending, item);
+    void toggleReadingLink(source.run, source.pending, item);
   const remove = (item: ReadingLink) =>
     removeReadingLink(source.run, source.pending, item);
   const markAll = () =>
@@ -198,12 +197,10 @@ type ReadingModel = ReturnType<typeof useReadingList>;
 
 const ReadingToolbar = (props: { readonly model: ReadingModel }) => {
   const [addOpen, setAddOpen] = createSignal(false);
-  const handleAdd = (url: string, form: HTMLFormElement) => {
-    void props.model.add(url, form).then((added) => {
-      if (added) {
-        setAddOpen(false);
-      }
-    });
+  const handleAdd = async (url: string, form: HTMLFormElement) => {
+    if (await props.model.add(url, form)) {
+      setAddOpen(false);
+    }
   };
 
   return (

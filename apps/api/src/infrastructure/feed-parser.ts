@@ -112,18 +112,10 @@ const articleFields = (parsed: AnyFeed): ArticleFields[] => {
   }
 };
 
-const feedDescription = (parsed: AnyFeed): string | undefined => {
-  switch (parsed.format) {
-    case 'rss':
-      return parsed.feed.description;
-    case 'atom':
-      return parsed.feed.subtitle?.value;
-    case 'rdf':
-      return parsed.feed.description;
-    case 'json':
-      return parsed.feed.description;
-  }
-};
+const feedDescription = (parsed: AnyFeed): string | undefined =>
+  parsed.format === 'atom'
+    ? parsed.feed.subtitle?.value
+    : parsed.feed.description;
 
 export const parseFeed = (content: string, base: string): ParsedFeed => {
   if (/<!DOCTYPE|<!ENTITY/i.test(content)) {

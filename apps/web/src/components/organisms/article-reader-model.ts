@@ -139,6 +139,14 @@ export const useAutoMark = (
 ) => {
   const source = toReaderSource(stores.content);
   let attempted = false;
+  const markRead = async () => {
+    const exit = await runMark(stores, selection.kind, selection.key, true);
+    publishReadStatus(exit, {
+      kind: selection.kind,
+      key: selection.key,
+      read: true,
+    });
+  };
   createEffect(() => {
     const loaded = source();
     if (!loaded || attempted) return;
@@ -146,13 +154,7 @@ export const useAutoMark = (
     notices.setRead(loaded.read);
     if (loaded.read) return;
 
-    void runMark(stores, selection.kind, selection.key, true).then((exit) => {
-      publishReadStatus(exit, {
-        kind: selection.kind,
-        key: selection.key,
-        read: true,
-      });
-    });
+    void markRead();
   });
 };
 

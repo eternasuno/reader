@@ -138,6 +138,7 @@ describe('scoped bulk notices', () => {
         scope: { kind: 'allfeeds' },
       });
       expect(feed.read()).toBe(false);
+      expect(link.read()).toBe(true);
 
       return disposeRoot;
     });
