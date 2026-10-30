@@ -10,8 +10,8 @@ export const Dialog = (props: {
 }) => {
   let ref!: HTMLDialogElement;
   createEffect(() => {
-    if (!props.open && ref.open) ref.close();
-    else if (props.open && !ref.open) ref.showModal();
+    if (props.open) ref.showModal();
+    else ref.close();
   });
 
   return (
@@ -21,18 +21,20 @@ export const Dialog = (props: {
       }}
       onClose={props.onClose}
       aria-label={props.label}
-      class="fixed inset-0 m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-xl overflow-y-auto rounded-lg border border-base-300 bg-base-100 p-6 text-base-content shadow-2xl backdrop:bg-black/60"
+      class="modal"
     >
-      <form method="dialog" class="flex justify-end">
-        <Button
-          type="submit"
-          class="btn btn-ghost min-h-11 px-3 py-2"
-          aria-label="关闭"
-        >
-          <ReaderIcon name="close" />
-        </Button>
-      </form>
-      {props.children}
+      <div class="modal-box max-h-[85dvh] max-w-xl">
+        <form method="dialog" class="flex justify-end">
+          <Button
+            type="submit"
+            class="btn btn-ghost min-h-11 px-3 py-2"
+            aria-label="关闭"
+          >
+            <ReaderIcon name="close" />
+          </Button>
+        </form>
+        {props.children}
+      </div>
     </dialog>
   );
 };

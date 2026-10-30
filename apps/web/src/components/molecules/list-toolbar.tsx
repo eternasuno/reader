@@ -1,7 +1,8 @@
 import { Show } from 'solid-js';
 import { IconButton } from '../atoms/icon-button';
 import { ReaderIcon } from '../atoms/reader-icon';
-import { NavMenuActions, PopoverMenu } from './nav-menu';
+import { NavMenuActions } from './nav-menu';
+import { PopoverMenu } from './popover-menu';
 
 type ListToolbarProps = {
   readonly title: string;
@@ -52,9 +53,12 @@ export const ListToolbar = (props: ListToolbarProps) => (
         <ReaderIcon name="markAbove" />
       </IconButton>
       <PopoverMenu
-        label={`${props.title} 更多操作`}
-        menuLabel={`${props.title} 操作`}
-        triggerClass="inline-grid size-8 shrink-0 cursor-pointer place-items-center rounded-md bg-transparent p-0 text-base-content"
+        label={`${props.title} 操作`}
+        trigger={(target) => (
+          <IconButton label={`${props.title} 更多操作`} popoverTarget={target}>
+            <ReaderIcon name="more" />
+          </IconButton>
+        )}
       >
         {(closeMenu) => (
           <NavMenuActions

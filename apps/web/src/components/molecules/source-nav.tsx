@@ -1,4 +1,4 @@
-import { Show } from 'solid-js';
+import { type JSX, Show } from 'solid-js';
 import { NavButton } from '../atoms/nav-item';
 import { ReaderIcon } from '../atoms/reader-icon';
 import { NavMenu, NavMenuMeta } from './nav-menu';
@@ -16,18 +16,22 @@ type SourceNavRowProps = {
   readonly onRefresh: () => void;
   readonly onMarkAll: () => void;
   readonly onOnlyUnreadChange: (value: boolean) => void;
+  readonly menuActions?: ((close: () => void) => JSX.Element) | undefined;
 };
 
 export const SourceNavRow = (props: SourceNavRowProps) => (
-  <div class="group/nav relative shrink-0 rounded">
+  <li
+    class="group/nav relative rounded"
+    aria-busy={props.pending !== undefined}
+  >
     <NavButton
-      class={`w-full gap-3 ${props.pending === undefined ? 'pr-2.5 pointer-coarse:pr-10' : 'pr-10'}`}
+      class="w-full gap-3 pr-10"
       active={props.active}
       onClick={props.onPick}
     >
       <ReaderIcon
         name={props.icon}
-        class={`size-5 shrink-0 ${props.active ? 'text-neutral-content' : 'text-base-content/65'}`}
+        class={`size-5 ${props.active ? 'text-neutral-content' : 'text-base-content/65'}`}
       />
       <span class="min-w-0 flex-1 truncate">{props.label}</span>
       <NavMenuMeta pending={props.pending} count={props.count} />
@@ -40,6 +44,7 @@ export const SourceNavRow = (props: SourceNavRowProps) => (
       onRefresh={props.onRefresh}
       onMarkAll={props.onMarkAll}
       onOnlyUnreadChange={props.onOnlyUnreadChange}
+      actions={props.menuActions}
     />
     <Show when={props.error}>
       {(message) => (
@@ -48,5 +53,5 @@ export const SourceNavRow = (props: SourceNavRowProps) => (
         </p>
       )}
     </Show>
-  </div>
+  </li>
 );

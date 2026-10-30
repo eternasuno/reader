@@ -4,6 +4,7 @@ import { AsyncResult } from 'effect/reactivity';
 import { makeSettingsAtoms, readerError } from '../../lib/reader';
 import { Button } from '../atoms/button';
 import { Input } from '../atoms/input';
+import { SubmitButton } from '../atoms/submit-button';
 
 const SettingsStatus = (props: {
   configured: boolean | undefined;
@@ -47,15 +48,7 @@ const SettingsKeyForm = (props: {
       placeholder="输入新的 Jina API Key"
       disabled={props.pending}
     />
-    <Button
-      class="btn btn-neutral"
-      variant="solid"
-      type="submit"
-      disabled={props.pending}
-      aria-busy={props.pending}
-    >
-      {props.pending ? '保存中…' : '保存'}
-    </Button>
+    <SubmitButton pending={props.pending} label="保存" pendingLabel="保存中…" />
   </form>
 );
 

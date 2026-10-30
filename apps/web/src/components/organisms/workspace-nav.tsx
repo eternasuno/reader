@@ -97,7 +97,7 @@ type NavSourceProps = {
 };
 
 const WorkspaceSourceNav = (input: NavSourceProps) => (
-  <>
+  <ul aria-label="阅读来源" class="flex shrink-0 flex-col gap-1">
     <SourceNavRow
       icon="all"
       label="全部文章"
@@ -126,7 +126,7 @@ const WorkspaceSourceNav = (input: NavSourceProps) => (
       onMarkAll={input.nav.markAllLater}
       onOnlyUnreadChange={input.nav.setOnlyUnread}
     />
-  </>
+  </ul>
 );
 
 const WorkspaceNavView = (input: NavSourceProps) => (

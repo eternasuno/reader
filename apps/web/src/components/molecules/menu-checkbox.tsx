@@ -6,7 +6,7 @@ export const MenuCheckbox = (props: {
   readonly disabled?: boolean;
   readonly onChange: (checked: boolean) => void;
 }) => (
-  <label class="flex w-full cursor-pointer items-center justify-start gap-3 px-3 py-2 text-left has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-40">
+  <label class="has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-40">
     <input
       type="checkbox"
       class="peer sr-only"

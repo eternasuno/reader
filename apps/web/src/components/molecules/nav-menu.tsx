@@ -1,8 +1,9 @@
-import { createUniqueId, type JSX, Show } from 'solid-js';
+import { type JSX, Show } from 'solid-js';
 import { Button } from '../atoms/button';
 import { UnreadCount } from '../atoms/nav-item';
 import { ReaderIcon } from '../atoms/reader-icon';
 import { MenuCheckbox } from './menu-checkbox';
+import { PopoverMenu } from './popover-menu';
 
 export const NavMenuMeta = (props: {
   readonly count: number | undefined;
@@ -35,28 +36,18 @@ export const NavMenuActions = (props: {
 }) => (
   <>
     <li>
-      <Button
-        type="button"
-        class="flex w-full items-center justify-start gap-3 px-3 py-2 text-left disabled:opacity-40"
-        disabled={props.busy}
-        onClick={props.onRefresh}
-      >
-        <ReaderIcon name="refresh" class="size-5 shrink-0" />
+      <Button type="button" disabled={props.busy} onClick={props.onRefresh}>
+        <ReaderIcon name="refresh" />
         <span>刷新</span>
       </Button>
     </li>
     <li>
-      <Button
-        type="button"
-        class="flex w-full items-center justify-start gap-3 px-3 py-2 text-left disabled:opacity-40"
-        disabled={props.busy}
-        onClick={props.onMarkAll}
-      >
-        <ReaderIcon name="checks" class="size-5 shrink-0" />
+      <Button type="button" disabled={props.busy} onClick={props.onMarkAll}>
+        <ReaderIcon name="checks" />
         <span>全部标记为已读</span>
       </Button>
     </li>
-    <li class="my-1 border-t border-base-300 pt-1">
+    <li class="my-1 border-t border-base-300">
       <MenuCheckbox
         label="只显示未读"
         checked={props.onlyUnread}
@@ -66,44 +57,6 @@ export const NavMenuActions = (props: {
     {props.actions}
   </>
 );
-
-export const PopoverMenu = (props: {
-  readonly label: string;
-  readonly menuLabel: string;
-  readonly triggerClass: string;
-  readonly title?: string | undefined;
-  readonly children: (close: () => void) => JSX.Element;
-}) => {
-  const id = createUniqueId();
-  const anchor = `--menu-${id}`;
-  let menu!: HTMLUListElement;
-  const closeMenu = () => menu.hidePopover();
-
-  return (
-    <>
-      <Button
-        type="button"
-        popovertarget={id}
-        aria-label={props.label}
-        title={props.title ?? '更多操作'}
-        class={props.triggerClass}
-        style={`anchor-name:${anchor}`}
-      >
-        <ReaderIcon name="more" class="size-5" />
-      </Button>
-      <ul
-        ref={menu}
-        id={id}
-        popover="auto"
-        aria-label={props.menuLabel}
-        class="dropdown menu fixed inset-auto top-[anchor(bottom)] right-[anchor(right)] z-10 my-1 w-52 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-2 text-sm text-base-content shadow-xl"
-        style={`position-anchor:${anchor}`}
-      >
-        {props.children(closeMenu)}
-      </ul>
-    </>
-  );
-};
 
 export const NavMenu = (props: {
   readonly label: string;
@@ -116,9 +69,18 @@ export const NavMenu = (props: {
   readonly actions?: ((close: () => void) => JSX.Element) | undefined;
 }) => (
   <PopoverMenu
-    label={`${props.label} 更多操作`}
-    menuLabel={`${props.label} 操作`}
-    triggerClass={`absolute top-1/2 right-0.5 grid size-8 -translate-y-1/2 place-items-center rounded-md bg-transparent p-0 opacity-0 pointer-events-none transition-opacity group-hover/nav:pointer-events-auto group-hover/nav:opacity-100 group-focus-within/nav:pointer-events-auto group-focus-within/nav:opacity-100 group-has-[ul:popover-open]/nav:pointer-events-auto group-has-[ul:popover-open]/nav:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 ${props.active ? 'text-neutral-content' : 'text-base-content/60'}`}
+    label={`${props.label} 操作`}
+    trigger={(target) => (
+      <Button
+        type="button"
+        popovertarget={target}
+        aria-label={`${props.label} 更多操作`}
+        title="更多操作"
+        class={`absolute top-1/2 right-0.5 grid size-8 -translate-y-1/2 place-items-center p-0 opacity-0 transition-opacity pointer-events-none group-hover/nav:pointer-events-auto group-hover/nav:opacity-100 group-focus-within/nav:pointer-events-auto group-focus-within/nav:opacity-100 group-has-[ul:popover-open]/nav:pointer-events-auto group-has-[ul:popover-open]/nav:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 ${props.active ? 'text-neutral-content' : 'text-base-content/60'}`}
+      >
+        <ReaderIcon name="more" />
+      </Button>
+    )}
   >
     {(closeMenu) => (
       <NavMenuActions

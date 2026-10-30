@@ -63,7 +63,7 @@ const scopeContent = (html: string) => {
 };
 
 const articleBodyClass =
-  'flow-root mx-auto max-w-3xl bg-[#121212] text-[#d4d4d8] font-[system-ui,sans-serif] text-lg leading-[1.9] [overflow-wrap:anywhere] max-sm:text-base';
+  'flow-root mx-auto max-w-3xl bg-[#121212] text-[#d4d4d8] font-[system-ui,sans-serif] text-lg leading-[1.9] wrap-anywhere max-sm:text-base';
 
 export const WebpageFrame = (props: { url: string }) => (
   <div class="flex min-h-0 flex-1 flex-col">
@@ -162,7 +162,7 @@ export const ArticleFrame = (props: { html: string }) => {
     <iframe
       ref={frame}
       title="文章正文"
-      class="block h-(--article-height) w-full rounded-none border-0 bg-[#121212]"
+      class="block h-(--article-height) w-full border-0 bg-[#121212]"
       style={`--article-height:${
         height() === undefined
           ? '65vh'

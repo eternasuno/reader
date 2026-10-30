@@ -1,11 +1,12 @@
 import { AsyncResult } from 'effect/reactivity';
-import { createUniqueId, onMount, Show } from 'solid-js';
+import { onMount, Show } from 'solid-js';
 import { focusWhenReady } from '../../pages/reader-lifecycle';
 import { Button } from '../atoms/button';
 import { IconButton } from '../atoms/icon-button';
 import { ReaderIcon, ReadStatusIcon } from '../atoms/reader-icon';
 import { ArticleFrame } from '../molecules/article-frame';
 import { MenuCheckbox } from '../molecules/menu-checkbox';
+import { PopoverMenu } from '../molecules/popover-menu';
 
 export { ArticleFrame } from '../molecules/article-frame';
 
@@ -130,20 +131,10 @@ const ReaderPrimaryActions = (props: ReaderActionsProps) => (
 
 const ReaderOverflow = (
   props: ReaderActionsProps & {
-    popoverId: string;
-    anchor: string;
-    setPopover: (element: HTMLUListElement) => void;
     closePopover: () => void;
   }
 ) => (
-  <ul
-    ref={props.setPopover}
-    id={props.popoverId}
-    popover="auto"
-    aria-label="更多文章操作"
-    class="dropdown dropdown-end menu w-52 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-2 shadow-xl"
-    style={`position-anchor:${props.anchor}`}
-  >
+  <>
     <li>
       <Button
         type="button"
@@ -162,10 +153,7 @@ const ReaderOverflow = (
         label="内嵌网页视图"
         checked={props.webpage}
         disabled={!props.url}
-        onChange={() => {
-          props.closePopover();
-          props.onToggleWebpage();
-        }}
+        onChange={props.onToggleWebpage}
       />
     </li>
     <Show when={props.url}>
@@ -196,7 +184,7 @@ const ReaderOverflow = (
         </Button>
       </li>
     </Show>
-  </ul>
+  </>
 );
 
 const ReaderNavigation = (props: ReaderActionsProps) => (
@@ -219,11 +207,7 @@ const ReaderNavigation = (props: ReaderActionsProps) => (
 );
 
 export const ReaderActions = (props: ReaderActionsProps) => {
-  const popoverId = createUniqueId();
-  const anchor = `--reader-actions-${popoverId}`;
   let backButton!: HTMLButtonElement;
-  let popover!: HTMLUListElement;
-  const closePopover = () => popover.hidePopover();
   onMount(() => {
     if (props.onBack) focusBackButton(backButton);
   });
@@ -250,23 +234,19 @@ export const ReaderActions = (props: ReaderActionsProps) => {
       <div class="ms-auto flex items-center gap-1 max-sm:gap-0">
         <ReaderPrimaryActions {...props} />
         <div class="ml-1 border-l border-base-300 pl-1">
-          <IconButton
-            popoverTarget={popoverId}
-            anchorName={anchor}
-            label="更多操作"
+          <PopoverMenu
+            label="更多文章操作"
+            trigger={(target) => (
+              <IconButton popoverTarget={target} label="更多操作">
+                <ReaderIcon name="more" />
+              </IconButton>
+            )}
           >
-            <ReaderIcon name="more" />
-          </IconButton>
+            {(closePopover) => (
+              <ReaderOverflow {...props} closePopover={closePopover} />
+            )}
+          </PopoverMenu>
         </div>
-        <ReaderOverflow
-          {...props}
-          popoverId={popoverId}
-          anchor={anchor}
-          setPopover={(element) => {
-            popover = element;
-          }}
-          closePopover={closePopover}
-        />
       </div>
     </nav>
   );
@@ -291,7 +271,7 @@ export const ReaderFailure = (props: { onRetry: () => void }) => (
     </p>
     <Button
       type="button"
-      class="btn btn-ghost btn-sm mt-4 min-h-9 rounded-none"
+      class="btn btn-ghost btn-sm mt-4 min-h-9"
       onClick={props.onRetry}
     >
       重试

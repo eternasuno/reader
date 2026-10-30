@@ -1,9 +1,10 @@
 import { useNavigate } from '@solidjs/router';
-import { createSignal, createUniqueId, Show } from 'solid-js';
+import { createSignal, Show } from 'solid-js';
 import { logout } from '../../lib/auth';
+import { Button } from '../atoms/button';
 import { IconButton } from '../atoms/icon-button';
-import { NavButton } from '../atoms/nav-item';
 import { ReaderIcon } from '../atoms/reader-icon';
+import { PopoverMenu } from '../molecules/popover-menu';
 
 const SignOutButton = () => {
   const navigate = useNavigate();
@@ -24,17 +25,13 @@ const SignOutButton = () => {
 
   return (
     <>
-      <NavButton
-        class="w-full justify-start gap-3"
-        disabled={leaving()}
-        onClick={() => void signOut()}
-      >
+      <Button type="button" disabled={leaving()} onClick={() => void signOut()}>
         <ReaderIcon name="logout" />
         <span>{leaving() ? '退出中…' : '退出登录'}</span>
-      </NavButton>
+      </Button>
       <Show when={error()}>
         {(message) => (
-          <p role="alert" class="px-2.5 py-1">
+          <p role="alert" class="px-3 py-1">
             {message()}
           </p>
         )}
@@ -47,51 +44,46 @@ export const WorkspaceAccountMenu = (props: {
   readonly onSettings: () => void;
   readonly onManage: () => void;
 }) => {
-  const id = createUniqueId();
-  const anchor = `--account-${id}`;
-  let menu!: HTMLUListElement;
-
   return (
-    <>
-      <IconButton label="用户菜单" popoverTarget={id} anchorName={anchor}>
-        <ReaderIcon name="user" />
-      </IconButton>
-      <ul
-        ref={menu}
-        id={id}
-        popover="auto"
-        aria-label="用户操作"
-        class="dropdown menu fixed inset-auto top-[anchor(bottom)] right-[anchor(right)] z-10 my-2 w-52 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-2 text-sm text-base-content shadow-xl"
-        style={`position-anchor:${anchor}`}
-      >
-        <li>
-          <NavButton
-            class="w-full justify-start gap-3"
-            onClick={() => {
-              menu.hidePopover();
-              props.onSettings();
-            }}
-          >
-            <ReaderIcon name="settings" />
-            <span>设置</span>
-          </NavButton>
-        </li>
-        <li>
-          <NavButton
-            class="w-full justify-start gap-3"
-            onClick={() => {
-              menu.hidePopover();
-              props.onManage();
-            }}
-          >
-            <ReaderIcon name="plus" />
-            <span>添加订阅</span>
-          </NavButton>
-        </li>
-        <li class="mt-2 border-t border-base-300 pt-2">
-          <SignOutButton />
-        </li>
-      </ul>
-    </>
+    <PopoverMenu
+      label="用户操作"
+      trigger={(target) => (
+        <IconButton label="用户菜单" popoverTarget={target}>
+          <ReaderIcon name="user" />
+        </IconButton>
+      )}
+    >
+      {(close) => (
+        <>
+          <li>
+            <Button
+              type="button"
+              onClick={() => {
+                close();
+                props.onSettings();
+              }}
+            >
+              <ReaderIcon name="settings" />
+              <span>设置</span>
+            </Button>
+          </li>
+          <li>
+            <Button
+              type="button"
+              onClick={() => {
+                close();
+                props.onManage();
+              }}
+            >
+              <ReaderIcon name="plus" />
+              <span>添加订阅</span>
+            </Button>
+          </li>
+          <li class="mt-2 border-t border-base-300 pt-2">
+            <SignOutButton />
+          </li>
+        </>
+      )}
+    </PopoverMenu>
   );
 };

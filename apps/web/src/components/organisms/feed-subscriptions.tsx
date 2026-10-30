@@ -2,6 +2,7 @@ import type { FeedPreview } from '@reader/api';
 import { Show } from 'solid-js';
 import { Button } from '../atoms/button';
 import { Input } from '../atoms/input';
+import { SubmitButton } from '../atoms/submit-button';
 import type { FeedReaderModel } from './feed-reader';
 
 export const FeedSubscribeForm = (props: { model: FeedReaderModel }) => (
@@ -29,24 +30,13 @@ export const FeedSubscribeForm = (props: { model: FeedReaderModel }) => (
       aria-label="订阅地址"
       disabled={props.model.previewPending()}
     />
-    <Button
-      class="btn btn-neutral"
-      variant="solid"
-      type="submit"
-      disabled={props.model.previewPending()}
-      aria-busy={props.model.previewPending()}
-    >
-      {props.model.previewPending() ? '获取预览…' : '预览订阅'}
-    </Button>
+    <SubmitButton
+      pending={props.model.previewPending()}
+      label="预览订阅"
+      pendingLabel="获取预览…"
+    />
   </form>
 );
-
-const confirmLabel = (model: FeedReaderModel) => {
-  if (model.confirmPending()) return '订阅中…';
-  if (model.confirmError()) return '重试订阅';
-
-  return '确认订阅';
-};
 
 const FeedPreviewPanel = (props: {
   model: FeedReaderModel;
@@ -69,16 +59,13 @@ const FeedPreviewPanel = (props: {
       {props.preview.articleCount} 篇文章
     </p>
     <div class="mt-3 flex flex-wrap gap-2">
-      <Button
-        class="btn btn-neutral"
-        variant="solid"
+      <SubmitButton
         type="button"
-        disabled={props.model.confirmPending()}
-        aria-busy={props.model.confirmPending()}
+        pending={props.model.confirmPending()}
+        label={props.model.confirmError() ? '重试订阅' : '确认订阅'}
+        pendingLabel="订阅中…"
         onClick={() => void props.model.confirm()}
-      >
-        {confirmLabel(props.model)}
-      </Button>
+      />
       <Button
         type="button"
         disabled={props.model.confirmPending()}
