@@ -1,9 +1,11 @@
-import type { FeedArticle } from '@reader/api';
+import type { Feed, FeedArticle } from '@reader/api';
 import type { useLocation } from '@solidjs/router';
+import { AsyncResult } from 'effect/reactivity';
 import {
   type Accessor,
   createEffect,
   createSignal,
+  on,
   type Setter,
   untrack,
 } from 'solid-js';
@@ -83,6 +85,29 @@ export const useReaderNavigation = (
     previous: () => handler('previous'),
     next: () => handler('next'),
   };
+};
+
+export const isFeedMissing = (
+  feeds: AsyncResult.AsyncResult<{ readonly items: readonly Feed[] }, unknown>,
+  activeKey: string
+): boolean =>
+  activeKey !== '' &&
+  AsyncResult.isSuccess(feeds) &&
+  !feeds.waiting &&
+  !feeds.value.items.some((feed) => feed.key === activeKey);
+
+export const useMissingFeedGuard = (
+  feeds: Accessor<
+    AsyncResult.AsyncResult<{ readonly items: readonly Feed[] }, unknown>
+  >,
+  activeKey: Accessor<string>,
+  onPick: (key: string) => void
+) => {
+  createEffect(
+    on([feeds, activeKey], ([result, key]) => {
+      if (isFeedMissing(result, key)) onPick('');
+    })
+  );
 };
 
 export const useRouteSync = (

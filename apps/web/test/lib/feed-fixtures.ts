@@ -25,6 +25,7 @@ export type TestOptions = {
   readonly markLoaded?: (
     keys: readonly string[]
   ) => Response | Promise<Response>;
+  readonly unsubscribe?: (key: string) => Response | Promise<Response>;
 };
 
 export type Deferred = {
@@ -138,9 +139,24 @@ const postResponse = (
   return undefined;
 };
 
+const deleteResponse = (
+  path: string,
+  init: RequestInit | undefined,
+  params: URLSearchParams,
+  options: TestOptions
+) => {
+  if (path !== '/api/feeds') return undefined;
+
+  return (
+    options.unsubscribe?.(bodyText(init, 'key') || params.get('key') || '') ??
+    Response.json({ ok: true })
+  );
+};
+
 const routeResponse = (
   method: string,
   path: string,
+  params: URLSearchParams,
   init: RequestInit | undefined,
   feeds: readonly Feed[],
   nextPage: () => FeedPage,
@@ -148,6 +164,7 @@ const routeResponse = (
 ) => {
   if (method === 'GET') return getResponse(path, feeds, nextPage);
   if (method === 'POST') return postResponse(path, init, options);
+  if (method === 'DELETE') return deleteResponse(path, init, params, options);
 
   return undefined;
 };
@@ -178,8 +195,15 @@ const createFetch = (
       body: requestBody(init),
     });
     return (
-      routeResponse(method, url.pathname, init, feeds, nextPage, options) ??
-      Response.json({ ok: true })
+      routeResponse(
+        method,
+        url.pathname,
+        url.searchParams,
+        init,
+        feeds,
+        nextPage,
+        options
+      ) ?? Response.json({ ok: true })
     );
   };
 };
@@ -200,6 +224,7 @@ export const makeTest = (
   );
   const registry = AtomRegistry.make();
   const atoms = makeFeedAtoms(layer);
+  registry.mount(atoms.query);
   registry.mount(atoms.articles);
   registry.mount(atoms.feeds);
 

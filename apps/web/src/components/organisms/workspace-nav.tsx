@@ -3,10 +3,10 @@ import {
   useAtomSet,
   useAtomValue,
 } from '@effect/atom-solid/Hooks';
-import type { Feed } from '@reader/api';
 import { Option } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
-import { type Accessor, createEffect, on } from 'solid-js';
+import { createEffect } from 'solid-js';
+import { useMissingFeedGuard } from '../../pages/reader-navigation';
 import { useWorkspaceData } from '../../pages/workspace-state';
 import { NavButton } from '../atoms/nav-item';
 import { ReaderIcon } from '../atoms/reader-icon';
@@ -29,27 +29,6 @@ type WorkspaceNavProps = {
   readonly onManage: () => void;
   readonly onPickFeed: (key: string) => void;
   readonly onSettings: () => void;
-};
-
-const useMissingFeedGuard = (
-  feeds: Accessor<
-    AsyncResult.AsyncResult<{ readonly items: readonly Feed[] }, unknown>
-  >,
-  activeKey: Accessor<string>,
-  onPick: (key: string) => void
-) => {
-  createEffect(
-    on([feeds, activeKey], ([result, key]) => {
-      if (
-        key &&
-        AsyncResult.isSuccess(result) &&
-        !result.waiting &&
-        !result.value.items.some((feed) => feed.key === key)
-      ) {
-        onPick('');
-      }
-    })
-  );
 };
 
 const useWorkspaceAtoms = () => {

@@ -205,3 +205,14 @@ describe('infinite loader retries', () => {
     expect(attempts).toBe(2);
   });
 });
+
+describe('infinite loader periodic reload', () => {
+  it('reloads while a mutation is pending so scheduled refreshes are not lost', () => {
+    const state = stateHolder(loaded());
+    const { loader, calls } = recordingLoader(state.read, () => true);
+
+    loader.reload();
+
+    expect(calls).toEqual([true]);
+  });
+});

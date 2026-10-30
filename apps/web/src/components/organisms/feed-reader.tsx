@@ -26,6 +26,7 @@ import {
   publishReadStatus,
   publishReadStatuses,
   unreadKeys,
+  useReaderDataRefresh,
 } from './reader-status';
 
 type RunFeed = (
@@ -184,6 +185,7 @@ export type FeedReaderProps = {
 const useFeedReader = (props: FeedReaderProps) => {
   const data = useWorkspaceData();
   const model = useFeeds();
+  const managing = () => props.management === true;
   const loaded = () => model.items();
   let published: readonly FeedArticle[] | undefined;
   createEffect(() => {
@@ -192,6 +194,9 @@ const useFeedReader = (props: FeedReaderProps) => {
       published = items;
       untrack(() => props.onItems?.(items));
     }
+  });
+  useReaderDataRefresh(() => {
+    if (!managing() && (props.active ?? true)) model.reload();
   });
   if (!props.management) {
     createEffect(
@@ -225,7 +230,6 @@ const useFeedReader = (props: FeedReaderProps) => {
 
     return items.find((feed) => feed.key === feedKey())?.unreadCount;
   };
-  const managing = () => props.management === true;
   const loadedUnread = () => hasUnread(model.items());
 
   return { model, feeds, feedTitle, unread, managing, loadedUnread };

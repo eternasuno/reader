@@ -1,5 +1,11 @@
+import type { Feed } from '@reader/api';
+import { AsyncResult } from 'effect/reactivity';
 import { describe, expect, it } from 'vitest';
-import { adjacentItems } from '../../src/pages/reader-navigation';
+import {
+  adjacentItems,
+  isFeedMissing,
+} from '../../src/pages/reader-navigation';
+import { feed } from '../lib/feed-fixtures';
 
 const items = [{ key: 'first' }, { key: 'middle' }, { key: 'last' }];
 
@@ -38,5 +44,32 @@ describe('loaded-page adjacency', () => {
         next: undefined,
       });
     }
+  });
+});
+
+type FeedList = { readonly items: readonly Feed[] };
+
+const feedsResult = (
+  items: readonly Feed[],
+  waiting = false
+): AsyncResult.AsyncResult<FeedList, unknown> =>
+  AsyncResult.success({ items }, { waiting });
+
+const initialResult = (): AsyncResult.AsyncResult<FeedList, unknown> =>
+  AsyncResult.initial<FeedList, unknown>();
+
+describe('missing feed guard', () => {
+  it('reports only a settled selection that is absent from the feed list', () => {
+    expect(isFeedMissing(feedsResult([feed('a')]), 'b')).toBe(true);
+    expect(isFeedMissing(feedsResult([feed('a')]), 'a')).toBe(false);
+    expect(isFeedMissing(feedsResult([feed('a')]), '')).toBe(false);
+  });
+
+  it('ignores feed lists that are still loading or failed', () => {
+    expect(isFeedMissing(feedsResult([feed('a')], true), 'b')).toBe(false);
+    expect(
+      isFeedMissing(AsyncResult.fail<string, FeedList>('offline'), 'b')
+    ).toBe(false);
+    expect(isFeedMissing(initialResult(), 'b')).toBe(false);
   });
 });

@@ -170,17 +170,15 @@ const runFeedMutation = (
 
     if (input._tag === 'Subscribe') {
       yield* client.feeds.subscribe({ payload: { token: input.token } });
-    } else {
-      yield* client.feeds.unsubscribe({ payload: { key: input.key } });
+      context.refreshFeeds();
+      context.resetArticles();
+
+      return;
     }
 
+    yield* client.feeds.unsubscribe({ payload: { key: input.key } });
     context.refreshFeeds();
-
-    if (input._tag === 'Unsubscribe') {
-      get.set(context.query, { ...get(context.query), feedKey: '' });
-    }
-
-    context.resetArticles();
+    if (get(context.query).feedKey === '') context.resetArticles();
   });
 
 const markLoadedArticles = (
