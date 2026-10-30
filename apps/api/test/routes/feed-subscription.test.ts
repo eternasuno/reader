@@ -101,6 +101,55 @@ const feedItem = async (response: Response): Promise<FeedItem> => {
   return payload.item;
 };
 
+const withFeedApp = <A>(
+  namespace: string,
+  fetcher: Layer.Layer<FeedFetcher>,
+  check: (handler: Handler, db: Database['Service']) => Promise<A>
+) =>
+  Effect.acquireUseRelease(
+    Effect.promise(() =>
+      createSurreal({
+        endpoint: 'mem://',
+        namespace,
+        database: 'test',
+      })
+    ),
+    (db) =>
+      Effect.promise(async () => {
+        const options = {
+          baseURL: origin,
+          secret: 'test-only-secret-at-least-32-characters',
+          emailAndPassword: { enabled: true, autoSignIn: false },
+          database: surrealAdapter({ db }),
+        };
+        const schema = await options.database(options).createSchema?.(options);
+        if (schema?.code) {
+          await db.query(schema.code);
+        }
+
+        await db.query(feedsSchema);
+        const routes = AppLive.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(Auth, betterAuth<BetterAuthOptions>(options)),
+              Layer.succeed(Database, db),
+              FeedPreviewStoreLive,
+              fetcher
+            )
+          )
+        );
+        const { handler, dispose } = HttpRouter.toWebHandler(routes, {
+          disableLogger: true,
+        });
+        try {
+          return await check(handler, db);
+        } finally {
+          await dispose();
+        }
+      }),
+    (db) => Effect.promise(() => db.close())
+  );
+
 const previewSubscription = async (
   handler: Handler,
   alice: string,
@@ -179,47 +228,61 @@ const verifyPreviewContract = async (
 };
 
 it.effect('previews and confirms through one store shared by requests', () =>
-  Effect.acquireUseRelease(
-    Effect.promise(() =>
-      createSurreal({
-        endpoint: 'mem://',
-        namespace: 'route-feed-preview',
-        database: 'test',
-      })
-    ),
-    (db) =>
-      Effect.promise(async () => {
-        const options = {
-          baseURL: origin,
-          secret: 'test-only-secret-at-least-32-characters',
-          emailAndPassword: { enabled: true, autoSignIn: false },
-          database: surrealAdapter({ db }),
-        };
-        const schema = await options.database(options).createSchema?.(options);
-        if (schema?.code) {
-          await db.query(schema.code);
-        }
-
-        await db.query(feedsSchema);
-        const routes = AppLive.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              Layer.succeed(Auth, betterAuth<BetterAuthOptions>(options)),
-              Layer.succeed(Database, db),
-              FeedPreviewStoreLive,
-              feedFetcher
-            )
-          )
-        );
-        const { handler, dispose } = HttpRouter.toWebHandler(routes, {
-          disableLogger: true,
-        });
-        try {
-          await verifyPreviewContract(handler, db);
-        } finally {
-          await dispose();
-        }
-      }),
-    (db) => Effect.promise(() => db.close())
+  withFeedApp('route-feed-preview', feedFetcher, (handler, db) =>
+    verifyPreviewContract(handler, db)
   )
+);
+
+it.effect(
+  'caches only the initial batch when a parsed feed expands past the preview budget',
+  () => {
+    const description = 'expanded preview content '.repeat(480);
+    const articles = Array.from({ length: 400 }, (_, index) => ({
+      identity: `large-${index}`,
+      url: `https://example.com/large/${index}`,
+      title: `Large ${index}`,
+      description,
+      publishedAt: new Date(index * 1000).toISOString(),
+    }));
+    let fetched = 0;
+    const fetcher = Layer.succeed(FeedFetcher, {
+      fetch: (url) => {
+        fetched += 1;
+
+        return Effect.succeed({ title: 'Large News', articles, url });
+      },
+    });
+
+    return withFeedApp(
+      'route-feed-preview-large',
+      fetcher,
+      async (handler, db) => {
+        expect(
+          Buffer.byteLength(JSON.stringify(articles), 'utf8')
+        ).toBeGreaterThan(4 * 1024 * 1024);
+
+        const alice = await signIn(handler, 'large-preview-alice@example.com');
+        const aliceId = await sessionUserId(handler, alice);
+        const response = await feedPost(handler, alice, '/preview', {
+          url: previewUrl,
+        });
+        expect(response.status).toBe(200);
+        const { preview } = (await response.json()) as { preview: Preview };
+        expect(preview.articleCount).toBe(400);
+
+        const confirmed = await feedPost(handler, alice, '', {
+          token: preview.token,
+        });
+        expect(confirmed.status).toBe(200);
+        expect(fetched).toBe(1);
+
+        const item = await feedItem(confirmed);
+        const [stored] = await db.query<[unknown[]]>(
+          'SELECT key FROM feed_article WHERE owner = $owner AND feedKey = $feedKey;',
+          { owner: aliceId, feedKey: item.key }
+        );
+        expect(stored).toHaveLength(30);
+      }
+    );
+  }
 );

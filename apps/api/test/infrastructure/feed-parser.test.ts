@@ -147,3 +147,17 @@ it('prefers JSON HTML, escapes text fallbacks and bounds descriptions', () => {
   ).toBeLessThanOrEqual(100000);
   expect(description({})).toBeUndefined();
 });
+
+it('returns every normalized article in feed order for business selection', () => {
+  const items = Array.from({ length: 600 }, (_, index) => {
+    const date = new Date((600 - index) * 1000).toUTCString();
+    return `<item><guid>${index}</guid><title>${index}</title><link>https://example.com/${index}</link><pubDate>${date}</pubDate></item>`;
+  });
+  const feed = parseFeed(
+    `<rss><channel><title>News</title>${items.join('')}</channel></rss>`,
+    'https://example.com/rss'
+  );
+  expect(feed.articles).toHaveLength(600);
+  expect(feed.articles[0]?.identity).toBe('0');
+  expect(feed.articles[599]?.identity).toBe('599');
+});

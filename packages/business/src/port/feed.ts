@@ -1,5 +1,6 @@
 import { Context, type Effect, Schema } from 'effect';
 import type { Feed, FeedArticle, ParsedFeed } from '../entity/feed';
+import type { FeedImport } from '../entity/feed-import';
 
 export class FeedRepositoryError extends Schema.TaggedError<FeedRepositoryError>()(
   'FeedRepositoryError',
@@ -21,7 +22,7 @@ export class FeedFetcher extends Context.Service<
 export type PendingFeedPreview = {
   readonly owner: string;
   readonly url: string;
-  readonly feed: ParsedFeed;
+  readonly imported: FeedImport;
   readonly expiresAt: number;
 };
 
@@ -53,7 +54,7 @@ export class FeedRepository extends Context.Service<
     readonly createSubscribed: (
       owner: string,
       url: string,
-      feed: ParsedFeed,
+      imported: FeedImport,
       now: string
     ) => Effect.Effect<Feed, FeedRepositoryError>;
     readonly remove: (
@@ -63,8 +64,7 @@ export class FeedRepository extends Context.Service<
     readonly sync: (
       owner: string,
       key: string,
-      feed: ParsedFeed,
-      initial: boolean,
+      imported: FeedImport,
       now: string
     ) => Effect.Effect<void, FeedRepositoryError>;
     readonly failure: (

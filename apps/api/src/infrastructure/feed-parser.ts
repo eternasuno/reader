@@ -137,13 +137,12 @@ export const parseFeed = (content: string, base: string): ParsedFeed => {
   const articles = articleFields(parsed)
     .map((item) => normalizeArticle(item, base))
     .filter((item): item is ParsedArticle => item !== undefined);
-  articles.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
 
   return {
     title: title?.slice(0, 500) || base,
     ...(description === undefined
       ? {}
       : { description: description.slice(0, 500) }),
-    articles: articles.slice(0, 500),
+    articles,
   };
 };

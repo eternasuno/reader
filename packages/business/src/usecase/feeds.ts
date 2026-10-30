@@ -1,4 +1,8 @@
 import { Clock, Effect, Schema } from 'effect';
+import {
+  prepareInitialImport,
+  prepareRefreshImport,
+} from '../entity/feed-import';
 import { FeedFetcher, FeedPreviewStore, FeedRepository } from '../port/feed';
 import { normalizeLink, saveLink } from './links';
 
@@ -38,11 +42,12 @@ export const previewFeed = Effect.fn('feeds.preview')(function* (
   const previewUrl = parsed.url ?? url;
   const store = yield* FeedPreviewStore;
   const now = yield* Clock.currentTimeMillis;
+  const imported = prepareInitialImport(parsed, new Date(now).toISOString());
   const token = yield* store.save(
     {
       owner,
       url: previewUrl,
-      feed: parsed,
+      imported,
       expiresAt: now + PREVIEW_TTL_MILLIS,
     },
     now
@@ -71,11 +76,12 @@ export const subscribeFeed = Effect.fn('feeds.subscribe')(function* (
   }
 
   const repository = yield* FeedRepository;
+  const timestamp = new Date(now).toISOString();
   const feed = yield* repository.createSubscribed(
     owner,
     preview.url,
-    preview.feed,
-    new Date(now).toISOString()
+    preview.imported,
+    timestamp
   );
 
   return { item: feed };
@@ -97,13 +103,12 @@ export const refreshFeed = Effect.fn('feeds.refresh')(function* (
     .pipe(
       Effect.tapError((error) => repository.failure(owner, key, error.error))
     );
-  const now = yield* Clock.currentTimeMillis;
+  const timestamp = new Date(yield* Clock.currentTimeMillis).toISOString();
   yield* repository.sync(
     owner,
     key,
-    parsed,
-    false,
-    new Date(now).toISOString()
+    prepareRefreshImport(parsed, timestamp),
+    timestamp
   );
 
   return { ok: true };

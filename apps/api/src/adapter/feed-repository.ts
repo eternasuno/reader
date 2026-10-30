@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import {
   type Feed,
   type FeedArticle,
+  type FeedImport,
   FeedRepository,
   FeedRepositoryError,
-  type ParsedFeed,
 } from '@reader/business';
 import { Effect, Layer } from 'effect';
 import type { Surreal } from 'surrealdb';
@@ -91,27 +91,24 @@ const removeFeed = (db: Surreal, owner: string, key: string) =>
 const buildSyncRows = (
   owner: string,
   key: string,
-  feed: ParsedFeed,
-  initial: boolean,
-  now: string
+  imported: FeedImport
 ): readonly SyncRow[] =>
-  feed.articles.slice(0, initial ? 30 : 500).map((item) => ({
+  imported.articles.map((item) => ({
     key: hash(owner, key, item.identity),
     url: item.url,
     title: item.title,
     ...(item.description === undefined
       ? {}
       : { description: item.description }),
-    publishedAt: item.publishedAt || now,
+    publishedAt: item.publishedAt,
   }));
 
 const syncFeedRows = (
   db: Surreal,
   owner: string,
   key: string,
-  title: string,
-  now: string,
-  articles: readonly SyncRow[]
+  imported: FeedImport,
+  now: string
 ) =>
   runCommand(
     db,
@@ -122,35 +119,25 @@ IF array::len(SELECT id FROM feed WHERE owner = $owner AND key = $key) > 0 {
     UPDATE type::record("feed_article", $article.key) SET description = $article.description WHERE owner = $owner AND feedKey = $key;
   };
   UPDATE feed SET title = $title, updatedAt = $now, error = "" WHERE owner = $owner AND key = $key;
-  LET $expired = SELECT id, publishedAt, key FROM feed_article WHERE owner = $owner AND feedKey = $key ORDER BY publishedAt DESC, key DESC START 500;
-  FOR $old IN $expired { DELETE $old.id; };
+  LET $expired = SELECT key, publishedAt FROM feed_article WHERE owner = $owner AND feedKey = $key ORDER BY publishedAt DESC, key DESC START $retention;
+  FOR $old IN $expired { DELETE feed_article WHERE owner = $owner AND feedKey = $key AND key = $old.key; };
 };
 COMMIT TRANSACTION;`,
-    { owner, key, articles, title, now }
-  );
-
-const syncFeed = (
-  db: Surreal,
-  owner: string,
-  key: string,
-  feed: ParsedFeed,
-  initial: boolean,
-  now: string
-) =>
-  syncFeedRows(
-    db,
-    owner,
-    key,
-    feed.title,
-    now,
-    buildSyncRows(owner, key, feed, initial, now)
+    {
+      owner,
+      key,
+      articles: buildSyncRows(owner, key, imported),
+      title: imported.title,
+      retention: imported.retention,
+      now,
+    }
   );
 
 const createSubscribedFeed = (
   db: Surreal,
   owner: string,
   url: string,
-  feed: ParsedFeed,
+  imported: FeedImport,
   now: string
 ) =>
   Effect.gen(function* () {
@@ -163,6 +150,8 @@ IF array::len($created) > 0 {
   FOR $article IN $articles {
     UPSERT type::record("feed_article", $article.key) SET owner = $owner, feedKey = $key, key = $article.key, url = $article.url, title = $article.title, publishedAt = $article.publishedAt, description = $article.description, read = false WHERE owner = NONE;
   };
+  LET $expired = SELECT key, publishedAt FROM feed_article WHERE owner = $owner AND feedKey = $key ORDER BY publishedAt DESC, key DESC START $retention;
+  FOR $old IN $expired { DELETE feed_article WHERE owner = $owner AND feedKey = $key AND key = $old.key; };
 };
 SELECT key, url, title, updatedAt, error, array::len((SELECT VALUE key FROM feed_article WHERE owner = $owner AND feedKey = $parent.key AND read = false)) AS unreadCount FROM feed WHERE owner = $owner AND key = $key;
 COMMIT TRANSACTION;`,
@@ -170,8 +159,9 @@ COMMIT TRANSACTION;`,
         owner,
         key,
         url,
-        title: feed.title,
-        articles: buildSyncRows(owner, key, feed, true, now),
+        title: imported.title,
+        articles: buildSyncRows(owner, key, imported),
+        retention: imported.retention,
         now,
       }
     );
@@ -189,14 +179,14 @@ const subscribeWithRetry = (
   db: Surreal,
   owner: string,
   url: string,
-  feed: ParsedFeed,
+  imported: FeedImport,
   now: string,
   attempts = MAX_TRANSACTION_ATTEMPTS
 ): Effect.Effect<Feed, FeedRepositoryError> =>
-  createSubscribedFeed(db, owner, url, feed, now).pipe(
+  createSubscribedFeed(db, owner, url, imported, now).pipe(
     Effect.catchIf(
       (error) => attempts > 1 && isTransactionConflict(error.cause),
-      () => subscribeWithRetry(db, owner, url, feed, now, attempts - 1)
+      () => subscribeWithRetry(db, owner, url, imported, now, attempts - 1)
     )
   );
 
@@ -275,11 +265,11 @@ export const FeedRepositoryLive = Layer.effect(
     return FeedRepository.of({
       list: (owner) => selectFeeds(db, owner),
       find: (owner, key) => selectFeed(db, owner, key),
-      createSubscribed: (owner, url, feed, now) =>
-        subscribeWithRetry(db, owner, url, feed, now),
+      createSubscribed: (owner, url, imported, now) =>
+        subscribeWithRetry(db, owner, url, imported, now),
       remove: (owner, key) => removeFeed(db, owner, key),
-      sync: (owner, key, feed, initial, now) =>
-        syncFeed(db, owner, key, feed, initial, now),
+      sync: (owner, key, imported, now) =>
+        syncFeedRows(db, owner, key, imported, now),
       failure: (owner, key, message) => failFeed(db, owner, key, message),
       articles: (
         owner,

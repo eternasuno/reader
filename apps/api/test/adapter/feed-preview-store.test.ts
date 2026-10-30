@@ -18,7 +18,7 @@ const pendingPreview = (
 ): PendingFeedPreview => ({
   owner,
   url: `https://example.com/${owner}.xml`,
-  feed: { title: 'News', articles: [] },
+  imported: { title: 'News', articles: [], retention: 500 },
   expiresAt,
 });
 
@@ -29,9 +29,9 @@ const briefedPreview = (
 ): PendingFeedPreview => ({
   owner,
   url: `https://example.com/${owner}.xml`,
-  feed: {
+  imported: {
     title: 'Daily Briefing',
-    description: paragraph,
+    retention: 500,
     articles: Array.from({ length: count }, (_, index) => ({
       identity: `${owner}-${index}`,
       url: `https://example.com/${owner}/${index}`,

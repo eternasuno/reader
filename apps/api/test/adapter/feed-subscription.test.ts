@@ -3,6 +3,7 @@ import { FeedRepository } from '@reader/business';
 import { Effect } from 'effect';
 import type { Surreal } from 'surrealdb';
 import {
+  createSubscribedFeed,
   makeParsed,
   runWithClient,
   runWithDatabase,
@@ -12,27 +13,33 @@ const verifyIdempotentCreation = Effect.gen(function* () {
   const repository = yield* FeedRepository;
   const url = 'https://example.com/retry-rss';
   const parsed = makeParsed(4);
-  const first = yield* repository.createSubscribed(
+  const createdAt = new Date(1000).toISOString();
+  const first = yield* createSubscribedFeed(
+    repository,
     'alice',
     url,
     parsed,
-    new Date(1000).toISOString()
+    createdAt
   );
-  const separate = yield* repository.createSubscribed(
+  const bobCreatedAt = new Date(2000).toISOString();
+  const separate = yield* createSubscribedFeed(
+    repository,
     'bob',
     url,
     makeParsed(2),
-    new Date(2000).toISOString()
+    bobCreatedAt
   );
   expect(separate.key).not.toBe(first.key);
   const items = yield* repository.articles('alice', '', false, 0, 10);
   const article = items[0]?.key ?? '';
   yield* repository.mark('alice', article, true);
-  const retried = yield* repository.createSubscribed(
+  const retriedAt = new Date(3000).toISOString();
+  const retried = yield* createSubscribedFeed(
+    repository,
     'alice',
     url,
     parsed,
-    new Date(3000).toISOString()
+    retriedAt
   );
   expect(retried).toEqual({ ...first, unreadCount: 3 });
   expect(yield* repository.articles('alice', '', false, 0, 10)).toHaveLength(3);
@@ -46,8 +53,8 @@ const verifyConcurrentRetries = Effect.gen(function* () {
   const now = new Date(10000).toISOString();
   const [first, second] = yield* Effect.all(
     [
-      repository.createSubscribed('alice', url, parsed, now),
-      repository.createSubscribed('alice', url, parsed, now),
+      createSubscribedFeed(repository, 'alice', url, parsed, now),
+      createSubscribedFeed(repository, 'alice', url, parsed, now),
     ],
     { concurrency: 'unbounded' }
   );
@@ -65,7 +72,7 @@ const verifyArticleInsertRollsBack = (db: Surreal) =>
       db.query('DEFINE FIELD url ON feed_article TYPE datetime;')
     );
     const error = yield* Effect.flip(
-      repository.createSubscribed('alice', url, makeParsed(3), now)
+      createSubscribedFeed(repository, 'alice', url, makeParsed(3), now)
     );
     expect(error._tag).toBe('FeedRepositoryError');
     const [feeds] = yield* Effect.promise(() =>
@@ -82,7 +89,7 @@ const verifyArticleInsertRollsBack = (db: Surreal) =>
       db.query('REMOVE FIELD IF EXISTS url ON feed_article;')
     );
     expect(
-      yield* repository.createSubscribed('alice', url, makeParsed(3), now)
+      yield* createSubscribedFeed(repository, 'alice', url, makeParsed(3), now)
     ).toMatchObject({ url, unreadCount: 3 });
   });
 

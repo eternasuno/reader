@@ -3,8 +3,11 @@ import { Effect, Layer } from 'effect';
 import {
   FeedFetchError,
   FeedFetcher,
+  type FeedImport,
   FeedPreviewStore,
   FeedRepository,
+  type PendingFeedPreview,
+  prepareInitialImport,
   previewFeed,
   subscribeFeed,
 } from '../../src';
@@ -68,7 +71,9 @@ it.effect(
                 url: preview.url,
                 expiresAt: preview.expiresAt,
               });
-              expect(preview.feed).toBe(parsedFeed);
+              expect(preview.imported).toEqual(
+                prepareInitialImport(parsedFeed, '1970-01-01T00:00:00.000Z')
+              );
               expect(now).toBe(0);
 
               return Effect.succeed('preview-token');
@@ -146,6 +151,8 @@ const confirmedFeed = {
   unreadCount: 0,
 };
 
+const previewTimestamp = '2026-10-30T00:00:00.000Z';
+
 const confirmationLayer = (
   created: { owner: string; url: string; now: string }[]
 ) =>
@@ -157,14 +164,25 @@ const confirmationLayer = (
         return Effect.succeed({
           owner,
           url: parsedFeed.url,
-          feed: parsedFeed,
+          imported: prepareInitialImport(parsedFeed, previewTimestamp),
           expiresAt: 10 * 60 * 1000,
         });
       },
     }),
     Layer.mock(FeedRepository, {
-      createSubscribed: (owner, url, feed, now) => {
-        expect(feed).toBe(parsedFeed);
+      createSubscribed: (owner, url, imported, now) => {
+        expect(imported).toEqual({
+          title: 'Example',
+          articles: [
+            {
+              identity: 'one',
+              url: 'https://example.com/one',
+              title: 'One',
+              publishedAt: previewTimestamp,
+            },
+          ],
+          retention: 500,
+        });
         created.push({ owner, url, now });
 
         return Effect.succeed(confirmedFeed);
@@ -213,7 +231,10 @@ it.effect('rejects unknown and cross-owner preview tokens', () =>
                 ? {
                     owner,
                     url: parsedFeed.url,
-                    feed: parsedFeed,
+                    imported: prepareInitialImport(
+                      parsedFeed,
+                      previewTimestamp
+                    ),
                     expiresAt: 0,
                   }
                 : undefined
@@ -224,4 +245,62 @@ it.effect('rejects unknown and cross-owner preview tokens', () =>
       )
     )
   )
+);
+
+it.effect(
+  'previews every parsed article and imports only the newest initial batch',
+  () => {
+    const articles = Array.from({ length: 35 }, (_, index) => ({
+      identity: String(index),
+      url: `https://example.com/${index}`,
+      title: String(index),
+      publishedAt: new Date(index * 1000).toISOString(),
+    }));
+    let stored: PendingFeedPreview | undefined;
+    let imported: FeedImport | undefined;
+    let fetched = 0;
+    const layer = Layer.mergeAll(
+      Layer.succeed(FeedFetcher, {
+        fetch: () => {
+          fetched += 1;
+
+          return Effect.succeed({ title: 'Example', articles });
+        },
+      }),
+      Layer.mock(FeedPreviewStore, {
+        save: (preview) => {
+          stored = preview;
+
+          return Effect.succeed('preview-token');
+        },
+        find: () => Effect.succeed(stored),
+      }),
+      Layer.mock(FeedRepository, {
+        createSubscribed: (_owner, _url, value) => {
+          imported = value;
+
+          return Effect.succeed(confirmedFeed);
+        },
+      })
+    );
+
+    return Effect.gen(function* () {
+      const { preview } = yield* previewFeed(
+        'alice',
+        'https://example.com/rss'
+      );
+      expect(preview.articleCount).toBe(35);
+      expect(stored?.imported.articles).toHaveLength(30);
+      expect(stored?.imported.articles[0]?.title).toBe('34');
+      expect(yield* subscribeFeed('alice', 'preview-token')).toEqual({
+        item: confirmedFeed,
+      });
+      expect(fetched).toBe(1);
+      expect(imported).toBe(stored?.imported);
+      expect(imported?.retention).toBe(500);
+      expect(imported?.articles.map(({ title }) => title)).toEqual(
+        Array.from({ length: 30 }, (_, index) => String(34 - index))
+      );
+    }).pipe(Effect.provide(layer));
+  }
 );

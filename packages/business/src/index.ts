@@ -1,5 +1,6 @@
 export * from './entity/article';
 export * from './entity/feed';
+export * from './entity/feed-import';
 export * from './entity/reading-link';
 export * from './port/article';
 export * from './port/feed';

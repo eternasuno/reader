@@ -3,6 +3,7 @@ import { Effect, Layer } from 'effect';
 import {
   FeedFetchError,
   FeedFetcher,
+  type FeedImport,
   FeedRepository,
   listFeedArticles,
   markAllFeedArticles,
@@ -110,8 +111,12 @@ it.effect(
             key,
             url: `https://example.com/${key}`,
           }),
-        sync: (owner, key, _parsed, initial) => {
-          expect(initial).toBe(false);
+        sync: (owner, key, imported) => {
+          expect(imported).toEqual({
+            title: 'Example',
+            articles: [],
+            retention: 500,
+          });
           synced.push(`${owner}:${key}`);
 
           return Effect.void;
@@ -185,4 +190,43 @@ it.effect('forwards cursor pagination and bulk feed article marks', () =>
       })
     )
   )
+);
+
+it.effect(
+  'refreshes with the newest 500 articles and the explicit retention cap',
+  () => {
+    const synced: FeedImport[] = [];
+    const articles = Array.from({ length: 600 }, (_, index) => ({
+      identity: String(index),
+      url: `https://example.com/${index}`,
+      title: String(index),
+      publishedAt: new Date(index * 1000).toISOString(),
+    }));
+
+    return Effect.gen(function* () {
+      yield* refreshFeed('alice', 'feed');
+      expect(synced).toHaveLength(1);
+      const imported = synced[0];
+      expect(imported?.retention).toBe(500);
+      expect(imported?.articles).toHaveLength(500);
+      expect(imported?.articles[0]?.title).toBe('599');
+      expect(imported?.articles[499]?.title).toBe('100');
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(FeedRepository, {
+            find: () => Effect.succeed(exampleFeed),
+            sync: (_owner, _key, imported) => {
+              synced.push(imported);
+
+              return Effect.void;
+            },
+          }),
+          Layer.succeed(FeedFetcher, {
+            fetch: () => Effect.succeed({ title: 'Example', articles }),
+          })
+        )
+      )
+    );
+  }
 );

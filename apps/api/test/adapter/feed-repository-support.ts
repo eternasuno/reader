@@ -1,4 +1,9 @@
-import type { FeedRepository } from '@reader/business';
+import {
+  type FeedRepository,
+  type ParsedFeed,
+  prepareInitialImport,
+  prepareRefreshImport,
+} from '@reader/business';
 import { Effect, Layer } from 'effect';
 import type { Surreal } from 'surrealdb';
 import { FeedRepositoryLive } from '../../src/adapter/feed-repository';
@@ -17,6 +22,28 @@ export const makeParsed = (count: number, offset = 0) => ({
     };
   }),
 });
+
+export const createSubscribedFeed = (
+  repository: FeedRepository['Service'],
+  owner: string,
+  url: string,
+  parsed: ParsedFeed,
+  now: string
+) =>
+  repository.createSubscribed(
+    owner,
+    url,
+    prepareInitialImport(parsed, now),
+    now
+  );
+
+export const syncFeed = (
+  repository: FeedRepository['Service'],
+  owner: string,
+  key: string,
+  parsed: ParsedFeed,
+  now: string
+) => repository.sync(owner, key, prepareRefreshImport(parsed, now), now);
 
 export const runWithClient = <A, E>(
   check: (db: Surreal) => Effect.Effect<A, E, FeedRepository>
@@ -44,7 +71,7 @@ export const createEmptyFeed = (
   owner: string,
   url: string,
   now: string
-) => repository.createSubscribed(owner, url, makeParsed(0), now);
+) => createSubscribedFeed(repository, owner, url, makeParsed(0), now);
 
 export const runWithDatabase = <A, E>(
   check: Effect.Effect<A, E, FeedRepository>
