@@ -5,10 +5,10 @@ import { WebpageFrame } from '../molecules/article-frame';
 import { ErrorToast, useErrorToast } from '../molecules/error-toast';
 import {
   ReaderActions,
-  ReaderContent,
   ReaderSourceLink,
   ReaderTitle,
 } from './article-reader-actions';
+import { ReaderContent } from './article-reader-content';
 import {
   makeDeleteHandler,
   makeExtractHandler,

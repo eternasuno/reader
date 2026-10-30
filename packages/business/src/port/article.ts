@@ -31,11 +31,6 @@ export class ArticleRepository extends Context.Service<
       kind: 'link' | 'feed',
       key: string
     ) => Effect.Effect<ArticleSource | undefined, ArticleFailure>;
-    readonly source: (
-      owner: string,
-      kind: 'link' | 'feed',
-      key: string
-    ) => Effect.Effect<string | undefined, ArticleFailure>;
     readonly get: (
       owner: string,
       url: string

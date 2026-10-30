@@ -26,13 +26,6 @@ export const ArticleRepositoryLive = Layer.effect(
             : 'SELECT title, url, read, description, feedKey FROM feed_article WHERE owner = $owner AND key = $key;',
           { owner, key }
         ).pipe(Effect.map((items) => items[0])),
-      source: (owner, kind, key) =>
-        query<{ url: string }[]>(
-          kind === 'link'
-            ? 'SELECT url FROM reading_link WHERE owner = $owner AND key = $key;'
-            : 'SELECT url FROM feed_article WHERE owner = $owner AND key = $key;',
-          { owner, key }
-        ).pipe(Effect.map((items) => items[0]?.url)),
       get: (owner, url) =>
         query<ArticleContent[]>(
           'SELECT url, title, html, extractedAt FROM article_content WHERE owner = $owner AND url = $url;',
