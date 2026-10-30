@@ -21,15 +21,19 @@ const selectEntry = (
   if (!onSelect) {
     return;
   }
+
   if (event.defaultPrevented) {
     return;
   }
+
   if (event.button !== 0) {
     return;
   }
+
   if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
     return;
   }
+
   event.preventDefault();
   onSelect(item);
 };

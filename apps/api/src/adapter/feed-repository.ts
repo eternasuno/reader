@@ -84,7 +84,9 @@ const removeFeed = (db: Surreal, owner: string, key: string) =>
     if (!existing) {
       return false;
     }
+
     yield* deleteFeedRows(db, owner, key);
+
     return true;
   });
 
@@ -262,6 +264,7 @@ export const FeedRepositoryLive = Layer.effect(
   FeedRepository,
   Effect.gen(function* () {
     const db = yield* Database;
+
     return FeedRepository.of({
       list: (owner) => selectFeeds(db, owner),
       find: (owner, key) => selectFeed(db, owner, key),

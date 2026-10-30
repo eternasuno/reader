@@ -67,6 +67,7 @@ const expectStoredSecret = Effect.gen(function* () {
   if (stored) {
     expect(Redacted.value(stored)).toBe('alice-secret');
   }
+
   expectCiphertextHidesPlaintext(yield* selectCiphertext('alice'));
 });
 

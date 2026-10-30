@@ -59,6 +59,7 @@ const SelectableTitle = (props: ReadingItemProps) => {
     if (!onSelect) {
       return;
     }
+
     if (
       event.button !== 0 ||
       event.ctrlKey ||
@@ -68,6 +69,7 @@ const SelectableTitle = (props: ReadingItemProps) => {
     ) {
       return;
     }
+
     event.preventDefault();
     onSelect(props.item);
   };

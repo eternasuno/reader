@@ -64,10 +64,12 @@ export const CredentialCryptoLive = Layer.effect(
     return {
       encrypt: (owner, value) => {
         requireKey();
+
         return encrypt(key, owner, value);
       },
       decrypt: (owner, value) => {
         requireKey();
+
         return decrypt(key, owner, value);
       },
     };

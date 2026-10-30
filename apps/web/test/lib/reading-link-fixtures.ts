@@ -76,18 +76,22 @@ const responseFor = (
   if (method === 'GET' && path === '/api/links/unread-count') {
     return handlers.unread();
   }
+
   if (method === 'GET' && path === '/api/links') {
     return handlers.list();
   }
+
   if (path === '/api/links/mark-all') {
     return handlers.markAll();
   }
+
   if (method === 'PATCH' && options.markStatus !== undefined) {
     return Response.json(
       { error: '链接不存在' },
       { status: options.markStatus }
     );
   }
+
   if (method === 'POST') {
     return Response.json(new DuplicateLink({ error: '已存在' }), {
       status: 409,
@@ -106,6 +110,7 @@ const createHandlers = (options: TestOptions): ListHandlers => {
 
       return Response.json({ error: '暂时无法加载' }, { status: 500 });
     }
+
     const pages = options.pages ?? [];
     const current =
       pages[Math.min(listCalls, pages.length - 1)] ?? page([], false);
@@ -202,11 +207,3 @@ export const startCommand = (
     })
   );
 };
-
-export const runCommand = (
-  registry: AtomRegistry.AtomRegistry,
-  atoms: ReadingAtoms,
-  input: LinkCommand
-) => startCommand(registry, atoms, input);
-
-export const settle = () => new Promise((resolve) => setTimeout(resolve, 10));

@@ -14,7 +14,7 @@ import { LinkRepositoryLive } from '../../src/adapter/link-repository';
 import { createSurreal, Database } from '../../src/infrastructure/db';
 import { linksSchema } from '../../src/infrastructure/links';
 
-const saveLink = (owner: string, url: string, _title: string) =>
+const saveLink = (owner: string, url: string) =>
   saveReadingLink(owner, url).pipe(Effect.map(({ item }) => item));
 
 const changeLink = (owner: string, key: string, read: boolean | undefined) =>
@@ -27,13 +27,12 @@ const changeLink = (owner: string, key: string, read: boolean | undefined) =>
   );
 
 const verifyReadIsolation = Effect.gen(function* () {
-  const first = yield* saveLink('alice', 'https://example.com/', 'Example');
+  const first = yield* saveLink('alice', 'https://example.com/');
   expect(first?.read).toBe(false);
   expect(yield* countUnreadLinks('alice')).toEqual({ count: 1 });
   expect(yield* countUnreadLinks('bob')).toEqual({ count: 0 });
   expect(
-    (yield* Effect.flip(saveLink('alice', 'https://example.com/', 'Duplicate')))
-      ._tag
+    (yield* Effect.flip(saveLink('alice', 'https://example.com/')))._tag
   ).toBe('DuplicateLink');
   expect((yield* listLinks('bob', false, 0)).items).toEqual([]);
   expect(yield* changeLink('bob', first?.key ?? '', true)).toBe(false);
@@ -51,11 +50,7 @@ const verifyReadIsolation = Effect.gen(function* () {
 
 const seedLinks = Effect.gen(function* () {
   for (let index = 0; index < 31; index++) {
-    yield* saveLink(
-      'alice',
-      `https://example.com/${index}`,
-      `Article ${index}`
-    );
+    yield* saveLink('alice', `https://example.com/${index}`);
   }
 });
 
@@ -97,7 +92,7 @@ const verifyCursorPaging = Effect.gen(function* () {
 });
 
 const verifyBulkMark = Effect.gen(function* () {
-  yield* saveLink('bob', 'https://bob.example.com/', 'Bob');
+  yield* saveLink('bob', 'https://bob.example.com/');
   expect(yield* markAllLinks('alice')).toEqual({ ok: true });
   expect(yield* countUnreadLinks('alice')).toEqual({ count: 0 });
   expect(yield* countUnreadLinks('bob')).toEqual({ count: 1 });
@@ -109,17 +104,9 @@ const verifyBulkMark = Effect.gen(function* () {
 });
 
 const verifyLoadedMark = Effect.gen(function* () {
-  const first = yield* saveLink(
-    'carol',
-    'https://carol.example.com/1',
-    'First'
-  );
-  const second = yield* saveLink(
-    'carol',
-    'https://carol.example.com/2',
-    'Second'
-  );
-  const other = yield* saveLink('dave', 'https://dave.example.com/', 'Dave');
+  const first = yield* saveLink('carol', 'https://carol.example.com/1');
+  const second = yield* saveLink('carol', 'https://carol.example.com/2');
+  const other = yield* saveLink('dave', 'https://dave.example.com/');
   expect(yield* markLoadedLinks('carol', [])).toEqual({ ok: true });
   expect(yield* countUnreadLinks('carol')).toEqual({ count: 2 });
   expect(

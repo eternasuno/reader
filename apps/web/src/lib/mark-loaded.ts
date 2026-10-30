@@ -14,12 +14,11 @@ export const partialMarkLoadedError = (
 ): string => `已标记 ${completed} 条，${failed} 条标记失败，请重试`;
 
 export const chunkKeys = (
-  keys: readonly string[],
-  size = MARK_LOADED_CHUNK_SIZE
+  keys: readonly string[]
 ): readonly (readonly string[])[] => {
   const chunks: (readonly string[])[] = [];
-  for (let index = 0; index < keys.length; index += size) {
-    chunks.push(keys.slice(index, index + size));
+  for (let index = 0; index < keys.length; index += MARK_LOADED_CHUNK_SIZE) {
+    chunks.push(keys.slice(index, index + MARK_LOADED_CHUNK_SIZE));
   }
 
   return chunks;

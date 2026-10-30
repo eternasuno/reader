@@ -50,6 +50,7 @@ export const makeSettingsAtoms = () => {
       } else {
         yield* client.reader.setKey({ payload: { key } });
       }
+
       get.refresh(status);
     })
   );

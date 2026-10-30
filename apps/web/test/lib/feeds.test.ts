@@ -6,9 +6,9 @@ import {
   feed,
   makeTest,
   page,
-  runCommand,
   runLoad,
   settle,
+  startCommand,
 } from './feed-fixtures';
 
 describe('feed infinite pages', () => {
@@ -69,7 +69,7 @@ describe('feed marks', () => {
     try {
       await runLoad(registry, atoms, true);
       const loaded = requests.length;
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'Mark',
         key,
         read: true,
@@ -101,7 +101,7 @@ describe('feed all refresh', () => {
     );
     try {
       await runLoad(registry, atoms, true);
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'RefreshAll',
         reload: true,
       });
@@ -132,7 +132,7 @@ describe('feed scoped refresh', () => {
     try {
       await runLoad(registry, atoms, true);
       const loaded = articleRequests(requests).length;
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'Refresh',
         key: alpha,
       });
@@ -154,7 +154,7 @@ describe('feed all-feed bulk marks', () => {
     const { registry, atoms, requests } = makeTest([page(first, true)]);
     try {
       await runLoad(registry, atoms, true);
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'MarkAll',
         key: '',
       });
@@ -180,7 +180,7 @@ describe('feed scoped bulk marks', () => {
     const { registry, atoms } = makeTest([page(first, true)]);
     try {
       await runLoad(registry, atoms, true);
-      await runCommand(registry, atoms, { _tag: 'MarkAll', key: 'feed' });
+      await startCommand(registry, atoms, { _tag: 'MarkAll', key: 'feed' });
       expect(
         registry.get(atoms.articles).items.map((item) => item.feedKey)
       ).toEqual(['other']);

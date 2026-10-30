@@ -158,16 +158,19 @@ export const ArticleFrame = (props: { html: string }) => {
     onCleanup(() => window.removeEventListener('message', receive));
   });
 
+  const heightStyle = () => {
+    const measured = height();
+    if (measured === undefined) return '65vh';
+
+    return `${measured / Number.parseFloat(getComputedStyle(window.document.documentElement).fontSize)}rem`;
+  };
+
   return (
     <iframe
       ref={frame}
       title="文章正文"
       class="block h-(--article-height) w-full border-0 bg-[#121212]"
-      style={`--article-height:${
-        height() === undefined
-          ? '65vh'
-          : `${height()! / Number.parseFloat(getComputedStyle(window.document.documentElement).fontSize)}rem`
-      }`}
+      style={`--article-height:${heightStyle()}`}
       scrolling={height() === undefined ? 'auto' : 'no'}
       sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
       referrerpolicy="no-referrer"

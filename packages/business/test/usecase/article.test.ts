@@ -39,6 +39,7 @@ it.effect(
           Layer.mock(ArticleRepository, {
             metadata: (owner) => {
               expect(owner).toBe('alice');
+
               return Effect.succeed({
                 title: 'Source',
                 url: item.url,

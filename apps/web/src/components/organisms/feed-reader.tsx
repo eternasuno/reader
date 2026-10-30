@@ -214,6 +214,7 @@ const useFeedReader = (props: FeedReaderProps) => {
       )
     );
   }
+
   const feeds = () =>
     Option.getOrUndefined(AsyncResult.value(model.feeds()))?.items;
   const feedKey = () => props.feedKey ?? '';

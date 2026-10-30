@@ -45,6 +45,7 @@ const addReadingLink = async (
 
   if (Exit.isSuccess(exit)) {
     form.reset();
+
     return true;
   }
 

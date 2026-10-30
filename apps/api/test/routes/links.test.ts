@@ -165,6 +165,7 @@ const seedBulkLinks = async (call: LinkCall, alice: string, bob: string) => {
       ).status
     ).toBe(201);
   }
+
   expect(
     (await call('POST', bob, { url: 'http://127.0.0.1/bob-bulk' })).status
   ).toBe(201);

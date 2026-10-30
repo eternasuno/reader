@@ -7,9 +7,9 @@ import {
   makeTest,
   page,
   type Request,
-  runCommand,
   runLoad,
   runPreview,
+  startCommand,
 } from './feed-fixtures';
 
 const successValue = <A>(exit: Exit.Exit<A, unknown>): A => {
@@ -71,7 +71,7 @@ describe('feed preview confirmation', () => {
         await runPreview(registry, atoms, 'https://example.com/feed.xml')
       );
       successValue(
-        await runCommand(registry, atoms, {
+        await startCommand(registry, atoms, {
           _tag: 'Subscribe',
           token: preview.token,
         })

@@ -24,24 +24,7 @@ describe('mark-loaded chunking', () => {
   });
 });
 
-describe('mark-loaded per-chunk success', () => {
-  it('reports only keys from successful chunks', async () => {
-    const sent: (readonly string[])[] = [];
-    const result = await Effect.runPromise(
-      markLoadedKeys(keys(5001), (chunk) => {
-        sent.push(chunk);
-
-        return sent.length === 2
-          ? Effect.fail('chunk failed')
-          : Effect.succeed({ ok: true });
-      })
-    );
-
-    expect(sent).toHaveLength(2);
-    expect(result.keys).toHaveLength(5000);
-    expect(result.keys).not.toContain('key-5000');
-  });
-
+describe('mark-loaded failures', () => {
   it('fails when no chunk persists', async () => {
     const exit = await Effect.runPromiseExit(
       markLoadedKeys(keys(2), () => Effect.fail('unavailable'))
@@ -49,25 +32,28 @@ describe('mark-loaded per-chunk success', () => {
 
     expect(Exit.isFailure(exit)).toBe(true);
   });
-});
 
-describe('mark-loaded partial failure', () => {
-  it('surfaces the failure while retaining successful keys', async () => {
+  it('surfaces the failure while retaining only keys from successful chunks', async () => {
+    const sent: (readonly string[])[] = [];
     const result = await Effect.runPromise(
-      markLoadedKeys(keys(5001), (chunk) =>
-        chunk.includes('key-5000')
+      markLoadedKeys(keys(5001), (chunk) => {
+        sent.push(chunk);
+
+        return chunk.includes('key-5000')
           ? Effect.fail('chunk failed')
-          : Effect.succeed({ ok: true })
-      )
+          : Effect.succeed({ ok: true });
+      })
     );
 
+    expect(sent).toHaveLength(2);
+    expect(result.keys).toHaveLength(MARK_LOADED_CHUNK_SIZE);
+    expect(result.keys).not.toContain('key-5000');
     expect(result.failed).toBe(true);
     expect(result.error).toBe(partialMarkLoadedError(5000, 1));
-    expect(result.error).not.toBe('');
-    expect(result.keys).toHaveLength(5000);
-    expect(result.keys).not.toContain('key-5000');
   });
+});
 
+describe('mark-loaded success', () => {
   it('reports clean success without a partial error', async () => {
     const result = await Effect.runPromise(
       markLoadedKeys(keys(2), () => Effect.succeed({ ok: true }))

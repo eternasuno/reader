@@ -49,6 +49,7 @@ export const useReaderStores = (kind: ReaderSelection['kind'], key: string) => {
     mode: 'promiseExit',
   });
   const runFeed = useAtomSet(() => feedAtoms.command, { mode: 'promiseExit' });
+
   return {
     content,
     mutation,
@@ -86,8 +87,10 @@ export const useReaderNotices = (
     const resolved = feedKey();
     if (bulkReadMatches(change, selection, resolved)) {
       setRead(change.read);
+
       return;
     }
+
     if (
       selection.kind === 'feed' &&
       change.scope.kind === 'singlefeed' &&
@@ -244,9 +247,11 @@ export const makeDeleteHandler =
     if (busy()) {
       return;
     }
+
     if (!window.confirm('确定删除这个链接？此操作无法撤销。')) {
       return;
     }
+
     setNotice('');
     const exit = await stores.runReading({ _tag: 'Delete', key });
     if (Exit.isSuccess(exit)) {
@@ -266,6 +271,7 @@ export const makeSaveHandler =
     if (busy()) {
       return;
     }
+
     setNotice('');
     const exit = await stores.runFeed({ _tag: 'Save', key });
     if (Exit.isSuccess(exit)) {

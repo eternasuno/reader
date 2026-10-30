@@ -33,6 +33,7 @@ export const routeSelection = (
 ): SelectionState => {
   if (!path.startsWith('/read/') || !key) return undefined;
   if (kind !== 'link' && kind !== 'feed') return undefined;
+
   return { kind, key, title: '', url: '', read: false };
 };
 

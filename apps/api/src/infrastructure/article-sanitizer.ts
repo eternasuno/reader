@@ -86,6 +86,7 @@ const normalizeElement = (element: Element, base: string) => {
   if (element.tagName === 'A') {
     resolveAttribute(element, 'href', base);
     hardenLink(element);
+
     return;
   }
 

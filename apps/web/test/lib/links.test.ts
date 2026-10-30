@@ -6,8 +6,8 @@ import {
   listRequests,
   makeTest,
   page,
-  runCommand,
   runLoad,
+  startCommand,
 } from './reading-link-fixtures';
 
 describe('reading-list unread counts', () => {
@@ -37,7 +37,7 @@ describe('reading-list marks', () => {
     try {
       await runLoad(registry, atoms, true);
       const loaded = listRequests(requests).length;
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'Mark',
         key,
         read: true,
@@ -63,7 +63,7 @@ describe('reading-list mark failures', () => {
     try {
       await runLoad(registry, atoms, true);
       const loaded = listRequests(requests).length;
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'Mark',
         key: link(1).key,
         read: true,
@@ -86,7 +86,7 @@ describe('reading-list unread bulk marks', () => {
     try {
       registry.mount(atoms.unread);
       await runLoad(registry, atoms, true);
-      const exit = await runCommand(registry, atoms, { _tag: 'MarkAll' });
+      const exit = await startCommand(registry, atoms, { _tag: 'MarkAll' });
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests).toContainEqual(
         expect.objectContaining({
@@ -118,7 +118,7 @@ describe('reading-list full bulk marks', () => {
     try {
       registry.set(atoms.query, false);
       await runLoad(registry, atoms, true);
-      const exit = await runCommand(registry, atoms, { _tag: 'MarkAll' });
+      const exit = await startCommand(registry, atoms, { _tag: 'MarkAll' });
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(registry.get(atoms.state).items.map((item) => item.read)).toEqual([
         true,

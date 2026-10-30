@@ -67,6 +67,7 @@ export const appendPage = <T>(
     if (keys.has(key)) {
       return false;
     }
+
     keys.add(key);
 
     return true;

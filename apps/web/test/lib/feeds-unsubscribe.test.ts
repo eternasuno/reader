@@ -7,7 +7,6 @@ import {
   feed,
   makeTest,
   page,
-  runCommand,
   runLoad,
   settle,
   startCommand,
@@ -26,7 +25,7 @@ describe('feed unsubscribe selection', () => {
       registry.set(atoms.query, { feedKey: alpha, onlyUnread: true });
       await runLoad(registry, atoms, true);
       const loaded = articleRequests(requests).length;
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'Unsubscribe',
         key: beta,
       });
@@ -69,7 +68,7 @@ describe('feed unsubscribe current feed', () => {
       await runLoad(registry, atoms, true);
       const loaded = articleRequests(requests).length;
       const snapshot = registry.get(atoms.articles);
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'Unsubscribe',
         key: beta,
       });
@@ -137,7 +136,7 @@ describe('feed unsubscribe all scope', () => {
     try {
       await runLoad(registry, atoms, true);
       const loaded = articleRequests(requests).length;
-      await runCommand(registry, atoms, { _tag: 'Unsubscribe', key: beta });
+      await startCommand(registry, atoms, { _tag: 'Unsubscribe', key: beta });
       await settle();
       expect(registry.get(atoms.query).feedKey).toBe('');
       expect(articleRequests(requests).length).toBeGreaterThan(loaded);
@@ -159,7 +158,7 @@ describe('feed subscribe reload', () => {
       registry.set(atoms.query, { feedKey: alpha, onlyUnread: true });
       await runLoad(registry, atoms, true);
       const loaded = articleRequests(requests).length;
-      const exit = await runCommand(registry, atoms, {
+      const exit = await startCommand(registry, atoms, {
         _tag: 'Subscribe',
         token: 'preview-token',
       });

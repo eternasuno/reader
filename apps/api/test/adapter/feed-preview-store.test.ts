@@ -153,6 +153,7 @@ it.effect('evicts the oldest previews to stay inside the byte budget', () =>
     for (const token of kept) {
       expect(yield* store.find('alice', token, 0)).toBeDefined();
     }
+
     expect(kept.length).toBe(capacity);
     expect(kept.length * bytes).toBeLessThanOrEqual(MAX_TOTAL_BYTES);
     expect((kept.length + 1) * bytes).toBeGreaterThan(MAX_TOTAL_BYTES);

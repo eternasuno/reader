@@ -58,6 +58,7 @@ export const useErrorToast = (
     if (!active() || !current) {
       shown = undefined;
       dismiss();
+
       return;
     }
 

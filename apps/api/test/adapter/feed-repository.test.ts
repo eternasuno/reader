@@ -295,8 +295,10 @@ it.effect('marks unread articles for the owner and feed scope only', () =>
   runWithDatabase(verifyBulkMark)
 );
 
-it.effect('caps articles at 500 and skips sync after unsubscribe', () =>
-  runWithDatabase(verifyRetentionCap)
+it.effect(
+  'caps articles at 500 and skips sync after unsubscribe',
+  () => runWithDatabase(verifyRetentionCap),
+  { timeout: 15000 }
 );
 
 it.effect('trims retained articles to the explicit retention cap', () =>

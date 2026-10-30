@@ -151,6 +151,7 @@ it('prefers JSON HTML, escapes text fallbacks and bounds descriptions', () => {
 it('returns every normalized article in feed order for business selection', () => {
   const items = Array.from({ length: 600 }, (_, index) => {
     const date = new Date((600 - index) * 1000).toUTCString();
+
     return `<item><guid>${index}</guid><title>${index}</title><link>https://example.com/${index}</link><pubDate>${date}</pubDate></item>`;
   });
   const feed = parseFeed(

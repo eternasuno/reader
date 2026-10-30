@@ -22,6 +22,7 @@ export class DatabaseConnectError extends Data.TaggedError(
 
 export const createSurreal = (config: DbConfig): Promise<Surreal> => {
   const db = new Surreal({ engines: { ...createNodeEngines() }, codecOptions });
+
   return db
     .connect(config.endpoint, {
       namespace: config.namespace,
@@ -38,6 +39,7 @@ export const DatabaseLive = Layer.effect(
       namespace: Config.String('NAMESPACE').pipe(Config.withDefault('app')),
       database: Config.String('DATABASE').pipe(Config.withDefault('app')),
     }).pipe(Config.nested('SURREAL'));
+
     return yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: () => createSurreal(config),

@@ -35,6 +35,7 @@ export const useUnreadRefresh = (
       feedsPending = false;
       refreshFeeds();
     }
+
     if (linksPending) {
       linksPending = false;
       refreshUnread();

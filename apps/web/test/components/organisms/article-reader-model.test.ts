@@ -126,6 +126,14 @@ describe('scoped bulk notices', () => {
       publish({
         kind: 'feed',
         keys: [],
+        read: true,
+        scope: { kind: 'allfeeds' },
+      });
+      expect(feed.read()).toBe(true);
+      expect(link.read()).toBe(true);
+      publish({
+        kind: 'feed',
+        keys: [],
         read: false,
         scope: { kind: 'allfeeds' },
       });

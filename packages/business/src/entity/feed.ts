@@ -52,7 +52,7 @@ export const FeedPreview = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
   description: Schema.String,
-  articleCount: Schema.Number,
+  articleCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 
 export type FeedPreview = typeof FeedPreview.Type;

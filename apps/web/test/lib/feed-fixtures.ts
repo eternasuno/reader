@@ -194,6 +194,7 @@ const createFetch = (
       params: url.searchParams,
       body: requestBody(init),
     });
+
     return (
       routeResponse(
         method,
@@ -274,11 +275,5 @@ export const startCommand = (
     })
   );
 };
-
-export const runCommand = (
-  registry: AtomRegistry.AtomRegistry,
-  atoms: FeedAtoms,
-  input: FeedCommand
-) => startCommand(registry, atoms, input);
 
 export const settle = () => new Promise((resolve) => setTimeout(resolve, 10));

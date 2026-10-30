@@ -14,6 +14,7 @@ export const makeParsed = (count: number, offset = 0) => ({
   title: 'News',
   articles: Array.from({ length: count }, (_, index) => {
     const id = offset + index;
+
     return {
       identity: String(id),
       url: `https://example.com/${id}`,

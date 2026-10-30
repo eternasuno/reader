@@ -27,7 +27,7 @@ describe('loaded-page adjacency', () => {
       previous: items[1],
       next: undefined,
     });
-    expect(adjacentItems([items[0]!], 'first')).toEqual({
+    expect(adjacentItems([{ key: 'first' }], 'first')).toEqual({
       previous: undefined,
       next: undefined,
     });

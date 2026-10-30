@@ -123,6 +123,7 @@ const useWorkspace = () => {
     navigate(path);
     focusListHeading();
   };
+
   return {
     location,
     navigate,
@@ -311,6 +312,7 @@ export const ReaderPage = (_props: {
     if (!current.isPending && !current.data && !current.error)
       navigate('/login', { replace: true });
   });
+
   return (
     <main>
       <Show when={!session().isPending} fallback={<p>正在确认登录状态…</p>}>

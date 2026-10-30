@@ -41,7 +41,8 @@ const loaded = (items: readonly Item[]): InfiniteState<Item> =>
 describe('infinite page accumulation', () => {
   it('appends pages, deduplicates keys, and advances the cursor', () => {
     const first = [item(1), item(2), item(3)];
-    const second = [item(3), item(4), item(5)];
+    const lastSecond = item(5);
+    const second = [item(3), item(4), lastSecond];
     const initial = appendPage(
       initialInfiniteState<Item>(),
       { items: first, hasMore: true },
@@ -65,7 +66,7 @@ describe('infinite page accumulation', () => {
       'item-5',
     ]);
     expect(appended.items[0]).toBe(first[0]);
-    expect(appended.cursor).toEqual(cursorOf(second[2]!));
+    expect(appended.cursor).toEqual(cursorOf(lastSecond));
     expect(appended.hasMore).toBe(false);
     expect(appended.loading).toBe(false);
     expect(appended.initialized).toBe(true);
