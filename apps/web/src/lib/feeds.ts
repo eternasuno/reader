@@ -17,7 +17,7 @@ import { LinksClient, LinksClientLive } from './links';
 import { markLoadedKeys } from './mark-loaded';
 
 export type FeedCommand =
-  | { readonly _tag: 'Subscribe'; readonly url: string }
+  | { readonly _tag: 'Subscribe'; readonly token: string }
   | { readonly _tag: 'Unsubscribe' | 'Save'; readonly key: string }
   | {
       readonly _tag: 'Refresh';
@@ -70,6 +70,14 @@ const listPage = (
       offset: 0,
       ...(cursor ?? {}),
     },
+  });
+
+const previewFeed = (url: string) =>
+  Effect.gen(function* () {
+    const client = yield* LinksClient;
+    const result = yield* client.feeds.preview({ payload: { url } });
+
+    return result.preview;
   });
 
 const runFeedLoad = (
@@ -161,7 +169,7 @@ const runFeedMutation = (
     }
 
     if (input._tag === 'Subscribe') {
-      yield* client.feeds.subscribe({ payload: { url: input.url } });
+      yield* client.feeds.subscribe({ payload: { token: input.token } });
     } else {
       yield* client.feeds.unsubscribe({ payload: { key: input.key } });
     }
@@ -243,6 +251,7 @@ export const makeFeedAtoms = (layer = LinksClientLive) => {
     }),
     { concurrent: true }
   );
+  const preview = runtime.fn<string>()((url) => previewFeed(url));
   const command = runtime.fn<FeedCommand>()(
     Effect.fnUntraced(function* (input, get) {
       return yield* runFeedCommand(input, get, {
@@ -254,5 +263,5 @@ export const makeFeedAtoms = (layer = LinksClientLive) => {
     })
   );
 
-  return { query, feeds, articles, load, command };
+  return { query, feeds, articles, load, preview, command };
 };

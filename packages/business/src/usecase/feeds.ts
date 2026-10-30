@@ -1,14 +1,16 @@
 import { Clock, Effect, Schema } from 'effect';
-import { FeedFetcher, FeedRepository } from '../port/feed';
+import { FeedFetcher, FeedPreviewStore, FeedRepository } from '../port/feed';
 import { normalizeLink, saveLink } from './links';
+
+const PREVIEW_TTL_MILLIS = 10 * 60 * 1000;
 
 export class InvalidFeed extends Schema.TaggedError<InvalidFeed>()(
   'InvalidFeed',
   { error: Schema.String }
 ) {}
 
-export class DuplicateFeed extends Schema.TaggedError<DuplicateFeed>()(
-  'DuplicateFeed',
+export class InvalidPreview extends Schema.TaggedError<InvalidPreview>()(
+  'InvalidPreview',
   { error: Schema.String }
 ) {}
 
@@ -23,7 +25,7 @@ export const listFeeds = Effect.fn('feeds.list')(function* (owner: string) {
   return { items: yield* repository.list(owner) };
 });
 
-export const subscribeFeed = Effect.fn('feeds.subscribe')(function* (
+export const previewFeed = Effect.fn('feeds.preview')(function* (
   owner: string,
   address: string
 ) {
@@ -33,18 +35,46 @@ export const subscribeFeed = Effect.fn('feeds.subscribe')(function* (
   });
   const fetcher = yield* FeedFetcher;
   const parsed = yield* fetcher.fetch(url);
-  const repository = yield* FeedRepository;
-  const feed = yield* repository.create(owner, url, parsed.title);
-  if (!feed) {
-    return yield* new DuplicateFeed({ error: '已经订阅了这个地址' });
+  const previewUrl = parsed.url ?? url;
+  const store = yield* FeedPreviewStore;
+  const now = yield* Clock.currentTimeMillis;
+  const token = yield* store.save(
+    {
+      owner,
+      url: previewUrl,
+      feed: parsed,
+      expiresAt: now + PREVIEW_TTL_MILLIS,
+    },
+    now
+  );
+
+  return {
+    preview: {
+      token,
+      url: previewUrl,
+      title: parsed.title,
+      description: parsed.description ?? '',
+      articleCount: parsed.articles.length,
+    },
+  };
+});
+
+export const subscribeFeed = Effect.fn('feeds.subscribe')(function* (
+  owner: string,
+  token: string
+) {
+  const store = yield* FeedPreviewStore;
+  const now = yield* Clock.currentTimeMillis;
+  const preview = yield* store.find(owner, token, now);
+  if (!preview) {
+    return yield* new InvalidPreview({ error: '订阅确认已失效，请重新添加' });
   }
 
-  const now = yield* Clock.currentTimeMillis;
-  yield* repository.sync(
+  const repository = yield* FeedRepository;
+  const feed = yield* repository.createSubscribed(
     owner,
-    feed.key,
-    parsed,
-    true,
+    preview.url,
+    preview.feed,
     new Date(now).toISOString()
   );
 

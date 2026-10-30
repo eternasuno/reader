@@ -20,6 +20,8 @@ type SyncRow = {
   readonly description?: string;
 };
 
+const MAX_TRANSACTION_ATTEMPTS = 3;
+
 const hash = (...values: string[]) =>
   createHash('sha256').update(JSON.stringify(values)).digest('hex');
 
@@ -28,6 +30,26 @@ const queryRows = <A>(db: Surreal, sql: string, bindings: Bindings) =>
     try: () => db.query<[A]>(sql, bindings),
     catch: (cause) => new FeedRepositoryError({ cause }),
   }).pipe(Effect.map(([rows]) => rows));
+
+const lastRows = <A>(results: readonly unknown[]): A[] => {
+  for (let index = results.length - 1; index >= 0; index--) {
+    const value = results[index];
+    if (Array.isArray(value)) {
+      return value as A[];
+    }
+  }
+
+  return [];
+};
+
+const queryLastRows = <A>(db: Surreal, sql: string, bindings: Bindings) =>
+  Effect.tryPromise({
+    try: () => db.query<unknown[]>(sql, bindings),
+    catch: (cause) => new FeedRepositoryError({ cause }),
+  }).pipe(Effect.map((results) => lastRows<A>(results)));
+
+const isTransactionConflict = (cause: unknown): boolean =>
+  cause instanceof Error && /retry the transaction/i.test(cause.message);
 
 const runCommand = (db: Surreal, sql: string, bindings: Bindings) =>
   Effect.tryPromise({
@@ -48,19 +70,6 @@ const selectFeed = (db: Surreal, owner: string, key: string) =>
     'SELECT key, url, title, updatedAt, error, array::len((SELECT VALUE key FROM feed_article WHERE owner = $owner AND feedKey = $parent.key AND read = false)) AS unreadCount FROM feed WHERE owner = $owner AND key = $key;',
     { owner, key }
   ).pipe(Effect.map((items) => items[0]));
-
-const insertFeed = (db: Surreal, owner: string, url: string, title: string) =>
-  Effect.suspend(() =>
-    queryRows<Feed[]>(
-      db,
-      'UPSERT type::record("feed", $key) SET owner = $owner, key = $key, url = $url, title = $title, updatedAt = "", error = "" WHERE owner = NONE RETURN AFTER;',
-      { owner, url, title, key: hash(owner, url) }
-    ).pipe(
-      Effect.map((items) =>
-        items[0] ? { ...items[0], unreadCount: 0 } : undefined
-      )
-    )
-  );
 
 const deleteFeedRows = (db: Surreal, owner: string, key: string) =>
   runCommand(
@@ -135,6 +144,60 @@ const syncFeed = (
     feed.title,
     now,
     buildSyncRows(owner, key, feed, initial, now)
+  );
+
+const createSubscribedFeed = (
+  db: Surreal,
+  owner: string,
+  url: string,
+  feed: ParsedFeed,
+  now: string
+) =>
+  Effect.gen(function* () {
+    const key = hash(owner, url);
+    const items = yield* queryLastRows<Feed>(
+      db,
+      `BEGIN TRANSACTION;
+LET $created = UPSERT type::record("feed", $key) SET owner = $owner, key = $key, url = $url, title = $title, updatedAt = $now, error = "" WHERE owner = NONE RETURN AFTER;
+IF array::len($created) > 0 {
+  FOR $article IN $articles {
+    UPSERT type::record("feed_article", $article.key) SET owner = $owner, feedKey = $key, key = $article.key, url = $article.url, title = $article.title, publishedAt = $article.publishedAt, description = $article.description, read = false WHERE owner = NONE;
+  };
+};
+SELECT key, url, title, updatedAt, error, array::len((SELECT VALUE key FROM feed_article WHERE owner = $owner AND feedKey = $parent.key AND read = false)) AS unreadCount FROM feed WHERE owner = $owner AND key = $key;
+COMMIT TRANSACTION;`,
+      {
+        owner,
+        key,
+        url,
+        title: feed.title,
+        articles: buildSyncRows(owner, key, feed, true, now),
+        now,
+      }
+    );
+    const created = items[0];
+    if (!created) {
+      return yield* new FeedRepositoryError({
+        cause: new Error('Subscription creation failed'),
+      });
+    }
+
+    return created;
+  });
+
+const subscribeWithRetry = (
+  db: Surreal,
+  owner: string,
+  url: string,
+  feed: ParsedFeed,
+  now: string,
+  attempts = MAX_TRANSACTION_ATTEMPTS
+): Effect.Effect<Feed, FeedRepositoryError> =>
+  createSubscribedFeed(db, owner, url, feed, now).pipe(
+    Effect.catchIf(
+      (error) => attempts > 1 && isTransactionConflict(error.cause),
+      () => subscribeWithRetry(db, owner, url, feed, now, attempts - 1)
+    )
   );
 
 const failFeed = (db: Surreal, owner: string, key: string, message: string) =>
@@ -212,7 +275,8 @@ export const FeedRepositoryLive = Layer.effect(
     return FeedRepository.of({
       list: (owner) => selectFeeds(db, owner),
       find: (owner, key) => selectFeed(db, owner, key),
-      create: (owner, url, title) => insertFeed(db, owner, url, title),
+      createSubscribed: (owner, url, feed, now) =>
+        subscribeWithRetry(db, owner, url, feed, now),
       remove: (owner, key) => removeFeed(db, owner, key),
       sync: (owner, key, feed, initial, now) =>
         syncFeed(db, owner, key, feed, initial, now),

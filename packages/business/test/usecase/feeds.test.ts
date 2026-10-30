@@ -9,7 +9,6 @@ import {
   markLoadedFeedArticles,
   refreshFeed,
   refreshSubscriptions,
-  subscribeFeed,
 } from '../../src';
 
 const exampleFeed = {
@@ -21,54 +20,32 @@ const exampleFeed = {
   unreadCount: 0,
 };
 
-const repositoryLayer = Layer.mock(FeedRepository, {
-  create: (owner) => {
-    expect(owner).toBe('alice');
+it.effect('lists and pages feed articles with owner-scoped cursors', () =>
+  Effect.gen(function* () {
+    expect(yield* listFeedArticles('alice', '', false, 30)).toEqual({
+      items: [],
+      hasMore: false,
+    });
+  }).pipe(
+    Effect.provide(
+      Layer.mock(FeedRepository, {
+        articles: (owner, key, read, offset, limit, all, before, beforeKey) => {
+          expect([
+            owner,
+            key,
+            read,
+            offset,
+            limit,
+            all,
+            before,
+            beforeKey,
+          ]).toEqual(['alice', '', false, 30, 31, false, '', '']);
 
-    return Effect.succeed(exampleFeed);
-  },
-  sync: (owner, key, _parsed, initial) => {
-    expect([owner, key, initial]).toEqual(['alice', 'feed', true]);
-
-    return Effect.void;
-  },
-  articles: (owner, key, read, offset, limit, all, before, beforeKey) => {
-    expect([owner, key, read, offset, limit, all, before, beforeKey]).toEqual([
-      'alice',
-      '',
-      false,
-      30,
-      31,
-      false,
-      '',
-      '',
-    ]);
-
-    return Effect.succeed([]);
-  },
-});
-
-it.effect(
-  'imports a new subscription with initial retention policy and owner identity',
-  () =>
-    Effect.gen(function* () {
-      expect((yield* subscribeFeed('alice', exampleFeed.url)).item.key).toBe(
-        'feed'
-      );
-      expect(yield* listFeedArticles('alice', '', false, 30)).toEqual({
-        items: [],
-        hasMore: false,
-      });
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(FeedFetcher, {
-            fetch: () => Effect.succeed({ title: 'Example', articles: [] }),
-          }),
-          repositoryLayer
-        )
-      )
+          return Effect.succeed([]);
+        },
+      })
     )
+  )
 );
 
 it.effect('does not fetch another account subscription', () =>

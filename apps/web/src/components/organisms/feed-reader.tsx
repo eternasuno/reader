@@ -15,6 +15,7 @@ import { useInfiniteLoader } from '../../pages/infinite-loader';
 import { useWorkspaceData } from '../../pages/workspace-state';
 import { FeedArticles } from '../molecules/feed-entries';
 import { ListToolbar } from '../molecules/list-toolbar';
+import { useFeedSubscription } from './feed-subscription';
 import { FeedManagement } from './feed-subscriptions';
 import {
   createReadStatusProjection,
@@ -58,19 +59,6 @@ const publishMarkAll = async (
   return exit;
 };
 
-const subscribeFeed = (
-  run: RunFeed,
-  setNotice: (value: string) => void,
-  form: HTMLFormElement
-) => {
-  const url = String(new FormData(form).get('url') ?? '').trim();
-  setNotice('');
-
-  return run({ _tag: 'Subscribe', url }).then((exit) => {
-    if (exit._tag === 'Success') form.reset();
-  });
-};
-
 const saveFeedArticle = (
   run: RunFeed,
   setNotice: (value: string) => void,
@@ -90,6 +78,9 @@ const useFeedSource = () => {
   const articles = useAtomValue(() => data.feeds.articles);
   const mutation = useAtomValue(() => data.feeds.command);
   const rawRun = useAtomSet(() => data.feeds.command, { mode: 'promiseExit' });
+  const rawPreview = useAtomSet(() => data.feeds.preview, {
+    mode: 'promiseExit',
+  });
   const load = useAtomSet(() => data.feeds.load, { mode: 'promiseExit' });
   useAtomMount(() => data.feeds.load);
   const items = createReadStatusProjection('feed', () => articles().items);
@@ -106,6 +97,7 @@ const useFeedSource = () => {
     articles,
     mutation,
     rawRun,
+    rawPreview,
     items,
     pending,
     ...loader,
@@ -155,8 +147,6 @@ const useFeedActions = (source: ReturnType<typeof useFeedSource>) => {
 
     await source.rawRun({ _tag: 'RefreshAll', reload: true });
   };
-  const subscribe = (form: HTMLFormElement) =>
-    subscribeFeed(run, setNotice, form);
   const save = (key: string) => saveFeedArticle(run, setNotice, key);
 
   return {
@@ -166,7 +156,6 @@ const useFeedActions = (source: ReturnType<typeof useFeedSource>) => {
     markAll,
     markLoaded,
     refresh,
-    subscribe,
     save,
   };
 };
@@ -177,6 +166,7 @@ const useFeeds = () => {
   return {
     ...source,
     ...useFeedActions(source),
+    ...useFeedSubscription(source.rawRun, source.rawPreview),
   };
 };
 

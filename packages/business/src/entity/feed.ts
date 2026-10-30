@@ -40,7 +40,19 @@ export type ParsedArticle = typeof ParsedArticle.Type;
 
 export const ParsedFeed = Schema.Struct({
   title: Schema.String,
+  description: Schema.optional(Schema.String),
+  url: Schema.optional(Schema.String),
   articles: Schema.Array(ParsedArticle),
 });
 
 export type ParsedFeed = typeof ParsedFeed.Type;
+
+export const FeedPreview = Schema.Struct({
+  token: Schema.String,
+  url: Schema.String,
+  title: Schema.String,
+  description: Schema.String,
+  articleCount: Schema.Number,
+});
+
+export type FeedPreview = typeof FeedPreview.Type;

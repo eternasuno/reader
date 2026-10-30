@@ -1,4 +1,4 @@
-import { Cause } from 'effect';
+import { Cause, Exit } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 
 export const errorText = (error: unknown): string =>
@@ -18,3 +18,6 @@ export const resultError = (
 
   return errorText(Cause.squash(result.cause));
 };
+
+export const exitError = (exit: Exit.Exit<unknown, unknown>): string =>
+  Exit.isSuccess(exit) ? '' : errorText(Cause.squash(exit.cause));

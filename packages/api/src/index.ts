@@ -2,14 +2,15 @@ import {
   ArticleContent,
   ArticleFailure,
   ArticleSource,
-  DuplicateFeed,
   DuplicateLink,
   Feed,
   FeedFetchError,
   FeedNotFound,
   FeedPage,
+  FeedPreview,
   InvalidFeed,
   InvalidLink,
+  InvalidPreview,
   LinkNotFound,
   LinkPage,
   ReadingLink,
@@ -135,17 +136,23 @@ const feeds = HttpApiGroup.make('feeds').add(
     success: Schema.Struct({ items: Schema.Array(Feed) }),
     error: feedErrors,
   }),
-  HttpApiEndpoint.post('subscribe', '/api/feeds', {
+  HttpApiEndpoint.post('preview', '/api/feeds/preview', {
     payload: Schema.Struct({
       url: Schema.String.check(Schema.isMaxLength(4096)),
     }),
-    success: Schema.Struct({ item: Feed }),
+    success: Schema.Struct({ preview: FeedPreview }),
     error: [
       ...feedErrors,
       InvalidFeed.pipe(HttpApiSchema.status(400)),
-      DuplicateFeed.pipe(HttpApiSchema.status(409)),
       FeedFetchError.pipe(HttpApiSchema.status(422)),
     ],
+  }),
+  HttpApiEndpoint.post('subscribe', '/api/feeds', {
+    payload: Schema.Struct({
+      token: Schema.String.check(Schema.isMaxLength(128)),
+    }),
+    success: Schema.Struct({ item: Feed }),
+    error: [...feedErrors, InvalidPreview.pipe(HttpApiSchema.status(400))],
   }),
   HttpApiEndpoint.delete('unsubscribe', '/api/feeds', {
     payload: feedKey,
@@ -193,7 +200,7 @@ const feeds = HttpApiGroup.make('feeds').add(
   })
 );
 
-export type { Feed, FeedArticle } from '@reader/business';
+export type { Feed, FeedArticle, FeedPreview } from '@reader/business';
 
 const articleRef = { kind: Schema.Literals(['link', 'feed']), key };
 

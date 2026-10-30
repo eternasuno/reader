@@ -18,6 +18,28 @@ export class FeedFetcher extends Context.Service<
   }
 >()('@reader/business/FeedFetcher') {}
 
+export type PendingFeedPreview = {
+  readonly owner: string;
+  readonly url: string;
+  readonly feed: ParsedFeed;
+  readonly expiresAt: number;
+};
+
+export class FeedPreviewStore extends Context.Service<
+  FeedPreviewStore,
+  {
+    readonly save: (
+      preview: PendingFeedPreview,
+      now: number
+    ) => Effect.Effect<string, FeedFetchError>;
+    readonly find: (
+      owner: string,
+      token: string,
+      now: number
+    ) => Effect.Effect<PendingFeedPreview | undefined>;
+  }
+>()('@reader/business/FeedPreviewStore') {}
+
 export class FeedRepository extends Context.Service<
   FeedRepository,
   {
@@ -28,11 +50,12 @@ export class FeedRepository extends Context.Service<
       owner: string,
       key: string
     ) => Effect.Effect<Feed | undefined, FeedRepositoryError>;
-    readonly create: (
+    readonly createSubscribed: (
       owner: string,
       url: string,
-      title: string
-    ) => Effect.Effect<Feed | undefined, FeedRepositoryError>;
+      feed: ParsedFeed,
+      now: string
+    ) => Effect.Effect<Feed, FeedRepositoryError>;
     readonly remove: (
       owner: string,
       key: string

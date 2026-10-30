@@ -71,6 +71,16 @@ export const feed = (key: string): Feed => ({
 const requestBody = (init: RequestInit | undefined): unknown =>
   init?.body ? JSON.parse(String(init.body)) : undefined;
 
+const bodyText = (init: RequestInit | undefined, field: string): string => {
+  const body = requestBody(init);
+  const value =
+    typeof body === 'object' && body !== null
+      ? Reflect.get(body, field)
+      : undefined;
+
+  return typeof value === 'string' ? value : '';
+};
+
 const markLoadedKeys = (init: RequestInit | undefined): readonly string[] => {
   const body = requestBody(init);
   const keys =
@@ -88,6 +98,22 @@ const markLoadedResponse = (
   options: TestOptions
 ) => options.markLoaded?.(markLoadedKeys(init)) ?? Response.json({ ok: true });
 
+const previewResponse = (init: RequestInit | undefined) => {
+  const url = bodyText(init, 'url');
+
+  return Response.json({
+    preview: {
+      token: 'preview-token',
+      url,
+      title: 'Preview title',
+      description: 'Preview description',
+      articleCount: 2,
+    },
+  });
+};
+
+const subscribeResponse = () => Response.json({ item: feed('subscribed') });
+
 const getResponse = (
   path: string,
   feeds: readonly Feed[],
@@ -95,6 +121,33 @@ const getResponse = (
 ) => {
   if (path === '/api/feeds') return Response.json({ items: feeds });
   if (path === '/api/feeds/articles') return Response.json(nextPage());
+
+  return undefined;
+};
+
+const postResponse = (
+  path: string,
+  init: RequestInit | undefined,
+  options: TestOptions
+) => {
+  if (path === '/api/feeds/articles/mark-loaded')
+    return markLoadedResponse(init, options);
+  if (path === '/api/feeds/preview') return previewResponse(init);
+  if (path === '/api/feeds') return subscribeResponse();
+
+  return undefined;
+};
+
+const routeResponse = (
+  method: string,
+  path: string,
+  init: RequestInit | undefined,
+  feeds: readonly Feed[],
+  nextPage: () => FeedPage,
+  options: TestOptions
+) => {
+  if (method === 'GET') return getResponse(path, feeds, nextPage);
+  if (method === 'POST') return postResponse(path, init, options);
 
   return undefined;
 };
@@ -124,14 +177,10 @@ const createFetch = (
       params: url.searchParams,
       body: requestBody(init),
     });
-    if (method === 'GET') {
-      const response = getResponse(url.pathname, feeds, nextPage);
-      if (response) return response;
-    }
-    if (method === 'POST' && url.pathname === '/api/feeds/articles/mark-loaded')
-      return markLoadedResponse(init, options);
-
-    return Response.json({ ok: true });
+    return (
+      routeResponse(method, url.pathname, init, feeds, nextPage, options) ??
+      Response.json({ ok: true })
+    );
   };
 };
 
@@ -172,6 +221,18 @@ export const runLoad = (
 
   return Effect.runPromiseExit(
     AtomRegistry.getResult(registry, atoms.load, { suspendOnWaiting: true })
+  );
+};
+
+export const runPreview = (
+  registry: AtomRegistry.AtomRegistry,
+  atoms: FeedAtoms,
+  url: string
+) => {
+  registry.set(atoms.preview, url);
+
+  return Effect.runPromiseExit(
+    AtomRegistry.getResult(registry, atoms.preview, { suspendOnWaiting: true })
   );
 };
 

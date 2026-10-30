@@ -5,6 +5,7 @@ import {
   markAllFeedArticles,
   markFeedArticle,
   markLoadedFeedArticles,
+  previewFeed,
   saveFeedArticle,
   subscribeFeed,
   unsubscribeFeed,
@@ -40,12 +41,20 @@ const failure = <A, E extends { readonly _tag: string }, R>(
 const withSession = <A, E, R>(use: (owner: string) => Effect.Effect<A, E, R>) =>
   Effect.flatMap(Session, (user) => use(user.id));
 
+const startPreview = ({ payload }: { payload: { readonly url: string } }) =>
+  withSession((owner) => previewFeed(owner, payload.url)).pipe(failure);
+
+const confirmSubscription = ({
+  payload,
+}: {
+  payload: { readonly token: string };
+}) => withSession((owner) => subscribeFeed(owner, payload.token)).pipe(failure);
+
 export const feedHandlers = HttpApiBuilder.group(ReaderApi, 'feeds', (group) =>
   group
     .handle('list', () => withSession(listFeeds).pipe(failure))
-    .handle('subscribe', ({ payload }) =>
-      withSession((owner) => subscribeFeed(owner, payload.url)).pipe(failure)
-    )
+    .handle('preview', startPreview)
+    .handle('subscribe', confirmSubscription)
     .handle('unsubscribe', ({ payload }) =>
       withSession((owner) => unsubscribeFeed(owner, payload.key)).pipe(failure)
     )

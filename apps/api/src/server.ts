@@ -8,10 +8,14 @@ import {
 } from '@effect/platform-node';
 import { Config, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
+import { FeedFetcherLive } from './adapter/feed-fetcher';
+import { FeedParserLive } from './adapter/feed-parser';
+import { FeedPreviewStoreLive } from './adapter/feed-preview-store';
 import { AppLive } from './app';
 import { AuthLive } from './infrastructure/auth';
 import { DatabaseLive } from './infrastructure/db';
 import { FeedSchedulerLive } from './infrastructure/feed-scheduler';
+import { HttpFetchLive } from './infrastructure/http-fetch';
 import { staticRoutes } from './routes/static';
 
 const DEFAULT_PORT = 3001;
@@ -22,6 +26,11 @@ const server = NodeHttpServer.layerConfig(createServer, {
 
 const dependencies = Layer.mergeAll(
   DatabaseLive,
+  FeedPreviewStoreLive,
+  FeedFetcherLive.pipe(
+    Layer.provide(FeedParserLive),
+    Layer.provide(HttpFetchLive)
+  ),
   FeedSchedulerLive.pipe(Layer.provide(DatabaseLive)),
   AuthLive.pipe(Layer.provide(DatabaseLive)),
   NodeFileSystem.layer,

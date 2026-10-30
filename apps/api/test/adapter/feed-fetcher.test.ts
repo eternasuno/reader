@@ -30,10 +30,30 @@ it.effect('parses feeds fetched through the pinned client', () =>
     const fetcher = yield* FeedFetcher;
     const feed = yield* fetcher.fetch('http://8.8.8.8/rss');
     expect(feed.title).toBe('News');
+    expect(feed.url).toBe('http://8.8.8.8/rss');
     expect(feed.articles[0]?.url).toBe('https://example.com/a');
   }).pipe(
     provideFetch(
       sequence(new Response(rss, { status: 200 })) as typeof globalThis.fetch
+    ),
+    Effect.provide(FeedLive)
+  )
+);
+
+it.effect('reports the final feed url after redirects', () =>
+  Effect.gen(function* () {
+    const fetcher = yield* FeedFetcher;
+    const feed = yield* fetcher.fetch('http://8.8.8.8/rss');
+    expect(feed.url).toBe('http://8.8.4.4/feed');
+  }).pipe(
+    provideFetch(
+      sequence(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'http://8.8.4.4/feed' },
+        }),
+        new Response(rss, { status: 200 })
+      ) as typeof globalThis.fetch
     ),
     Effect.provide(FeedLive)
   )

@@ -1,9 +1,8 @@
+import { FeedFetcher, FeedPreviewStore } from '@reader/business';
 import { Effect, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
 import { ArticleExtractorLive } from './adapter/article-extractor';
 import { ArticleRepositoryLive } from './adapter/article-repository';
-import { FeedFetcherLive } from './adapter/feed-fetcher';
-import { FeedParserLive } from './adapter/feed-parser';
 import { FeedRepositoryLive } from './adapter/feed-repository';
 import { LinkRepositoryLive } from './adapter/link-repository';
 import { LinkTitleLive } from './adapter/link-title';
@@ -18,6 +17,8 @@ import { linkRoutes } from './routes/links';
 export const AppLive = Layer.unwrap(
   Effect.gen(function* () {
     const auth = yield* Auth;
+    const previews = yield* FeedPreviewStore;
+    const fetcher = yield* FeedFetcher;
 
     return Layer.mergeAll(
       authRoutes,
@@ -31,11 +32,18 @@ export const AppLive = Layer.unwrap(
             LinkRepositoryLive,
             LinkTitleLive,
             FeedRepositoryLive,
-            FeedFetcherLive.pipe(Layer.provide(FeedParserLive)),
             HttpFetchLive
           )
         )
       )
-    ).pipe(HttpRouter.provideRequest(Layer.succeed(Auth, auth)));
+    ).pipe(
+      HttpRouter.provideRequest(
+        Layer.mergeAll(
+          Layer.succeed(Auth, auth),
+          Layer.succeed(FeedPreviewStore, previews),
+          Layer.succeed(FeedFetcher, fetcher)
+        )
+      )
+    );
   })
 );

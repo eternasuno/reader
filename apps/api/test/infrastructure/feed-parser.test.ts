@@ -23,6 +23,38 @@ it('parses RSS and Atom, resolves relative links and rejects unsafe entries', ()
   expect(() => parseFeed('<html/>', 'https://example.com')).toThrow();
 });
 
+it('reads feed-level descriptions from every supported format', () => {
+  expect(
+    parseFeed(
+      '<rss><channel><title>News</title><description>Latest &amp; greatest</description></channel></rss>',
+      'https://example.com/rss'
+    ).description
+  ).toBe('Latest & greatest');
+  expect(
+    parseFeed(
+      '<feed xmlns="http://www.w3.org/2005/Atom"><title>Atom</title><subtitle>Atom summary</subtitle></feed>',
+      'https://example.com/atom'
+    ).description
+  ).toBe('Atom summary');
+  expect(
+    parseFeed(
+      '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://example.com/rss"><title>RDF</title><description>RDF summary</description></channel></rdf:RDF>',
+      'https://example.com/rss'
+    ).description
+  ).toBe('RDF summary');
+  expect(
+    parseFeed(
+      JSON.stringify({
+        version: 'https://jsonfeed.org/version/1.1',
+        title: 'JSON',
+        description: 'JSON summary',
+        items: [],
+      }),
+      'https://example.com/feed'
+    ).description
+  ).toBe('JSON summary');
+});
+
 it('maps RDF namespace identity and dates', () => {
   const feed = parseFeed(
     '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel rdf:about="https://example.com/rss"><title>RDF</title><link>https://example.com</link></channel><item rdf:about="unique"><title>Article</title><link>https://example.com/a</link><dc:date>2026-10-17T00:00:00Z</dc:date></item></rdf:RDF>',

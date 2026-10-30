@@ -24,13 +24,15 @@ export const FeedFetcherLive = Layer.effect(
             Effect.catchTag('FetchFailure', () => Effect.fail(fetchFailed()))
           );
 
-          return yield* parser
+          const parsed = yield* parser
             .parse(document.content, document.url)
             .pipe(
               Effect.catchTag('FeedParseError', (error) =>
                 Effect.fail(new FeedFetchError({ error: error.error }))
               )
             );
+
+          return { ...parsed, url: document.url };
         }),
     });
   })

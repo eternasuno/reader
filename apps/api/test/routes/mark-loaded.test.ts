@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
+import { FeedFetcher, FeedPreviewStore } from '@reader/business';
 import { surrealAdapter } from '@surrealdb/better-auth';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
 import { Effect, Layer } from 'effect';
@@ -282,7 +283,9 @@ it.effect(
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(Auth, betterAuth<BetterAuthOptions>(options)),
-                Layer.succeed(Database, db)
+                Layer.succeed(Database, db),
+                Layer.mock(FeedPreviewStore, {}),
+                Layer.mock(FeedFetcher, {})
               )
             )
           );

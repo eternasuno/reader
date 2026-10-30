@@ -1,41 +1,11 @@
 import { expect, it } from '@effect/vitest';
 import { FeedRepository } from '@reader/business';
-import { Effect, Layer } from 'effect';
-import { FeedRepositoryLive } from '../../src/adapter/feed-repository';
-import { createSurreal, Database } from '../../src/infrastructure/db';
-import { feedsSchema } from '../../src/infrastructure/feeds';
-
-const makeParsed = (count: number, offset = 0) => ({
-  title: 'News',
-  articles: Array.from({ length: count }, (_, index) => {
-    const id = offset + index;
-    return {
-      identity: String(id),
-      url: `https://example.com/${id}`,
-      title: String(id),
-      publishedAt: new Date(id * 1000).toISOString(),
-    };
-  }),
-});
-
-const runWithDatabase = <A, E>(check: Effect.Effect<A, E, FeedRepository>) =>
-  Effect.acquireUseRelease(
-    Effect.promise(() =>
-      createSurreal({
-        endpoint: 'mem://',
-        namespace: 'feeds',
-        database: 'test',
-      })
-    ),
-    (db) =>
-      Effect.promise(() => db.query(feedsSchema)).pipe(
-        Effect.andThen(check),
-        Effect.provide(
-          FeedRepositoryLive.pipe(Layer.provide(Layer.succeed(Database, db)))
-        )
-      ),
-    (db) => Effect.promise(() => db.close())
-  );
+import { Effect } from 'effect';
+import {
+  createEmptyFeed,
+  makeParsed,
+  runWithDatabase,
+} from './feed-repository-support';
 
 const verifyDescriptions = (
   repository: FeedRepository['Service'],
@@ -70,19 +40,15 @@ const verifyDescriptions = (
 
 const verifyCoreFlows = Effect.gen(function* () {
   const repository = yield* FeedRepository;
-  const feed = yield* repository.create(
-    'alice',
-    'https://example.com/rss',
-    'News'
-  );
-  const key = feed?.key ?? '';
-  expect(feed).toBeDefined();
-  expect(
-    yield* repository.create('alice', 'https://example.com/rss', 'News')
-  ).toBeUndefined();
-  const parsed = makeParsed(35);
+  const url = 'https://example.com/rss';
   const now = new Date().toISOString();
-  yield* repository.sync('alice', key, parsed, true, now);
+  const parsed = makeParsed(35);
+  const feed = yield* repository.createSubscribed('alice', url, parsed, now);
+  const key = feed.key;
+  expect(feed.unreadCount).toBe(30);
+  expect(yield* repository.createSubscribed('alice', url, parsed, now)).toEqual(
+    feed
+  );
   const items = yield* repository.articles('alice', '', false, 0, 40);
   expect(items).toHaveLength(30);
   expect((yield* repository.list('alice'))[0]?.unreadCount).toBe(30);
@@ -105,12 +71,13 @@ const verifyCoreFlows = Effect.gen(function* () {
 
 const verifyRetentionCap = Effect.gen(function* () {
   const repository = yield* FeedRepository;
-  const feed = yield* repository.create(
+  const feed = yield* repository.createSubscribed(
     'alice',
     'https://example.com/rss',
-    'News'
+    makeParsed(0),
+    new Date().toISOString()
   );
-  const key = feed?.key ?? '';
+  const key = feed.key;
   yield* repository.sync(
     'alice',
     key,
@@ -145,19 +112,11 @@ const verifyRetentionCap = Effect.gen(function* () {
 
 const verifyCursorPaging = Effect.gen(function* () {
   const repository = yield* FeedRepository;
-  const feed = yield* repository.create(
-    'alice',
-    'https://example.com/cursor-rss',
-    'News'
-  );
-  const key = feed?.key ?? '';
-  yield* repository.sync(
-    'alice',
-    key,
-    makeParsed(40),
-    false,
-    new Date(40000000).toISOString()
-  );
+  const url = 'https://example.com/cursor-rss';
+  const later = new Date(40000000).toISOString();
+  const feed = yield* createEmptyFeed(repository, 'alice', url, later);
+  const key = feed.key;
+  yield* repository.sync('alice', key, makeParsed(40), false, later);
   const first = yield* repository.articles('alice', '', false, 0, 30);
   expect(first).toHaveLength(30);
   const last = first[29];
@@ -190,25 +149,28 @@ const verifyCursorPaging = Effect.gen(function* () {
 
 const verifyBulkMark = Effect.gen(function* () {
   const repository = yield* FeedRepository;
-  const first = yield* repository.create(
+  const now = new Date().toISOString();
+  const first = yield* repository.createSubscribed(
     'alice',
     'https://example.com/first-rss',
-    'First'
+    makeParsed(0),
+    now
   );
-  const second = yield* repository.create(
+  const second = yield* repository.createSubscribed(
     'alice',
     'https://example.com/second-rss',
-    'Second'
+    makeParsed(0),
+    now
   );
-  const bobFeed = yield* repository.create(
+  const bobFeed = yield* repository.createSubscribed(
     'bob',
     'https://example.com/bob-rss',
-    'Bob'
+    makeParsed(0),
+    now
   );
-  const firstKey = first?.key ?? '';
-  const secondKey = second?.key ?? '';
-  const bobKey = bobFeed?.key ?? '';
-  const now = new Date().toISOString();
+  const firstKey = first.key;
+  const secondKey = second.key;
+  const bobKey = bobFeed.key;
   yield* repository.sync('alice', firstKey, makeParsed(5), true, now);
   yield* repository.sync('alice', secondKey, makeParsed(5, 10), true, now);
   yield* repository.sync('bob', bobKey, makeParsed(5, 20), true, now);
@@ -232,22 +194,16 @@ const verifyBulkMark = Effect.gen(function* () {
 
 const verifyLoadedMark = Effect.gen(function* () {
   const repository = yield* FeedRepository;
-  const carol = yield* repository.create(
-    'carol',
-    'https://example.com/carol-rss',
-    'Carol'
-  );
-  const dave = yield* repository.create(
-    'dave',
-    'https://example.com/dave-rss',
-    'Dave'
-  );
   const now = new Date(90000000).toISOString();
-  yield* repository.sync('carol', carol?.key ?? '', makeParsed(4), true, now);
-  yield* repository.sync('dave', dave?.key ?? '', makeParsed(2, 10), true, now);
+  const carolUrl = 'https://example.com/carol-rss';
+  const daveUrl = 'https://example.com/dave-rss';
+  const carol = yield* createEmptyFeed(repository, 'carol', carolUrl, now);
+  const dave = yield* createEmptyFeed(repository, 'dave', daveUrl, now);
+  yield* repository.sync('carol', carol.key, makeParsed(4), true, now);
+  yield* repository.sync('dave', dave.key, makeParsed(2, 10), true, now);
   const carolItems = yield* repository.articles(
     'carol',
-    carol?.key ?? '',
+    carol.key,
     false,
     0,
     10

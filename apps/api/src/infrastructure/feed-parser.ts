@@ -112,6 +112,19 @@ const articleFields = (parsed: AnyFeed): ArticleFields[] => {
   }
 };
 
+const feedDescription = (parsed: AnyFeed): string | undefined => {
+  switch (parsed.format) {
+    case 'rss':
+      return parsed.feed.description;
+    case 'atom':
+      return parsed.feed.subtitle?.value;
+    case 'rdf':
+      return parsed.feed.description;
+    case 'json':
+      return parsed.feed.description;
+  }
+};
+
 export const parseFeed = (content: string, base: string): ParsedFeed => {
   if (/<!DOCTYPE|<!ENTITY/i.test(content)) {
     throw new Error('Unsupported XML declarations');
@@ -120,6 +133,7 @@ export const parseFeed = (content: string, base: string): ParsedFeed => {
   const parsed = parseSyndication(content);
   const title =
     parsed.format === 'atom' ? parsed.feed.title?.value : parsed.feed.title;
+  const description = feedDescription(parsed);
   const articles = articleFields(parsed)
     .map((item) => normalizeArticle(item, base))
     .filter((item): item is ParsedArticle => item !== undefined);
@@ -127,6 +141,9 @@ export const parseFeed = (content: string, base: string): ParsedFeed => {
 
   return {
     title: title?.slice(0, 500) || base,
+    ...(description === undefined
+      ? {}
+      : { description: description.slice(0, 500) }),
     articles: articles.slice(0, 500),
   };
 };
