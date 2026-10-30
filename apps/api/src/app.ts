@@ -11,6 +11,7 @@ import { ReaderCredentialsLive } from './adapter/reader-credentials';
 import { WebpageFetcherLive } from './adapter/webpage-fetcher';
 import { Auth } from './infrastructure/auth';
 import { CredentialCryptoLive } from './infrastructure/credential-crypto';
+import { HttpFetchLive } from './infrastructure/http-fetch';
 import { authRoutes } from './routes/auth';
 import { linkRoutes } from './routes/links';
 
@@ -30,7 +31,8 @@ export const AppLive = Layer.unwrap(
             LinkRepositoryLive,
             LinkTitleLive,
             FeedRepositoryLive,
-            FeedFetcherLive.pipe(Layer.provide(FeedParserLive))
+            FeedFetcherLive.pipe(Layer.provide(FeedParserLive)),
+            HttpFetchLive
           )
         )
       )

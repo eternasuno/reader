@@ -1,69 +1,57 @@
 import { ArticleFailure, WebpageFetcher } from '@reader/business';
 import { Effect, Layer, Redacted } from 'effect';
+import { fetchPublicText } from '../infrastructure/http-fetch';
 
-const collect = async (response: Response): Promise<string> => {
-  if (!response.ok || !response.body) {
-    throw new Error('Request rejected');
+const failure = () =>
+  new ArticleFailure({ error: 'Jina 获取失败，请检查 Key、额度及文章地址' });
+
+const parseTarget = (url: string): URL => {
+  const address = new URL(url);
+
+  if (
+    !['https:', 'http:'].includes(address.protocol) ||
+    address.username ||
+    address.password
+  ) {
+    throw new Error('Invalid URL');
   }
 
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const result = await reader.read();
-      if (result.done) {
-        break;
-      }
-
-      size += result.value.length;
-      if (size > 5 * 1024 * 1024) {
-        throw new Error('HTML too large');
-      }
-
-      chunks.push(result.value);
-    }
-
-    return Buffer.concat(chunks).toString('utf8');
-  } finally {
-    await reader.cancel();
-  }
+  return address;
 };
 
 export const WebpageFetcherLive = Layer.succeed(WebpageFetcher, {
   fetch: (url, key) =>
-    Effect.tryPromise({
-      try: async (signal) => {
-        const address = new URL(url);
-        if (
-          !['https:', 'http:'].includes(address.protocol) ||
-          address.username ||
-          address.password
-        ) {
-          throw new Error('Invalid URL');
-        }
+    Effect.gen(function* () {
+      const address = yield* Effect.try({
+        try: () => parseTarget(url),
+        catch: failure,
+      });
+      const page = yield* fetchPublicText({
+        url: `https://r.jina.ai/${address.href}`,
+        headers: {
+          Authorization: `Bearer ${Redacted.value(key)}`,
+          'X-Return-Format': 'html',
+          'X-Timeout': '30',
+          Accept: 'text/html',
+        },
+        maxBytes: 5 * 1024 * 1024,
+        maxRedirects: 0,
+        redirect: 'error',
+      });
 
-        const response = await fetch(`https://r.jina.ai/${address.href}`, {
-          signal,
-          redirect: 'error',
-          headers: {
-            Authorization: `Bearer ${Redacted.value(key)}`,
-            'X-Return-Format': 'html',
-            'X-Timeout': '30',
-            Accept: 'text/html',
-          },
-        });
+      if (!page.ok) {
+        return yield* failure();
+      }
 
-        return collect(response);
-      },
-      catch: () =>
-        new ArticleFailure({
-          error: 'Jina 获取失败，请检查 Key、额度及文章地址',
-        }),
+      return page.body;
     }).pipe(
-      Effect.timeout('40 seconds'),
-      Effect.catchTag('TimeoutError', () =>
-        Effect.fail(new ArticleFailure({ error: '获取正文超时，请稍后重试' }))
-      )
+      Effect.timeoutOrElse({
+        duration: '40 seconds',
+        orElse: () =>
+          Effect.fail(
+            new ArticleFailure({ error: '获取正文超时，请稍后重试' })
+          ),
+      }),
+      Effect.catchTag('FetchFailure', () => Effect.fail(failure()))
     ),
 });

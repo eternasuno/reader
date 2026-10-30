@@ -3,6 +3,7 @@ import { Effect, Layer } from 'effect';
 import { FeedFetcherLive } from '../adapter/feed-fetcher';
 import { FeedParserLive } from '../adapter/feed-parser';
 import { FeedRepositoryLive } from '../adapter/feed-repository';
+import { HttpFetchLive } from './http-fetch';
 
 export const FeedSchedulerLive = Layer.effectDiscard(
   refreshSubscriptions.pipe(
@@ -15,7 +16,8 @@ export const FeedSchedulerLive = Layer.effectDiscard(
   Layer.provide(
     Layer.mergeAll(
       FeedRepositoryLive,
-      FeedFetcherLive.pipe(Layer.provide(FeedParserLive))
+      FeedFetcherLive.pipe(Layer.provide(FeedParserLive)),
+      HttpFetchLive
     )
   )
 );
