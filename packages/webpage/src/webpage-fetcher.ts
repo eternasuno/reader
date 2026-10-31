@@ -23,7 +23,7 @@ const parseBrowserEndpoint = (
       return Redacted.make(endpoint);
     },
     catch: () =>
-      new WebpageFetchError({ error: '浏览器服务地址无效，请检查设置' }),
+      new WebpageFetchError({ error: 'Invalid browser service address' }),
   });
 
 export const WebpageFetcherLive = Layer.effect(
@@ -34,20 +34,12 @@ export const WebpageFetcherLive = Layer.effect(
     return WebpageFetcher.of({
       fetch: (url, key, provider, endpoint) => {
         if (provider === 'jina') {
-          if (!key) {
-            return Effect.fail(
-              new WebpageFetchError({ error: '请先在设置中填写 Jina API Key' })
-            );
-          }
-
           return fetchJina(url, key).pipe(
             Effect.mapError(
               (failure) =>
                 new WebpageFetchError({
-                  error:
-                    failure.message === 'Jina request timed out'
-                      ? '获取正文超时，请稍后重试'
-                      : 'Jina 获取失败，请检查 Key、额度及文章地址',
+                  error: failure.message,
+                  code: failure.code ?? 'fetch_failed',
                 })
             )
           );
@@ -55,7 +47,9 @@ export const WebpageFetcherLive = Layer.effect(
 
         if (!endpoint) {
           return Effect.fail(
-            new WebpageFetchError({ error: '请先在设置中填写浏览器服务地址' })
+            new WebpageFetchError({
+              error: 'Browser service address is required',
+            })
           );
         }
 
@@ -66,13 +60,17 @@ export const WebpageFetcherLive = Layer.effect(
             duration: '40 seconds',
             orElse: () =>
               Effect.fail(
-                new WebpageFetchError({ error: '浏览器提取超时，请稍后重试' })
+                new WebpageFetchError({
+                  error: 'Browser extraction timed out',
+                  code: 'fetch_failed',
+                })
               ),
           }),
           Effect.catchTag('FetchFailure', () =>
             Effect.fail(
               new WebpageFetchError({
-                error: '浏览器获取失败，请检查服务器浏览器服务及文章地址',
+                error: 'Browser extraction failed',
+                code: 'fetch_failed',
               })
             )
           )

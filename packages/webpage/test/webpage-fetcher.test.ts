@@ -34,6 +34,60 @@ it.effect('sends Jina credentials and returns the fetched html', () =>
   }).pipe(Effect.provide(WebpageFetcherLive))
 );
 
+it.effect('fetches anonymously when no Jina key is configured', () =>
+  Effect.gen(function* () {
+    let init: RequestInit | undefined;
+    const fetchImpl = (_input: RequestInfo | URL, options?: RequestInit) => {
+      init = options;
+
+      return Promise.resolve(new Response(html, { status: 200 }));
+    };
+    const fetcher = yield* WebpageFetcher;
+    const result = yield* fetcher
+      .fetch(article, undefined, 'jina')
+      .pipe(provideFetch(fetchImpl as typeof globalThis.fetch));
+    expect(result).toBe(html);
+    expect(new Headers(init?.headers).get('authorization')).toBeNull();
+  }).pipe(Effect.provide(WebpageFetcherLive))
+);
+
+it.effect('exposes stable Jina failure codes with English messages', () =>
+  Effect.gen(function* () {
+    const responses = [
+      new Response('slow down', { status: 429 }),
+      new Response('denied', { status: 403 }),
+      new Response('boom', { status: 502 }),
+    ];
+    const fetchImpl = () => {
+      const response = responses.shift();
+
+      if (!response) {
+        throw new Error('Unexpected request');
+      }
+
+      return Promise.resolve(response);
+    };
+    const fetcher = yield* WebpageFetcher;
+    const run = () =>
+      Effect.flip(
+        fetcher
+          .fetch(article, key, 'jina')
+          .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
+      );
+    const limited = yield* run();
+    const rejected = yield* run();
+    const failed = yield* run();
+    expect([limited.code, rejected.code, failed.code]).toEqual([
+      'rate_limited',
+      'key_rejected',
+      'fetch_failed',
+    ]);
+    expect(limited.error).toBe('Jina rate limit exceeded');
+    expect(rejected.error).toBe('Jina API key rejected');
+    expect(failed.error).toBe('Jina request failed with status 502');
+  }).pipe(Effect.provide(WebpageFetcherLive))
+);
+
 it.effect('rejects credentialed or unsupported addresses before fetching', () =>
   Effect.gen(function* () {
     const fetchImpl = () => {
@@ -102,7 +156,7 @@ it.effect('requires a browser endpoint instead of an environment default', () =>
       fetcher.fetch(article, undefined, 'browser')
     );
     expect(error._tag).toBe('WebpageFetchError');
-    expect(error.error).toBe('请先在设置中填写浏览器服务地址');
+    expect(error.error).toBe('Browser service address is required');
   }).pipe(
     Effect.provide(
       Layer.merge(
@@ -131,7 +185,7 @@ it.effect('rejects unsupported browser endpoint input before connecting', () =>
         fetcher.fetch(article, undefined, 'browser', endpoint)
       );
       expect(error._tag).toBe('WebpageFetchError');
-      expect(error.error).toBe('浏览器服务地址无效，请检查设置');
+      expect(error.error).toBe('Invalid browser service address');
     }
   }).pipe(Effect.provide(WebpageFetcherLive))
 );
@@ -150,6 +204,7 @@ it.effect('reports a forty second timeout', () =>
     yield* Effect.yieldNow;
     yield* TestClock.adjust('40 seconds');
     const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-    expect(error.error).toBe('获取正文超时，请稍后重试');
+    expect(error.error).toBe('Jina request timed out');
+    expect(error.code).toBe('fetch_failed');
   }).pipe(Effect.provide(WebpageFetcherLive))
 );

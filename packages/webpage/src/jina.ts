@@ -23,16 +23,37 @@ const parseTarget = (url: string): Effect.Effect<URL, FetchFailure> =>
       new FetchFailure({ message: 'Invalid article URL', cause }),
   });
 
+const failureForStatus = (status: number): FetchFailure => {
+  if (status === 429) {
+    return new FetchFailure({
+      message: 'Jina rate limit exceeded',
+      code: 'rate_limited',
+    });
+  }
+
+  if (status === 401 || status === 403) {
+    return new FetchFailure({
+      message: 'Jina API key rejected',
+      code: 'key_rejected',
+    });
+  }
+
+  return new FetchFailure({
+    message: `Jina request failed with status ${status}`,
+    code: 'fetch_failed',
+  });
+};
+
 const requestPage = (
   address: URL,
-  key: Redacted.Redacted<string>
+  key: Redacted.Redacted<string> | undefined
 ): Effect.Effect<string, FetchFailure> =>
   Effect.flatMap(
     fetchPublicText({
       url: `${JINA_ENDPOINT}${address.href}`,
       headers: {
         Accept: 'text/html',
-        Authorization: `Bearer ${Redacted.value(key)}`,
+        ...(key ? { Authorization: `Bearer ${Redacted.value(key)}` } : {}),
         'X-Return-Format': 'html',
         'X-Timeout': '30',
       },
@@ -43,17 +64,32 @@ const requestPage = (
     (page) =>
       page.ok
         ? Effect.succeed(page.body)
-        : Effect.fail(new FetchFailure({ message: 'Jina request failed' }))
+        : Effect.fail(failureForStatus(page.status))
   );
+
+const classifyFailure = (failure: FetchFailure): FetchFailure =>
+  failure.code
+    ? failure
+    : new FetchFailure({
+        message: failure.message,
+        cause: failure.cause,
+        code: 'fetch_failed',
+      });
 
 export const fetchJina = (
   url: string,
-  key: Redacted.Redacted<string>
+  key: Redacted.Redacted<string> | undefined
 ): Effect.Effect<string, FetchFailure> =>
   Effect.flatMap(parseTarget(url), (address) => requestPage(address, key)).pipe(
     Effect.timeoutOrElse({
       duration: '40 seconds',
       orElse: () =>
-        Effect.fail(new FetchFailure({ message: 'Jina request timed out' })),
-    })
+        Effect.fail(
+          new FetchFailure({
+            message: 'Jina request timed out',
+            code: 'fetch_failed',
+          })
+        ),
+    }),
+    Effect.mapError(classifyFailure)
   );

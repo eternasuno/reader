@@ -1,6 +1,6 @@
 import { expect, it } from '@effect/vitest';
 import { ArticleExtractor } from '@reader/business';
-import { Effect } from 'effect';
+import { type DateTime, Effect, Schema } from 'effect';
 import { ArticleExtractorLive } from '../../src/adapter/article-extractor';
 
 const baseUrl = 'https://example.com/articles/hello';
@@ -13,6 +13,12 @@ const paragraph = (extra = '') =>
 
 const makeHtml = () =>
   `<!doctype html><html><head><title>Extractor Fixture</title></head><body><main><article><h1>Extractor Fixture</h1>${paragraph('<a href="/relative/path">relative link</a>')}${paragraph('<a href="javascript:alert(1)">evil link</a>')}${paragraph('<img src="/photo.png" alt="photo" onerror="alert(1)">')}${paragraph('<a href="https://alice:secret@example.com/private">credentialed link</a>')}${paragraph('<img src="data:image/png;base64,aGk=" alt="inline">')}<p onclick="alert(1)">${sentence.repeat(6)}</p><script>alert('xss')</script><iframe src="https://evil.example/embed"></iframe></article></main></body></html>`;
+
+const makeMetadataHtml = (publishedTime: string) =>
+  `<!doctype html><html><head><title>Metadata Fixture</title><meta name="description" content="A &lt;b&gt;bold&lt;/b&gt; summary &amp;amp; more"><meta property="article:published_time" content="${publishedTime}"></head><body><main><article><h1>Metadata Fixture</h1>${paragraph()}${paragraph()}</article></main></body></html>`;
+
+const untitledHtml = (publishedTime: string) =>
+  `<!doctype html><html><head><meta property="article:published_time" content="${publishedTime}"></head><body><main><article>${paragraph()}${paragraph()}</article></main></body></html>`;
 
 const expectNoActiveContent = (html: string) => {
   expect(html).not.toContain('<script');
@@ -53,6 +59,33 @@ const verifyTypedFailure = Effect.gen(function* () {
   expect(failure._tag).toBe('ArticleExtractError');
 });
 
+const encodePublishedAt = (publishedAt: DateTime.Utc): string =>
+  Schema.encodeSync(Schema.DateTimeUtcFromString)(publishedAt);
+
+const verifyMetadata = Effect.gen(function* () {
+  const extractor = yield* ArticleExtractor;
+  const result = yield* extractor.extract(
+    makeMetadataHtml('2024-05-06T07:08:09.000Z'),
+    baseUrl
+  );
+  const publishedAt = result.publishedAt;
+  expect(result.title).toBe('Metadata Fixture');
+  expect(result.description).toBe(
+    'A &lt;b&gt;bold&lt;/b&gt; summary &amp; more'
+  );
+  expect(
+    publishedAt === undefined ? undefined : encodePublishedAt(publishedAt)
+  ).toBe('2024-05-06T07:08:09.000Z');
+});
+
+const verifyUntitledFallback = Effect.gen(function* () {
+  const extractor = yield* ArticleExtractor;
+  const result = yield* extractor.extract(untitledHtml('not a date'), baseUrl);
+  expect(result.title).toBe('Untitled');
+  expect(result.title).not.toContain(baseUrl);
+  expect(result.publishedAt).toBeUndefined();
+});
+
 it.effect(
   'removes active content and unsafe urls while resolving and hardening media',
   () => verifySanitizedOutput.pipe(Effect.provide(ArticleExtractorLive))
@@ -60,4 +93,12 @@ it.effect(
 
 it.effect('converts extraction failures to typed errors', () =>
   verifyTypedFailure.pipe(Effect.provide(ArticleExtractorLive))
+);
+
+it.effect('escapes the description and parses the published time', () =>
+  verifyMetadata.pipe(Effect.provide(ArticleExtractorLive))
+);
+
+it.effect('falls back to an Untitled title and drops invalid dates', () =>
+  verifyUntitledFallback.pipe(Effect.provide(ArticleExtractorLive))
 );

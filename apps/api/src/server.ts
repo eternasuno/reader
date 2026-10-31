@@ -6,16 +6,12 @@ import {
   NodePath,
   NodeRuntime,
 } from '@effect/platform-node';
-import { HttpFetchLive } from '@reader/webpage/http';
 import { Config, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
-import { FeedFetcherLive } from './adapter/feed-fetcher';
-import { FeedParserLive } from './adapter/feed-parser';
-import { FeedPreviewStoreLive } from './adapter/feed-preview-store';
-import { AppLive } from './app';
+import { AppLive, LibraryServicesLive } from './app';
 import { AuthLive } from './infrastructure/auth';
 import { DatabaseLive } from './infrastructure/db';
-import { FeedSchedulerLive } from './infrastructure/feed-scheduler';
+import { SubscriptionSchedulerLive } from './infrastructure/subscription-scheduler';
 import { staticRoutes } from './routes/static';
 
 const DEFAULT_PORT = 3001;
@@ -24,14 +20,11 @@ const server = NodeHttpServer.layerConfig(createServer, {
   port: Config.Port('API_PORT').pipe(Config.withDefault(DEFAULT_PORT)),
 });
 
+const library = LibraryServicesLive.pipe(Layer.provide(DatabaseLive));
+
 const dependencies = Layer.mergeAll(
-  DatabaseLive,
-  FeedPreviewStoreLive,
-  FeedFetcherLive.pipe(
-    Layer.provide(FeedParserLive),
-    Layer.provide(HttpFetchLive)
-  ),
-  FeedSchedulerLive.pipe(Layer.provide(DatabaseLive)),
+  library,
+  SubscriptionSchedulerLive.pipe(Layer.provide(library)),
   AuthLive.pipe(Layer.provide(DatabaseLive)),
   NodeFileSystem.layer,
   NodePath.layer,

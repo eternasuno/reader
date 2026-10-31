@@ -58,3 +58,48 @@ export const logout = async () => {
     throw new Error(result.error.message ?? 'Sign out failed.');
   }
 };
+
+export type ChangePasswordParams = {
+  currentPassword: string;
+  newPassword: string;
+};
+
+const passwordMessages: Record<string, string> = {
+  INVALID_PASSWORD: '当前密码不正确',
+  PASSWORD_TOO_SHORT: '新密码至少需要 8 个字符',
+  PASSWORD_TOO_LONG: '新密码过长，请缩短后重试',
+  CREDENTIAL_ACCOUNT_NOT_FOUND: '当前账号不支持修改密码',
+  FAILED_TO_GET_SESSION: '登录状态已失效，请重新登录',
+  SESSION_EXPIRED: '登录状态已失效，请重新登录',
+  SESSION_NOT_FRESH: '请重新登录后再修改密码',
+  UNAUTHORIZED: '登录状态已失效，请重新登录',
+  USER_NOT_FOUND: '当前账号不存在，请重新登录',
+  RATE_LIMITED: '尝试次数过多，请稍后重试',
+  INVALID_ORIGIN: '请求来源无效，请刷新页面后重试',
+};
+
+export const passwordErrorText = (code: string | undefined): string =>
+  code === undefined
+    ? '修改密码失败，请稍后重试'
+    : (passwordMessages[code] ?? '修改密码失败，请稍后重试');
+
+export const changePassword = async (params: ChangePasswordParams) => {
+  let result: Awaited<ReturnType<typeof authClient.changePassword>>;
+
+  try {
+    result = await authClient.changePassword({
+      ...params,
+      revokeOtherSessions: true,
+    });
+  } catch {
+    throw new Error('网络连接失败，请稍后重试');
+  }
+
+  if (result.error) {
+    const code: unknown = result.error.code;
+
+    throw new Error(
+      passwordErrorText(typeof code === 'string' ? code : undefined)
+    );
+  }
+};

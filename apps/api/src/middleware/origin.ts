@@ -15,7 +15,7 @@ export const checkOrigin = HttpRouter.middleware()(
 
         if (request.method !== 'GET' && origin && origin !== allowedOrigin) {
           return yield* HttpServerResponse.json(
-            { error: '不允许跨站修改' },
+            { error: 'Cross-site modification is not allowed' },
             { status: 403 }
           );
         }

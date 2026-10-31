@@ -1,0 +1,226 @@
+import { createEffect, createSignal, For, Show } from 'solid-js';
+import type { Preview } from '../../lib/library';
+import type { PreviewResult } from '../../pages/library-model';
+import { Button } from '../atoms/button';
+import { SubmitButton } from '../atoms/submit-button';
+import { Dialog } from '../molecules/dialog';
+import { FormInput } from '../molecules/form-input';
+
+type AddBusy = 'add' | 'preview' | 'subscribe';
+
+type AddFlowProps = {
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly onAdd: (url: string) => Promise<boolean>;
+  readonly onPreview: (url: string) => Promise<PreviewResult>;
+  readonly onSubscribe: (url: string) => Promise<boolean>;
+};
+
+const submittedUrl = (form: HTMLFormElement): string =>
+  String(new FormData(form).get('url') ?? '').trim();
+
+const requestPreview = async (
+  props: AddFlowProps,
+  form: HTMLFormElement | undefined
+): Promise<
+  { readonly result: PreviewResult; readonly url: string } | undefined
+> => {
+  if (form === undefined || !form.reportValidity()) return undefined;
+  const url = submittedUrl(form);
+  if (url === '') return undefined;
+  const result = await props.onPreview(url);
+
+  return result.kind === 'failed' ? undefined : { result, url };
+};
+
+const useAddPreview = (props: AddFlowProps) => {
+  let form: HTMLFormElement | undefined;
+  const [preview, setPreview] = createSignal<Preview>();
+  const [url, setUrl] = createSignal('');
+  const [busy, setBusy] = createSignal(false);
+  const reset = () => {
+    setPreview(undefined);
+    setUrl('');
+  };
+  const resetForm = () => {
+    reset();
+    form?.reset();
+  };
+  const request = async () => {
+    const request = requestPreview(props, form);
+    setBusy(true);
+    const requested = await request;
+    setBusy(false);
+    if (requested === undefined) return;
+    if (requested.result.kind === 'existing') {
+      props.onClose();
+
+      return;
+    }
+    if (requested.result.kind !== 'preview') return;
+
+    setPreview(requested.result.preview);
+    setUrl(requested.url);
+  };
+
+  return {
+    preview,
+    url,
+    busy,
+    reset,
+    resetForm,
+    request,
+    formRef: (element: HTMLFormElement) => {
+      form = element;
+    },
+  };
+};
+
+const useAddSubmit = (
+  props: AddFlowProps,
+  close: () => void,
+  resetPreview: () => void
+) => {
+  const [busy, setBusy] = createSignal<AddBusy>();
+  const run = async (kind: AddBusy, task: () => Promise<boolean>) => {
+    setBusy(kind);
+    const ok = await task();
+    setBusy(undefined);
+    if (ok) close();
+  };
+  const add = async (value: string) => {
+    if (value === '') return;
+
+    await run('add', () => props.onAdd(value));
+  };
+  const subscribe = async (value: string) => {
+    if (value === '') return;
+
+    await run('subscribe', () => props.onSubscribe(value));
+  };
+  const edit = () => {
+    resetPreview();
+    setBusy(undefined);
+  };
+
+  return { busy, add, subscribe, edit };
+};
+
+const PreviewPanel = (props: {
+  readonly preview: Preview;
+  readonly busy: boolean;
+  readonly onConfirm: () => void;
+  readonly onCancel: () => void;
+}) => (
+  <section
+    aria-label="订阅预览"
+    class="mt-2 rounded-box border border-base-content/20 p-3"
+  >
+    <h3 class="font-semibold tracking-tight">{props.preview.title}</h3>
+    <Show when={props.preview.description}>
+      {(text) => (
+        <p class="mt-1 whitespace-pre-line text-sm text-base-content/70">
+          {text()}
+        </p>
+      )}
+    </Show>
+    <p class="mt-1 break-all text-xs text-base-content/60">
+      {props.preview.url}
+    </p>
+    <ul class="mt-2 list-disc pl-5 text-sm text-base-content/70">
+      <For each={props.preview.titles.slice(0, 3)}>
+        {(title) => <li class="truncate">{title}</li>}
+      </For>
+    </ul>
+    <div class="mt-3 flex flex-wrap gap-2">
+      <SubmitButton
+        type="button"
+        pending={props.busy}
+        label="确认订阅"
+        pendingLabel="订阅中…"
+        onClick={props.onConfirm}
+      />
+      <Button type="button" disabled={props.busy} onClick={props.onCancel}>
+        返回修改
+      </Button>
+    </div>
+  </section>
+);
+
+const AddForm = (props: {
+  readonly preview: ReturnType<typeof useAddPreview>;
+  readonly submit: ReturnType<typeof useAddSubmit>;
+}) => (
+  <form
+    ref={props.preview.formRef}
+    class="mt-2"
+    onSubmit={(event) => {
+      event.preventDefault();
+      void props.submit.add(submittedUrl(event.currentTarget));
+    }}
+  >
+    <FormInput
+      id="library-add-url"
+      name="url"
+      label="网址"
+      hint="请输入有效的 http 或 https 链接"
+      type="url"
+      required
+      maxLength={4096}
+      placeholder="粘贴文章或订阅链接…"
+      disabled={props.preview.busy() || props.submit.busy() !== undefined}
+    />
+    <div class="flex flex-wrap gap-2">
+      <SubmitButton
+        pending={props.submit.busy() === 'add'}
+        label="添加文章"
+        pendingLabel="添加中…"
+      />
+      <SubmitButton
+        type="button"
+        pending={props.preview.busy()}
+        label="预览订阅"
+        pendingLabel="获取预览…"
+        onClick={() => void props.preview.request()}
+      />
+    </div>
+  </form>
+);
+
+export const LibraryAddDialog = (props: AddFlowProps) => {
+  const preview = useAddPreview(props);
+  const submit = useAddSubmit(props, props.onClose, preview.reset);
+  createEffect(() => {
+    if (props.open) preview.resetForm();
+  });
+
+  return (
+    <Dialog open={props.open} label="添加链接或订阅" onClose={props.onClose}>
+      <section class="py-2" aria-labelledby="library-add-heading">
+        <h2
+          id="library-add-heading"
+          class="text-lg font-semibold tracking-tight"
+        >
+          添加链接或订阅
+        </h2>
+        <p class="mt-2 text-sm text-base-content/60">
+          粘贴文章链接保存到稍后阅读，或预览 RSS / Atom 订阅。
+        </p>
+        <Show
+          when={preview.preview()}
+          keyed
+          fallback={<AddForm preview={preview} submit={submit} />}
+        >
+          {(item) => (
+            <PreviewPanel
+              preview={item}
+              busy={submit.busy() === 'subscribe'}
+              onConfirm={() => void submit.subscribe(preview.url())}
+              onCancel={submit.edit}
+            />
+          )}
+        </Show>
+      </section>
+    </Dialog>
+  );
+};

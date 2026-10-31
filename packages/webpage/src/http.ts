@@ -1,6 +1,7 @@
 import type { LookupAddress, LookupOptions } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { Agent, fetch as undiciFetch } from '@effect/platform-node/Undici';
+import type { WebpageFetchCode } from '@reader/business';
 import { Data, Effect, Layer, type Scope, Stream } from 'effect';
 import {
   FetchHttpClient,
@@ -13,6 +14,7 @@ import {
 export class FetchFailure extends Data.TaggedError('FetchFailure')<{
   readonly message: string;
   readonly cause?: unknown;
+  readonly code?: WebpageFetchCode;
 }> {}
 
 export type PublicTextRequest = {

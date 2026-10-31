@@ -46,6 +46,52 @@ it.effect('returns Jina html with the target and credentials', () =>
   })
 );
 
+it.effect('omits credentials when no key is configured', () =>
+  Effect.gen(function* () {
+    let init: FetchInit | undefined;
+    const fetchImpl = (_input: FetchInput, options?: FetchInit) => {
+      init = options;
+
+      return textFetch(html)();
+    };
+    const result = yield* fetchJina(article, undefined).pipe(
+      provideFetch(fetchImpl as typeof globalThis.fetch)
+    );
+    expect(result).toBe(html);
+    expect(new Headers(init?.headers).get('authorization')).toBeNull();
+  })
+);
+
+it.effect('classifies rate limits, rejected keys and other failures', () =>
+  Effect.gen(function* () {
+    const responses = [
+      new Response('slow down', { status: 429 }),
+      new Response('denied', { status: 401 }),
+      new Response('denied', { status: 403 }),
+      new Response('boom', { status: 502 }),
+    ];
+    const fetchImpl = () => {
+      const response = responses.shift();
+
+      if (!response) {
+        throw new Error('Unexpected request');
+      }
+
+      return Promise.resolve(response);
+    };
+    const run = () =>
+      Effect.flip(
+        fetchJina(article, key).pipe(
+          provideFetch(fetchImpl as typeof globalThis.fetch)
+        )
+      );
+    expect((yield* run()).code).toBe('rate_limited');
+    expect((yield* run()).code).toBe('key_rejected');
+    expect((yield* run()).code).toBe('key_rejected');
+    expect((yield* run()).code).toBe('fetch_failed');
+  })
+);
+
 it.effect('rejects unsupported or credentialed targets before fetching', () =>
   Effect.gen(function* () {
     let called = false;
@@ -127,5 +173,6 @@ it.effect('reports a forty second timeout', () =>
     const error = yield* Fiber.join(fiber).pipe(Effect.flip);
     expect(error._tag).toBe('FetchFailure');
     expect(error.message).toBe('Jina request timed out');
+    expect(error.code).toBe('fetch_failed');
   })
 );

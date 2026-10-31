@@ -30,7 +30,7 @@ By default:
 
 Both applications run as independent Turborepo tasks. Vite proxies `/api` to the Effect server during development and preview, so browser authentication remains same-origin without API CORS middleware.
 
-Install and start a CDP-compatible browser service separately, such as Obscura with `obscura serve --port 9222`. In the reader settings, choose the server extraction service and save `http://127.0.0.1:9222` as your browser service address to extract articles without a Jina key, or choose Jina and save your API key. Switching providers preserves the saved key and cached articles.
+Jina is the default extraction provider and supports anonymous access; an API key is optional. To use browser extraction, install and start a CDP-compatible browser service separately, such as Obscura with `obscura serve --port 9222`, then save its address in the standalone settings page. Switching providers preserves their saved configuration and extracted articles.
 
 The server uses `puppeteer-core` to connect to the configured browser, creates an isolated context for each extraction, and permits two concurrent browser extractions. Both providers return HTML to the same local Readability extraction and sanitization pipeline. The implementations live in `packages/webpage`. Browser extraction waits for network activity to settle; pages with long polling or delayed rendering can still time out or need the original site.
 
@@ -119,11 +119,17 @@ Deploy the frontend and `/api` on the same public origin. In development and pre
 
 - `/register` — email/password registration
 - `/login` — email/password login
-- `/` — protected account page; redirects to `/login` when no session exists
+- `/` — protected later reading list; redirects to `/login` when no session exists
+- `/rss` — subscribed Feed articles
+- `/read/:kind/:key` — selected article
+- `/settings` — account, article retention, and extraction settings
 
 ### API
 
 - `/api/auth/*` — Better Auth protocol
+- `/api/library/*` — authenticated articles, subscriptions, unread counts, and reading settings
+
+Business storage uses the unified Article and Feed model. Existing records from the previous reading-link and feed-article model are not migrated; use a fresh database for this version. Run `pnpm db:migrate` before starting against a new persistent database.
 
 ## Production
 

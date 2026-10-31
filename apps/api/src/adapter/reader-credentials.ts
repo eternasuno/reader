@@ -33,13 +33,14 @@ const runQuery = <A>(
 ) =>
   Effect.tryPromise({
     try: () => db.query<[A]>(sql, { owner, id: ownerId(owner), ...extra }),
-    catch: () => new ReaderCredentialsError({ error: '无法访问 Key 设置' }),
+    catch: () =>
+      new ReaderCredentialsError({ error: 'Failed to access key settings' }),
   }).pipe(Effect.map(([result]) => result));
 
 const decodeRows = (rows: unknown) =>
   Schema.decodeUnknownEffect(Schema.Array(StoredRow))(rows).pipe(
     Effect.mapError(
-      () => new ReaderCredentialsError({ error: '无法读取 Key 设置' })
+      () => new ReaderCredentialsError({ error: 'Failed to read key settings' })
     )
   );
 
@@ -66,7 +67,8 @@ const decryptStored = (crypto: Crypto, owner: string, encrypted: string) =>
     try: () => Redacted.make(crypto.decrypt(owner, encrypted)),
     catch: () =>
       new ReaderCredentialsError({
-        error: '无法解密 Key，请检查服务器加密配置或重新填写',
+        error:
+          'Failed to decrypt key; check the server encryption configuration or re-enter the key',
       }),
   });
 
@@ -89,7 +91,8 @@ const encryptKey = (
     try: () => crypto.encrypt(owner, Redacted.value(key)),
     catch: () =>
       new ReaderCredentialsError({
-        error: '服务器尚未正确配置 READER_ENCRYPTION_KEY',
+        error:
+          'READER_ENCRYPTION_KEY is not configured correctly on the server',
       }),
   });
 

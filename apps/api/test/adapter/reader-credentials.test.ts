@@ -3,7 +3,7 @@ import { expect, it } from '@effect/vitest';
 import { ReaderCredentials } from '@reader/business';
 import { ConfigProvider, Effect, Layer, Redacted } from 'effect';
 import { ReaderCredentialsLive } from '../../src/adapter/reader-credentials';
-import { articlesSchema } from '../../src/infrastructure/articles';
+import { readerStoreSchema } from '../../src/adapter/reader-store';
 import { CredentialCryptoLive } from '../../src/infrastructure/credential-crypto';
 import { createSurreal, Database } from '../../src/infrastructure/db';
 
@@ -26,7 +26,7 @@ const runWithCredentials = (check: Check, config = makeConfig()) =>
       })
     ),
     (db) =>
-      Effect.promise(() => db.query(articlesSchema)).pipe(
+      Effect.promise(() => db.query(readerStoreSchema)).pipe(
         Effect.andThen(check),
         Effect.provide(
           Layer.mergeAll(
@@ -213,7 +213,9 @@ const expectUndecodableCiphertextFailure = Effect.gen(function* () {
 
   const error = yield* Effect.flip(credentials.get('alice'));
   expect(error._tag).toBe('ReaderCredentialsError');
-  expect(error.error).toBe('无法解密 Key，请检查服务器加密配置或重新填写');
+  expect(error.error).toBe(
+    'Failed to decrypt key; check the server encryption configuration or re-enter the key'
+  );
 });
 
 const expectUnreadableRowFailure = Effect.gen(function* () {
@@ -223,7 +225,7 @@ const expectUnreadableRowFailure = Effect.gen(function* () {
 
   const error = yield* Effect.flip(credentials.provider('alice'));
   expect(error._tag).toBe('ReaderCredentialsError');
-  expect(error.error).toBe('无法读取 Key 设置');
+  expect(error.error).toBe('Failed to read key settings');
 });
 
 const expectMissingEncryptionKeyFailure = Effect.gen(function* () {
@@ -232,7 +234,9 @@ const expectMissingEncryptionKeyFailure = Effect.gen(function* () {
     credentials.set('alice', Redacted.make('alice-secret'))
   );
   expect(error._tag).toBe('ReaderCredentialsError');
-  expect(error.error).toBe('服务器尚未正确配置 READER_ENCRYPTION_KEY');
+  expect(error.error).toBe(
+    'READER_ENCRYPTION_KEY is not configured correctly on the server'
+  );
 });
 
 it.effect('reports undecryptable stored keys as credential failures', () =>
@@ -311,7 +315,7 @@ const expectUnreadableEndpointFailure = Effect.gen(function* () {
 
   const error = yield* Effect.flip(credentials.browserEndpoint('alice'));
   expect(error._tag).toBe('ReaderCredentialsError');
-  expect(error.error).toBe('无法读取 Key 设置');
+  expect(error.error).toBe('Failed to read key settings');
 });
 
 it.effect('persists the browser endpoint per owner', () =>

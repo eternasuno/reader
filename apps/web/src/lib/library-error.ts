@@ -1,0 +1,84 @@
+export type LibraryErrorTag =
+  | 'Unauthorized'
+  | 'Forbidden'
+  | 'InvalidCursor'
+  | 'ArticleReadError'
+  | 'ArticleWriteError'
+  | 'InvalidArticleUrl'
+  | 'ArticleNotFound'
+  | 'ArticleNotInFeed'
+  | 'ArticleNotLater'
+  | 'ArticleMissingUrl'
+  | 'ArticleEmptyContent'
+  | 'DuplicateArticle'
+  | 'ReaderCredentialsError'
+  | 'WebpageFetchError'
+  | 'ArticleExtractError'
+  | 'SubscriptionUrlInvalid'
+  | 'SubscriptionExists'
+  | 'SubscriptionNotFound'
+  | 'SubscriptionImportFailed'
+  | 'SubscriptionRefreshFailed'
+  | 'FetchSubscriptionError'
+  | 'ParseSubscriptionError'
+  | 'SubscriptionReadError'
+  | 'SubscriptionWriteError'
+  | 'RequestFailed'
+  | 'NetworkError'
+  | 'InvalidResponse';
+
+const libraryErrorMessages: Record<LibraryErrorTag, string> = {
+  Unauthorized: '登录状态已失效，请重新登录',
+  Forbidden: '不允许跨站修改',
+  InvalidCursor: '列表已更新，请刷新后重试',
+  ArticleReadError: '暂时无法读取文章，请稍后重试',
+  ArticleWriteError: '暂时无法保存文章，请稍后重试',
+  InvalidArticleUrl: '请输入有效的 http 或 https 链接',
+  ArticleNotFound: '文章不存在，可能已被删除',
+  ArticleNotInFeed: '该文章不属于任何订阅',
+  ArticleNotLater: '订阅文章不能从稍后阅读中删除',
+  ArticleMissingUrl: '该文章没有原始链接',
+  ArticleEmptyContent: '未能提取到文章内容',
+  DuplicateArticle: '该文章已在稍后阅读中',
+  ReaderCredentialsError: '正文提取凭据不可用，请检查设置',
+  WebpageFetchError: '网页抓取失败，请稍后重试',
+  ArticleExtractError: '正文提取失败，请稍后重试',
+  SubscriptionUrlInvalid: '请输入有效的订阅地址',
+  SubscriptionExists: '该订阅已存在',
+  SubscriptionNotFound: '订阅不存在，可能已被删除',
+  SubscriptionImportFailed: '订阅文章导入失败，请稍后重试',
+  SubscriptionRefreshFailed: '订阅刷新失败，请稍后重试',
+  FetchSubscriptionError: '无法获取订阅内容，请稍后重试',
+  ParseSubscriptionError: '无法解析订阅源，请确认地址正确',
+  SubscriptionReadError: '暂时无法读取订阅，请稍后重试',
+  SubscriptionWriteError: '暂时无法保存订阅，请稍后重试',
+  RequestFailed: '请求失败，请稍后重试',
+  NetworkError: '网络连接失败，请检查网络后重试',
+  InvalidResponse: '响应数据格式不正确，请稍后重试',
+};
+
+export class LibraryError extends Error {
+  readonly tag: LibraryErrorTag;
+  readonly id: string | undefined;
+  readonly code: string | undefined;
+
+  constructor(
+    tag: LibraryErrorTag,
+    detail: {
+      readonly id?: string | undefined;
+      readonly code?: string | undefined;
+    } = {}
+  ) {
+    super(libraryErrorMessages[tag]);
+    this.name = 'LibraryError';
+    this.tag = tag;
+    this.id = detail.id;
+    this.code = detail.code;
+  }
+}
+
+export const libraryErrorMessage = (error: unknown): string =>
+  error instanceof LibraryError ? error.message : '操作失败，请稍后重试';
+
+export const isLibraryErrorTag = (value: string): value is LibraryErrorTag =>
+  Object.hasOwn(libraryErrorMessages, value);

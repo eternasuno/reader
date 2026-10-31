@@ -6,14 +6,14 @@ const EmptyRoute = () => null;
 export const routes: RouteDefinition[] = [
   {
     path: '/',
-    component: lazy(() => import('./pages/index')),
+    component: lazy(() => import('./pages/library')),
     children: [
       { path: '/', component: EmptyRoute },
       { path: '/rss', component: EmptyRoute },
-      { path: '/settings', component: EmptyRoute },
       { path: '/read/:kind/:key', component: EmptyRoute },
     ],
   },
+  { path: '/settings', component: lazy(() => import('./pages/settings')) },
   { path: '/login', component: lazy(() => import('./pages/login')) },
   { path: '/register', component: lazy(() => import('./pages/register')) },
 ];

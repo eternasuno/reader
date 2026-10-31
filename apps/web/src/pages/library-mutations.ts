@@ -1,0 +1,240 @@
+import {
+  type Article,
+  LibraryError,
+  libraryErrorMessage,
+  type Preview,
+} from '../lib/library';
+import { removeItem, restoreItem, upsertItem } from './library-articles';
+import { errorFeedId } from './library-commands';
+import type { LibraryStore } from './library-context';
+import { removeFeed, restoreFeed, upsertFeed } from './library-feeds';
+import { reloadFeed, selectFeed, startLoad } from './library-loading';
+import { writeRead } from './library-read';
+import { loadCounts } from './library-reference';
+import { openDuplicate } from './library-selection';
+
+export type PreviewResult =
+  | { readonly kind: 'preview'; readonly preview: Preview }
+  | { readonly kind: 'existing' }
+  | { readonly kind: 'failed' };
+
+const reloadAfterRemoval = async (store: LibraryStore, id: string) => {
+  const scope = store.state().scope;
+  if (scope.kind === 'feeds' && scope.feedId === id) {
+    await startLoad(store, { kind: 'feeds' }, store.state().filter);
+  }
+};
+
+const subscribeFailure = async (
+  store: LibraryStore,
+  error: unknown
+): Promise<boolean> => {
+  if (error instanceof LibraryError && error.tag === 'SubscriptionExists') {
+    store.notify('success', '该订阅已存在');
+    if (error.id !== undefined) {
+      await reloadFeed(store, error.id);
+    }
+
+    return true;
+  }
+
+  const kept = errorFeedId(error, 'SubscriptionImportFailed');
+  if (kept !== undefined) {
+    store.notify('error', libraryErrorMessage(error));
+    await reloadFeed(store, kept);
+
+    return true;
+  }
+
+  store.notify('error', libraryErrorMessage(error));
+
+  return false;
+};
+
+export const toggleRead = async (
+  store: LibraryStore,
+  article: Article
+): Promise<void> => {
+  const current = store.lookup(article.id) ?? article;
+  await writeRead(store, article.id, !current.read);
+};
+
+export const removeArticle = async (
+  store: LibraryStore,
+  article: Article
+): Promise<boolean> => {
+  const current = store.state();
+  const index = current.items.findIndex((item) => item.id === article.id);
+  const target = current.items[index] ?? article;
+  const selected = current.selected;
+  const token = store.begin(article.id);
+  store.setState((value) => ({
+    ...removeItem(value, target),
+    selected: value.selected,
+  }));
+  try {
+    await store.client.remove(article.id);
+    if (store.end(article.id, token)) {
+      store.setState((value) =>
+        value.selected?.id === article.id
+          ? { ...value, selected: undefined }
+          : value
+      );
+    }
+
+    await loadCounts(store);
+
+    return true;
+  } catch (error) {
+    if (store.end(article.id, token)) {
+      store.setState((value) => ({
+        ...restoreItem(value, target, index),
+        selected: value.selected ?? selected,
+      }));
+      store.notify('error', libraryErrorMessage(error));
+    }
+
+    return false;
+  }
+};
+
+export const saveArticle = async (
+  store: LibraryStore,
+  article: Article
+): Promise<boolean> => {
+  const token = store.begin(article.id);
+  try {
+    const saved = await store.client.save(article.id);
+    store.end(article.id, token);
+    store.setState((current) => upsertItem(current, saved));
+    await loadCounts(store);
+    store.notify('success', '已保存到稍后阅读');
+
+    return true;
+  } catch (error) {
+    store.end(article.id, token);
+    if (await openDuplicate(store, error)) {
+      return true;
+    }
+
+    store.notify('error', libraryErrorMessage(error));
+
+    return false;
+  }
+};
+
+export const addArticle = async (
+  store: LibraryStore,
+  url: string
+): Promise<boolean> => {
+  try {
+    const item = await store.client.add(url);
+    store.setState((current) => ({
+      ...upsertItem(current, item),
+      selected: item,
+    }));
+    await loadCounts(store);
+    store.notify('success', '文章已添加');
+
+    return true;
+  } catch (error) {
+    if (await openDuplicate(store, error)) {
+      return true;
+    }
+
+    store.notify('error', libraryErrorMessage(error));
+
+    return false;
+  }
+};
+
+export const previewUrl = async (
+  store: LibraryStore,
+  url: string
+): Promise<PreviewResult> => {
+  try {
+    return { kind: 'preview', preview: await store.client.preview(url) };
+  } catch (error) {
+    if (error instanceof LibraryError && error.tag === 'SubscriptionExists') {
+      store.notify('success', '该订阅已存在');
+      if (error.id !== undefined) {
+        await reloadFeed(store, error.id);
+      }
+
+      return { kind: 'existing' };
+    }
+
+    store.notify('error', libraryErrorMessage(error));
+
+    return { kind: 'failed' };
+  }
+};
+
+export const subscribeFeed = async (
+  store: LibraryStore,
+  url: string
+): Promise<boolean> => {
+  try {
+    const feed = await store.client.subscribe(url);
+    store.setState((current) => ({
+      ...current,
+      feeds: upsertFeed(current.feeds, feed),
+    }));
+    await loadCounts(store);
+    store.notify('success', '订阅已添加');
+    await selectFeed(store, feed.id);
+
+    return true;
+  } catch (error) {
+    return subscribeFailure(store, error);
+  }
+};
+
+export const unsubscribeFeed = async (
+  store: LibraryStore,
+  id: string
+): Promise<boolean> => {
+  const current = store.state();
+  const feed = current.feeds.find((item) => item.id === id);
+  const unread = current.counts.feeds[id] ?? 0;
+  const token = store.begin(id);
+  if (feed !== undefined) {
+    store.setState((value) => removeFeed(value, feed, unread));
+  }
+
+  try {
+    await store.client.unsubscribe(id);
+    store.end(id, token);
+    await loadCounts(store);
+    await reloadAfterRemoval(store, id);
+
+    return true;
+  } catch (error) {
+    if (store.end(id, token) && feed !== undefined) {
+      store.setState((value) => restoreFeed(value, feed, unread));
+    }
+
+    store.notify('error', libraryErrorMessage(error));
+
+    return false;
+  }
+};
+
+export const extractArticle = async (
+  store: LibraryStore,
+  article: Article
+): Promise<Article | undefined> => {
+  const token = store.begin(article.id);
+  try {
+    const item = await store.client.extract(article.id);
+    store.end(article.id, token);
+    store.setState((current) => upsertItem(current, item));
+
+    return item;
+  } catch (error) {
+    store.end(article.id, token);
+    store.notify('error', libraryErrorMessage(error));
+
+    return undefined;
+  }
+};
