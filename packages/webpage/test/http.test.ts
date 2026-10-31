@@ -7,7 +7,7 @@ import {
   parsePublicUrl,
   pinnedAddressLookup,
   selectPublicAddress,
-} from '../../src/infrastructure/http-fetch';
+} from '../src/http';
 
 type FetchInput = Parameters<typeof globalThis.fetch>[0];
 type FetchInit = Parameters<typeof globalThis.fetch>[1];

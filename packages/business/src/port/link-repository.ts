@@ -1,10 +1,11 @@
-import { Context, type Effect, Schema } from 'effect';
+import { Context, Data, type Effect } from 'effect';
 import type { ReadingLink } from '../entity/reading-link';
 
-export class LinkRepositoryError extends Schema.TaggedError<LinkRepositoryError>()(
-  'LinkRepositoryError',
-  { cause: Schema.Unknown }
-) {}
+export class LinkRepositoryError extends Data.TaggedError(
+  'LinkRepositoryError'
+)<{
+  readonly cause: unknown;
+}> {}
 
 export class LinkRepository extends Context.Service<
   LinkRepository,

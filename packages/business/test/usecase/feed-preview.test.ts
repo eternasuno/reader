@@ -5,6 +5,7 @@ import {
   FeedFetcher,
   type FeedImport,
   FeedPreviewStore,
+  FeedPreviewStoreError,
   FeedRepository,
   type PendingFeedPreview,
   prepareInitialImport,
@@ -141,6 +142,21 @@ it.effect('does not store a preview when fetching fails', () => {
     )
   );
 });
+
+it.effect('keeps store failures distinct from fetch failures', () =>
+  previewFeed('alice', 'https://x.co').pipe(
+    Effect.flip,
+    Effect.map((error) => expect(error._tag).toBe('FeedPreviewStoreError')),
+    Effect.provideService(FeedFetcher, {
+      fetch: () => Effect.succeed({ title: 'Example', articles: [] }),
+    }),
+    Effect.provide(
+      Layer.mock(FeedPreviewStore, {
+        save: () => Effect.fail(new FeedPreviewStoreError({ error: 'x' })),
+      })
+    )
+  )
+);
 
 const confirmedFeed = {
   key: 'feed',

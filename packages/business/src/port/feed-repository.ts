@@ -1,45 +1,12 @@
-import { Context, type Effect, Schema } from 'effect';
-import type { Feed, FeedArticle, ParsedFeed } from '../entity/feed';
+import { Context, Data, type Effect } from 'effect';
+import type { Feed, FeedArticle } from '../entity/feed';
 import type { FeedImport } from '../entity/feed-import';
 
-export class FeedRepositoryError extends Schema.TaggedError<FeedRepositoryError>()(
-  'FeedRepositoryError',
-  { cause: Schema.Unknown }
-) {}
-
-export class FeedFetchError extends Schema.TaggedError<FeedFetchError>()(
-  'FeedFetchError',
-  { error: Schema.String }
-) {}
-
-export class FeedFetcher extends Context.Service<
-  FeedFetcher,
-  {
-    readonly fetch: (url: string) => Effect.Effect<ParsedFeed, FeedFetchError>;
-  }
->()('@reader/business/FeedFetcher') {}
-
-export type PendingFeedPreview = {
-  readonly owner: string;
-  readonly url: string;
-  readonly imported: FeedImport;
-  readonly expiresAt: number;
-};
-
-export class FeedPreviewStore extends Context.Service<
-  FeedPreviewStore,
-  {
-    readonly save: (
-      preview: PendingFeedPreview,
-      now: number
-    ) => Effect.Effect<string, FeedFetchError>;
-    readonly find: (
-      owner: string,
-      token: string,
-      now: number
-    ) => Effect.Effect<PendingFeedPreview | undefined>;
-  }
->()('@reader/business/FeedPreviewStore') {}
+export class FeedRepositoryError extends Data.TaggedError(
+  'FeedRepositoryError'
+)<{
+  readonly cause: unknown;
+}> {}
 
 export class FeedRepository extends Context.Service<
   FeedRepository,

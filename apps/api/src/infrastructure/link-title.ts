@@ -1,5 +1,5 @@
+import { FetchFailure, fetchPublicText } from '@reader/webpage/http';
 import { Effect } from 'effect';
-import { FetchFailure, fetchPublicText } from './http-fetch';
 
 const namedEntities: Record<string, string> = {
   amp: '&',

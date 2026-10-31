@@ -37,18 +37,38 @@ export const makeReaderAtoms = (kind: 'link' | 'feed', key: string) => {
   return { content, extract };
 };
 
-export const makeSettingsAtoms = () => {
-  const runtime = Atom.runtime(LinksClientLive);
+export type ReaderProvider = 'jina' | 'browser';
+
+export type SettingsCommand =
+  | { readonly _tag: 'Key'; readonly key: string }
+  | { readonly _tag: 'DeleteKey' }
+  | { readonly _tag: 'BrowserEndpoint'; readonly endpoint: string }
+  | { readonly _tag: 'Provider'; readonly provider: ReaderProvider };
+
+export const toReaderProvider = (value: string): ReaderProvider | undefined =>
+  value === 'jina' || value === 'browser' ? value : undefined;
+
+export const makeSettingsAtoms = (layer = LinksClientLive) => {
+  const runtime = Atom.runtime(layer);
   const status = runtime.atom(() =>
     Effect.flatMap(LinksClient, (client) => client.reader.settings())
   );
-  const update = runtime.fn<string | null>()(
-    Effect.fnUntraced(function* (key, get) {
+  const update = runtime.fn<SettingsCommand>()(
+    Effect.fnUntraced(function* (command, get) {
       const client = yield* LinksClient;
-      if (key === null) {
+
+      if (command._tag === 'Key') {
+        yield* client.reader.setKey({ payload: { key: command.key } });
+      } else if (command._tag === 'DeleteKey') {
         yield* client.reader.deleteKey();
+      } else if (command._tag === 'BrowserEndpoint') {
+        yield* client.reader.setBrowserEndpoint({
+          payload: { endpoint: command.endpoint },
+        });
       } else {
-        yield* client.reader.setKey({ payload: { key } });
+        yield* client.reader.setProvider({
+          payload: { provider: command.provider },
+        });
       }
 
       get.refresh(status);

@@ -30,6 +30,12 @@ By default:
 
 Both applications run as independent Turborepo tasks. Vite proxies `/api` to the Effect server during development and preview, so browser authentication remains same-origin without API CORS middleware.
 
+Install and start a CDP-compatible browser service separately, such as Obscura with `obscura serve --port 9222`. In the reader settings, choose the server extraction service and save `http://127.0.0.1:9222` as your browser service address to extract articles without a Jina key, or choose Jina and save your API key. Switching providers preserves the saved key and cached articles.
+
+The server uses `puppeteer-core` to connect to the configured browser, creates an isolated context for each extraction, and permits two concurrent browser extractions. Both providers return HTML to the same local Readability extraction and sanitization pipeline. The implementations live in `packages/webpage`. Browser extraction waits for network activity to settle; pages with long polling or delayed rendering can still time out or need the original site.
+
+Production browser extraction requires a separately running CDP-compatible browser service such as Obscura, Lightpanda, or Chromium. The API image does not install or launch a browser. Each user saves their browser service address in the reader settings, using an HTTP discovery URL or a full WebSocket endpoint. The API connects to that address; in Docker, localhost refers to the API container, so use the browser service's reachable address. Keep browser services private and expose this self-hosted application only to trusted users who may configure endpoints reachable from the API. Browser engines must enforce outbound network restrictions: request interception is used where supported, but Obscura 0.2.2 requires its own default private-network blocking because its interception support prevents JavaScript subresources from loading. API-side DNS validation cannot pin a remote browser's DNS resolution.
+
 ## Commands
 
 ```sh
@@ -103,7 +109,7 @@ API variables belong in `apps/api/.env`:
 | `SURREAL_DATABASE` | `app` | SurrealDB database |
 | `BETTER_AUTH_SECRET` | — | Better Auth signing secret |
 | `BETTER_AUTH_URL` | `http://localhost:3000` | Canonical public site origin used for auth URLs |
-| `READER_ENCRYPTION_KEY` | — | 32 random bytes in base64 used to encrypt/decrypt reader API keys; required for reader credential storage |
+| `READER_ENCRYPTION_KEY` | — | 32 random bytes in base64 used to encrypt/decrypt reader API keys; required for Jina key storage, not for browser extraction |
 
 Deploy the frontend and `/api` on the same public origin. In development and preview, Vite provides the `/api` proxy.
 

@@ -1,27 +1,26 @@
-import { Clock, Effect, Schema } from 'effect';
+import { Clock, Data, Effect } from 'effect';
 import {
   prepareInitialImport,
   prepareRefreshImport,
 } from '../entity/feed-import';
-import { FeedFetcher, FeedPreviewStore, FeedRepository } from '../port/feed';
+import { FeedFetcher } from '../port/feed-fetcher';
+import { FeedPreviewStore } from '../port/feed-preview-store';
+import { FeedRepository } from '../port/feed-repository';
 import { normalizeLink, saveLink } from './links';
 
 const PREVIEW_TTL_MILLIS = 10 * 60 * 1000;
 
-export class InvalidFeed extends Schema.TaggedError<InvalidFeed>()(
-  'InvalidFeed',
-  { error: Schema.String }
-) {}
+export class InvalidFeed extends Data.TaggedError('InvalidFeed')<{
+  readonly error: string;
+}> {}
 
-export class InvalidPreview extends Schema.TaggedError<InvalidPreview>()(
-  'InvalidPreview',
-  { error: Schema.String }
-) {}
+export class InvalidPreview extends Data.TaggedError('InvalidPreview')<{
+  readonly error: string;
+}> {}
 
-export class FeedNotFound extends Schema.TaggedError<FeedNotFound>()(
-  'FeedNotFound',
-  { error: Schema.String }
-) {}
+export class FeedNotFound extends Data.TaggedError('FeedNotFound')<{
+  readonly error: string;
+}> {}
 
 export const listFeeds = Effect.fn('feeds.list')(function* (owner: string) {
   const repository = yield* FeedRepository;

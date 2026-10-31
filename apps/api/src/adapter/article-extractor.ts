@@ -1,5 +1,5 @@
 import { Readability } from '@mozilla/readability';
-import { ArticleExtractor, ArticleFailure } from '@reader/business';
+import { ArticleExtractError, ArticleExtractor } from '@reader/business';
 import { Effect, Layer } from 'effect';
 import { JSDOM } from 'jsdom';
 import { cleanArticle } from '../infrastructure/article-sanitizer';
@@ -30,6 +30,6 @@ export const ArticleExtractorLive = Layer.succeed(ArticleExtractor, {
     Effect.try({
       try: () => extract(html, url),
       catch: () =>
-        new ArticleFailure({ error: '无法提取正文，请打开原文阅读' }),
+        new ArticleExtractError({ error: '无法提取正文，请打开原文阅读' }),
     }),
 });

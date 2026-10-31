@@ -50,7 +50,7 @@ const verifyTypedFailure = Effect.gen(function* () {
   const failure = yield* Effect.flip(
     extractor.extract('<html></html>', baseUrl)
   );
-  expect(failure._tag).toBe('ArticleFailure');
+  expect(failure._tag).toBe('ArticleExtractError');
 });
 
 it.effect(

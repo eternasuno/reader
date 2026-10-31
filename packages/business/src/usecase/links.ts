@@ -1,21 +1,18 @@
-import { Clock, Effect, Schema } from 'effect';
+import { Clock, Data, Effect } from 'effect';
 import { LinkRepository } from '../port/link-repository';
 import { LinkTitle } from '../port/link-title';
 
-export class InvalidLink extends Schema.TaggedError<InvalidLink>()(
-  'InvalidLink',
-  { error: Schema.String }
-) {}
+export class InvalidLink extends Data.TaggedError('InvalidLink')<{
+  readonly error: string;
+}> {}
 
-export class DuplicateLink extends Schema.TaggedError<DuplicateLink>()(
-  'DuplicateLink',
-  { error: Schema.String }
-) {}
+export class DuplicateLink extends Data.TaggedError('DuplicateLink')<{
+  readonly error: string;
+}> {}
 
-export class LinkNotFound extends Schema.TaggedError<LinkNotFound>()(
-  'LinkNotFound',
-  { error: Schema.String }
-) {}
+export class LinkNotFound extends Data.TaggedError('LinkNotFound')<{
+  readonly error: string;
+}> {}
 
 export const normalizeLink = (value: unknown): string => {
   if (typeof value !== 'string' || value.length > 4096) {

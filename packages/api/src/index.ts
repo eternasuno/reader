@@ -1,18 +1,11 @@
 import {
   ArticleContent,
-  ArticleFailure,
   ArticleSource,
-  DuplicateLink,
   Feed,
-  FeedFetchError,
-  FeedNotFound,
   FeedPage,
   FeedPreview,
-  InvalidFeed,
-  InvalidLink,
-  InvalidPreview,
-  LinkNotFound,
   LinkPage,
+  ReaderProvider,
   ReadingLink,
 } from '@reader/business';
 import { Schema } from 'effect';
@@ -22,6 +15,22 @@ import {
   HttpApiGroup,
   HttpApiSchema,
 } from 'effect/http-api';
+import {
+  ArticleExtractErrorSchema,
+  ArticleFailureSchema,
+  ArticleRepositoryErrorSchema,
+  DuplicateLinkSchema,
+  FeedFetchErrorSchema,
+  FeedNotFoundSchema,
+  FeedPreviewStoreErrorSchema,
+  InvalidFeedSchema,
+  InvalidLinkSchema,
+  InvalidPreviewSchema,
+  LinkNotFoundSchema,
+  LinksUnavailableSchema,
+  ReaderCredentialsErrorSchema,
+  WebpageFetchErrorSchema,
+} from './errors';
 
 export {
   DuplicateLink,
@@ -30,11 +39,7 @@ export {
   LinkPage,
   ReadingLink,
 } from '@reader/business';
-
-export class LinksUnavailable extends Schema.TaggedError<LinksUnavailable>()(
-  'LinksUnavailable',
-  { error: Schema.String }
-) {}
+export * from './errors';
 
 const key = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 
@@ -53,7 +58,7 @@ const forbidden = Schema.Struct({
 const links = HttpApiGroup.make('links').add(
   HttpApiEndpoint.get('unreadCount', '/api/links/unread-count', {
     success: Schema.Struct({ count: Schema.Number }),
-    error: [LinksUnavailable.pipe(HttpApiSchema.status(500)), unauthorized],
+    error: [LinksUnavailableSchema, unauthorized],
   }),
   HttpApiEndpoint.get('list', '/api/links', {
     query: {
@@ -66,7 +71,7 @@ const links = HttpApiGroup.make('links').add(
       beforeKey: Schema.optional(Schema.String),
     },
     success: LinkPage,
-    error: [LinksUnavailable.pipe(HttpApiSchema.status(500)), unauthorized],
+    error: [LinksUnavailableSchema, unauthorized],
   }),
   HttpApiEndpoint.post('add', '/api/links', {
     payload: Schema.Struct({
@@ -76,9 +81,9 @@ const links = HttpApiGroup.make('links').add(
       HttpApiSchema.status(201)
     ),
     error: [
-      InvalidLink.pipe(HttpApiSchema.status(400)),
-      DuplicateLink.pipe(HttpApiSchema.status(409)),
-      LinksUnavailable.pipe(HttpApiSchema.status(500)),
+      InvalidLinkSchema,
+      DuplicateLinkSchema,
+      LinksUnavailableSchema,
       unauthorized,
       forbidden,
     ],
@@ -87,8 +92,8 @@ const links = HttpApiGroup.make('links').add(
     payload: Schema.Struct({ key, read: Schema.Boolean }),
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: [
-      LinkNotFound.pipe(HttpApiSchema.status(404)),
-      LinksUnavailable.pipe(HttpApiSchema.status(500)),
+      LinkNotFoundSchema,
+      LinksUnavailableSchema,
       unauthorized,
       forbidden,
     ],
@@ -96,38 +101,26 @@ const links = HttpApiGroup.make('links').add(
   HttpApiEndpoint.post('markAll', '/api/links/mark-all', {
     payload: Schema.Struct({}),
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [
-      LinksUnavailable.pipe(HttpApiSchema.status(500)),
-      unauthorized,
-      forbidden,
-    ],
+    error: [LinksUnavailableSchema, unauthorized, forbidden],
   }),
   HttpApiEndpoint.post('markLoaded', '/api/links/mark-loaded', {
     payload: loadedKeys,
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [
-      LinksUnavailable.pipe(HttpApiSchema.status(500)),
-      unauthorized,
-      forbidden,
-    ],
+    error: [LinksUnavailableSchema, unauthorized, forbidden],
   }),
   HttpApiEndpoint.delete('remove', '/api/links', {
     payload: Schema.Struct({ key }),
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: [
-      LinkNotFound.pipe(HttpApiSchema.status(404)),
-      LinksUnavailable.pipe(HttpApiSchema.status(500)),
+      LinkNotFoundSchema,
+      LinksUnavailableSchema,
       unauthorized,
       forbidden,
     ],
   })
 );
 
-const feedErrors = [
-  LinksUnavailable.pipe(HttpApiSchema.status(500)),
-  unauthorized,
-  forbidden,
-];
+const feedErrors = [LinksUnavailableSchema, unauthorized, forbidden];
 
 const feedKey = Schema.Struct({ key });
 
@@ -143,8 +136,9 @@ const feeds = HttpApiGroup.make('feeds').add(
     success: Schema.Struct({ preview: FeedPreview }),
     error: [
       ...feedErrors,
-      InvalidFeed.pipe(HttpApiSchema.status(400)),
-      FeedFetchError.pipe(HttpApiSchema.status(422)),
+      InvalidFeedSchema,
+      FeedFetchErrorSchema,
+      FeedPreviewStoreErrorSchema,
     ],
   }),
   HttpApiEndpoint.post('subscribe', '/api/feeds', {
@@ -152,12 +146,12 @@ const feeds = HttpApiGroup.make('feeds').add(
       token: Schema.String.check(Schema.isMaxLength(128)),
     }),
     success: Schema.Struct({ item: Feed }),
-    error: [...feedErrors, InvalidPreview.pipe(HttpApiSchema.status(400))],
+    error: [...feedErrors, InvalidPreviewSchema],
   }),
   HttpApiEndpoint.delete('unsubscribe', '/api/feeds', {
     payload: feedKey,
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [...feedErrors, FeedNotFound.pipe(HttpApiSchema.status(404))],
+    error: [...feedErrors, FeedNotFoundSchema],
   }),
   HttpApiEndpoint.get('articles', '/api/feeds/articles', {
     query: {
@@ -176,7 +170,7 @@ const feeds = HttpApiGroup.make('feeds').add(
   HttpApiEndpoint.patch('mark', '/api/feeds/articles', {
     payload: Schema.Struct({ key, read: Schema.Boolean }),
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [...feedErrors, FeedNotFound.pipe(HttpApiSchema.status(404))],
+    error: [...feedErrors, FeedNotFoundSchema],
   }),
   HttpApiEndpoint.post('markAll', '/api/feeds/articles/mark-all', {
     payload: Schema.Struct({ feedKey: Schema.String }),
@@ -193,9 +187,9 @@ const feeds = HttpApiGroup.make('feeds').add(
     success: Schema.Struct({ item: ReadingLink }),
     error: [
       ...feedErrors,
-      FeedNotFound.pipe(HttpApiSchema.status(404)),
-      InvalidLink.pipe(HttpApiSchema.status(400)),
-      DuplicateLink.pipe(HttpApiSchema.status(409)),
+      FeedNotFoundSchema,
+      InvalidLinkSchema,
+      DuplicateLinkSchema,
     ],
   })
 );
@@ -205,14 +199,23 @@ export type { Feed, FeedArticle, FeedPreview } from '@reader/business';
 const articleRef = { kind: Schema.Literals(['link', 'feed']), key };
 
 const articleErrors = [
-  ArticleFailure.pipe(HttpApiSchema.status(422)),
+  ArticleFailureSchema,
+  ArticleExtractErrorSchema,
+  ArticleRepositoryErrorSchema,
+  ReaderCredentialsErrorSchema,
+  WebpageFetchErrorSchema,
   unauthorized,
   forbidden,
 ];
 
 const reader = HttpApiGroup.make('reader').add(
   HttpApiEndpoint.get('settings', '/api/reader/settings', {
-    success: Schema.Struct({ configured: Schema.Boolean }),
+    success: Schema.Struct({
+      configured: Schema.Boolean,
+      jinaConfigured: Schema.Boolean,
+      provider: ReaderProvider,
+      browserEndpoint: Schema.String,
+    }),
     error: articleErrors,
   }),
   HttpApiEndpoint.put('setKey', '/api/reader/settings', {
@@ -223,6 +226,18 @@ const reader = HttpApiGroup.make('reader').add(
     error: articleErrors,
   }),
   HttpApiEndpoint.delete('deleteKey', '/api/reader/settings', {
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: articleErrors,
+  }),
+  HttpApiEndpoint.put('setProvider', '/api/reader/provider', {
+    payload: Schema.Struct({ provider: ReaderProvider }),
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: articleErrors,
+  }),
+  HttpApiEndpoint.put('setBrowserEndpoint', '/api/reader/browser', {
+    payload: Schema.Struct({
+      endpoint: Schema.String.check(Schema.isMaxLength(2048)),
+    }),
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: articleErrors,
   }),

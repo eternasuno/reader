@@ -16,6 +16,7 @@
     "@mozilla/readability": "^0.6.0",
     "@reader/api": "workspace:*",
     "@reader/business": "workspace:*",
+    "@reader/webpage": "workspace:*",
     "@surrealdb/better-auth": "0.1.0",
     "@surrealdb/node": "3.0.3",
     "better-auth": "catalog:",

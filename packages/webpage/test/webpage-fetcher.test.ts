@@ -1,9 +1,9 @@
 import { expect, it } from '@effect/vitest';
 import { WebpageFetcher } from '@reader/business';
-import { Effect, Fiber, Redacted } from 'effect';
+import { ConfigProvider, Effect, Fiber, Layer, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import { WebpageFetcherLive } from '../../src/adapter/webpage-fetcher';
+import { WebpageFetcherLive } from '../src';
 
 const key = Redacted.make('secret');
 const article = 'https://example.com/article';
@@ -23,7 +23,7 @@ it.effect('sends Jina credentials and returns the fetched html', () =>
     };
     const fetcher = yield* WebpageFetcher;
     const result = yield* fetcher
-      .fetch(article, key)
+      .fetch(article, key, 'jina')
       .pipe(provideFetch(fetchImpl as typeof globalThis.fetch));
     const headers = new Headers(seen?.init?.headers);
     expect(result).toBe(html);
@@ -42,16 +42,16 @@ it.effect('rejects credentialed or unsupported addresses before fetching', () =>
     const fetcher = yield* WebpageFetcher;
     const credentialed = yield* Effect.flip(
       fetcher
-        .fetch('https://user:pass@example.com/a', key)
+        .fetch('https://user:pass@example.com/a', key, 'jina')
         .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
     );
     const unsupported = yield* Effect.flip(
       fetcher
-        .fetch('ftp://example.com/a', key)
+        .fetch('ftp://example.com/a', key, 'jina')
         .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
     );
-    expect(credentialed._tag).toBe('ArticleFailure');
-    expect(unsupported._tag).toBe('ArticleFailure');
+    expect(credentialed._tag).toBe('WebpageFetchError');
+    expect(unsupported._tag).toBe('WebpageFetchError');
   }).pipe(Effect.provide(WebpageFetcherLive))
 );
 
@@ -76,22 +76,63 @@ it.effect('rejects redirects, oversized bodies and failed statuses', () =>
     const fetcher = yield* WebpageFetcher;
     const redirect = yield* Effect.flip(
       fetcher
-        .fetch(article, key)
+        .fetch(article, key, 'jina')
         .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
     );
     const oversized = yield* Effect.flip(
       fetcher
-        .fetch(article, key)
+        .fetch(article, key, 'jina')
         .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
     );
     const failed = yield* Effect.flip(
       fetcher
-        .fetch(article, key)
+        .fetch(article, key, 'jina')
         .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
     );
-    expect(redirect._tag).toBe('ArticleFailure');
-    expect(oversized._tag).toBe('ArticleFailure');
-    expect(failed._tag).toBe('ArticleFailure');
+    expect(redirect._tag).toBe('WebpageFetchError');
+    expect(oversized._tag).toBe('WebpageFetchError');
+    expect(failed._tag).toBe('WebpageFetchError');
+  }).pipe(Effect.provide(WebpageFetcherLive))
+);
+
+it.effect('requires a browser endpoint instead of an environment default', () =>
+  Effect.gen(function* () {
+    const fetcher = yield* WebpageFetcher;
+    const error = yield* Effect.flip(
+      fetcher.fetch(article, undefined, 'browser')
+    );
+    expect(error._tag).toBe('WebpageFetchError');
+    expect(error.error).toBe('请先在设置中填写浏览器服务地址');
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        WebpageFetcherLive,
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            READER_BROWSER_ENDPOINT: 'http://127.0.0.1:9222',
+          })
+        )
+      )
+    )
+  )
+);
+
+it.effect('rejects unsupported browser endpoint input before connecting', () =>
+  Effect.gen(function* () {
+    const fetcher = yield* WebpageFetcher;
+    const endpoints = [
+      'ftp://127.0.0.1:9222',
+      'http://user:secret@127.0.0.1:9222',
+      'http://127.0.0.1:9222/#devtools',
+    ];
+
+    for (const endpoint of endpoints) {
+      const error = yield* Effect.flip(
+        fetcher.fetch(article, undefined, 'browser', endpoint)
+      );
+      expect(error._tag).toBe('WebpageFetchError');
+      expect(error.error).toBe('浏览器服务地址无效，请检查设置');
+    }
   }).pipe(Effect.provide(WebpageFetcherLive))
 );
 
@@ -99,7 +140,7 @@ it.effect('reports a forty second timeout', () =>
   Effect.gen(function* () {
     const fetcher = yield* WebpageFetcher;
     const fiber = yield* fetcher
-      .fetch(article, key)
+      .fetch(article, key, 'jina')
       .pipe(
         provideFetch(
           (() => new Promise<Response>(() => {})) as typeof globalThis.fetch

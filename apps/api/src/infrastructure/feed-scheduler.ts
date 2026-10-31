@@ -1,9 +1,9 @@
 import { refreshSubscriptions } from '@reader/business';
+import { HttpFetchLive } from '@reader/webpage/http';
 import { Effect, Layer } from 'effect';
 import { FeedFetcherLive } from '../adapter/feed-fetcher';
 import { FeedParserLive } from '../adapter/feed-parser';
 import { FeedRepositoryLive } from '../adapter/feed-repository';
-import { HttpFetchLive } from './http-fetch';
 
 export const FeedSchedulerLive = Layer.effectDiscard(
   refreshSubscriptions.pipe(

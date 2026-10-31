@@ -253,16 +253,25 @@ const follow = (
       : Effect.succeed(hop.response)
   );
 
+const parsePublicTarget = (address: string): Effect.Effect<URL, FetchFailure> =>
+  Effect.try({
+    try: () => parsePublicUrl(address),
+    catch: (cause) =>
+      new FetchFailure({ message: 'Unsupported address', cause }),
+  });
+
+export const validatePublicTarget = (
+  address: string
+): Effect.Effect<URL, FetchFailure> =>
+  Effect.flatMap(parsePublicTarget(address), (url) =>
+    Effect.map(resolvePinnedAddress(url.hostname), () => url)
+  );
+
 export const fetchPublicText = (
   request: PublicTextRequest
 ): Effect.Effect<PublicTextResponse, FetchFailure> =>
-  Effect.flatMap(
-    Effect.try({
-      try: () => parsePublicUrl(request.url),
-      catch: (cause) =>
-        new FetchFailure({ message: 'Unsupported address', cause }),
-    }),
-    (url) => follow(url, request, 0)
+  Effect.flatMap(parsePublicTarget(request.url), (url) =>
+    follow(url, request, 0)
   );
 
 export const HttpFetchLive = Layer.succeed(

@@ -1,7 +1,9 @@
+import { Exit } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { createRoot, createSignal } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  makeExtractHandler,
   readerFeedKey,
   readerSourceState,
   toReaderStatus,
@@ -258,5 +260,29 @@ describe('reader feed key resolution', () => {
     ).toBe('selection-feed');
     expect(readerFeedKey({}, { feedKey: 'source-feed' })).toBe('source-feed');
     expect(readerFeedKey({}, undefined)).toBeUndefined();
+  });
+});
+
+describe('cached re-extraction', () => {
+  it('confirms with service-neutral wording before spending another request', async () => {
+    const confirm = vi.fn((_message: string) => false);
+    vi.stubGlobal('window', { confirm });
+    const extract = vi.fn(async () => Exit.succeed(undefined));
+    const handler = makeExtractHandler(
+      () => ({
+        url: 'https://example.com',
+        title: 'Article',
+        html: '<p>cached</p>',
+        extractedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      () => {},
+      extract
+    );
+
+    expect(await handler()).toBe(false);
+    expect(extract).not.toHaveBeenCalled();
+    const message = String(confirm.mock.calls[0]?.[0]);
+    expect(message).toContain('正文提取服务');
+    expect(message).not.toContain('Jina');
   });
 });

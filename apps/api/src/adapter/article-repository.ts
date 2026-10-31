@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   type ArticleContent,
-  ArticleFailure,
   ArticleRepository,
+  ArticleRepositoryError,
   type ArticleSource,
 } from '@reader/business';
 import { Effect, Layer } from 'effect';
@@ -15,7 +15,7 @@ export const ArticleRepositoryLive = Layer.effect(
     const query = <A>(sql: string, bindings: Record<string, unknown>) =>
       Effect.tryPromise({
         try: () => db.query<[A]>(sql, bindings),
-        catch: () => new ArticleFailure({ error: '无法访问文章内容' }),
+        catch: () => new ArticleRepositoryError({ error: '无法访问文章内容' }),
       }).pipe(Effect.map(([result]) => result));
 
     return ArticleRepository.of({

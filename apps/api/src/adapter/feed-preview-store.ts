@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
-  FeedFetchError,
   FeedPreviewStore,
+  FeedPreviewStoreError,
   type PendingFeedPreview,
 } from '@reader/business';
 import { Clock, Duration, Effect, Layer, Schedule } from 'effect';
@@ -79,7 +79,7 @@ const createPreviewCache = () => {
     Effect.gen(function* () {
       const size = utf8Bytes(preview);
       if (size > MAX_PREVIEW_BYTES) {
-        return yield* new FeedFetchError({
+        return yield* new FeedPreviewStoreError({
           error: '订阅源内容过大，暂时无法添加',
         });
       }

@@ -8,8 +8,8 @@ import { toReaderSource } from './article-reader-model';
 const ReaderEmpty = () => (
   <div class="rounded-box border border-dashed border-base-300 bg-base-200/40 px-6 py-12 text-center">
     <p class="text-sm leading-relaxed text-base-content/70">
-      暂无 RSS 内容或正文缓存。点击提取正文会调用 Jina
-      并消耗额度，之后优先读取缓存。
+      暂无 RSS
+      内容或正文缓存。点击提取正文会调用已配置的正文提取服务，之后优先读取缓存。
     </p>
   </div>
 );

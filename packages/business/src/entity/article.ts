@@ -1,5 +1,9 @@
 import { Schema } from 'effect';
 
+export const ReaderProvider = Schema.Literals(['jina', 'browser']);
+
+export type ReaderProvider = typeof ReaderProvider.Type;
+
 export const ArticleSource = Schema.Struct({
   title: Schema.String,
   url: Schema.String,

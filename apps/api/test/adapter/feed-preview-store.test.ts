@@ -130,7 +130,7 @@ it.effect('rejects a preview larger than one stored feed may use', () =>
     expect(previewBytes(oversized)).toBeGreaterThan(MAX_PREVIEW_BYTES);
 
     const error = yield* Effect.flip(store.save(oversized, 0));
-    expect(error._tag).toBe('FeedFetchError');
+    expect(error._tag).toBe('FeedPreviewStoreError');
     expect(error.error).toBe('订阅源内容过大，暂时无法添加');
   }).pipe(Effect.provide(FeedPreviewStoreLive))
 );

@@ -3,7 +3,9 @@ import {
   credentialStatus,
   readArticle,
   removeReaderKey,
+  saveReaderBrowserEndpoint,
   saveReaderKey,
+  saveReaderProvider,
 } from '@reader/business';
 import { Effect } from 'effect';
 import { HttpApiBuilder } from 'effect/http-api';
@@ -22,6 +24,16 @@ export const readerHandlers = HttpApiBuilder.group(
       )
       .handle('deleteKey', () =>
         Effect.flatMap(Session, (user) => removeReaderKey(user.id))
+      )
+      .handle('setProvider', ({ payload }) =>
+        Effect.flatMap(Session, (user) =>
+          saveReaderProvider(user.id, payload.provider)
+        )
+      )
+      .handle('setBrowserEndpoint', ({ payload }) =>
+        Effect.flatMap(Session, (user) =>
+          saveReaderBrowserEndpoint(user.id, payload.endpoint)
+        )
       )
       .handle('content', ({ query }) =>
         Effect.flatMap(Session, (user) =>

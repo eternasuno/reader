@@ -1,5 +1,10 @@
 import { expect, it } from '@effect/vitest';
-import { FeedFetcher } from '@reader/business';
+import {
+  FeedFetchError,
+  FeedFetcher,
+  FeedPreviewStore,
+  FeedPreviewStoreError,
+} from '@reader/business';
 import { surrealAdapter } from '@surrealdb/better-auth';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
 import { Effect, Layer } from 'effect';
@@ -104,7 +109,8 @@ const feedItem = async (response: Response): Promise<FeedItem> => {
 const withFeedApp = <A>(
   namespace: string,
   fetcher: Layer.Layer<FeedFetcher>,
-  check: (handler: Handler, db: Database['Service']) => Promise<A>
+  check: (handler: Handler, db: Database['Service']) => Promise<A>,
+  store: Layer.Layer<FeedPreviewStore> = FeedPreviewStoreLive
 ) =>
   Effect.acquireUseRelease(
     Effect.promise(() =>
@@ -133,7 +139,7 @@ const withFeedApp = <A>(
             Layer.mergeAll(
               Layer.succeed(Auth, betterAuth<BetterAuthOptions>(options)),
               Layer.succeed(Database, db),
-              FeedPreviewStoreLive,
+              store,
               fetcher
             )
           )
@@ -286,3 +292,37 @@ it.effect(
     );
   }
 );
+
+it.effect('serializes preview failures with their own tags', () => {
+  const fetcher = Layer.succeed(FeedFetcher, {
+    fetch: (url) =>
+      url.includes('down')
+        ? Effect.fail(new FeedFetchError({ error: 'feed down' }))
+        : Effect.succeed({ title: 'Example', articles: [] }),
+  });
+  const store = Layer.mock(FeedPreviewStore, {
+    save: () => Effect.fail(new FeedPreviewStoreError({ error: 'store down' })),
+  });
+  return withFeedApp(
+    'route-feed-preview-errors',
+    fetcher,
+    async (handler) => {
+      const alice = await signIn(handler, 'preview-error@example.com');
+      const fetched = await feedPost(handler, alice, '/preview', {
+        url: 'https://example.com/down.xml',
+      });
+      expect(fetched.status).toBe(422);
+      expect(await fetched.json()).toMatchObject({
+        _tag: 'FeedFetchError',
+      });
+      const stored = await feedPost(handler, alice, '/preview', {
+        url: 'https://example.com/ok.xml',
+      });
+      expect(stored.status).toBe(422);
+      expect(await stored.json()).toMatchObject({
+        _tag: 'FeedPreviewStoreError',
+      });
+    },
+    store
+  );
+});

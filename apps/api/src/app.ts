@@ -1,4 +1,10 @@
-import { FeedFetcher, FeedPreviewStore } from '@reader/business';
+import {
+  FeedFetcher,
+  FeedPreviewStore,
+  WebpageFetcher,
+} from '@reader/business';
+import { WebpageFetcherLive } from '@reader/webpage';
+import { HttpFetchLive } from '@reader/webpage/http';
 import { Effect, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
 import { ArticleExtractorLive } from './adapter/article-extractor';
@@ -7,10 +13,8 @@ import { FeedRepositoryLive } from './adapter/feed-repository';
 import { LinkRepositoryLive } from './adapter/link-repository';
 import { LinkTitleLive } from './adapter/link-title';
 import { ReaderCredentialsLive } from './adapter/reader-credentials';
-import { WebpageFetcherLive } from './adapter/webpage-fetcher';
 import { Auth } from './infrastructure/auth';
 import { CredentialCryptoLive } from './infrastructure/credential-crypto';
-import { HttpFetchLive } from './infrastructure/http-fetch';
 import { authRoutes } from './routes/auth';
 import { linkRoutes } from './routes/links';
 
@@ -19,6 +23,10 @@ export const AppLive = Layer.unwrap(
     const auth = yield* Auth;
     const previews = yield* FeedPreviewStore;
     const fetcher = yield* FeedFetcher;
+    const webpageFetcher = yield* Effect.provide(
+      WebpageFetcher,
+      WebpageFetcherLive
+    );
 
     return Layer.mergeAll(
       authRoutes,
@@ -27,7 +35,7 @@ export const AppLive = Layer.unwrap(
           Layer.mergeAll(
             ArticleRepositoryLive,
             ReaderCredentialsLive.pipe(Layer.provide(CredentialCryptoLive)),
-            WebpageFetcherLive,
+            Layer.succeed(WebpageFetcher, webpageFetcher),
             ArticleExtractorLive,
             LinkRepositoryLive,
             LinkTitleLive,

@@ -196,7 +196,10 @@ export const makeExtractHandler =
   async () => {
     setNotice('');
     const cached = item();
-    if (cached && !window.confirm('重新提取会再次消耗 Jina 额度，继续？')) {
+    if (
+      cached &&
+      !window.confirm('重新提取会再次调用已配置的正文提取服务，继续？')
+    ) {
       return false;
     }
 

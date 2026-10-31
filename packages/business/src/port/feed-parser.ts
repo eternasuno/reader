@@ -1,10 +1,9 @@
-import { Context, type Effect, Schema } from 'effect';
+import { Context, Data, type Effect } from 'effect';
 import type { ParsedFeed } from '../entity/feed';
 
-export class FeedParseError extends Schema.TaggedError<FeedParseError>()(
-  'FeedParseError',
-  { error: Schema.String }
-) {}
+export class FeedParseError extends Data.TaggedError('FeedParseError')<{
+  readonly error: string;
+}> {}
 
 export class FeedParser extends Context.Service<
   FeedParser,
