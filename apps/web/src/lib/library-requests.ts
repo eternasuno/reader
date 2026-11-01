@@ -11,13 +11,7 @@ import {
   PreviewItemSchema,
 } from './library-schema';
 import { decodeBody, type Send, sendGet, sendJson } from './library-transport';
-import type {
-  ArticlePage,
-  Counts,
-  FeedUnread,
-  Filter,
-  Scope,
-} from './library-types';
+import type { ArticlePage, FeedUnread, Filter, Scope } from './library-types';
 
 const scopeQuery = (
   scope: Scope
@@ -36,16 +30,11 @@ export const readPage = async (
     scope.kind === 'later'
       ? '/api/library/later'
       : '/api/library/feeds/articles';
-  const page = await decodeBody(
+
+  return await decodeBody(
     ArticlePageSchema,
     await sendGet(send, path, { filter, cursor, ...scopeQuery(scope) })
   );
-
-  return {
-    items: page.items,
-    cursor: page.cursor,
-    boundary: page.boundary ?? null,
-  };
 };
 
 export const readRefresh = async (
@@ -91,15 +80,6 @@ export const readFeedUnread = async (send: Send): Promise<FeedUnread> => {
       counts.feeds.map((feed) => [feed.id, feed.count])
     ),
   };
-};
-
-export const readCounts = async (send: Send): Promise<Counts> => {
-  const [later, feeds] = await Promise.all([
-    readLaterUnread(send),
-    readFeedUnread(send),
-  ]);
-
-  return { later, feeds: feeds.feeds, feedsTotal: feeds.total };
 };
 
 export const readArticle = async (

@@ -1,11 +1,7 @@
-import { Effect, Option } from 'effect';
-import type {
-  ArticleId,
-  OwnerId,
-} from '../../../../packages/business/src/entity/model.ts';
+import { Effect } from 'effect';
+import { Articles } from '../../../../packages/business/src/port/reader-store.ts';
 import {
   addArticle,
-  countUnread,
   extractArticle,
   getArticle,
   listLaterArticles,
@@ -22,7 +18,6 @@ import {
   optionToNull,
   withSession,
 } from './library-contract';
-import { articleNotFound } from './library-errors';
 import {
   addFailure,
   articlePageFailure,
@@ -48,7 +43,11 @@ const laterRefresh = ({ query }: HandlerRequest<'laterRefresh'>) =>
 
 const laterUnread = () =>
   withSession((owner) =>
-    Effect.map(countUnread(owner), ({ later }) => ({ count: later }))
+    Effect.gen(function* () {
+      const articles = yield* Articles;
+
+      return { count: yield* articles.unreadLater(owner) };
+    })
   ).pipe(Effect.catchTags(articleReadFailure));
 
 const article = ({ query }: HandlerRequest<'article'>) =>
@@ -68,22 +67,8 @@ const save = ({ payload }: HandlerRequest<'saveArticle'>) =>
     Effect.catchTags(saveFailure)
   );
 
-const readExtract = (owner: OwnerId, id: ArticleId) =>
-  Effect.gen(function* () {
-    const found = yield* getArticle(owner, id);
-    if (Option.isNone(found)) {
-      return yield* articleNotFound();
-    }
-
-    const { content } = yield* extractArticle(owner, id);
-
-    return {
-      item: { ...found.value, extractedContent: content },
-    };
-  });
-
 const extract = ({ payload }: HandlerRequest<'extractArticle'>) =>
-  withSession((owner) => readExtract(owner, payload.id)).pipe(
+  withSession((owner) => extractArticle(owner, payload.id)).pipe(
     Effect.catchTags(extractFailure)
   );
 

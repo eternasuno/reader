@@ -76,28 +76,6 @@ const refreshErrors = (id: FeedId) => {
   };
 };
 
-export const previewSubscription = Effect.fn('subscriptions.preview')(
-  function* (ownerId: OwnerId, address: string) {
-    const url = yield* subscriptionUrl(address);
-    const id = feedId(ownerId, url);
-    const subscriptions = yield* Subscriptions;
-    if (Option.isSome(yield* subscriptions.find(ownerId, id))) {
-      return yield* existsError(id);
-    }
-
-    const syndication = yield* Syndication;
-    const feed = yield* syndication.fetch(url);
-    const description = feed.description;
-
-    return {
-      url,
-      title: feed.title,
-      ...(description === undefined ? {} : { description }),
-      titles: feed.articles.slice(0, 3).map((article) => article.title),
-    };
-  }
-);
-
 export const subscribe = Effect.fn('subscriptions.subscribe')(function* (
   ownerId: OwnerId,
   address: string

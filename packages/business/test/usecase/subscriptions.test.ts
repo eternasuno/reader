@@ -17,14 +17,12 @@ import {
   Subscriptions,
 } from '../../src/port/reader-store';
 import {
-  FetchSubscriptionError,
   type SubscriptionEntry,
   type SyndicatedFeed,
   Syndication,
 } from '../../src/port/syndication';
 import { articleId, feedId, normalizeUrl } from '../../src/usecase/identity';
 import {
-  previewSubscription,
   refreshSubscription,
   subscribe,
 } from '../../src/usecase/subscriptions';
@@ -87,94 +85,13 @@ const provide = <A, E, R>(
     )
   );
 
-it.effect('previews a subscription feed without persisting it', () => {
-  const requested: string[] = [];
-
-  return provide(
-    Effect.gen(function* () {
-      const preview = yield* previewSubscription(
-        alice,
-        ' https://Example.com/feed.xml?utm_source=x '
-      );
-      expect(preview.url.href).toBe(url.href);
-      expect(preview.title).toBe('News');
-      expect(preview.description).toBe('Daily');
-      expect(preview.titles).toEqual(['First', 'Second', 'Third']);
-      expect(requested).toEqual([url.href]);
-    }),
-    {
-      subscriptions: { find: () => Effect.succeed(Option.none()) },
-      syndication: {
-        fetch: (target) => {
-          requested.push(target.href);
-
-          return Effect.succeed({
-            title: 'News',
-            description: 'Daily',
-            articles: [
-              entry({
-                title: 'First',
-                publishedAt: at('2026-01-03T00:00:00.000Z'),
-              }),
-              entry({
-                title: 'Second',
-                url: new URL('https://example.com/2'),
-                publishedAt: at('2026-01-01T00:00:00.000Z'),
-              }),
-              entry({
-                title: 'Third',
-                url: new URL('https://example.com/3'),
-              }),
-              entry({
-                title: 'Fourth',
-                url: new URL('https://example.com/4'),
-              }),
-            ],
-          });
-        },
-      },
-    }
-  );
-});
-
-it.effect(
-  'reports a duplicate subscription during preview without fetching',
-  () => {
-    let fetched = false;
-
-    return provide(
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(previewSubscription(alice, url.href));
-        expect(error._tag).toBe('SubscriptionExists');
-        expect(error).toMatchObject({
-          id,
-          message: 'Subscription already exists',
-        });
-        expect(fetched).toBe(false);
-      }),
-      {
-        subscriptions: {
-          find: () => Effect.succeed(Option.some(subscription())),
-        },
-        syndication: {
-          fetch: () => {
-            fetched = true;
-
-            return Effect.succeed(feed([]));
-          },
-        },
-      }
-    );
-  }
-);
-
 it.effect('rejects a non-HTTP subscription URL before fetching', () => {
   let fetched = false;
 
   return provide(
     Effect.gen(function* () {
       const error = yield* Effect.flip(
-        previewSubscription(alice, 'ftp://example.com/feed')
+        subscribe(alice, 'ftp://example.com/feed')
       );
       expect(error._tag).toBe('SubscriptionUrlInvalid');
       expect(error.message).toBe('Subscription URL must use HTTP or HTTPS');
@@ -191,23 +108,6 @@ it.effect('rejects a non-HTTP subscription URL before fetching', () => {
     }
   );
 });
-
-it.effect('surfaces feed fetch errors from the preview', () =>
-  provide(
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(previewSubscription(alice, url.href));
-      expect(error._tag).toBe('FetchSubscriptionError');
-      expect(error.message).toBe('failed');
-    }),
-    {
-      subscriptions: { find: () => Effect.succeed(Option.none()) },
-      syndication: {
-        fetch: () =>
-          Effect.fail(new FetchSubscriptionError({ message: 'failed' })),
-      },
-    }
-  )
-);
 
 it.effect(
   'creates the subscription before importing the newest distinct articles',

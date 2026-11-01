@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   ReaderCredentials,
   ReaderCredentialsError,
@@ -9,10 +8,7 @@ import type { Surreal } from 'surrealdb';
 import { CredentialCrypto } from '../infrastructure/credential-crypto';
 import { Database } from '../infrastructure/db';
 
-type Bindings = Record<string, unknown>;
-
 type Crypto = {
-  readonly encrypt: (owner: string, value: string) => string;
   readonly decrypt: (owner: string, value: string) => string;
 };
 
@@ -22,17 +18,9 @@ const StoredRow = Schema.Struct({
   browserEndpoint: Schema.optional(Schema.String),
 });
 
-const ownerId = (owner: string) =>
-  createHash('sha256').update(owner).digest('hex');
-
-const runQuery = <A>(
-  db: Surreal,
-  sql: string,
-  owner: string,
-  extra: Bindings = {}
-) =>
+const runQuery = <A>(db: Surreal, sql: string, owner: string) =>
   Effect.tryPromise({
-    try: () => db.query<[A]>(sql, { owner, id: ownerId(owner), ...extra }),
+    try: () => db.query<[A]>(sql, { owner }),
     catch: () =>
       new ReaderCredentialsError({ error: 'Failed to access key settings' }),
   }).pipe(Effect.map(([result]) => result));
@@ -50,9 +38,6 @@ const selectRows = (db: Surreal, owner: string) =>
     'SELECT encrypted, provider, browserEndpoint FROM reader_credential WHERE owner = $owner;',
     owner
   ).pipe(Effect.flatMap(decodeRows));
-
-const loadConfigured = (db: Surreal, owner: string) =>
-  selectRows(db, owner).pipe(Effect.map((rows) => Boolean(rows[0]?.encrypted)));
 
 const loadProvider = (db: Surreal, owner: string) =>
   selectRows(db, owner).pipe(Effect.map((rows) => rows[0]?.provider ?? 'jina'));
@@ -82,81 +67,11 @@ const loadKey = (db: Surreal, crypto: Crypto, owner: string) =>
     return yield* decryptStored(crypto, owner, encrypted);
   });
 
-const encryptKey = (
-  crypto: Crypto,
-  owner: string,
-  key: Redacted.Redacted<string>
-) =>
-  Effect.try({
-    try: () => crypto.encrypt(owner, Redacted.value(key)),
-    catch: () =>
-      new ReaderCredentialsError({
-        error:
-          'READER_ENCRYPTION_KEY is not configured correctly on the server',
-      }),
-  });
-
-const storeKey = (
-  db: Surreal,
-  crypto: Crypto,
-  owner: string,
-  key: Redacted.Redacted<string>
-) =>
-  Effect.gen(function* () {
-    const encrypted = yield* encryptKey(crypto, owner, key);
-    yield* runQuery(
-      db,
-      'UPSERT type::record("reader_credential", $id) SET owner = $owner, encrypted = $encrypted;',
-      owner,
-      { encrypted }
-    );
-  });
-
-const removeKey = (db: Surreal, owner: string) =>
-  runQuery(
-    db,
-    'UPDATE reader_credential SET encrypted = NONE WHERE owner = $owner;',
-    owner
-  ).pipe(Effect.asVoid);
-
-const storeProvider = (db: Surreal, owner: string, provider: ReaderProvider) =>
-  runQuery(
-    db,
-    'UPSERT type::record("reader_credential", $id) SET owner = $owner, provider = $provider;',
-    owner,
-    { provider }
-  ).pipe(Effect.asVoid);
-
-const storeBrowserEndpoint = (db: Surreal, owner: string, endpoint: string) => {
-  const browserEndpoint = endpoint.trim();
-
-  if (!browserEndpoint) {
-    return runQuery(
-      db,
-      'UPDATE reader_credential SET browserEndpoint = NONE WHERE owner = $owner;',
-      owner
-    ).pipe(Effect.asVoid);
-  }
-
-  return runQuery(
-    db,
-    'UPSERT type::record("reader_credential", $id) SET owner = $owner, browserEndpoint = $browserEndpoint;',
-    owner,
-    { browserEndpoint }
-  ).pipe(Effect.asVoid);
-};
-
 const makeCredentials = (db: Surreal, crypto: Crypto) =>
   ReaderCredentials.of({
-    configured: (owner) => loadConfigured(db, owner),
     get: (owner) => loadKey(db, crypto, owner),
-    set: (owner, key) => storeKey(db, crypto, owner, key),
-    remove: (owner) => removeKey(db, owner),
     provider: (owner) => loadProvider(db, owner),
-    setProvider: (owner, provider) => storeProvider(db, owner, provider),
     browserEndpoint: (owner) => loadBrowserEndpoint(db, owner),
-    setBrowserEndpoint: (owner, endpoint) =>
-      storeBrowserEndpoint(db, owner, endpoint),
   });
 
 export const ReaderCredentialsLive = Layer.effect(

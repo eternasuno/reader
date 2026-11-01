@@ -37,7 +37,7 @@ export type Preview = typeof PreviewSchema.Type;
 export const ArticlePageSchema = Schema.Struct({
   items: Schema.Array(ArticleSchema),
   cursor: Schema.NullOr(Schema.String),
-  boundary: Schema.optional(Schema.NullOr(Schema.String)),
+  boundary: Schema.NullOr(Schema.String),
 });
 
 export const ArticleItemSchema = Schema.Struct({ item: ArticleSchema });

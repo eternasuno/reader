@@ -191,7 +191,7 @@ export const extractArticle = Effect.fn('articles.extract')(function* (
 
   const article = found.value;
   if (article.extractedContent !== undefined) {
-    return { content: article.extractedContent };
+    return { item: article };
   }
 
   if (article.url === undefined) {
@@ -206,7 +206,7 @@ export const extractArticle = Effect.fn('articles.extract')(function* (
     return yield* new ArticleNotFound({ message: 'Article not found' });
   }
 
-  return { content: extracted.html };
+  return { item: { ...article, extractedContent: extracted.html } };
 });
 
 export const markArticle = Effect.fn('articles.mark')(function* (
@@ -266,14 +266,4 @@ export const removeArticle = Effect.fn('articles.remove')(function* (
   }
 
   return { ok: true as const };
-});
-
-export const countUnread = Effect.fn('articles.countUnread')(function* (
-  owner: OwnerId
-) {
-  const articles = yield* Articles;
-  const later = yield* articles.unreadLater(owner);
-  const feeds = yield* articles.unreadFeeds(owner);
-
-  return { later, feeds: feeds.feeds, total: later + feeds.total };
 });

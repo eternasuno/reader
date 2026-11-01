@@ -97,19 +97,22 @@ describe('library list requests', () => {
     });
   });
 
-  it('defaults a missing boundary to null', async () => {
+  it('rejects a page that omits the boundary', async () => {
     const { client, requests } = makeClient(json({ items: [], cursor: null }));
-    const page = await client.list({ kind: 'feeds', feedId: 'feed-1' }, 'all');
 
+    expect(
+      await failure(client.list({ kind: 'feeds', feedId: 'feed-1' }, 'all'))
+    ).toMatchObject({ tag: 'InvalidResponse' });
     expect(requests[0]?.path).toBe('/api/library/feeds/articles');
     expect(requests[0]?.params.get('feedId')).toBe('feed-1');
-    expect(page).toEqual({ items: [], cursor: null, boundary: null });
   });
 });
 
 describe('library feed scope', () => {
   it('lists every subscribed feed when no feed is selected', async () => {
-    const { client, requests } = makeClient(json({ items: [], cursor: null }));
+    const { client, requests } = makeClient(
+      json({ items: [], cursor: null, boundary: null })
+    );
     await client.list({ kind: 'feeds' }, 'read');
 
     expect(requests[0]?.params.get('feedId')).toBeNull();
@@ -132,33 +135,10 @@ describe('library feed scope', () => {
 });
 
 describe('library reads', () => {
-  it('reads subscriptions and per-scope unread counts', async () => {
-    const { client } = makeClient((current) => {
-      if (current.path === '/api/library/feeds') {
-        return Response.json({ items: [feed('f1')] });
-      }
-      if (current.path === '/api/library/later/unread') {
-        return Response.json({ count: 3 });
-      }
-      if (current.path === '/api/library/feeds/unread') {
-        return Response.json({
-          total: 5,
-          feeds: [
-            { id: 'f1', count: 2 },
-            { id: 'f2', count: 3 },
-          ],
-        });
-      }
-
-      return Response.json({ item: null });
-    });
+  it('reads subscriptions', async () => {
+    const { client } = makeClient(json({ items: [feed('f1')] }));
 
     expect(await client.feeds()).toEqual([feed('f1')]);
-    expect(await client.counts()).toEqual({
-      later: 3,
-      feeds: { f1: 2, f2: 3 },
-      feedsTotal: 5,
-    });
   });
 
   it('reads later and feed unread counts independently', async () => {

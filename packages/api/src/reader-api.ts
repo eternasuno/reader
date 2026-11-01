@@ -86,10 +86,6 @@ export const InvalidRetentionSchema = failure('InvalidRetention', 400);
 export const InvalidKeySchema = failure('InvalidKey', 400);
 export const InvalidEndpointSchema = failure('InvalidEndpoint', 400);
 export const InvalidProviderSchema = failure('InvalidProvider', 400);
-export const ExtractionSettingsReadErrorSchema = failure(
-  'ExtractionSettingsReadError',
-  500
-);
 export const ExtractionSettingsWriteErrorSchema = failure(
   'ExtractionSettingsWriteError',
   500

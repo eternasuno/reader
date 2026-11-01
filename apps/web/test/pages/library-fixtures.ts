@@ -82,7 +82,6 @@ export const createStubClient = () => ({
       [] as readonly Article[]
   ),
   feeds: vi.fn(async () => [] as readonly Feed[]),
-  counts: vi.fn(async () => counts()),
   laterUnread: vi.fn(async () => 0),
   feedUnread: vi.fn(
     async (): Promise<{

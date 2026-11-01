@@ -235,7 +235,6 @@ it.effect('clears the browser endpoint and resets browser to jina', () =>
       });
       expect(yield* credentials.provider(owner)).toBe('jina');
       expect(yield* credentials.browserEndpoint(owner)).toBeUndefined();
-      expect(yield* credentials.configured(owner)).toBe(true);
 
       yield* settings.save(owner, {
         provider: 'jina',

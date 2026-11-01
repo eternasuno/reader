@@ -11,8 +11,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/atom-solid": "4.0.0",
-    "@reader/api": "workspace:*",
     "@solidjs/router": "1.0.0",
     "@tanstack/solid-virtual": "3.13.50",
     "better-auth": "catalog:",

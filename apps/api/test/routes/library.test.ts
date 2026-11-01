@@ -6,8 +6,13 @@ import { surrealAdapter } from '@surrealdb/better-auth';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
 import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { HttpRouter } from 'effect/http';
+import type { Surreal } from 'surrealdb';
 import { ArticleExtractor } from '../../../../packages/business/src/port/article-extractor.ts';
 import { ContentProcessor } from '../../../../packages/business/src/port/content-processor.ts';
+import {
+  ArticleReadError,
+  Articles,
+} from '../../../../packages/business/src/port/reader-store.ts';
 import { Syndication } from '../../../../packages/business/src/port/syndication.ts';
 import { WebpageFetcher } from '../../../../packages/business/src/port/webpage-fetcher.ts';
 import { HttpFetchLive } from '../../../../packages/webpage/src/http.ts';
@@ -15,11 +20,15 @@ import {
   ArticleItemSchema,
   ArticlePageSchema,
 } from '../../../web/src/lib/library-schema.ts';
+import { makeArticles } from '../../src/adapter/article-store';
 import { ExtractionSettingsLive } from '../../src/adapter/extraction-settings';
 import { ReaderCredentialsLive } from '../../src/adapter/reader-credentials';
 import {
-  ReaderStoreLive,
+  ArticlesLive,
+  ReaderStoreConcurrency,
+  ReaderStoreConcurrencyLive,
   readerStoreSchema,
+  SubscriptionsLive,
 } from '../../src/adapter/reader-store';
 import { AppLive } from '../../src/app';
 import { Auth } from '../../src/infrastructure/auth';
@@ -473,63 +482,191 @@ const makeConfig = () =>
     })
   );
 
+const authOptions = (db: Surreal) => ({
+  baseURL: origin,
+  secret: 'test-only-secret-at-least-32-characters',
+  emailAndPassword: { enabled: true, autoSignIn: false },
+  database: surrealAdapter({ db }),
+});
+
+const openDatabase = (namespace: string) =>
+  Effect.promise(() =>
+    createSurreal({ endpoint: 'mem://', namespace, database: 'test' })
+  );
+
+const setupDatabase = async (db: Surreal) => {
+  const options = authOptions(db);
+  const schema = await options.database(options).createSchema?.(options);
+  if (schema?.code) {
+    await db.query(schema.code);
+  }
+
+  await db.query(readerStoreSchema);
+
+  return options;
+};
+
+type ArticleStore = Layer.Layer<
+  Articles,
+  never,
+  Database | ReaderStoreConcurrency
+>;
+
+const failingCounter = (
+  db: Surreal,
+  counter: 'unreadLater' | 'unreadFeeds'
+): Layer.Layer<Articles, never, ReaderStoreConcurrency> =>
+  Layer.effect(
+    Articles,
+    Effect.gen(function* () {
+      const lock = yield* ReaderStoreConcurrency;
+      const articles = makeArticles(db, lock);
+      const failure = () =>
+        Effect.fail(new ArticleReadError({ message: 'Unread count failed' }));
+
+      return counter === 'unreadLater'
+        ? { ...articles, unreadLater: failure }
+        : { ...articles, unreadFeeds: failure };
+    })
+  );
+
+const makeHandler = (
+  db: Surreal,
+  options: ReturnType<typeof authOptions>,
+  articles: ArticleStore
+) => {
+  const services = Layer.mergeAll(
+    articles,
+    SubscriptionsLive,
+    ExtractionSettingsLive,
+    ReaderCredentialsLive,
+    syndication,
+    Layer.succeed(ContentProcessor, {
+      process: (content) => Effect.succeed(content),
+    }),
+    Layer.succeed(WebpageFetcher, {
+      fetch: () => Effect.succeed('<html><body><p>Body</p></body></html>'),
+    }),
+    articleExtractor,
+    HttpFetchLive
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(Database, db),
+        CredentialCryptoLive.pipe(Layer.provide(makeConfig())),
+        ReaderStoreConcurrencyLive
+      )
+    )
+  );
+  const routes = AppLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(Auth, betterAuth<BetterAuthOptions>(options)),
+        services
+      )
+    )
+  );
+
+  return HttpRouter.toWebHandler(routes, { disableLogger: true });
+};
+
 it.effect('serves authenticated owner-scoped library operations', () =>
   Effect.acquireUseRelease(
-    Effect.promise(() =>
-      createSurreal({
-        endpoint: 'mem://',
-        namespace: 'route-library',
-        database: 'test',
-      })
-    ),
+    openDatabase('route-library'),
     (db) =>
       Effect.promise(async () => {
-        const options = {
-          baseURL: origin,
-          secret: 'test-only-secret-at-least-32-characters',
-          emailAndPassword: { enabled: true, autoSignIn: false },
-          database: surrealAdapter({ db }),
-        };
-        const schema = await options.database(options).createSchema?.(options);
-        if (schema?.code) {
-          await db.query(schema.code);
-        }
-
-        await db.query(readerStoreSchema);
-        const config = makeConfig();
-        const crypto = CredentialCryptoLive.pipe(Layer.provide(config));
-        const business = Layer.mergeAll(
-          ReaderStoreLive,
-          ExtractionSettingsLive,
-          ReaderCredentialsLive,
-          syndication,
-          Layer.succeed(ContentProcessor, {
-            process: (content) => Effect.succeed(content),
-          }),
-          Layer.succeed(WebpageFetcher, {
-            fetch: () =>
-              Effect.succeed('<html><body><p>Body</p></body></html>'),
-          }),
-          articleExtractor,
-          HttpFetchLive
-        ).pipe(
-          Layer.provide(Layer.mergeAll(Layer.succeed(Database, db), crypto))
-        );
-        const routes = AppLive.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              Layer.succeed(Auth, betterAuth<BetterAuthOptions>(options)),
-              business
-            )
-          )
-        );
-        const { handler, dispose } = HttpRouter.toWebHandler(routes, {
-          disableLogger: true,
-        });
+        const options = await setupDatabase(db);
+        const { handler, dispose } = makeHandler(db, options, ArticlesLive);
         try {
           await verifyLibrary(handler);
         } finally {
           await dispose();
+        }
+      }),
+    (db) => Effect.promise(() => db.close())
+  )
+);
+
+it.effect('serves each unread count while the other counter fails', () =>
+  Effect.acquireUseRelease(
+    openDatabase('route-unread'),
+    (db) =>
+      Effect.promise(async () => {
+        const options = await setupDatabase(db);
+        const laterFails = makeHandler(
+          db,
+          options,
+          failingCounter(db, 'unreadLater')
+        );
+        const feedsFails = makeHandler(
+          db,
+          options,
+          failingCounter(db, 'unreadFeeds')
+        );
+        try {
+          const alice = await signIn(laterFails.handler, 'alice@example.com');
+          const subscribed = await call(
+            laterFails.handler,
+            'POST',
+            '/api/library/feeds',
+            alice,
+            { url: 'https://example.com/feed.xml' }
+          );
+          expect(subscribed.status).toBe(200);
+          const { item } = await json<{ item: FeedItem }>(subscribed);
+          expect(
+            (
+              await call(
+                laterFails.handler,
+                'POST',
+                '/api/library/articles',
+                alice,
+                { url: 'https://example.com/manual' }
+              )
+            ).status
+          ).toBe(201);
+          expect(
+            await json(
+              await call(
+                laterFails.handler,
+                'GET',
+                '/api/library/feeds/unread',
+                alice
+              )
+            )
+          ).toEqual({ total: 4, feeds: [{ id: item.id, count: 4 }] });
+          expect(
+            (
+              await call(
+                laterFails.handler,
+                'GET',
+                '/api/library/later/unread',
+                alice
+              )
+            ).status
+          ).toBe(500);
+          expect(
+            await json(
+              await call(
+                feedsFails.handler,
+                'GET',
+                '/api/library/later/unread',
+                alice
+              )
+            )
+          ).toEqual({ count: 1 });
+          expect(
+            (
+              await call(
+                feedsFails.handler,
+                'GET',
+                '/api/library/feeds/unread',
+                alice
+              )
+            ).status
+          ).toBe(500);
+        } finally {
+          await Promise.all([laterFails.dispose(), feedsFails.dispose()]);
         }
       }),
     (db) => Effect.promise(() => db.close())

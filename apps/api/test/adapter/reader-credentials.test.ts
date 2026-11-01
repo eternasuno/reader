@@ -1,13 +1,26 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
-import { ReaderCredentials } from '@reader/business';
+import {
+  ExtractionSettings,
+  OwnerId,
+  ReaderCredentials,
+} from '@reader/business';
 import { ConfigProvider, Effect, Layer, Redacted } from 'effect';
+import type { Surreal } from 'surrealdb';
+import { ExtractionSettingsLive } from '../../src/adapter/extraction-settings';
 import { ReaderCredentialsLive } from '../../src/adapter/reader-credentials';
 import { readerStoreSchema } from '../../src/adapter/reader-store';
 import { CredentialCryptoLive } from '../../src/infrastructure/credential-crypto';
 import { createSurreal, Database } from '../../src/infrastructure/db';
 
-type Check = Effect.Effect<void, unknown, ReaderCredentials | Database>;
+type Check = Effect.Effect<
+  void,
+  unknown,
+  ExtractionSettings | ReaderCredentials | Database
+>;
+
+const owner = OwnerId.make('alice');
+const other = OwnerId.make('bob');
 
 const makeConfig = () =>
   ConfigProvider.layer(
@@ -16,13 +29,31 @@ const makeConfig = () =>
     })
   );
 
-const runWithCredentials = (check: Check, config = makeConfig()) =>
+const settingsLive = (db: Surreal, config: Layer.Layer<never>) =>
+  ExtractionSettingsLive.pipe(
+    Layer.provide(Layer.fresh(CredentialCryptoLive)),
+    Layer.provide(Layer.succeed(Database, db)),
+    Layer.provide(config)
+  );
+
+const credentialsLive = (db: Surreal, config: Layer.Layer<never>) =>
+  ReaderCredentialsLive.pipe(
+    Layer.provide(Layer.fresh(CredentialCryptoLive)),
+    Layer.provide(Layer.succeed(Database, db)),
+    Layer.provide(config)
+  );
+
+const runWithSettings = (
+  check: Check,
+  config = makeConfig(),
+  readConfig = config
+) =>
   Effect.acquireUseRelease(
     Effect.promise(() =>
       createSurreal({
         endpoint: 'mem://',
-        namespace: 'credentials-test',
-        database: 'credentials',
+        namespace: `credentials-${randomUUID()}`,
+        database: 'test',
       })
     ),
     (db) =>
@@ -30,11 +61,8 @@ const runWithCredentials = (check: Check, config = makeConfig()) =>
         Effect.andThen(check),
         Effect.provide(
           Layer.mergeAll(
-            ReaderCredentialsLive.pipe(
-              Layer.provide(CredentialCryptoLive),
-              Layer.provide(Layer.succeed(Database, db)),
-              Layer.provide(config)
-            ),
+            settingsLive(db, config),
+            credentialsLive(db, readConfig),
             Layer.succeed(Database, db)
           )
         )
@@ -42,20 +70,7 @@ const runWithCredentials = (check: Check, config = makeConfig()) =>
     (db) => Effect.promise(() => db.close())
   );
 
-const selectCiphertext = (owner: string) =>
-  Effect.gen(function* () {
-    const db = yield* Database;
-    const [rows] = yield* Effect.promise(() =>
-      db.query<[{ encrypted: string }[]]>(
-        'SELECT encrypted FROM reader_credential WHERE owner = $owner;',
-        { owner }
-      )
-    );
-
-    return rows[0]?.encrypted;
-  });
-
-const selectRow = (owner: string) =>
+const selectRow = (ownerId: OwnerId) =>
   Effect.gen(function* () {
     const db = yield* Database;
     const [rows] = yield* Effect.promise(() =>
@@ -63,269 +78,194 @@ const selectRow = (owner: string) =>
         [{ encrypted?: string; provider?: string; browserEndpoint?: string }[]]
       >(
         'SELECT encrypted, provider, browserEndpoint FROM reader_credential WHERE owner = $owner;',
-        { owner }
+        { owner: ownerId }
       )
     );
 
     return rows[0];
   });
 
-const unsetProvider = (owner: string) =>
+const unsetProvider = (ownerId: OwnerId) =>
   Effect.gen(function* () {
     const db = yield* Database;
     yield* Effect.promise(() =>
       db.query(
         'UPDATE reader_credential SET provider = NONE WHERE owner = $owner;',
-        { owner }
+        { owner: ownerId }
       )
     );
   });
 
-const expectCiphertextHidesPlaintext = (ciphertext: string | undefined) => {
-  expect(ciphertext).toBeDefined();
-  expect(ciphertext).not.toContain('alice-secret');
-};
-
-const expectStoredSecret = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  const stored = yield* credentials.get('alice');
-  expect(stored).toBeDefined();
-  if (stored) {
-    expect(Redacted.value(stored)).toBe('alice-secret');
-  }
-
-  expectCiphertextHidesPlaintext(yield* selectCiphertext('alice'));
-});
-
-const expectOwnerIsolation = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  expect(yield* credentials.configured('bob')).toBe(false);
-  expect(yield* credentials.get('bob')).toBeUndefined();
-  expect(yield* credentials.provider('bob')).toBe('jina');
-  expect(yield* credentials.browserEndpoint('bob')).toBeUndefined();
-});
-
-const expectUnknownOwner = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  expect(yield* credentials.configured('nobody')).toBe(false);
-  expect(yield* credentials.get('nobody')).toBeUndefined();
-  expect(yield* credentials.provider('nobody')).toBe('jina');
-  expect(yield* credentials.browserEndpoint('nobody')).toBeUndefined();
-});
-
-const expectRoundtrip = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.set('alice', Redacted.make('alice-secret'));
-  expect(yield* credentials.configured('alice')).toBe(true);
-  yield* expectStoredSecret;
-  yield* expectOwnerIsolation;
-  yield* credentials.remove('alice');
-  expect(yield* credentials.configured('alice')).toBe(false);
-  expect(yield* credentials.get('alice')).toBeUndefined();
-});
-
-const expectProviderPersistence = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.setProvider('alice', 'browser');
-
-  expect(yield* credentials.provider('alice')).toBe('browser');
-  expect((yield* selectRow('alice'))?.provider).toBe('browser');
-  expect(yield* credentials.configured('alice')).toBe(false);
-  expect(yield* credentials.get('alice')).toBeUndefined();
-});
-
-const expectKeySurvivesProviderSwitch = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.set('alice', Redacted.make('alice-secret'));
-  yield* credentials.setProvider('alice', 'browser');
-
-  const stored = yield* credentials.get('alice');
-  expect(stored).toBeDefined();
-  if (stored) {
-    expect(Redacted.value(stored)).toBe('alice-secret');
-  }
-
-  expect(yield* credentials.provider('alice')).toBe('browser');
-  expectCiphertextHidesPlaintext(yield* selectCiphertext('alice'));
-
-  yield* credentials.setProvider('alice', 'jina');
-  const restored = yield* credentials.get('alice');
-  expect(restored).toBeDefined();
-  if (restored) {
-    expect(Redacted.value(restored)).toBe('alice-secret');
-  }
-
-  expect(yield* credentials.provider('alice')).toBe('jina');
-});
-
-const expectLegacyRowDefaultsToJina = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.set('alice', Redacted.make('alice-secret'));
-  yield* unsetProvider('alice');
-
-  expect((yield* selectRow('alice'))?.provider).toBeUndefined();
-  expect(yield* credentials.provider('alice')).toBe('jina');
-  expect(yield* credentials.configured('alice')).toBe(true);
-  expectCiphertextHidesPlaintext(yield* selectCiphertext('alice'));
-});
-
-const expectRemovalKeepsProvider = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.set('alice', Redacted.make('alice-secret'));
-  yield* credentials.setProvider('alice', 'browser');
-  yield* credentials.remove('alice');
-
-  expect(yield* credentials.configured('alice')).toBe(false);
-  expect(yield* credentials.get('alice')).toBeUndefined();
-  expect(yield* credentials.provider('alice')).toBe('browser');
-  expect((yield* selectRow('alice'))?.provider).toBe('browser');
-});
-
-const expectProviderIsolation = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.setProvider('alice', 'browser');
-  yield* credentials.setProvider('bob', 'jina');
-
-  expect(yield* credentials.provider('alice')).toBe('browser');
-  expect(yield* credentials.provider('bob')).toBe('jina');
-  expect(yield* credentials.configured('bob')).toBe(false);
-});
-
-const corruptRow = (
-  owner: string,
-  field: 'encrypted' | 'provider' | 'browserEndpoint'
+const corruptField = (
+  ownerId: OwnerId,
+  field: 'provider' | 'browserEndpoint' | 'encrypted'
 ) =>
   Effect.gen(function* () {
     const db = yield* Database;
-    const value = field === 'browserEndpoint' ? '1' : '"corrupt"';
+    const value = field === 'encrypted' ? 'corrupt' : 1;
+
     yield* Effect.promise(() =>
       db.query(
-        `UPDATE reader_credential SET ${field} = ${value} WHERE owner = $owner;`,
-        { owner }
+        `UPDATE reader_credential SET ${field} = $value WHERE owner = $owner;`,
+        { owner: ownerId, value }
       )
     );
   });
 
-const expectUndecodableCiphertextFailure = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.set('alice', Redacted.make('alice-secret'));
-  yield* corruptRow('alice', 'encrypted');
+it.effect(
+  'roundtrips encrypted keys saved through settings with isolation',
+  () =>
+    runWithSettings(
+      Effect.gen(function* () {
+        const settings = yield* ExtractionSettings;
+        const credentials = yield* ReaderCredentials;
 
-  const error = yield* Effect.flip(credentials.get('alice'));
-  expect(error._tag).toBe('ReaderCredentialsError');
-  expect(error.error).toBe(
-    'Failed to decrypt key; check the server encryption configuration or re-enter the key'
-  );
-});
+        yield* settings.save(owner, {
+          provider: 'jina',
+          key: Redacted.make('alice-secret'),
+        });
 
-const expectUnreadableRowFailure = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.setProvider('alice', 'browser');
-  yield* corruptRow('alice', 'provider');
+        const stored = yield* credentials.get(owner);
+        expect(stored).toBeDefined();
+        if (stored) {
+          expect(Redacted.value(stored)).toBe('alice-secret');
+        }
 
-  const error = yield* Effect.flip(credentials.provider('alice'));
-  expect(error._tag).toBe('ReaderCredentialsError');
-  expect(error.error).toBe('Failed to read key settings');
-});
+        const ciphertext = (yield* selectRow(owner))?.encrypted;
+        expect(ciphertext).toBeDefined();
+        expect(ciphertext).not.toContain('alice-secret');
 
-const expectMissingEncryptionKeyFailure = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  const error = yield* Effect.flip(
-    credentials.set('alice', Redacted.make('alice-secret'))
-  );
-  expect(error._tag).toBe('ReaderCredentialsError');
-  expect(error.error).toBe(
-    'READER_ENCRYPTION_KEY is not configured correctly on the server'
-  );
-});
-
-it.effect('reports undecryptable stored keys as credential failures', () =>
-  runWithCredentials(expectUndecodableCiphertextFailure)
+        expect(yield* credentials.get(other)).toBeUndefined();
+        expect(yield* credentials.provider(other)).toBe('jina');
+        expect(yield* credentials.browserEndpoint(other)).toBeUndefined();
+      })
+    )
 );
 
-it.effect('reports unreadable credential rows as credential failures', () =>
-  runWithCredentials(expectUnreadableRowFailure)
+it.effect('defaults legacy rows without a provider to jina', () =>
+  runWithSettings(
+    Effect.gen(function* () {
+      const settings = yield* ExtractionSettings;
+      const credentials = yield* ReaderCredentials;
+
+      yield* settings.save(owner, {
+        provider: 'jina',
+        key: Redacted.make('alice-secret'),
+      });
+      yield* unsetProvider(owner);
+
+      expect((yield* selectRow(owner))?.provider).toBeUndefined();
+      expect(yield* credentials.provider(owner)).toBe('jina');
+      expect(yield* credentials.get(owner)).toBeDefined();
+    })
+  )
 );
 
-it.effect('reports a missing encryption key as a credential failure', () =>
-  runWithCredentials(
-    expectMissingEncryptionKeyFailure,
+it.effect('reports a missing encryption key when reading a stored key', () =>
+  runWithSettings(
+    Effect.gen(function* () {
+      const settings = yield* ExtractionSettings;
+      const credentials = yield* ReaderCredentials;
+
+      yield* settings.save(owner, {
+        provider: 'jina',
+        key: Redacted.make('alice-secret'),
+      });
+
+      const error = yield* Effect.flip(credentials.get(owner));
+      expect(error._tag).toBe('ReaderCredentialsError');
+      expect(error.error).toBe(
+        'Failed to decrypt key; check the server encryption configuration or re-enter the key'
+      );
+    }),
+    makeConfig(),
     ConfigProvider.layer(ConfigProvider.fromUnknown({}))
   )
 );
 
-it.effect('reports unknown owners as unconfigured', () =>
-  runWithCredentials(expectUnknownOwner)
-);
+it.effect('reports unreadable credential rows as credential failures', () =>
+  runWithSettings(
+    Effect.gen(function* () {
+      const settings = yield* ExtractionSettings;
+      const credentials = yield* ReaderCredentials;
 
-it.effect('roundtrips encrypted credentials with owner isolation', () =>
-  runWithCredentials(expectRoundtrip)
-);
+      yield* settings.save(owner, { provider: 'jina' });
+      yield* corruptField(owner, 'provider');
 
-it.effect('persists the selected provider without storing a key', () =>
-  runWithCredentials(expectProviderPersistence)
-);
-
-it.effect('keeps the encrypted key when switching providers', () =>
-  runWithCredentials(expectKeySurvivesProviderSwitch)
-);
-
-it.effect('defaults legacy rows without a provider to jina', () =>
-  runWithCredentials(expectLegacyRowDefaultsToJina)
-);
-
-it.effect('removes the key but retains the selected provider', () =>
-  runWithCredentials(expectRemovalKeepsProvider)
-);
-
-it.effect('isolates provider selection between owners', () =>
-  runWithCredentials(expectProviderIsolation)
-);
-
-const expectBrowserEndpointPersistence = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.setBrowserEndpoint('alice', 'http://127.0.0.1:9222');
-
-  expect(yield* credentials.browserEndpoint('alice')).toBe(
-    'http://127.0.0.1:9222'
-  );
-  expect((yield* selectRow('alice'))?.browserEndpoint).toBe(
-    'http://127.0.0.1:9222'
-  );
-  expect(yield* credentials.browserEndpoint('bob')).toBeUndefined();
-});
-
-const expectBrowserEndpointClearKeepsCredentials = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.set('alice', Redacted.make('alice-secret'));
-  yield* credentials.setProvider('alice', 'browser');
-  yield* credentials.setBrowserEndpoint('alice', 'ws://127.0.0.1:9222');
-  yield* credentials.setBrowserEndpoint('alice', '');
-
-  expect(yield* credentials.browserEndpoint('alice')).toBeUndefined();
-  expect((yield* selectRow('alice'))?.browserEndpoint).toBeUndefined();
-  expect(yield* credentials.provider('alice')).toBe('browser');
-  expect(yield* credentials.configured('alice')).toBe(true);
-});
-
-const expectUnreadableEndpointFailure = Effect.gen(function* () {
-  const credentials = yield* ReaderCredentials;
-  yield* credentials.setBrowserEndpoint('alice', 'http://127.0.0.1:9222');
-  yield* corruptRow('alice', 'browserEndpoint');
-
-  const error = yield* Effect.flip(credentials.browserEndpoint('alice'));
-  expect(error._tag).toBe('ReaderCredentialsError');
-  expect(error.error).toBe('Failed to read key settings');
-});
-
-it.effect('persists the browser endpoint per owner', () =>
-  runWithCredentials(expectBrowserEndpointPersistence)
-);
-
-it.effect('clears the browser endpoint without removing credentials', () =>
-  runWithCredentials(expectBrowserEndpointClearKeepsCredentials)
+      const error = yield* Effect.flip(credentials.provider(owner));
+      expect(error._tag).toBe('ReaderCredentialsError');
+      expect(error.error).toBe('Failed to read key settings');
+    })
+  )
 );
 
 it.effect('reports unreadable browser endpoints as credential failures', () =>
-  runWithCredentials(expectUnreadableEndpointFailure)
+  runWithSettings(
+    Effect.gen(function* () {
+      const settings = yield* ExtractionSettings;
+      const credentials = yield* ReaderCredentials;
+
+      yield* settings.save(owner, {
+        provider: 'browser',
+        browserEndpoint: 'ws://127.0.0.1:9222',
+      });
+      yield* corruptField(owner, 'browserEndpoint');
+
+      const error = yield* Effect.flip(credentials.browserEndpoint(owner));
+      expect(error._tag).toBe('ReaderCredentialsError');
+      expect(error.error).toBe('Failed to read key settings');
+    })
+  )
+);
+
+it.effect('reports corrupt stored ciphertext as a credential failure', () =>
+  runWithSettings(
+    Effect.gen(function* () {
+      const settings = yield* ExtractionSettings;
+      const credentials = yield* ReaderCredentials;
+
+      yield* settings.save(owner, {
+        provider: 'jina',
+        key: Redacted.make('alice-secret'),
+      });
+      yield* corruptField(owner, 'encrypted');
+
+      const error = yield* Effect.flip(credentials.get(owner));
+      expect(error._tag).toBe('ReaderCredentialsError');
+      expect(error.error).toBe(
+        'Failed to decrypt key; check the server encryption configuration or re-enter the key'
+      );
+    })
+  )
+);
+
+it.effect('reports unknown owners as unconfigured', () =>
+  runWithSettings(
+    Effect.gen(function* () {
+      const credentials = yield* ReaderCredentials;
+
+      expect(yield* credentials.get(other)).toBeUndefined();
+      expect(yield* credentials.provider(other)).toBe('jina');
+      expect(yield* credentials.browserEndpoint(other)).toBeUndefined();
+    })
+  )
+);
+
+it.effect('reads the stored browser endpoint per owner', () =>
+  runWithSettings(
+    Effect.gen(function* () {
+      const settings = yield* ExtractionSettings;
+      const credentials = yield* ReaderCredentials;
+
+      yield* settings.save(owner, {
+        provider: 'browser',
+        browserEndpoint: '  http://127.0.0.1:9222  ',
+      });
+
+      expect(yield* credentials.browserEndpoint(owner)).toBe(
+        'http://127.0.0.1:9222'
+      );
+      expect(yield* credentials.browserEndpoint(other)).toBeUndefined();
+    })
+  )
 );

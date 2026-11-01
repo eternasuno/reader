@@ -3,10 +3,12 @@ import type {
   FeedId,
   OwnerId,
 } from '../../../../packages/business/src/entity/model.ts';
-import { Subscriptions } from '../../../../packages/business/src/port/reader-store.ts';
+import {
+  Articles,
+  Subscriptions,
+} from '../../../../packages/business/src/port/reader-store.ts';
 import { Syndication } from '../../../../packages/business/src/port/syndication.ts';
 import {
-  countUnread,
   listFeedArticles,
   refreshFeedArticles,
 } from '../../../../packages/business/src/usecase/articles.ts';
@@ -113,10 +115,11 @@ const unsubscribe = ({ payload }: HandlerRequest<'unsubscribe'>) =>
 
 const feedsUnread = () =>
   withSession((owner) =>
-    Effect.map(countUnread(owner), ({ feeds }) => ({
-      feeds,
-      total: feeds.reduce((sum, feed) => sum + feed.count, 0),
-    }))
+    Effect.gen(function* () {
+      const articles = yield* Articles;
+
+      return yield* articles.unreadFeeds(owner);
+    })
   ).pipe(Effect.catchTags(articleReadFailure));
 
 export const feedHandlers = {

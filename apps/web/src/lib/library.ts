@@ -5,7 +5,6 @@ import {
   markRead,
   readArticle,
   readArticleById,
-  readCounts,
   readFeeds,
   readFeedUnread,
   readLaterUnread,
@@ -35,7 +34,6 @@ export const createLibraryClient = (options: LibraryClientOptions = {}) => {
     refresh: (scope: Scope, filter: Filter, through: string) =>
       readRefresh(send, scope, filter, through),
     feeds: () => readFeeds(send),
-    counts: () => readCounts(send),
     laterUnread: () => readLaterUnread(send),
     feedUnread: () => readFeedUnread(send),
     article: (id: string) => readArticleById(send, id),

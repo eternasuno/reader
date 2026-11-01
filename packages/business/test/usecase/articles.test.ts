@@ -24,7 +24,6 @@ import {
 } from '../../src/port/webpage-fetcher';
 import {
   addArticle,
-  countUnread,
   extractArticle,
   getArticle,
   listFeedArticles,
@@ -530,7 +529,7 @@ it.effect(
     return provide(
       Effect.gen(function* () {
         expect(yield* extractArticle(alice, article.id)).toEqual({
-          content: '<p>Cached</p>',
+          item: article,
         });
       }),
       {
@@ -568,7 +567,7 @@ it.effect('extracts, persists, and returns an article body', () => {
   return provide(
     Effect.gen(function* () {
       expect(yield* extractArticle(alice, article.id)).toEqual({
-        content: '<p>Fresh</p>',
+        item: { ...article, extractedContent: '<p>Fresh</p>' },
       });
       expect(saved).toEqual([[alice, article.id, '<p>Fresh</p>']]);
     }),
@@ -990,22 +989,3 @@ it.effect('rejects feed pages once the feed no longer exists', () => {
     }
   );
 });
-
-it.effect('counts unread later and feed articles from the store', () =>
-  provide(
-    Effect.gen(function* () {
-      expect(yield* countUnread(alice)).toEqual({
-        later: 2,
-        feeds: [{ id: feed, count: 3 }],
-        total: 5,
-      });
-    }),
-    {
-      articles: {
-        unreadLater: () => Effect.succeed(2),
-        unreadFeeds: () =>
-          Effect.succeed({ total: 3, feeds: [{ id: feed, count: 3 }] }),
-      },
-    }
-  )
-);
