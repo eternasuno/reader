@@ -15,6 +15,8 @@ const paths = {
   next: 'm6.5 9.5 5.5 5.5 5.5-5.5',
   extract:
     'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Zm0 0v5h5M9 13h6M9 17h6',
+  extractFilled:
+    'M7 3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9h-5a1 1 0 0 1-1-1V3H7Zm8 0v4h4l-4-4ZM9 12h6v2H9v-2Zm0 4h6v2H9v-2Z',
   reading:
     'M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4V4Zm9 3a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 2',
   square:
@@ -34,14 +36,19 @@ export const ReadStatusIcon = (props: {
   readonly read: boolean;
   readonly class?: string;
 }) => (
-  <span
-    class={`shrink-0 rounded-full border ${props.class ?? 'size-2'}`}
+  <svg
+    class={`shrink-0 ${props.class ?? 'size-2'}`}
     classList={{
-      'border-current opacity-70': props.read,
-      'border-primary bg-primary': !props.read,
+      'opacity-70': props.read,
+      'text-primary': !props.read,
     }}
+    viewBox="0 0 24 24"
+    fill="none"
     aria-hidden="true"
-  />
+  >
+    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5" />
+    <circle cx="12" cy="12" r="6" fill={props.read ? 'none' : 'currentColor'} />
+  </svg>
 );
 
 export const ReaderIcon = (props: {
@@ -60,8 +67,17 @@ export const ReaderIcon = (props: {
   >
     <path
       d={paths[props.name]}
-      fill={props.name === 'more' ? 'currentColor' : 'none'}
-      stroke={props.name === 'more' ? 'none' : undefined}
+      fill={
+        props.name === 'more' || props.name === 'extractFilled'
+          ? 'currentColor'
+          : 'none'
+      }
+      fill-rule={props.name === 'extractFilled' ? 'evenodd' : undefined}
+      stroke={
+        props.name === 'more' || props.name === 'extractFilled'
+          ? 'none'
+          : undefined
+      }
     />
   </svg>
 );

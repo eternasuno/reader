@@ -1,5 +1,5 @@
 import { Show } from 'solid-js';
-import type { Article, Filter } from '../../lib/library';
+import type { Article, Feed, Filter, Scope } from '../../lib/library';
 import { type LibraryModel, unreadCount } from '../../pages/library-model';
 import { Button } from '../atoms/button';
 import { LibraryEntry } from '../molecules/library-entry';
@@ -7,24 +7,48 @@ import { LibraryToolbar } from '../molecules/library-toolbar';
 import { VirtualScroller } from '../molecules/virtual-scroller';
 
 const emptyCopy = (
-  filter: Filter
+  filter: Filter,
+  scope: Scope
 ): { readonly title: string; readonly hint: string } => {
   if (filter === 'unread')
     return { title: '没有未读文章', hint: '所有文章都已读过了。' };
   if (filter === 'read')
     return { title: '还没有已读文章', hint: '打开一篇文章后，会出现在这里。' };
 
-  return { title: '这里还没有文章', hint: '订阅一个源，或稍后再来看看。' };
+  return scope.kind === 'later'
+    ? {
+        title: '留一篇，慢慢读',
+        hint: '保存感兴趣的文章链接，在这里专注阅读。',
+      }
+    : {
+        title: '从一个订阅源开始',
+        hint: '添加 RSS 订阅，让新的文章汇集到这里。',
+      };
 };
 
 const ListStatus = (props: {
   readonly title: string;
   readonly hint: string;
+  readonly action: string | undefined;
+  readonly onAction: () => void;
 }) => (
-  <div class="grid min-h-0 flex-1 place-items-center px-6 py-16 text-center">
-    <div>
-      <p class="text-lg">{props.title}</p>
-      <p class="mt-3 text-sm text-base-content/50">{props.hint}</p>
+  <div class="grid min-h-0 flex-1 place-items-center overflow-y-auto px-6 py-12 text-center">
+    <div class="max-w-xs">
+      <h3 class="text-lg font-medium text-balance">{props.title}</h3>
+      <p class="mt-3 text-sm leading-relaxed text-pretty text-base-content/65">
+        {props.hint}
+      </p>
+      <Show when={props.action}>
+        {(action) => (
+          <Button
+            variant="solid"
+            class="btn btn-sm btn-primary mt-6 pointer-coarse:min-h-11"
+            onClick={props.onAction}
+          >
+            {action()}
+          </Button>
+        )}
+      </Show>
     </div>
   </div>
 );
@@ -38,7 +62,11 @@ const ListError = (props: {
     class="flex shrink-0 items-center gap-3 border-b border-base-300 bg-base-100 px-4 py-2 text-xs text-error"
   >
     <span class="min-w-0 flex-1">{props.message}</span>
-    <Button type="button" class="btn btn-xs" onClick={props.onRetry}>
+    <Button
+      type="button"
+      class="btn btn-sm pointer-coarse:min-h-11"
+      onClick={props.onRetry}
+    >
       重试
     </Button>
   </div>
@@ -54,17 +82,45 @@ const ListLoading = () => (
   </div>
 );
 
+const ListEmpty = (props: {
+  readonly model: LibraryModel;
+  readonly onAdd: () => void;
+}) => {
+  const state = () => props.model.state();
+  const copy = () =>
+    state().error === undefined
+      ? emptyCopy(state().filter, state().scope)
+      : { title: '暂时无法加载文章', hint: '请点击上方重试。' };
+  const action = () => {
+    if (state().error !== undefined) return undefined;
+
+    if (state().filter !== 'all') return '查看全部文章';
+
+    return state().scope.kind === 'later' ? '新增文章链接' : undefined;
+  };
+  const onAction = () => {
+    if (state().filter === 'all') props.onAdd();
+    else void props.model.setFilter('all');
+  };
+
+  return (
+    <ListStatus
+      title={copy().title}
+      hint={copy().hint}
+      action={action()}
+      onAction={onAction}
+    />
+  );
+};
+
 const ListBody = (props: {
   readonly model: LibraryModel;
   readonly onOpen: (article: Article) => void;
+  readonly onAdd: () => void;
 }) => {
   const state = () => props.model.state();
   const empty = () => state().initialized && state().items.length === 0;
   const loading = () => !state().initialized && state().loading;
-  const copy = () =>
-    state().error === undefined
-      ? emptyCopy(state().filter)
-      : { title: '暂时无法加载文章', hint: '请点击上方重试。' };
   const retry = () => {
     if (state().initialized) void props.model.loadMore();
     else void props.model.refresh();
@@ -77,7 +133,7 @@ const ListBody = (props: {
       </Show>
       <Show
         when={!empty()}
-        fallback={<ListStatus title={copy().title} hint={copy().hint} />}
+        fallback={<ListEmpty model={props.model} onAdd={props.onAdd} />}
       >
         <Show when={!loading()} fallback={<ListLoading />}>
           <VirtualScroller
@@ -109,6 +165,7 @@ export const LibraryList = (props: {
   readonly title: string;
   readonly onOpen: (article: Article) => void;
   readonly onAdd: () => void;
+  readonly onUnsubscribe: (feed: Feed) => void;
 }) => {
   const state = () => props.model.state();
 
@@ -118,6 +175,13 @@ export const LibraryList = (props: {
         title={props.title}
         unread={unreadCount(state().counts, state().scope)}
         filter={state().filter}
+        canAddArticle={state().scope.kind === 'later'}
+        currentFeed={state().feeds.find((feed) => {
+          const scope = state().scope;
+
+          return scope.kind === 'feeds' && scope.feedId === feed.id;
+        })}
+        onUnsubscribe={props.onUnsubscribe}
         busy={state().loading || state().pending.size > 0}
         loadedUnread={state().items.some((item) => !item.read)}
         onFilter={(filter) => void props.model.setFilter(filter)}
@@ -125,7 +189,7 @@ export const LibraryList = (props: {
         onMarkAll={() => void props.model.markAll()}
         onAdd={props.onAdd}
       />
-      <ListBody model={props.model} onOpen={props.onOpen} />
+      <ListBody model={props.model} onOpen={props.onOpen} onAdd={props.onAdd} />
     </div>
   );
 };

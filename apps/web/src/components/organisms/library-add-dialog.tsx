@@ -10,6 +10,7 @@ type AddBusy = 'add' | 'preview' | 'subscribe';
 
 type AddFlowProps = {
   readonly open: boolean;
+  readonly mode: 'article' | 'feed';
   readonly onClose: () => void;
   readonly onAdd: (url: string) => Promise<boolean>;
   readonly onPreview: (url: string) => Promise<PreviewResult>;
@@ -150,13 +151,18 @@ const PreviewPanel = (props: {
 const AddForm = (props: {
   readonly preview: ReturnType<typeof useAddPreview>;
   readonly submit: ReturnType<typeof useAddSubmit>;
+  readonly mode: 'article' | 'feed';
 }) => (
   <form
     ref={props.preview.formRef}
     class="mt-2"
     onSubmit={(event) => {
       event.preventDefault();
-      void props.submit.add(submittedUrl(event.currentTarget));
+      if (props.mode === 'article') {
+        void props.submit.add(submittedUrl(event.currentTarget));
+      } else {
+        void props.preview.request();
+      }
     }}
   >
     <FormInput
@@ -167,22 +173,28 @@ const AddForm = (props: {
       type="url"
       required
       maxLength={4096}
-      placeholder="粘贴文章或订阅链接…"
+      placeholder={
+        props.mode === 'article' ? '粘贴文章链接…' : '粘贴 RSS / Atom 链接…'
+      }
       disabled={props.preview.busy() || props.submit.busy() !== undefined}
     />
     <div class="flex flex-wrap gap-2">
-      <SubmitButton
-        pending={props.submit.busy() === 'add'}
-        label="添加文章"
-        pendingLabel="添加中…"
-      />
-      <SubmitButton
-        type="button"
-        pending={props.preview.busy()}
-        label="预览订阅"
-        pendingLabel="获取预览…"
-        onClick={() => void props.preview.request()}
-      />
+      <Show
+        when={props.mode === 'article'}
+        fallback={
+          <SubmitButton
+            pending={props.preview.busy()}
+            label="预览订阅"
+            pendingLabel="获取预览…"
+          />
+        }
+      >
+        <SubmitButton
+          pending={props.submit.busy() === 'add'}
+          label="添加文章"
+          pendingLabel="添加中…"
+        />
+      </Show>
     </div>
   </form>
 );
@@ -194,22 +206,29 @@ export const LibraryAddDialog = (props: AddFlowProps) => {
     if (props.open) preview.resetForm();
   });
 
+  const title = () =>
+    props.mode === 'article' ? '新增文章链接' : '新增 RSS 订阅';
+
   return (
-    <Dialog open={props.open} label="添加链接或订阅" onClose={props.onClose}>
+    <Dialog open={props.open} label={title()} onClose={props.onClose}>
       <section class="py-2" aria-labelledby="library-add-heading">
         <h2
           id="library-add-heading"
           class="text-lg font-semibold tracking-tight"
         >
-          添加链接或订阅
+          {title()}
         </h2>
         <p class="mt-2 text-sm text-base-content/60">
-          粘贴文章链接保存到稍后阅读，或预览 RSS / Atom 订阅。
+          {props.mode === 'article'
+            ? '粘贴文章链接，保存到稍后阅读。'
+            : '粘贴 RSS / Atom 链接，预览后确认订阅。'}
         </p>
         <Show
           when={preview.preview()}
           keyed
-          fallback={<AddForm preview={preview} submit={submit} />}
+          fallback={
+            <AddForm preview={preview} submit={submit} mode={props.mode} />
+          }
         >
           {(item) => (
             <PreviewPanel

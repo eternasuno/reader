@@ -13,15 +13,19 @@ export const NavButton = (props: NavButtonProps) => {
       {...rest}
       type="button"
       aria-current={local.active ? 'page' : undefined}
-      class={`flex min-h-9 cursor-pointer items-center px-2.5 py-2 text-left aria-[current=page]:bg-neutral aria-[current=page]:text-neutral-content max-sm:min-h-11 ${local.class ?? ''}`}
+      class={`flex min-h-9 cursor-pointer items-center px-2.5 py-2 text-left aria-[current=page]:bg-neutral aria-[current=page]:text-neutral-content max-sm:min-h-11 pointer-coarse:min-h-11 ${local.class ?? ''}`}
     />
   );
 };
 
-export const UnreadCount = (props: { readonly count: number | undefined }) => (
+export const UnreadCount = (props: {
+  readonly count: number | undefined;
+  readonly active?: boolean;
+}) => (
   <Show when={(props.count ?? 0) > 0}>
     <span
-      class="ml-auto shrink-0 text-xs tabular-nums text-base-content/60"
+      class="ml-auto shrink-0 text-xs tabular-nums text-base-content/65 data-[active=true]:text-neutral-content/80"
+      data-active={props.active}
       title={`${props.count} 篇未读文章`}
     >
       {props.count}

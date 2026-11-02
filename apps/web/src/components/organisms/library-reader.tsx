@@ -1,97 +1,69 @@
-import { createEffect, createSignal, For, on, Show } from 'solid-js';
+import { Show } from 'solid-js';
 import type { Article } from '../../lib/library';
+import {
+  type LibraryReaderMode,
+  useReaderMode,
+} from '../../pages/library-reader-mode';
 import { Button } from '../atoms/button';
 import { IconButton } from '../atoms/icon-button';
+import { MenuCheckbox } from '../atoms/menu-checkbox';
 import { ReaderIcon, ReadStatusIcon } from '../atoms/reader-icon';
 import { ArticleFrame, WebpageFrame } from '../molecules/article-frame';
 import { PopoverMenu } from '../molecules/popover-menu';
 import { ReaderSourceLink, ReaderTitle } from './article-reader-actions';
 
-export type LibraryReaderMode = 'original' | 'extracted' | 'webpage';
-
-const modes: readonly {
-  readonly value: LibraryReaderMode;
-  readonly label: string;
-}[] = [
-  { value: 'original', label: '原文' },
-  { value: 'extracted', label: '提取正文' },
-  { value: 'webpage', label: '网页' },
-];
-
-const hasText = (value: string | undefined): boolean => (value ?? '') !== '';
-
-const useReaderMode = (
-  article: () => Article,
-  onExtract: (article: Article) => Promise<Article | undefined>
-) => {
-  const [mode, setMode] = createSignal<LibraryReaderMode>('original');
-  const [extracting, setExtracting] = createSignal(false);
-  let run = 0;
-  createEffect(
-    on(
-      () => article().id,
-      () => {
-        run += 1;
-        setMode('original');
-        setExtracting(false);
-      }
-    )
-  );
-  const hasUrl = () => hasText(article().url);
-  const hasExtracted = () => hasText(article().extractedContent);
-  const pick = async (next: LibraryReaderMode) => {
-    if (next === mode() || !hasUrl()) return;
-    if (next !== 'extracted' || hasExtracted()) {
-      setMode(next);
-      return;
-    }
-
-    const token = ++run;
-    setExtracting(true);
-    const updated = await onExtract(article());
-    if (token !== run) return;
-
-    setExtracting(false);
-    if (updated !== undefined) setMode('extracted');
-  };
-
-  return { mode, extracting, hasUrl, hasExtracted, pick };
-};
+export type { LibraryReaderMode } from '../../pages/library-reader-mode';
 
 type ReaderModeView = ReturnType<typeof useReaderMode>;
 
-const modeDisabled = (value: LibraryReaderMode, view: ReaderModeView) =>
-  value !== 'original' && !view.hasUrl();
+const WebpageOption = (props: {
+  readonly view: ReaderModeView;
+  readonly onClose: () => void;
+}) => (
+  <li>
+    <MenuCheckbox
+      label="嵌入式网页视图"
+      checked={props.view.mode() === 'webpage'}
+      disabled={props.view.extracting() || !props.view.hasUrl()}
+      onChange={(checked) => {
+        props.onClose();
+        void props.view.pick(checked ? 'webpage' : 'original');
+      }}
+    />
+  </li>
+);
 
-const ModeSwitch = (props: { readonly view: ReaderModeView }) => (
-  <fieldset class="m-0 flex min-w-0 items-center gap-1 border-0 p-0">
-    <legend class="sr-only">正文来源</legend>
-    <For each={modes}>
-      {(item) => (
-        <Button
-          type="button"
-          class="btn btn-xs"
-          classList={{
-            'btn-neutral': props.view.mode() === item.value,
-            'btn-ghost': props.view.mode() !== item.value,
-          }}
-          aria-pressed={props.view.mode() === item.value}
-          disabled={
-            props.view.extracting() || modeDisabled(item.value, props.view)
-          }
-          onClick={() => void props.view.pick(item.value)}
-        >
-          {item.label}
-        </Button>
-      )}
-    </For>
+const ExtractAction = (props: { readonly view: ReaderModeView }) => (
+  <div class="flex shrink-0 items-center">
+    <IconButton
+      label={props.view.mode() === 'extracted' ? '切换回原文' : '提取正文'}
+      pressed={props.view.mode() === 'extracted'}
+      disabled={props.view.extracting() || !props.view.hasUrl()}
+      busy={props.view.extracting()}
+      onClick={() =>
+        void props.view.pick(
+          props.view.mode() === 'extracted' ? 'original' : 'extracted'
+        )
+      }
+    >
+      <Show
+        when={!props.view.extracting()}
+        fallback={
+          <span class="loading loading-spinner loading-xs" aria-hidden="true" />
+        }
+      >
+        <ReaderIcon
+          name={props.view.mode() === 'extracted' ? 'extractFilled' : 'extract'}
+          class={`size-5 ${props.view.mode() === 'extracted' ? 'text-primary' : ''}`}
+        />
+      </Show>
+    </IconButton>
     <Show when={props.view.extracting()}>
-      <span class="loading loading-spinner loading-xs" aria-hidden="true" />
-      <span class="text-xs text-base-content/60" role="status">
+      <span role="status" class="sr-only">
         正在提取正文…
       </span>
     </Show>
-  </fieldset>
+  </div>
 );
 
 const readableHtml = (
@@ -125,7 +97,6 @@ const ReaderDocument = (props: {
       <Show when={props.article.url}>
         {(url) => <ReaderSourceLink url={url()} />}
       </Show>
-      <ModeSwitch view={props.view} />
       <ReaderHtml html={readableHtml(props.article, props.view.mode())} />
     </div>
   </div>
@@ -144,7 +115,10 @@ type ReaderPaneProps = {
   readonly onExtract: (article: Article) => Promise<Article | undefined>;
 };
 
-const ReaderOverflow = (props: { readonly pane: ReaderPaneProps }) => (
+const ReaderOverflow = (props: {
+  readonly pane: ReaderPaneProps;
+  readonly view: ReaderModeView;
+}) => (
   <PopoverMenu
     label="更多文章操作"
     trigger={(target) => (
@@ -155,6 +129,7 @@ const ReaderOverflow = (props: { readonly pane: ReaderPaneProps }) => (
   >
     {(close) => (
       <>
+        <WebpageOption view={props.view} onClose={close} />
         <Show when={props.pane.article.url}>
           {(url) => (
             <li>
@@ -208,7 +183,10 @@ const StepButton = (props: {
   </IconButton>
 );
 
-const ReaderHeader = (props: { readonly pane: ReaderPaneProps }) => (
+const ReaderHeader = (props: {
+  readonly pane: ReaderPaneProps;
+  readonly view: ReaderModeView;
+}) => (
   <nav
     aria-label="文章操作"
     class="z-10 flex h-13 shrink-0 items-center gap-1 border-b border-base-300 bg-base-100 px-4 max-sm:px-2"
@@ -245,7 +223,8 @@ const ReaderHeader = (props: { readonly pane: ReaderPaneProps }) => (
       >
         <ReadStatusIcon read={props.pane.article.read} class="size-4.5" />
       </IconButton>
-      <ReaderOverflow pane={props.pane} />
+      <ExtractAction view={props.view} />
+      <ReaderOverflow pane={props.pane} view={props.view} />
     </div>
   </nav>
 );
@@ -256,7 +235,7 @@ const ReaderPane = (props: ReaderPaneProps) => {
 
   return (
     <section class="m-0 flex h-full min-h-0 w-full flex-col">
-      <ReaderHeader pane={props} />
+      <ReaderHeader pane={props} view={view} />
       <Show
         when={webpage()}
         fallback={<ReaderDocument article={props.article} view={view} />}
@@ -268,11 +247,13 @@ const ReaderPane = (props: ReaderPaneProps) => {
 };
 
 const ReaderEmpty = () => (
-  <div class="grid h-full place-items-center px-6 text-center">
+  <div class="grid h-full place-items-center bg-base-100/30 px-6 text-center">
     <div class="flex flex-col items-center gap-4">
       <ReaderIcon name="reading" class="size-10 text-base-content/25" />
-      <p class="text-sm text-base-content/60">未选择文章</p>
-      <p class="text-xs text-base-content/60">从左侧选择一篇文章，开始阅读</p>
+      <p class="text-xl font-medium text-base-content/80">给阅读留一点空间</p>
+      <p class="text-sm leading-relaxed text-base-content/60">
+        从左侧选择一篇文章，开始阅读
+      </p>
     </div>
   </div>
 );

@@ -21,6 +21,8 @@ description: Follow the client architecture and resource-lifecycle constraints w
 
 ## UI Styling and Focus
 
+When changing reader layout, sidebar/list menus, article modes, creation flows, or shared menu/status icons, read [Reader layout and interactions](reader-ui.md). It records the agreed control placement, scope behavior, and state transitions; preserve these unless the current user request changes them.
+
 - Use Tailwind for all expressible presentation; keep `index.css` limited to Tailwind/daisyUI configuration and theme tokens. Do not reintroduce component CSS, `@apply`, giant class constants, or sprawling descendant selectors; simplify utilities and extract cohesive repeated UI components.
 - Prefer built-in sizing and breakpoint scales over incidental precision. Necessary custom fixed dimensions use rem except thin borders. Dynamic iframe height and generated anchor names may be passed as runtime CSS values.
 - All buttons compose `components/atoms/button.tsx`; only that base component renders the native button. Ordinary buttons share rounded-rectangle geometry, a pale hover background, and a soft shadow. Filled daisyUI buttons use `variant="solid"` to retain semantic background/content and hover colors; `SubmitButton` supplies this variant. The article read-status toggle is the intentional circular-hit-area exception. Preserve sizes, selected/destructive states, native form behavior, refs, labels, and disabled/loading behavior; do not duplicate hover implementations at call sites.

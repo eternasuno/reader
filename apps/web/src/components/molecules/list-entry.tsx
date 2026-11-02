@@ -11,7 +11,7 @@ export const EntrySurface = (props: {
 }) => (
   <Dynamic
     component={props.component}
-    class="group relative flow-root -mx-6 px-7 py-4 hover:bg-base-content/5 data-[selected=true]:bg-neutral/30 data-[selected=true]:shadow-[inset_2px_0_var(--color-primary)]"
+    class="group relative flow-root -mx-6 border-b border-base-300/50 px-7 py-5 hover:bg-base-content/5 pointer-coarse:pl-12 data-[selected=true]:bg-neutral/30 data-[selected=true]:shadow-[inset_2px_0_var(--color-primary)]"
     data-read={props.read ? 'true' : 'false'}
     data-selected={props.selected ? 'true' : undefined}
   >
@@ -28,7 +28,7 @@ export const EntryTitle = (props: {
   readonly children: JSX.Element;
 }) => (
   <a
-    class="entry-title line-clamp-3 wrap-anywhere text-sm font-[450] leading-[1.55] text-base-content after:absolute after:inset-0 after:content-[''] group-data-[read=false]:font-semibold"
+    class="entry-title line-clamp-3 wrap-anywhere text-sm font-[450] leading-[1.55] text-base-content after:absolute after:inset-0 after:content-[''] group-data-[read=false]:font-semibold group-data-[read=true]:text-base-content/70"
     href={props.href}
     target={props.target}
     rel={props.rel}
@@ -79,14 +79,15 @@ export const EntryReadToggle = (props: {
 }) => (
   <Button
     type="button"
-    class="absolute top-8 left-0 z-2 grid size-7 cursor-pointer place-items-center bg-transparent text-base-content disabled:cursor-wait [&]:rounded-full!"
+    class="absolute top-8 left-0 z-2 grid size-7 cursor-pointer place-items-center bg-transparent text-base-content disabled:cursor-wait pointer-coarse:top-9 pointer-coarse:size-11 [&]:rounded-full!"
     aria-label={
       props.read
         ? `已读：${props.label}，点击标为未读`
         : `未读：${props.label}，点击标为已读`
     }
     classList={{
-      'opacity-0 group-hover:opacity-100 focus-visible:opacity-100': props.read,
+      'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100':
+        props.read,
     }}
     aria-pressed={props.read}
     title={props.read ? '已读，点击标为未读' : '未读，点击标为已读'}

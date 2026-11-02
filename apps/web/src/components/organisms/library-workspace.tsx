@@ -2,14 +2,16 @@ import { useLocation, useNavigate, useParams } from '@solidjs/router';
 import { createEffect, createMemo, createSignal, on, onMount } from 'solid-js';
 import type { Article, Feed, Scope } from '../../lib/library';
 import {
+  confirmUnsubscribe,
+  createFeedMenu,
+} from '../../pages/library-feed-menu';
+import {
   type LibraryModel,
   type PreviewResult,
   sameScope,
   useLibraryModel,
 } from '../../pages/library-model';
-import { Button } from '../atoms/button';
-import { ReaderIcon } from '../atoms/reader-icon';
-import { LibraryAccountMenu } from '../molecules/library-account-menu';
+import { LibraryMobileBar } from '../molecules/library-mobile-bar';
 import { LibraryToastView } from '../molecules/library-toast';
 import { LibraryAddDialog } from './library-add-dialog';
 import { LibraryList } from './library-list';
@@ -149,54 +151,33 @@ const saveArticle = async (
     route.open(selected);
 };
 
-const unsubscribeFeed = (model: LibraryModel, feed: Feed) => {
-  if (!window.confirm('取消订阅并删除该源的文章？已保存的稍后阅读不会删除。'))
-    return;
-
-  void model.unsubscribe(feed.id);
-};
-
-const MobileBar = (props: {
-  readonly navOpen: boolean;
-  readonly title: string;
-  readonly onToggle: () => void;
-}) => (
-  <div class="hidden items-center justify-between gap-2 border-b border-base-300 bg-base-100 px-2 max-sm:flex">
-    <Button
-      type="button"
-      class="grid size-11 cursor-pointer place-items-center"
-      aria-label="切换导航"
-      aria-expanded={props.navOpen}
-      onClick={props.onToggle}
-    >
-      <ReaderIcon name={props.navOpen ? 'close' : 'menu'} />
-    </Button>
-    <span>
-      留白 <span class="text-base-content/40">/ {props.title}</span>
-    </span>
-    <LibraryAccountMenu />
-  </div>
-);
-
 const SidebarColumn = (props: {
   readonly model: LibraryModel;
   readonly route: RouteState;
   readonly onNavigate: () => void;
+  readonly onAdd: (mode: 'article' | 'feed') => void;
 }) => {
-  const state = () => props.model.state();
+  const menu = createFeedMenu(props.model, (scope) => {
+    props.onNavigate();
+    props.route.navigate(listPathOf(scope));
+  });
 
   return (
     <aside class="min-h-0 min-w-0 border-r border-base-300 bg-base-100 max-sm:col-start-1 max-sm:row-start-2 max-sm:hidden max-sm:group-data-[nav=true]/workspace:flex">
       <LibrarySidebar
-        scope={state().scope}
-        counts={state().counts}
-        feeds={state().feeds}
-        pending={state().pending}
+        scope={props.model.state().scope}
+        counts={props.model.state().counts}
+        feeds={props.model.state().feeds}
+        pending={props.model.state().pending}
+        filter={props.model.state().filter}
+        onAdd={props.onAdd}
+        onFilterScope={(scope, checked) => void menu.filter(scope, checked)}
+        onMarkScope={(scope) => void menu.markAll(scope)}
+        onUnsubscribe={(feed) => confirmUnsubscribe(props.model, feed)}
         onPickScope={(scope) => {
           props.onNavigate();
           pickScope(props.model, props.route, scope);
         }}
-        onUnsubscribe={(feed) => unsubscribeFeed(props.model, feed)}
       />
     </aside>
   );
@@ -217,6 +198,7 @@ const ListColumn = (props: {
       title={props.title}
       onOpen={props.route.open}
       onAdd={props.onAdd}
+      onUnsubscribe={(feed) => confirmUnsubscribe(props.model, feed)}
     />
   </section>
 );
@@ -297,12 +279,28 @@ const useLibraryView = (model: LibraryModel, route: RouteState) => {
   };
 };
 
+const AddDialog = (props: {
+  readonly model: LibraryModel;
+  readonly route: RouteState;
+  readonly mode: 'article' | 'feed' | undefined;
+  readonly onClose: () => void;
+}) => (
+  <LibraryAddDialog
+    open={props.mode !== undefined}
+    mode={props.mode ?? 'article'}
+    onClose={props.onClose}
+    onAdd={(url) => addArticle(props.model, props.route, url)}
+    onPreview={(url) => previewFeed(props.model, props.route, url)}
+    onSubscribe={(url) => subscribeFeed(props.model, props.route, url)}
+  />
+);
+
 export const LibraryWorkspace = () => {
   const model = useLibraryModel();
   const route = useLibraryRoute(model);
   const view = useLibraryView(model, route);
   const [navOpen, setNavOpen] = createSignal(false);
-  const [addOpen, setAddOpen] = createSignal(false);
+  const [addMode, setAddMode] = createSignal<'article' | 'feed'>();
 
   return (
     <>
@@ -311,7 +309,7 @@ export const LibraryWorkspace = () => {
         data-reading={route.key() !== undefined}
         data-nav={navOpen()}
       >
-        <MobileBar
+        <LibraryMobileBar
           navOpen={navOpen()}
           title={view.title()}
           onToggle={() => setNavOpen(!navOpen())}
@@ -320,12 +318,13 @@ export const LibraryWorkspace = () => {
           model={model}
           route={route}
           onNavigate={() => setNavOpen(false)}
+          onAdd={setAddMode}
         />
         <ListColumn
           model={model}
           route={route}
           title={view.title()}
-          onAdd={() => setAddOpen(true)}
+          onAdd={() => setAddMode('article')}
         />
         <ReaderColumn
           model={model}
@@ -335,12 +334,11 @@ export const LibraryWorkspace = () => {
           next={view.next()}
         />
       </div>
-      <LibraryAddDialog
-        open={addOpen()}
-        onClose={() => setAddOpen(false)}
-        onAdd={(url) => addArticle(model, route, url)}
-        onPreview={(url) => previewFeed(model, route, url)}
-        onSubscribe={(url) => subscribeFeed(model, route, url)}
+      <AddDialog
+        model={model}
+        route={route}
+        mode={addMode()}
+        onClose={() => setAddMode(undefined)}
       />
       <LibraryToastView
         toast={model.state().toast}

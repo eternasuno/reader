@@ -1,83 +1,116 @@
-import { For } from 'solid-js';
-import type { Filter } from '../../lib/library';
+import { Show } from 'solid-js';
+import type { Feed, Filter } from '../../lib/library';
+import { Button } from '../atoms/button';
 import { IconButton } from '../atoms/icon-button';
+import { MenuCheckbox } from '../atoms/menu-checkbox';
 import { ReaderIcon } from '../atoms/reader-icon';
+import { PopoverMenu } from './popover-menu';
 
-const filters: readonly { readonly value: Filter; readonly label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'unread', label: '未读' },
-  { value: 'read', label: '已读' },
-];
-
-const toFilter = (value: string): Filter =>
-  value === 'unread' || value === 'read' ? value : 'all';
-
-export const LibraryToolbar = (props: {
+type LibraryToolbarProps = {
   readonly title: string;
   readonly unread: number;
   readonly filter: Filter;
   readonly busy: boolean;
   readonly loadedUnread: boolean;
+  readonly currentFeed: Feed | undefined;
+  readonly canAddArticle: boolean;
   readonly onFilter: (filter: Filter) => void;
   readonly onMarkLoaded: () => void;
   readonly onMarkAll: () => void;
   readonly onAdd: () => void;
-}) => (
+  readonly onUnsubscribe: (feed: Feed) => void;
+};
+
+const LibraryMenu = (props: LibraryToolbarProps) => (
+  <PopoverMenu
+    label="文章列表操作"
+    trigger={(target) => (
+      <IconButton label="文章列表菜单" popoverTarget={target}>
+        <ReaderIcon name="more" />
+      </IconButton>
+    )}
+  >
+    {(close) => (
+      <>
+        <li>
+          <MenuCheckbox
+            label="只显示未读"
+            checked={props.filter === 'unread'}
+            onChange={(checked) => {
+              close();
+              props.onFilter(checked ? 'unread' : 'all');
+            }}
+          />
+        </li>
+        <li>
+          <Button
+            disabled={props.busy || (props.unread === 0 && !props.loadedUnread)}
+            onClick={() => {
+              close();
+              props.onMarkAll();
+            }}
+          >
+            <ReaderIcon name="checks" />
+            全部标记为已读
+          </Button>
+        </li>
+        <Show when={props.canAddArticle}>
+          <li class="mt-2 border-t border-base-300 pt-2">
+            <Button
+              onClick={() => {
+                close();
+                props.onAdd();
+              }}
+            >
+              <ReaderIcon name="plus" />
+              新增文章链接
+            </Button>
+          </li>
+        </Show>
+        <Show when={props.currentFeed}>
+          {(feed) => (
+            <li>
+              <Button
+                class="text-error"
+                disabled={props.busy}
+                onClick={() => {
+                  close();
+                  props.onUnsubscribe(feed());
+                }}
+              >
+                <ReaderIcon name="delete" />
+                删除 RSS 源
+              </Button>
+            </li>
+          )}
+        </Show>
+      </>
+    )}
+  </PopoverMenu>
+);
+
+export const LibraryToolbar = (props: LibraryToolbarProps) => (
   <nav
-    class="workspace-list-heading flex h-13 shrink-0 items-center gap-2 border-b border-base-300 bg-base-100 px-4"
+    class="workspace-list-heading flex min-h-13 shrink-0 items-center gap-2 border-b border-base-300 bg-base-100 px-4"
     aria-label={`${props.title}清单工具`}
   >
-    <h2 class="min-w-0 truncate text-sm font-semibold" tabindex="-1">
-      {props.title}
-    </h2>
-    <span
-      class="whitespace-nowrap text-xs tabular-nums text-base-content/60"
-      title="未读文章总数"
-    >
-      {props.unread}
-      <span class="sr-only"> 篇未读文章</span>
-    </span>
-    <div class="ml-auto flex items-center gap-1">
-      <label class="sr-only" for="library-filter">
-        筛选文章
-      </label>
-      <select
-        id="library-filter"
-        class="select select-xs w-20"
-        value={props.filter}
-        onChange={(event) =>
-          props.onFilter(toFilter(event.currentTarget.value))
-        }
-      >
-        <For each={filters}>
-          {(filter) => <option value={filter.value}>{filter.label}</option>}
-        </For>
-      </select>
-      <IconButton
-        label="将已加载文章标为已读"
-        title="将已加载文章标为已读"
-        disabled={props.busy || !props.loadedUnread}
-        busy={props.busy}
-        onClick={props.onMarkLoaded}
-      >
-        <ReaderIcon name="markAbove" />
-      </IconButton>
-      <IconButton
-        label="全部标记为已读"
-        title="全部标记为已读"
-        disabled={props.busy}
-        busy={props.busy}
-        onClick={props.onMarkAll}
-      >
-        <ReaderIcon name="checks" />
-      </IconButton>
-      <IconButton
-        label="添加链接或订阅"
-        title="添加链接或订阅"
-        onClick={props.onAdd}
-      >
-        <ReaderIcon name="plus" />
-      </IconButton>
+    <div class="flex min-w-0 flex-1 items-center gap-2">
+      <h2 class="min-w-0 truncate text-sm font-semibold" tabindex="-1">
+        {props.title}
+      </h2>
+      <span class="shrink-0 text-xs tabular-nums text-base-content/65">
+        {props.unread}
+        <span class="sr-only"> 篇未读</span>
+      </span>
     </div>
+    <IconButton
+      label="将已加载文章标为已读"
+      disabled={props.busy || !props.loadedUnread}
+      busy={props.busy}
+      onClick={props.onMarkLoaded}
+    >
+      <ReaderIcon name="markAbove" />
+    </IconButton>
+    <LibraryMenu {...props} />
   </nav>
 );
