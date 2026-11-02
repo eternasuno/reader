@@ -6,16 +6,17 @@ import {
   Option,
   Queue,
 } from 'effect';
+import type { HttpClient } from 'effect/http';
 import type {
   FeedId,
   OwnerId,
-} from '../../../../packages/business/src/entity/model.ts';
-import type { ContentProcessor } from '../../../../packages/business/src/port/content-processor.ts';
-import {
-  type Articles,
-  Subscriptions,
-} from '../../../../packages/business/src/port/reader-store.ts';
-import type { Syndication } from '../../../../packages/business/src/port/syndication.ts';
+} from '../../../../packages/business/src/entity/object-value.ts';
+import type { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
+import type { DocumentSantize } from '../../../../packages/business/src/port/document-santize.ts';
+import type { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
+import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
+import type { HtmlParser } from '../../../../packages/business/src/port/html-parser.ts';
+import type { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
 import { refreshSubscription } from '../../../../packages/business/src/usecase/subscriptions.ts';
 
 const WORKER_COUNT = 3;
@@ -30,10 +31,13 @@ type SubscriptionJob = {
 type Registration = Set<FeedId>;
 
 type RefreshRequirements =
-  | Subscriptions
-  | Articles
-  | Syndication
-  | ContentProcessor;
+  | FeedRepository
+  | ArticleRepository
+  | SettingsRepository
+  | HttpClient.HttpClient
+  | FeedParser
+  | DocumentSantize
+  | HtmlParser;
 
 const register = (registered: Registration, id: FeedId) =>
   Effect.sync(() => {
@@ -70,7 +74,7 @@ const release = (registered: Registration, id: FeedId) =>
 
 const refresh =
   (
-    subscriptions: Context.Service.Shape<typeof Subscriptions>,
+    subscriptions: Context.Service.Shape<typeof FeedRepository>,
     registered: Registration
   ) =>
   (job: SubscriptionJob) =>
@@ -99,7 +103,7 @@ const worker = <R>(
   );
 
 const scan = (
-  subscriptions: Context.Service.Shape<typeof Subscriptions>,
+  subscriptions: Context.Service.Shape<typeof FeedRepository>,
   enqueueJob: (job: SubscriptionJob) => Effect.Effect<void>
 ) =>
   subscriptions.all.pipe(
@@ -121,7 +125,7 @@ export const SubscriptionSchedulerLive: Layer.Layer<
   RefreshRequirements
 > = Layer.effectDiscard(
   Effect.gen(function* () {
-    const subscriptions = yield* Subscriptions;
+    const subscriptions = yield* FeedRepository;
     const queue = yield* Queue.unbounded<SubscriptionJob>();
     const registered = new Set<FeedId>();
 

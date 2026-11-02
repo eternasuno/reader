@@ -1,18 +1,18 @@
 import { DateTime, Effect, Option } from 'effect';
-import type { Article, ArticleId, FeedId, OwnerId } from '../entity/model';
+import type { Article } from '../entity/article';
+import type { ArticleId, FeedId, OwnerId } from '../entity/object-value';
 import {
-  type ArticleExtractError,
+  ArticleExtractError,
   ArticleExtractor,
   type ExtractedArticle,
 } from '../port/article-extractor';
-import {
-  ReaderCredentials,
-  type ReaderCredentialsError,
-} from '../port/reader-credentials';
-import { Articles } from '../port/reader-store';
+import { ArticleRepository } from '../port/article-repository';
+import { HtmlParser } from '../port/html-parser';
+import type { SettingsRepositoryReadError } from '../port/settings-repository';
 import {
   type WebpageFetchError,
   WebpageFetcher,
+  WebpageFetcherFactory,
 } from '../port/webpage-fetcher';
 import {
   ArticleEmptyContent,
@@ -46,28 +46,36 @@ const UNTITLED = 'Untitled';
 
 const fetchAndExtract = (
   owner: OwnerId,
-  url: URL
+  sourceUrl: URL
 ): Effect.Effect<
   ExtractedArticle,
-  | ReaderCredentialsError
+  | SettingsRepositoryReadError
   | WebpageFetchError
   | ArticleExtractError
   | ArticleEmptyContent,
-  ArticleExtractor | ReaderCredentials | WebpageFetcher
+  ArticleExtractor | HtmlParser | WebpageFetcherFactory
 > =>
   Effect.gen(function* () {
-    const credentials = yield* ReaderCredentials;
-    const provider = yield* credentials.provider(owner);
-    const key = provider === 'jina' ? yield* credentials.get(owner) : undefined;
-    const endpoint =
-      provider === 'browser'
-        ? yield* credentials.browserEndpoint(owner)
-        : undefined;
-    const fetcher = yield* WebpageFetcher;
-    const html = yield* fetcher.fetch(url.href, key, provider, endpoint);
+    const factory = yield* WebpageFetcherFactory;
+    const fetcherLayer = yield* factory.forOwner(owner);
+    const html = yield* Effect.gen(function* () {
+      const fetcher = yield* WebpageFetcher;
+
+      return yield* fetcher.fetch(sourceUrl.href);
+    }).pipe(Effect.provide(fetcherLayer));
+    const parser = yield* HtmlParser;
+    const document = yield* parser.parse(html, sourceUrl).pipe(
+      Effect.mapError(
+        () =>
+          new ArticleExtractError({
+            error: 'Unable to extract article content; open the original page',
+          })
+      )
+    );
     const extractor = yield* ArticleExtractor;
-    const extracted = yield* extractor.extract(html, url.href);
-    if (extracted.html.trim() === '') {
+    const extracted = yield* extractor.extract(document);
+    const content = extracted.content;
+    if (content.trim() === '') {
       return yield* new ArticleEmptyContent({
         message: 'Article content is empty',
       });
@@ -76,14 +84,15 @@ const fetchAndExtract = (
     return {
       ...extracted,
       title: extracted.title.trim() || UNTITLED,
+      content,
     };
-  });
+  }).pipe(Effect.scoped);
 
 export const getArticle = Effect.fn('articles.get')(function* (
   owner: OwnerId,
   id: ArticleId
 ) {
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
 
   return yield* articles.find(owner, id);
 });
@@ -113,12 +122,12 @@ export const addArticle = Effect.fn('articles.add')(function* (
     ...(extracted.description === undefined
       ? {}
       : { description: extracted.description }),
-    content: extracted.html,
-    extractedContent: extracted.html,
+    content: extracted.content,
+    extractedContent: extracted.content,
     publishedAt,
     read: false,
   };
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
   const created = yield* articles.create(owner, [article]);
   if (created.length === 0) {
     return yield* new DuplicateArticle({
@@ -134,7 +143,7 @@ export const saveArticle = Effect.fn('articles.save')(function* (
   owner: OwnerId,
   id: ArticleId
 ) {
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
   const found = yield* articles.find(owner, id);
   if (Option.isNone(found)) {
     return yield* new ArticleNotFound({ message: 'Article not found' });
@@ -183,7 +192,7 @@ export const extractArticle = Effect.fn('articles.extract')(function* (
   owner: OwnerId,
   id: ArticleId
 ) {
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
   const found = yield* articles.find(owner, id);
   if (Option.isNone(found)) {
     return yield* new ArticleNotFound({ message: 'Article not found' });
@@ -201,12 +210,12 @@ export const extractArticle = Effect.fn('articles.extract')(function* (
   }
 
   const extracted = yield* fetchAndExtract(owner, article.url);
-  const saved = yield* articles.saveExtracted(owner, id, extracted.html);
+  const saved = yield* articles.saveExtracted(owner, id, extracted.content);
   if (!saved) {
     return yield* new ArticleNotFound({ message: 'Article not found' });
   }
 
-  return { item: { ...article, extractedContent: extracted.html } };
+  return { item: { ...article, extractedContent: extracted.content } };
 });
 
 export const markArticle = Effect.fn('articles.mark')(function* (
@@ -214,7 +223,7 @@ export const markArticle = Effect.fn('articles.mark')(function* (
   id: ArticleId,
   read: boolean
 ) {
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
   yield* articles.setRead(owner, [id], read);
 
   return { ok: true as const };
@@ -223,7 +232,7 @@ export const markArticle = Effect.fn('articles.mark')(function* (
 export const markLaterRead = Effect.fn('articles.markLater')(function* (
   owner: OwnerId
 ) {
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
   yield* articles.markLater(owner);
 
   return { ok: true as const };
@@ -233,7 +242,7 @@ export const markFeedsRead = Effect.fn('articles.markFeeds')(function* (
   owner: OwnerId,
   ids: readonly FeedId[]
 ) {
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
   yield* articles.markFeeds(owner, ids);
 
   return { ok: true as const };
@@ -243,7 +252,7 @@ export const markArticlesRead = Effect.fn('articles.markArticles')(function* (
   owner: OwnerId,
   ids: readonly ArticleId[]
 ) {
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
   yield* articles.setRead(owner, ids, true);
 
   return { ok: true as const };
@@ -253,7 +262,7 @@ export const removeArticle = Effect.fn('articles.remove')(function* (
   owner: OwnerId,
   id: ArticleId
 ) {
-  const articles = yield* Articles;
+  const articles = yield* ArticleRepository;
   const found = yield* articles.find(owner, id);
   if (Option.isSome(found) && found.value.feedId !== undefined) {
     return yield* new ArticleNotLater({

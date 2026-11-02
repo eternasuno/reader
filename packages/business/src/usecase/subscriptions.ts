@@ -1,7 +1,11 @@
 import { DateTime, Effect, Option, Schema } from 'effect';
-import { type Feed, FeedId, type OwnerId } from '../entity/model';
-import { Articles, Subscriptions } from '../port/reader-store';
-import { Syndication } from '../port/syndication';
+import type { Feed } from '../entity/feed';
+import { FeedId, type OwnerId } from '../entity/object-value';
+import { ArticleRepository } from '../port/article-repository';
+import { FeedParser } from '../port/feed-parser';
+import { FeedRepository } from '../port/feed-repository';
+import { SettingsRepository } from '../port/settings-repository';
+import { fetchFeed } from './feed-fetch';
 import { feedId, normalizeUrl } from './identity';
 import {
   importArticles,
@@ -57,7 +61,11 @@ const importErrors = (id: FeedId) => {
       })
     );
 
-  return { ContentProcessError: fail, ArticleWriteError: fail };
+  return {
+    DocumentSantizeError: fail,
+    HtmlParseError: fail,
+    ArticleWriteError: fail,
+  };
 };
 
 const refreshErrors = (id: FeedId) => {
@@ -70,7 +78,8 @@ const refreshErrors = (id: FeedId) => {
     );
 
   return {
-    ContentProcessError: fail,
+    DocumentSantizeError: fail,
+    HtmlParseError: fail,
     ArticleWriteError: fail,
     SubscriptionWriteError: fail,
   };
@@ -82,13 +91,14 @@ export const subscribe = Effect.fn('subscriptions.subscribe')(function* (
 ) {
   const url = yield* subscriptionUrl(address);
   const id = feedId(ownerId, url);
-  const subscriptions = yield* Subscriptions;
+  const subscriptions = yield* FeedRepository;
   if (Option.isSome(yield* subscriptions.find(ownerId, id))) {
     return yield* existsError(id);
   }
 
-  const syndication = yield* Syndication;
-  const feed = yield* syndication.fetch(url);
+  const feedParser = yield* FeedParser;
+  const document = yield* fetchFeed(url);
+  const feed = yield* feedParser.parse(document.content, document.url);
   const now = yield* DateTime.now;
   const subscription: Feed = {
     id,
@@ -110,9 +120,25 @@ export const subscribe = Effect.fn('subscriptions.subscribe')(function* (
   return { item: subscription };
 });
 
+const readRetention = (ownerId: OwnerId, id: FeedId) =>
+  Effect.gen(function* () {
+    const settings = yield* SettingsRepository;
+    const value = yield* settings.get(ownerId);
+
+    return value.retention;
+  }).pipe(
+    Effect.mapError(
+      () =>
+        new SubscriptionRefreshFailed({
+          message: 'Failed to refresh subscription',
+          id,
+        })
+    )
+  );
+
 export const refreshSubscription = Effect.fn('subscriptions.refresh')(
   function* (ownerId: OwnerId, id: FeedId) {
-    const subscriptions = yield* Subscriptions;
+    const subscriptions = yield* FeedRepository;
     const subscription = yield* subscriptions.find(ownerId, id);
     if (Option.isNone(subscription)) {
       return yield* new SubscriptionNotFound({
@@ -121,12 +147,13 @@ export const refreshSubscription = Effect.fn('subscriptions.refresh')(
       });
     }
 
-    const syndication = yield* Syndication;
-    const feed = yield* syndication.fetch(subscription.value.url);
+    const feedParser = yield* FeedParser;
+    const document = yield* fetchFeed(subscription.value.url);
+    const feed = yield* feedParser.parse(document.content, document.url);
     const now = yield* DateTime.now;
-    const articles = yield* Articles;
+    const articles = yield* ArticleRepository;
     const inventory = yield* articles.inventory(ownerId, id);
-    const retention = yield* subscriptions.retention(ownerId);
+    const retention = yield* readRetention(ownerId, id);
     const retained = refreshSelection(
       ownerId,
       id,

@@ -8,7 +8,6 @@ import {
   articleReadError,
   articleWriteError,
   duplicateArticle,
-  extractionSettingsWriteError,
   fetchSubscriptionError,
   invalidArticleUrl,
   invalidCursor,
@@ -17,8 +16,9 @@ import {
   invalidProvider,
   invalidRetention,
   parseSubscriptionError,
-  readerCredentialsError,
   settingsReadError,
+  settingsRepositoryReadError,
+  settingsRepositoryWriteError,
   settingsSaveError,
   subscriptionExists,
   subscriptionImportFailed,
@@ -51,7 +51,7 @@ export const articleWriteFailure = {
 export const addFailure = {
   InvalidArticleUrl: invalidArticleUrl,
   ArticleEmptyContent: articleEmptyContent,
-  ReaderCredentialsError: readerCredentialsError,
+  SettingsRepositoryReadError: settingsRepositoryReadError,
   WebpageFetchError: webpageFetchError,
   ArticleExtractError: articleExtractError,
   DuplicateArticle: duplicateArticle,
@@ -70,7 +70,7 @@ export const extractFailure = {
   ArticleNotFound: articleNotFound,
   ArticleMissingUrl: articleMissingUrl,
   ArticleEmptyContent: articleEmptyContent,
-  ReaderCredentialsError: readerCredentialsError,
+  SettingsRepositoryReadError: settingsRepositoryReadError,
   WebpageFetchError: webpageFetchError,
   ArticleExtractError: articleExtractError,
   ...articleReadFailure,
@@ -124,5 +124,5 @@ export const extractionFailure = {
 };
 
 export const extractionWriteFailure = {
-  ExtractionSettingsWriteError: extractionSettingsWriteError,
+  SettingsRepositoryWriteError: settingsRepositoryWriteError,
 };

@@ -1,33 +1,36 @@
 import { DateTime, Effect } from 'effect';
-import type { ArticleId, FeedId, OwnerId } from '../entity/model';
+import type { ArticleId, FeedId, OwnerId } from '../entity/object-value';
 import {
-  type ContentProcessError,
-  ContentProcessor,
-} from '../port/content-processor';
-import { type ArticleBoundary, Articles } from '../port/reader-store';
-import type { SubscriptionEntry } from '../port/syndication';
+  type ArticleBoundary,
+  ArticleRepository,
+} from '../port/article-repository';
+import { DocumentSantize } from '../port/document-santize';
+import type { ParsedArticle } from '../port/feed-parser';
+import { HtmlParser } from '../port/html-parser';
 import { articleId } from './identity';
 
 export const SUBSCRIPTION_INITIAL_IMPORT = 30;
+
+const MAX_CONTENT_LENGTH = 100_000;
 
 type Candidate = {
   readonly id: ArticleId;
   readonly publishedAtIso: string;
   readonly existing: boolean;
   readonly order: number;
-  readonly entry?: SubscriptionEntry;
+  readonly entry?: ParsedArticle;
   readonly publishedAt?: DateTime.Utc;
 };
 
 type RetainedArticle = Candidate & {
-  readonly entry: SubscriptionEntry;
+  readonly entry: ParsedArticle;
   readonly publishedAt: DateTime.Utc;
 };
 
 const newCandidate = (
   ownerId: OwnerId,
   id: FeedId,
-  entry: SubscriptionEntry,
+  entry: ParsedArticle,
   now: DateTime.Utc,
   order: number
 ): Candidate => {
@@ -70,7 +73,7 @@ const compareCandidates = (left: Candidate, right: Candidate) =>
 export const initialSelection = (
   ownerId: OwnerId,
   id: FeedId,
-  entries: readonly SubscriptionEntry[],
+  entries: readonly ParsedArticle[],
   now: DateTime.Utc
 ) => {
   const seen = new Set<ArticleId>();
@@ -94,7 +97,7 @@ export const refreshSelection = (
   ownerId: OwnerId,
   id: FeedId,
   inventory: readonly ArticleBoundary[],
-  entries: readonly SubscriptionEntry[],
+  entries: readonly ParsedArticle[],
   now: DateTime.Utc
 ) => {
   const known = new Set(inventory.map((boundary) => boundary.id));
@@ -121,13 +124,28 @@ const isRetained = (candidate: Candidate): candidate is RetainedArticle =>
   candidate.entry !== undefined &&
   candidate.publishedAt !== undefined;
 
-const processOptional = (
-  value: string | undefined,
-  process: (value: string) => Effect.Effect<string, ContentProcessError>
-) =>
-  value === undefined
-    ? Effect.succeed(undefined)
-    : Effect.map(process(value), (processed) => processed || undefined);
+const sanitizeDocument = (document: Document) =>
+  Effect.gen(function* () {
+    const processor = yield* DocumentSantize;
+    const processed = yield* processor.sanitize(document);
+
+    return processed === '' ? undefined : processed;
+  });
+
+const processHtml = (value: string | undefined, url?: URL) =>
+  Effect.gen(function* () {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    const parser = yield* HtmlParser;
+    const document = yield* parser.parse(
+      value.slice(0, MAX_CONTENT_LENGTH),
+      url
+    );
+
+    return yield* sanitizeDocument(document);
+  }).pipe(Effect.scoped);
 
 const buildArticle = (
   ownerId: OwnerId,
@@ -135,14 +153,9 @@ const buildArticle = (
   candidate: RetainedArticle
 ) =>
   Effect.gen(function* () {
-    const processor = yield* ContentProcessor;
     const { entry } = candidate;
-    const description = yield* processOptional(entry.description, (value) =>
-      processor.process(value, entry.descriptionText ?? false, entry.url)
-    );
-    const content = yield* processOptional(entry.content, (value) =>
-      processor.process(value, entry.contentText ?? false, entry.url)
-    );
+    const description = yield* processHtml(entry.description, entry.url);
+    const content = yield* processHtml(entry.content, entry.url);
 
     return {
       id: candidate.id,
@@ -171,7 +184,7 @@ export const importArticles = (
     const items = yield* Effect.forEach(retained, (candidate) =>
       buildArticle(ownerId, id, candidate)
     );
-    const articles = yield* Articles;
+    const articles = yield* ArticleRepository;
 
     yield* articles.create(ownerId, items);
   });

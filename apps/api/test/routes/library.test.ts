@@ -1,38 +1,39 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: one integration scenario exercises the library API boundary.
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: the scenario follows the user journey in order.
-import { randomBytes } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
 import { surrealAdapter } from '@surrealdb/better-auth';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
-import { ConfigProvider, Effect, Layer, Schema } from 'effect';
-import { HttpRouter } from 'effect/http';
+import { Effect, Layer, Schema } from 'effect';
+import { HttpClient, HttpClientResponse, HttpRouter } from 'effect/http';
 import type { Surreal } from 'surrealdb';
 import { ArticleExtractor } from '../../../../packages/business/src/port/article-extractor.ts';
-import { ContentProcessor } from '../../../../packages/business/src/port/content-processor.ts';
 import {
   ArticleReadError,
-  Articles,
-} from '../../../../packages/business/src/port/reader-store.ts';
-import { Syndication } from '../../../../packages/business/src/port/syndication.ts';
-import { WebpageFetcher } from '../../../../packages/business/src/port/webpage-fetcher.ts';
+  ArticleRepository,
+} from '../../../../packages/business/src/port/article-repository.ts';
+import { DocumentSantize } from '../../../../packages/business/src/port/document-santize.ts';
+import { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
+import {
+  WebpageFetcher,
+  WebpageFetcherFactory,
+} from '../../../../packages/business/src/port/webpage-fetcher.ts';
 import { HttpFetchLive } from '../../../../packages/webpage/src/http.ts';
 import {
   ArticleItemSchema,
   ArticlePageSchema,
 } from '../../../web/src/lib/library-schema.ts';
 import { makeArticles } from '../../src/adapter/article-store';
-import { ExtractionSettingsLive } from '../../src/adapter/extraction-settings';
-import { ReaderCredentialsLive } from '../../src/adapter/reader-credentials';
+import { HtmlParserLive } from '../../src/adapter/html-parser';
 import {
-  ArticlesLive,
+  ArticleRepositoryLive,
+  FeedRepositoryLive,
   ReaderStoreConcurrency,
   ReaderStoreConcurrencyLive,
   readerStoreSchema,
-  SubscriptionsLive,
 } from '../../src/adapter/reader-store';
+import { SettingsRepositoryLive } from '../../src/adapter/settings-repository';
 import { AppLive } from '../../src/app';
 import { Auth } from '../../src/infrastructure/auth';
-import { CredentialCryptoLive } from '../../src/infrastructure/credential-crypto';
 import { createSurreal, Database } from '../../src/infrastructure/db';
 
 const origin = 'http://localhost:3000';
@@ -445,42 +446,48 @@ const verifyLibrary = async (handler: Handler) => {
   await verifyUnsubscribe(handler, alice, subscription.id);
 };
 
-const syndication = Layer.succeed(Syndication, {
-  fetch: () =>
-    Effect.succeed({
-      title: 'Example feed',
-      description: 'Daily updates',
-      articles: [
-        {
-          title: 'One',
-          url: new URL('https://example.com/one'),
-        },
-        {
-          title: 'Two',
-          url: new URL('https://example.com/two'),
-        },
-        {
-          title: 'Three',
-          url: new URL('https://example.com/three'),
-        },
-        {
-          title: 'Four',
-        },
-      ],
-    }),
-});
+const feedSource = Layer.mergeAll(
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response('<rss/>', { status: 200 })
+        )
+      )
+    )
+  ),
+  Layer.succeed(FeedParser, {
+    parse: () =>
+      Effect.succeed({
+        title: 'Example feed',
+        description: 'Daily updates',
+        articles: [
+          {
+            title: 'One',
+            url: new URL('https://example.com/one'),
+          },
+          {
+            title: 'Two',
+            url: new URL('https://example.com/two'),
+          },
+          {
+            title: 'Three',
+            url: new URL('https://example.com/three'),
+          },
+          {
+            title: 'Four',
+          },
+        ],
+      }),
+  })
+);
 
 const articleExtractor = Layer.succeed(ArticleExtractor, {
   extract: () =>
-    Effect.succeed({ title: 'Example article', html: '<p>Body</p>' }),
+    Effect.succeed({ title: 'Example article', content: '<p>Body</p>' }),
 });
-
-const makeConfig = () =>
-  ConfigProvider.layer(
-    ConfigProvider.fromUnknown({
-      READER_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
-    })
-  );
 
 const authOptions = (db: Surreal) => ({
   baseURL: origin,
@@ -507,7 +514,7 @@ const setupDatabase = async (db: Surreal) => {
 };
 
 type ArticleStore = Layer.Layer<
-  Articles,
+  ArticleRepository,
   never,
   Database | ReaderStoreConcurrency
 >;
@@ -515,9 +522,9 @@ type ArticleStore = Layer.Layer<
 const failingCounter = (
   db: Surreal,
   counter: 'unreadLater' | 'unreadFeeds'
-): Layer.Layer<Articles, never, ReaderStoreConcurrency> =>
+): Layer.Layer<ArticleRepository, never, ReaderStoreConcurrency> =>
   Layer.effect(
-    Articles,
+    ArticleRepository,
     Effect.gen(function* () {
       const lock = yield* ReaderStoreConcurrency;
       const articles = makeArticles(db, lock);
@@ -537,25 +544,27 @@ const makeHandler = (
 ) => {
   const services = Layer.mergeAll(
     articles,
-    SubscriptionsLive,
-    ExtractionSettingsLive,
-    ReaderCredentialsLive,
-    syndication,
-    Layer.succeed(ContentProcessor, {
-      process: (content) => Effect.succeed(content),
+    FeedRepositoryLive,
+    SettingsRepositoryLive,
+    feedSource,
+    Layer.succeed(DocumentSantize, {
+      sanitize: () => Effect.succeed('<p>Body</p>'),
     }),
-    Layer.succeed(WebpageFetcher, {
-      fetch: () => Effect.succeed('<html><body><p>Body</p></body></html>'),
+    Layer.succeed(WebpageFetcherFactory, {
+      forOwner: () =>
+        Effect.succeed(
+          Layer.succeed(WebpageFetcher, {
+            fetch: () =>
+              Effect.succeed('<html><body><p>Body</p></body></html>'),
+          })
+        ),
     }),
     articleExtractor,
+    HtmlParserLive,
     HttpFetchLive
   ).pipe(
     Layer.provide(
-      Layer.mergeAll(
-        Layer.succeed(Database, db),
-        CredentialCryptoLive.pipe(Layer.provide(makeConfig())),
-        ReaderStoreConcurrencyLive
-      )
+      Layer.mergeAll(Layer.succeed(Database, db), ReaderStoreConcurrencyLive)
     )
   );
   const routes = AppLive.pipe(
@@ -576,7 +585,11 @@ it.effect('serves authenticated owner-scoped library operations', () =>
     (db) =>
       Effect.promise(async () => {
         const options = await setupDatabase(db);
-        const { handler, dispose } = makeHandler(db, options, ArticlesLive);
+        const { handler, dispose } = makeHandler(
+          db,
+          options,
+          ArticleRepositoryLive
+        );
         try {
           await verifyLibrary(handler);
         } finally {

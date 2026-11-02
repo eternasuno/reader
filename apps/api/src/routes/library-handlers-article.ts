@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { Articles } from '../../../../packages/business/src/port/reader-store.ts';
+import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
 import {
   addArticle,
   extractArticle,
@@ -44,7 +44,7 @@ const laterRefresh = ({ query }: HandlerRequest<'laterRefresh'>) =>
 const laterUnread = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const articles = yield* Articles;
+      const articles = yield* ArticleRepository;
 
       return { count: yield* articles.unreadLater(owner) };
     })

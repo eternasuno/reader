@@ -109,6 +109,39 @@ export const pinnedAddressLookup =
     callback(null, address, 4);
   };
 
+const lookupPublicAddress = async (
+  hostname: string,
+  options: LookupOptions,
+  callback: LookupCallback
+): Promise<void> => {
+  let address: string;
+
+  try {
+    const records = await lookup(hostname, { all: true, family: 4 });
+    address = selectPublicAddress(records.map((record) => record.address));
+  } catch (cause) {
+    callback(cause as NodeJS.ErrnoException, '');
+
+    return;
+  }
+
+  if (options.all) {
+    callback(null, [{ address, family: 4 }]);
+
+    return;
+  }
+
+  callback(null, address, 4);
+};
+
+export const publicAddressLookup = (
+  hostname: string,
+  options: LookupOptions,
+  callback: LookupCallback
+): void => {
+  void lookupPublicAddress(hostname, options, callback);
+};
+
 const resolvePinnedAddress = (
   hostname: string
 ): Effect.Effect<string, FetchFailure> =>
@@ -173,20 +206,20 @@ const sendHop = (
   Effect.gen(function* () {
     const address = yield* resolvePinnedAddress(url.hostname);
     const dispatcher = yield* acquireDispatcher(address);
+    const client = HttpClient.withScope(yield* HttpClient.HttpClient);
 
-    return yield* HttpClient.execute(
-      HttpClientRequest.get(url, { headers: request.headers })
-    ).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.RequestInit, {
-        dispatcher,
-        redirect: request.redirect ?? 'manual',
-      } as globalThis.RequestInit),
-      Effect.mapError(
-        (cause) => new FetchFailure({ message: 'Request failed', cause })
-      )
-    );
-  });
+    return yield* client
+      .execute(HttpClientRequest.get(url, { headers: request.headers }))
+      .pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, {
+          dispatcher,
+          redirect: request.redirect ?? 'manual',
+        } as globalThis.RequestInit),
+        Effect.mapError(
+          (cause) => new FetchFailure({ message: 'Request failed', cause })
+        )
+      );
+  }).pipe(Effect.provide(FetchHttpClient.layer));
 
 type Hop =
   | { readonly _tag: 'redirect'; readonly url: URL }

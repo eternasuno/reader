@@ -109,7 +109,6 @@ API variables belong in `apps/api/.env`:
 | `SURREAL_DATABASE` | `app` | SurrealDB database |
 | `BETTER_AUTH_SECRET` | — | Better Auth signing secret |
 | `BETTER_AUTH_URL` | `http://localhost:3000` | Canonical public site origin used for auth URLs |
-| `READER_ENCRYPTION_KEY` | — | 32 random bytes in base64 used to encrypt/decrypt reader API keys; required for Jina key storage, not for browser extraction |
 
 Deploy the frontend and `/api` on the same public origin. In development and preview, Vite provides the `/api` proxy.
 

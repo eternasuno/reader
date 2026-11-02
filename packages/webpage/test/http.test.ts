@@ -6,6 +6,7 @@ import {
   isPublicIPv4,
   parsePublicUrl,
   pinnedAddressLookup,
+  publicAddressLookup,
   selectPublicAddress,
 } from '../src/http';
 
@@ -28,6 +29,23 @@ const textFetch =
   (body: string, headers: Record<string, string> = {}) =>
   () =>
     Promise.resolve(new Response(body, { status: 200, headers }));
+
+const streamingRedirect = (
+  events: string[],
+  location: string,
+  signal: AbortSignal | null | undefined
+) => {
+  const body = new ReadableStream<Uint8Array>({
+    cancel: () => {
+      events.push('cancel:redirect');
+    },
+  });
+  signal?.addEventListener('abort', () => {
+    void body.cancel();
+  });
+
+  return new Response(body, { status: 302, headers: { location } });
+};
 
 it('rejects unsafe URLs and private or mixed DNS results', () => {
   for (const ip of [
@@ -66,6 +84,16 @@ it('pins the validated address for single and all lookups', () => {
   ]);
 });
 
+it('resolves public addresses and rejects private ones during lookup', async () => {
+  const resolve = (hostname: string) =>
+    new Promise<readonly unknown[]>((resolve) => {
+      publicAddressLookup(hostname, {}, (...args) => resolve(args));
+    });
+  expect(await resolve('8.8.8.8')).toEqual([null, '8.8.8.8', 4]);
+  const [error] = await resolve('127.0.0.1');
+  expect(error).toBeInstanceOf(Error);
+});
+
 it.effect('keeps the public URL and uses a scoped dispatcher', () =>
   Effect.gen(function* () {
     let seen: { url: string; init: FetchInit | undefined } | undefined;
@@ -87,45 +115,42 @@ it.effect('keeps the public URL and uses a scoped dispatcher', () =>
   })
 );
 
-it.effect('follows three redirects and reports the final address', () =>
-  Effect.gen(function* () {
-    const responses = [
-      new Response(null, {
-        status: 302,
-        headers: { location: 'http://8.8.8.9/one' },
-      }),
-      new Response(null, {
-        status: 301,
-        headers: { location: 'http://1.1.1.1/two' },
-      }),
-      new Response(null, {
-        status: 307,
-        headers: { location: 'http://9.9.9.9/three' },
-      }),
-      new Response('final', { status: 200 }),
-    ];
-    const seen: string[] = [];
-    const fetchImpl = (input: FetchInput) => {
-      seen.push(String(input));
-      const response = responses.shift();
-      if (!response) {
-        throw new Error('Unexpected request');
-      }
+it.effect(
+  'follows three redirects, releasing each body, to the final address',
+  () =>
+    Effect.gen(function* () {
+      const locations = [
+        'http://8.8.8.9/one',
+        'http://1.1.1.1/two',
+        'http://9.9.9.9/three',
+      ];
+      const events: string[] = [];
+      const fetchImpl = (input: FetchInput, init?: FetchInit) => {
+        const url = String(input);
+        events.push(`request:${url}`);
+        const location = locations.shift();
 
-      return Promise.resolve(response);
-    };
-    const result = yield* fetchPublicText(request).pipe(
-      withFetch(fetchImpl as typeof globalThis.fetch)
-    );
-    expect(result.body).toBe('final');
-    expect(result.url).toBe('http://9.9.9.9/three');
-    expect(seen).toEqual([
-      'http://8.8.8.8/page',
-      'http://8.8.8.9/one',
-      'http://1.1.1.1/two',
-      'http://9.9.9.9/three',
-    ]);
-  })
+        return Promise.resolve(
+          location
+            ? streamingRedirect(events, location, init?.signal)
+            : new Response('final', { status: 200 })
+        );
+      };
+      const result = yield* fetchPublicText(request).pipe(
+        withFetch(fetchImpl as typeof globalThis.fetch)
+      );
+      expect(result.body).toBe('final');
+      expect(result.url).toBe('http://9.9.9.9/three');
+      expect(events).toEqual([
+        'request:http://8.8.8.8/page',
+        'cancel:redirect',
+        'request:http://8.8.8.9/one',
+        'cancel:redirect',
+        'request:http://1.1.1.1/two',
+        'cancel:redirect',
+        'request:http://9.9.9.9/three',
+      ]);
+    })
 );
 
 it.effect('rejects a redirect to a private address', () =>

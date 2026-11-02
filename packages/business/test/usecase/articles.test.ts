@@ -3,24 +3,21 @@
 import { expect, it } from '@effect/vitest';
 import { type Context, Effect, Layer, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import {
-  Article,
-  ArticleId,
-  Feed,
-  FeedId,
-  OwnerId,
-} from '../../src/entity/model';
+import { Article } from '../../src/entity/article';
+import { Feed } from '../../src/entity/feed';
+import { ArticleId, FeedId, OwnerId } from '../../src/entity/object-value';
 import { ArticleExtractor } from '../../src/port/article-extractor';
-import { ReaderCredentials } from '../../src/port/reader-credentials';
 import {
   type ArticleBoundary,
   type ArticleQuery,
-  Articles,
-  Subscriptions,
-} from '../../src/port/reader-store';
+  ArticleRepository,
+} from '../../src/port/article-repository';
+import { FeedRepository } from '../../src/port/feed-repository';
+import { HtmlParseError, HtmlParser } from '../../src/port/html-parser';
 import {
   WebpageFetchError,
   WebpageFetcher,
+  WebpageFetcherFactory,
 } from '../../src/port/webpage-fetcher';
 import {
   addArticle,
@@ -99,6 +96,15 @@ const pagedStore =
     );
   };
 
+const pagedArticles = (items: readonly Article[]) => ({
+  listLater: pagedStore(items),
+  listFeeds: (
+    owner: OwnerId,
+    _feedId: FeedId | undefined,
+    query: ArticleQuery
+  ) => pagedStore(items)(owner, query),
+});
+
 const subscription = (id: FeedId): Feed =>
   Schema.decodeUnknownSync(Feed)({
     id,
@@ -108,38 +114,51 @@ const subscription = (id: FeedId): Feed =>
     updatedAt: '2026-01-01T00:00:00.000Z',
   });
 
+const parsedDocument = (html = ''): Document =>
+  ({ body: { innerHTML: html } }) as unknown as Document;
+
 const provide = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   layers: {
-    readonly articles?: Partial<Context.Service.Shape<typeof Articles>>;
-    readonly credentials?: Partial<
-      Context.Service.Shape<typeof ReaderCredentials>
+    readonly articles?: Partial<
+      Context.Service.Shape<typeof ArticleRepository>
     >;
     readonly fetcher?: Partial<Context.Service.Shape<typeof WebpageFetcher>>;
+    readonly parser?: Partial<Context.Service.Shape<typeof HtmlParser>>;
     readonly extractor?: Partial<
       Context.Service.Shape<typeof ArticleExtractor>
     >;
     readonly subscriptions?: Partial<
-      Context.Service.Shape<typeof Subscriptions>
+      Context.Service.Shape<typeof FeedRepository>
     >;
-  }
+  },
+  owner: OwnerId = alice
 ) =>
   effect.pipe(
     Effect.provide(
       Layer.mergeAll(
-        Layer.mock(Articles, layers.articles ?? {}),
-        Layer.mock(ReaderCredentials, layers.credentials ?? {}),
-        Layer.mock(WebpageFetcher, layers.fetcher ?? {}),
+        Layer.mock(ArticleRepository, layers.articles ?? {}),
+        Layer.mock(WebpageFetcherFactory, {
+          forOwner: (requested) => {
+            expect(requested).toBe(owner);
+
+            return Effect.succeed(
+              Layer.succeed(WebpageFetcher, {
+                fetch:
+                  layers.fetcher?.fetch ?? (() => Effect.die('must not fetch')),
+              })
+            );
+          },
+        }),
+        Layer.mock(HtmlParser, {
+          parse: () => Effect.succeed(parsedDocument()),
+          ...layers.parser,
+        }),
         Layer.mock(ArticleExtractor, layers.extractor ?? {}),
-        Layer.mock(Subscriptions, layers.subscriptions ?? {})
+        Layer.mock(FeedRepository, layers.subscriptions ?? {})
       )
     )
   );
-
-const jinaCredentials = () => ({
-  provider: () => Effect.succeed('jina' as const),
-  get: () => Effect.undefined,
-});
 
 it.effect('gets an article scoped to the requesting owner', () => {
   const item = makeArticle();
@@ -169,6 +188,7 @@ it.effect('gets an article scoped to the requesting owner', () => {
 });
 
 it.effect('adds an anonymous Jina article with normalized URL and body', () => {
+  const document = parsedDocument('<p>Body</p>');
   let saved: Article | undefined;
 
   return provide(
@@ -197,27 +217,26 @@ it.effect('adds an anonymous Jina article with normalized URL and body', () => {
           return Effect.succeed(items.map((item) => item.id));
         },
       },
-      credentials: jinaCredentials(),
       fetcher: {
-        fetch: (url, key, provider, endpoint) => {
-          expect([url, key, provider, endpoint]).toEqual([
-            'https://example.com/post',
-            undefined,
-            'jina',
-            undefined,
-          ]);
+        fetch: (url) => {
+          expect(url).toBe('https://example.com/post');
 
           return Effect.succeed('<html>raw</html>');
         },
       },
-      extractor: {
-        extract: (html, url) => {
-          expect([html, url]).toEqual([
-            '<html>raw</html>',
-            'https://example.com/post',
-          ]);
+      parser: {
+        parse: (html, url) => {
+          expect(html).toBe('<html>raw</html>');
+          expect(url?.href).toBe('https://example.com/post');
 
-          return Effect.succeed({ title: '  ', html: '<p>Body</p>' });
+          return Effect.succeed(document);
+        },
+      },
+      extractor: {
+        extract: (received) => {
+          expect(received).toBe(document);
+
+          return Effect.succeed({ title: '  ', content: '<p>Body</p>' });
         },
       },
     }
@@ -251,13 +270,12 @@ it.effect('keeps extracted description and published date when adding', () => {
           return Effect.succeed(items.map((item) => item.id));
         },
       },
-      credentials: jinaCredentials(),
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
         extract: () =>
           Effect.succeed({
             title: 'Post',
-            html: '<p>Body</p>',
+            content: '<p>Body</p>',
             description: 'Summary',
             publishedAt,
           }),
@@ -292,7 +310,6 @@ it.effect(
             return Effect.succeed(items.map((item) => item.id));
           },
         },
-        credentials: jinaCredentials(),
         fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
         extractor: {
           extract: () => {
@@ -300,7 +317,7 @@ it.effect(
 
             return Effect.succeed({
               title: 'Post',
-              html: '<p>Body</p>',
+              content: '<p>Body</p>',
               description: `Summary ${attempt}`,
             });
           },
@@ -329,10 +346,10 @@ it.effect('reports duplicate additions with the derived article id', () => {
           return Effect.succeed([]);
         },
       },
-      credentials: jinaCredentials(),
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
-        extract: () => Effect.succeed({ title: 'Post', html: '<p>Body</p>' }),
+        extract: () =>
+          Effect.succeed({ title: 'Post', content: '<p>Body</p>' }),
       },
     }
   );
@@ -348,10 +365,9 @@ it.effect('rejects an empty extracted body without saving', () =>
     }),
     {
       articles: { create: () => Effect.die('must not save an empty article') },
-      credentials: jinaCredentials(),
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
-        extract: () => Effect.succeed({ title: 'Post', html: '   ' }),
+        extract: () => Effect.succeed({ title: 'Post', content: '   ' }),
       },
     }
   )
@@ -365,7 +381,6 @@ it.effect('rejects malformed article URLs before contacting providers', () =>
     }),
     {
       articles: {},
-      credentials: { provider: () => Effect.die('must not read credentials') },
       fetcher: { fetch: () => Effect.die('must not fetch') },
       extractor: { extract: () => Effect.die('must not extract') },
     }
@@ -385,7 +400,6 @@ it.effect('preserves fetch failure codes while adding', () =>
     }),
     {
       articles: {},
-      credentials: jinaCredentials(),
       fetcher: {
         fetch: () =>
           Effect.fail(
@@ -393,6 +407,29 @@ it.effect('preserves fetch failure codes while adding', () =>
           ),
       },
       extractor: {},
+    }
+  )
+);
+
+it.effect('maps parser failures to extraction errors while adding', () =>
+  provide(
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        addArticle(alice, 'https://example.com/post')
+      );
+      expect(error._tag).toBe('ArticleExtractError');
+      expect(error._tag === 'ArticleExtractError' && error.error).toBe(
+        'Unable to extract article content; open the original page'
+      );
+    }),
+    {
+      articles: { create: () => Effect.die('must not save') },
+      fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
+      parser: {
+        parse: () =>
+          Effect.fail(new HtmlParseError({ error: 'malformed markup' })),
+      },
+      extractor: { extract: () => Effect.die('must not extract') },
     }
   )
 );
@@ -430,7 +467,6 @@ it.effect('saves a feed article copy without fetching or extracting', () => {
           return Effect.succeed(items.map((item) => item.id));
         },
       },
-      credentials: { provider: () => Effect.die('must not read credentials') },
       fetcher: { fetch: () => Effect.die('must not fetch') },
       extractor: { extract: () => Effect.die('must not extract') },
     }
@@ -534,9 +570,6 @@ it.effect(
       }),
       {
         articles: { find: () => Effect.succeed(Option.some(article)) },
-        credentials: {
-          provider: () => Effect.die('must not read credentials'),
-        },
         fetcher: { fetch: () => Effect.die('must not fetch') },
         extractor: { extract: () => Effect.die('must not extract') },
       }
@@ -554,7 +587,6 @@ it.effect('rejects extraction when the article has no URL', () =>
       articles: {
         find: () => Effect.succeed(Option.some(makeArticle())),
       },
-      credentials: { provider: () => Effect.die('must not read credentials') },
       fetcher: { fetch: () => Effect.die('must not fetch') },
     }
   )
@@ -580,10 +612,10 @@ it.effect('extracts, persists, and returns an article body', () => {
           return Effect.succeed(true);
         },
       },
-      credentials: jinaCredentials(),
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
-        extract: () => Effect.succeed({ title: 'Fresh', html: '<p>Fresh</p>' }),
+        extract: () =>
+          Effect.succeed({ title: 'Fresh', content: '<p>Fresh</p>' }),
       },
     }
   );
@@ -603,10 +635,10 @@ it.effect('treats a deleted article as missing after extraction', () =>
           ),
         saveExtracted: () => Effect.succeed(false),
       },
-      credentials: jinaCredentials(),
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
-        extract: () => Effect.succeed({ title: 'Fresh', html: '<p>Fresh</p>' }),
+        extract: () =>
+          Effect.succeed({ title: 'Fresh', content: '<p>Fresh</p>' }),
       },
     }
   )
@@ -628,7 +660,6 @@ it.effect('preserves fetch failure codes while extracting', () =>
             Option.some(makeArticle({ url: 'https://example.com/a' }))
           ),
       },
-      credentials: jinaCredentials(),
       fetcher: {
         fetch: () =>
           Effect.fail(
@@ -734,7 +765,6 @@ it.effect('pages thirty later articles and continues from the cursor', () => {
       expect(first.cursor).not.toBeNull();
       expect(first.boundary).toBe(first.cursor);
       expect(calls[0]).toEqual({
-        scope: { kind: 'later' },
         filter: 'all',
         limit: 31,
       });
@@ -748,7 +778,6 @@ it.effect('pages thirty later articles and continues from the cursor', () => {
       expect(second.boundary).toEqual(expect.any(String));
       expect(second.boundary).not.toBe(first.cursor);
       expect(calls[1]).toEqual({
-        scope: { kind: 'later' },
         filter: 'all',
         limit: 31,
         after: {
@@ -759,7 +788,7 @@ it.effect('pages thirty later articles and continues from the cursor', () => {
     }),
     {
       articles: {
-        list: (owner, query) => {
+        listLater: (owner, query) => {
           calls.push(query);
 
           return pagedStore(items)(owner, query);
@@ -789,28 +818,28 @@ it.effect('binds cursors to owner, scope, and filter', () => {
         expect((yield* Effect.flip(attempt))._tag).toBe('InvalidCursor');
       }
     }),
-    { articles: { list: pagedStore(items) } }
+    { articles: pagedArticles(items) }
   );
 });
 
 it.effect('lists feed articles in feed or all-feed scope', () => {
-  const calls: ArticleQuery[] = [];
+  const calls: (readonly [OwnerId, FeedId | undefined, ArticleQuery])[] = [];
   const checks: (readonly [OwnerId, FeedId])[] = [];
 
   return provide(
     Effect.gen(function* () {
       yield* listFeedArticles(alice, feed, 'unread');
       yield* listFeedArticles(alice, undefined, 'read');
-      expect(calls.map((call) => call.scope)).toEqual([
-        { kind: 'feeds', feedId: feed },
-        { kind: 'feeds' },
+      expect(calls.map(([, feedId, query]) => [feedId, query.filter])).toEqual([
+        [feed, 'unread'],
+        [undefined, 'read'],
       ]);
       expect(checks).toEqual([[alice, feed]]);
     }),
     {
       articles: {
-        list: (_owner, query) => {
-          calls.push(query);
+        listFeeds: (owner, feedId, query) => {
+          calls.push([owner, feedId, query]);
 
           return Effect.succeed([]);
         },
@@ -845,7 +874,6 @@ it.effect('refreshes through the original boundary article inclusively', () => {
       );
       expect(calls.slice(-2)).toEqual([
         {
-          scope: { kind: 'later' },
           filter: 'all',
           limit: 31,
           through: {
@@ -854,7 +882,6 @@ it.effect('refreshes through the original boundary article inclusively', () => {
           },
         },
         {
-          scope: { kind: 'later' },
           filter: 'all',
           limit: 31,
           through: {
@@ -870,7 +897,7 @@ it.effect('refreshes through the original boundary article inclusively', () => {
     }),
     {
       articles: {
-        list: (owner, query) => {
+        listLater: (owner, query) => {
           calls.push(query);
 
           return pagedStore(items)(owner, query);
@@ -898,7 +925,7 @@ it.effect('keeps a tail boundary on a final page without a cursor', () => {
         items.map((item) => item.id)
       );
     }),
-    { articles: { list: pagedStore(items) } }
+    { articles: pagedArticles(items) }
   );
 });
 
@@ -911,7 +938,7 @@ it.effect('reports no boundary for an empty page', () =>
         boundary: null,
       });
     }),
-    { articles: { list: () => Effect.succeed([]) } }
+    { articles: { listLater: () => Effect.succeed([]) } }
   )
 );
 
@@ -945,7 +972,7 @@ it.effect('refreshes from a boundary whose article was removed', () => {
     }),
     {
       articles: {
-        list: (owner, query) => {
+        listLater: (owner, query) => {
           calls.push(query);
 
           return pagedStore(stored)(owner, query);
@@ -976,7 +1003,7 @@ it.effect('rejects feed pages once the feed no longer exists', () => {
       expect(refreshError._tag).toBe('SubscriptionNotFound');
     }),
     {
-      articles: { list: pagedStore(items) },
+      articles: pagedArticles(items),
       subscriptions: {
         find: (owner, id) => {
           expect([owner, id]).toEqual([alice, feed]);

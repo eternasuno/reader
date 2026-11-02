@@ -1,26 +1,25 @@
+import {
+  FeedParser,
+  type ParsedArticle,
+  type ParsedFeed,
+  ParseSubscriptionError,
+} from '@reader/business';
 import { DateTime, Effect, Layer, Match } from 'effect';
 import { type AnyFeed, parseFeed as parseSyndication } from 'feedsmith';
-import {
-  FetchSubscriptionError,
-  ParseSubscriptionError,
-  type SubscriptionEntry,
-  type SyndicatedFeed,
-  Syndication,
-} from '../../../../packages/business/src/port/syndication.ts';
-import { fetchFeed } from '../infrastructure/feed-fetch';
 
 const MAX_TITLE_LENGTH = 500;
 
 const MAX_FIELD_LENGTH = 100_000;
 
-const UNSUPPORTED_DECLARATION = /<!DOCTYPE|<!ENTITY/i;
+const UNSUPPORTED_DECLARATION = /<!(?:DOCTYPE|ENTITY)\b/i;
+
+const SKIPPED_XML_MARKUP =
+  /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>/gi;
 
 type RawEntry = {
   readonly title: string | undefined;
   readonly description: string | undefined;
   readonly content: string | undefined;
-  readonly descriptionText: boolean;
-  readonly contentText: boolean;
   readonly url: string | undefined;
   readonly date: string | undefined;
 };
@@ -52,6 +51,25 @@ const HTML_MEDIA_TYPES = new Set([
   'application/xhtml+xml',
 ]);
 
+const hasUnsupportedDeclaration = (content: string) => {
+  let index = 0;
+
+  for (const skipped of content.matchAll(SKIPPED_XML_MARKUP)) {
+    if (UNSUPPORTED_DECLARATION.test(content.slice(index, skipped.index))) {
+      return true;
+    }
+
+    index = skipped.index + skipped[0].length;
+  }
+
+  return UNSUPPORTED_DECLARATION.test(content.slice(index));
+};
+
+const stripByteOrderMark = (content: string) =>
+  content.startsWith('\uFEFF') ? content.slice(1) : content;
+
+const isJsonContent = (content: string) => content.trimStart().startsWith('{');
+
 const mediaType = (type: string | undefined) =>
   type?.split(';')[0]?.trim().toLowerCase() ?? '';
 
@@ -61,12 +79,16 @@ const isPlainMediaType = (type: string | undefined) =>
 const isHtmlMediaType = (type: string | undefined) =>
   HTML_MEDIA_TYPES.has(mediaType(type));
 
+const escapeText = (value: string) =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+
 const rssEntry = (item: RssItem): RawEntry => ({
   title: item.title,
   description: item.description,
   content: item.content?.encoded,
-  descriptionText: false,
-  contentText: false,
   url: item.link,
   date: item.pubDate,
 });
@@ -75,14 +97,21 @@ const rdfEntry = (item: RdfItem): RawEntry => ({
   title: item.title,
   description: item.description,
   content: item.content?.encoded,
-  descriptionText: false,
-  contentText: false,
   url: item.link,
   date: item.dc?.dates?.[0],
 });
 
-const atomText = (value: string | undefined, type: string | undefined) =>
-  isPlainMediaType(type) || isHtmlMediaType(type) ? value : undefined;
+const atomText = (value: string | undefined, type: string | undefined) => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (isPlainMediaType(type)) {
+    return escapeText(value);
+  }
+
+  return isHtmlMediaType(type) ? value : undefined;
+};
 
 const atomContent = (content: AtomItem['content']) =>
   content === undefined || content.src !== undefined
@@ -106,18 +135,19 @@ const atomEntry = (item: AtomItem): RawEntry => ({
   title: item.title?.value,
   description: atomText(item.summary?.value, item.summary?.type),
   content: atomContent(item.content),
-  descriptionText: isPlainMediaType(item.summary?.type),
-  contentText: isPlainMediaType(item.content?.type),
   url: atomUrl(item.links),
   date: item.published,
 });
 
 const jsonEntry = (item: JsonItem): RawEntry => ({
   title: item.title,
-  description: item.summary,
-  content: item.content_html ?? item.content_text,
-  descriptionText: true,
-  contentText: item.content_html === undefined,
+  description:
+    item.summary === undefined ? undefined : escapeText(item.summary),
+  content:
+    item.content_html ??
+    (item.content_text === undefined
+      ? undefined
+      : escapeText(item.content_text)),
   url: item.url,
   date: item.date_published,
 });
@@ -139,13 +169,13 @@ const rawEntries = (parsed: AnyFeed): readonly RawEntry[] =>
     Match.exhaustive
   );
 
-const toUrl = (value: string | undefined, base: string): URL | undefined => {
+const toUrl = (value: string | undefined, sourceUrl: URL): URL | undefined => {
   if (value === undefined || value.trim() === '') {
     return undefined;
   }
 
   try {
-    const url = new URL(value, base);
+    const url = new URL(value, sourceUrl);
     if (
       (url.protocol !== 'http:' && url.protocol !== 'https:') ||
       url.username !== '' ||
@@ -171,16 +201,14 @@ const toPublishedAt = (value: string | undefined) => {
 const cleanTitle = (title: string | undefined) =>
   title?.trim().slice(0, MAX_TITLE_LENGTH) || 'Untitled';
 
-const toEntry = (item: RawEntry, base: string): SubscriptionEntry => {
-  const url = toUrl(item.url, base);
+const toEntry = (item: RawEntry, sourceUrl: URL): ParsedArticle => {
+  const url = toUrl(item.url, sourceUrl);
   const publishedAt = toPublishedAt(item.date);
   const description = item.description?.slice(0, MAX_FIELD_LENGTH);
   const content = item.content?.slice(0, MAX_FIELD_LENGTH);
 
   return {
     title: cleanTitle(item.title),
-    descriptionText: item.descriptionText,
-    contentText: item.contentText,
     ...(url === undefined ? {} : { url }),
     ...(description === undefined ? {} : { description }),
     ...(content === undefined ? {} : { content }),
@@ -204,46 +232,33 @@ const feedDescription = (parsed: AnyFeed) => {
   return description?.slice(0, MAX_TITLE_LENGTH);
 };
 
-const feedEntries = (parsed: AnyFeed, base: string) =>
-  rawEntries(parsed).map((item) => toEntry(item, base));
+const feedEntries = (parsed: AnyFeed, sourceUrl: URL) =>
+  rawEntries(parsed).map((item) => toEntry(item, sourceUrl));
 
-export const parseSubscriptionFeed = (
-  content: string,
-  base: string
-): SyndicatedFeed => {
-  if (UNSUPPORTED_DECLARATION.test(content)) {
+export const parseFeed = (content: string, sourceUrl: URL): ParsedFeed => {
+  const document = stripByteOrderMark(content);
+
+  if (!isJsonContent(document) && hasUnsupportedDeclaration(document)) {
     throw new Error('Unsupported XML declarations');
   }
 
-  const parsed = parseSyndication(content);
+  const parsed = parseSyndication(document);
   const description = feedDescription(parsed);
 
   return {
     title: feedTitle(parsed),
     ...(description === undefined ? {} : { description }),
-    articles: feedEntries(parsed, base),
+    articles: feedEntries(parsed, sourceUrl),
   };
 };
 
-export const SyndicationLive = Layer.succeed(Syndication, {
-  fetch: (url) =>
-    Effect.gen(function* () {
-      const document = yield* fetchFeed(url.href).pipe(
-        Effect.catchTag('FetchFailure', () =>
-          Effect.fail(
-            new FetchSubscriptionError({
-              message: 'Failed to fetch the subscription feed',
-            })
-          )
-        )
-      );
+const parse = (content: string, sourceUrl: URL) =>
+  Effect.try({
+    try: () => parseFeed(content, sourceUrl),
+    catch: () =>
+      new ParseSubscriptionError({
+        message: 'Failed to parse the subscription feed',
+      }),
+  });
 
-      return yield* Effect.try({
-        try: () => parseSubscriptionFeed(document.content, document.url),
-        catch: () =>
-          new ParseSubscriptionError({
-            message: 'Failed to parse the subscription feed',
-          }),
-      });
-    }),
-});
+export const FeedParserLive = Layer.succeed(FeedParser, { parse });

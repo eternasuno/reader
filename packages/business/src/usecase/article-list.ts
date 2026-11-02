@@ -1,25 +1,28 @@
 import { Effect, Option, Schema } from 'effect';
-import {
-  type Article,
-  ArticleFilter,
-  ArticleId,
-  type ArticlePage,
-  FeedId,
-  OwnerId,
-} from '../entity/model';
+import { Article } from '../entity/article';
+import { ArticleId, FeedId, OwnerId } from '../entity/object-value';
 import {
   type ArticleBoundary,
+  ArticleFilter,
   type ArticleQuery,
-  type ArticleReadError,
-  type ArticleScope,
-  Articles,
+  ArticleRepository,
+} from '../port/article-repository';
+import {
+  FeedRepository,
   type SubscriptionReadError,
-  Subscriptions,
-} from '../port/reader-store';
+} from '../port/feed-repository';
 import { InvalidCursor } from './article-errors';
 import { SubscriptionNotFound } from './subscriptions';
 
 const PAGE_SIZE = 30;
+
+export const ArticlePage = Schema.Struct({
+  items: Schema.Array(Article),
+  cursor: Schema.NullOr(Schema.String),
+  boundary: Schema.NullOr(Schema.String),
+});
+
+export type ArticlePage = typeof ArticlePage.Type;
 
 const CursorPayload = Schema.Struct({
   version: Schema.Literals([1]),
@@ -38,6 +41,8 @@ const CursorPayload = Schema.Struct({
   }),
 });
 
+type CursorScope = (typeof CursorPayload.Type)['scope'];
+
 const encodeBase64 = (value: string): string => {
   let binary = '';
   for (const byte of new TextEncoder().encode(value)) {
@@ -54,20 +59,13 @@ const decodeBase64 = (value: string): string => {
   return new TextDecoder().decode(bytes);
 };
 
-const scopeKey = (scope: ArticleScope): string =>
+const scopeKey = (scope: CursorScope): string =>
   scope.kind === 'later' ? 'later' : `feeds:${scope.feedId ?? ''}`;
 
-const scopePayload = (scope: ArticleScope) => {
-  if (scope.kind === 'later') {
-    return { kind: 'later' as const };
-  }
+const laterScope: CursorScope = { kind: 'later' };
 
-  if (scope.feedId === undefined) {
-    return { kind: 'feeds' as const };
-  }
-
-  return { kind: 'feeds' as const, feedId: scope.feedId };
-};
+const feedScope = (feedId: FeedId | undefined): CursorScope =>
+  feedId === undefined ? { kind: 'feeds' } : { kind: 'feeds', feedId };
 
 const boundaryOf = (article: Article): ArticleBoundary => ({
   publishedAt: Schema.encodeSync(Schema.DateTimeUtcFromString)(
@@ -78,14 +76,14 @@ const boundaryOf = (article: Article): ArticleBoundary => ({
 
 const encodeCursor = (
   owner: OwnerId,
-  scope: ArticleScope,
+  scope: CursorScope,
   filter: ArticleFilter,
   after: ArticleBoundary
 ): string => {
   const payload = {
     version: 1 as const,
     owner,
-    scope: scopePayload(scope),
+    scope,
     filter,
     after: {
       publishedAt: Schema.decodeSync(Schema.DateTimeUtcFromString)(
@@ -100,23 +98,9 @@ const encodeCursor = (
   );
 };
 
-type CursorScope = (typeof CursorPayload.Type)['scope'];
-
-const asScope = (scope: CursorScope): ArticleScope => {
-  if (scope.kind === 'later') {
-    return { kind: 'later' };
-  }
-
-  if (scope.feedId === undefined) {
-    return { kind: 'feeds' };
-  }
-
-  return { kind: 'feeds', feedId: scope.feedId };
-};
-
 const decodeCursor = (
   owner: OwnerId,
-  scope: ArticleScope,
+  scope: CursorScope,
   filter: ArticleFilter,
   value: string
 ): Effect.Effect<ArticleBoundary, InvalidCursor> =>
@@ -128,7 +112,7 @@ const decodeCursor = (
       if (
         payload.owner !== owner ||
         payload.filter !== filter ||
-        scopeKey(asScope(payload.scope)) !== scopeKey(scope)
+        scopeKey(payload.scope) !== scopeKey(scope)
       ) {
         throw new Error('cursor does not match the requested page');
       }
@@ -145,7 +129,7 @@ const decodeCursor = (
 
 const decodeOptionalCursor = (
   owner: OwnerId,
-  scope: ArticleScope,
+  scope: CursorScope,
   filter: ArticleFilter,
   value: string | undefined
 ): Effect.Effect<ArticleBoundary | undefined, InvalidCursor> =>
@@ -154,21 +138,19 @@ const decodeOptionalCursor = (
     : decodeCursor(owner, scope, filter, value);
 
 const pageQuery = (
-  scope: ArticleScope,
   filter: ArticleFilter,
   after: ArticleBoundary | undefined,
-  boundary: ArticleBoundary | undefined
+  through: ArticleBoundary | undefined
 ): ArticleQuery => ({
-  scope,
   filter,
   limit: PAGE_SIZE + 1,
   ...(after === undefined ? {} : { after }),
-  ...(boundary === undefined ? {} : { through: boundary }),
+  ...(through === undefined ? {} : { through }),
 });
 
 const tailToken = (
   owner: OwnerId,
-  scope: ArticleScope,
+  scope: CursorScope,
   filter: ArticleFilter,
   items: readonly Article[]
 ): string | null => {
@@ -179,65 +161,31 @@ const tailToken = (
     : encodeCursor(owner, scope, filter, boundaryOf(last));
 };
 
-const listPage = (
+const pageOf = (
   owner: OwnerId,
-  scope: ArticleScope,
+  scope: CursorScope,
   filter: ArticleFilter,
-  cursor: string | undefined,
-  through: string | undefined
-): Effect.Effect<ArticlePage, InvalidCursor | ArticleReadError, Articles> =>
-  Effect.gen(function* () {
-    const articles = yield* Articles;
-    const after = yield* decodeOptionalCursor(owner, scope, filter, cursor);
-    const boundary = yield* decodeOptionalCursor(owner, scope, filter, through);
-    const rows = yield* articles.list(
-      owner,
-      pageQuery(scope, filter, after, boundary)
-    );
-    const items = rows.slice(0, PAGE_SIZE);
-    const tail = tailToken(owner, scope, filter, items);
+  rows: readonly Article[]
+): ArticlePage => {
+  const items = rows.slice(0, PAGE_SIZE);
+  const tail = tailToken(owner, scope, filter, items);
 
-    return {
-      items,
-      cursor: rows.length > PAGE_SIZE ? tail : null,
-      boundary: tail,
-    };
-  });
+  return {
+    items,
+    cursor: rows.length > PAGE_SIZE ? tail : null,
+    boundary: tail,
+  };
+};
 
-const feedScope = (feedId: FeedId | undefined): ArticleScope =>
-  feedId === undefined ? { kind: 'feeds' } : { kind: 'feeds', feedId };
+const continuationOf = (
+  rows: readonly Article[]
+): ArticleBoundary | undefined => {
+  const last = rows.at(-1);
 
-const refreshPage = (
-  owner: OwnerId,
-  scope: ArticleScope,
-  filter: ArticleFilter,
-  boundary: ArticleBoundary
-): Effect.Effect<readonly Article[], ArticleReadError, Articles> =>
-  Effect.gen(function* () {
-    const articles = yield* Articles;
-    const items: Article[] = [];
-    let after: ArticleBoundary | undefined;
-
-    while (true) {
-      const query: ArticleQuery = {
-        scope,
-        filter,
-        limit: PAGE_SIZE + 1,
-        through: boundary,
-        ...(after === undefined ? {} : { after }),
-      };
-      const rows = yield* articles.list(owner, query);
-      items.push(...rows);
-      const last = rows.at(-1);
-      if (rows.length <= PAGE_SIZE || last === undefined) {
-        break;
-      }
-
-      after = boundaryOf(last);
-    }
-
-    return items;
-  });
+  return rows.length > PAGE_SIZE && last !== undefined
+    ? boundaryOf(last)
+    : undefined;
+};
 
 export const listLaterArticles = Effect.fn('articles.listLater')(function* (
   owner: OwnerId,
@@ -245,7 +193,20 @@ export const listLaterArticles = Effect.fn('articles.listLater')(function* (
   cursor?: string,
   through?: string
 ) {
-  return yield* listPage(owner, { kind: 'later' }, filter, cursor, through);
+  const articles = yield* ArticleRepository;
+  const after = yield* decodeOptionalCursor(owner, laterScope, filter, cursor);
+  const boundary = yield* decodeOptionalCursor(
+    owner,
+    laterScope,
+    filter,
+    through
+  );
+  const rows = yield* articles.listLater(
+    owner,
+    pageQuery(filter, after, boundary)
+  );
+
+  return pageOf(owner, laterScope, filter, rows);
 });
 
 const requireFeed = (
@@ -254,10 +215,10 @@ const requireFeed = (
 ): Effect.Effect<
   void,
   SubscriptionNotFound | SubscriptionReadError,
-  Subscriptions
+  FeedRepository
 > =>
   Effect.gen(function* () {
-    const subscriptions = yield* Subscriptions;
+    const subscriptions = yield* FeedRepository;
     if (Option.isNone(yield* subscriptions.find(owner, feedId))) {
       return yield* new SubscriptionNotFound({
         message: 'Subscription not found',
@@ -277,15 +238,39 @@ export const listFeedArticles = Effect.fn('articles.listFeeds')(function* (
     yield* requireFeed(owner, feedId);
   }
 
-  return yield* listPage(owner, feedScope(feedId), filter, cursor, through);
+  const articles = yield* ArticleRepository;
+  const scope = feedScope(feedId);
+  const after = yield* decodeOptionalCursor(owner, scope, filter, cursor);
+  const boundary = yield* decodeOptionalCursor(owner, scope, filter, through);
+  const rows = yield* articles.listFeeds(
+    owner,
+    feedId,
+    pageQuery(filter, after, boundary)
+  );
+
+  return pageOf(owner, scope, filter, rows);
 });
 
 export const refreshLaterArticles = Effect.fn('articles.refreshLater')(
   function* (owner: OwnerId, filter: ArticleFilter, through: string) {
-    const scope: ArticleScope = { kind: 'later' };
-    const boundary = yield* decodeCursor(owner, scope, filter, through);
+    const boundary = yield* decodeCursor(owner, laterScope, filter, through);
+    const articles = yield* ArticleRepository;
+    const items: Article[] = [];
+    let after: ArticleBoundary | undefined;
 
-    return yield* refreshPage(owner, scope, filter, boundary);
+    while (true) {
+      const rows = yield* articles.listLater(
+        owner,
+        pageQuery(filter, after, boundary)
+      );
+      items.push(...rows);
+      const next = continuationOf(rows);
+      if (next === undefined) {
+        return items;
+      }
+
+      after = next;
+    }
   }
 );
 
@@ -296,13 +281,29 @@ export const refreshFeedArticles = Effect.fn('articles.refreshFeeds')(
     filter: ArticleFilter,
     through: string
   ) {
-    const scope = feedScope(feedId);
     if (feedId !== undefined) {
       yield* requireFeed(owner, feedId);
     }
 
+    const scope = feedScope(feedId);
     const boundary = yield* decodeCursor(owner, scope, filter, through);
+    const articles = yield* ArticleRepository;
+    const items: Article[] = [];
+    let after: ArticleBoundary | undefined;
 
-    return yield* refreshPage(owner, scope, filter, boundary);
+    while (true) {
+      const rows = yield* articles.listFeeds(
+        owner,
+        feedId,
+        pageQuery(filter, after, boundary)
+      );
+      items.push(...rows);
+      const next = continuationOf(rows);
+      if (next === undefined) {
+        return items;
+      }
+
+      after = next;
+    }
   }
 );

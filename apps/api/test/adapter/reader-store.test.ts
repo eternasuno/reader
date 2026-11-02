@@ -4,23 +4,33 @@ import { createHash, randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
 import { Effect, Layer, Option, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
-import * as Model from '../../../../packages/business/src/entity/model.ts';
-import * as Port from '../../../../packages/business/src/port/reader-store.ts';
+import { Article } from '../../../../packages/business/src/entity/article.ts';
+import { Feed } from '../../../../packages/business/src/entity/feed.ts';
+import {
+  ArticleId,
+  FeedId,
+  OwnerId,
+} from '../../../../packages/business/src/entity/object-value.ts';
+import {
+  type ArticleQuery,
+  ArticleRepository,
+} from '../../../../packages/business/src/port/article-repository.ts';
+import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
 import {
   ReaderStoreLive,
   readerStoreSchema,
 } from '../../src/adapter/reader-store';
 import { createSurreal, Database } from '../../src/infrastructure/db';
 
-type Store = Port.Articles | Port.Subscriptions | Database;
+type Store = ArticleRepository | FeedRepository | Database;
 
 const hash = (...values: string[]) =>
   createHash('sha256').update(JSON.stringify(values)).digest('hex');
 
-const owner = (value: string) => Schema.decodeSync(Model.OwnerId)(value);
+const owner = (value: string) => Schema.decodeSync(OwnerId)(value);
 
 const feed = (ownerId: string, url: string, updatedAt: string, id?: string) =>
-  Schema.decodeSync(Model.Feed)({
+  Schema.decodeSync(Feed)({
     id: id ?? hash(ownerId, url),
     ownerId,
     url,
@@ -39,7 +49,7 @@ const article = (
     readonly title?: string;
   } = {}
 ) =>
-  Schema.decodeSync(Model.Article)({
+  Schema.decodeSync(Article)({
     id: options.id ?? hash(ownerId, seed),
     ownerId,
     ...(options.feedId === undefined ? {} : { feedId: options.feedId }),
@@ -50,23 +60,17 @@ const article = (
 
 const hashA = hash('tie-a');
 const hashB = hash('tie-b');
-const tieFirstId = Schema.decodeSync(Model.ArticleId)(
-  hashA < hashB ? hashA : hashB
-);
-const tieSecondId = Schema.decodeSync(Model.ArticleId)(
-  hashA < hashB ? hashB : hashA
-);
-const missingFeedId = Schema.decodeSync(Model.FeedId)(hash('missing'));
-const missingArticleId = Schema.decodeSync(Model.ArticleId)(hash('missing'));
+const tieFirstId = Schema.decodeSync(ArticleId)(hashA < hashB ? hashA : hashB);
+const tieSecondId = Schema.decodeSync(ArticleId)(hashA < hashB ? hashB : hashA);
+const missingFeedId = Schema.decodeSync(FeedId)(hash('missing'));
+const missingArticleId = Schema.decodeSync(ArticleId)(hash('missing'));
 
-const feedsQuery = (limit = 100): Port.ArticleQuery => ({
-  scope: { kind: 'feeds' },
+const feedsQuery = (limit = 100): ArticleQuery => ({
   filter: 'all',
   limit,
 });
 
-const laterQuery: Port.ArticleQuery = {
-  scope: { kind: 'later' },
+const laterQuery: ArticleQuery = {
   filter: 'all',
   limit: 100,
 };
@@ -111,7 +115,7 @@ const runCheck = <A, E>(check: (db: Surreal) => Effect.Effect<A, E, Store>) =>
 it.effect('creates subscriptions idempotently with owner-scoped identity', () =>
   runCheck((db) =>
     Effect.gen(function* () {
-      const subscriptions = yield* Port.Subscriptions;
+      const subscriptions = yield* FeedRepository;
       const alice = owner('alice');
       const bob = owner('bob');
       const url = 'https://example.com/feed.xml';
@@ -149,8 +153,8 @@ it.effect(
   () =>
     runCheck((db) =>
       Effect.gen(function* () {
-        const articles = yield* Port.Articles;
-        const subscriptions = yield* Port.Subscriptions;
+        const articles = yield* ArticleRepository;
+        const subscriptions = yield* FeedRepository;
         const alice = owner('alice');
         const bob = owner('bob');
         const now = '2026-01-01T00:00:00.000Z';
@@ -175,8 +179,12 @@ it.effect(
         expect(yield* articles.find(alice, later.id)).toEqual(
           Option.some(later)
         );
-        expect(yield* articles.list(alice, feedsQuery())).toEqual([]);
-        expect(yield* articles.list(bob, feedsQuery())).toEqual([bobItem]);
+        expect(
+          yield* articles.listFeeds(alice, undefined, feedsQuery())
+        ).toEqual([]);
+        expect(yield* articles.listFeeds(bob, undefined, feedsQuery())).toEqual(
+          [bobItem]
+        );
         expect(
           yield* query<{ total: number }>(
             db,
@@ -191,8 +199,8 @@ it.effect(
 it.effect('writes atomically and preserves duplicates and read state', () =>
   runCheck(() =>
     Effect.gen(function* () {
-      const articles = yield* Port.Articles;
-      const subscriptions = yield* Port.Subscriptions;
+      const articles = yield* ArticleRepository;
+      const subscriptions = yield* FeedRepository;
       const alice = owner('alice');
       const subscribed = feed(
         'alice',
@@ -240,7 +248,9 @@ it.effect('writes atomically and preserves duplicates and read state', () =>
       expect(yield* articles.create(alice, [fourth, fourth])).toEqual([
         fourth.id,
       ]);
-      expect(yield* articles.list(alice, feedsQuery())).toHaveLength(4);
+      expect(
+        yield* articles.listFeeds(alice, undefined, feedsQuery())
+      ).toHaveLength(4);
       expect(yield* articles.create(alice, [])).toEqual([]);
     })
   )
@@ -249,8 +259,8 @@ it.effect('writes atomically and preserves duplicates and read state', () =>
 it.effect('orders ties and applies inclusive through and exclusive after', () =>
   runCheck(() =>
     Effect.gen(function* () {
-      const articles = yield* Port.Articles;
-      const subscriptions = yield* Port.Subscriptions;
+      const articles = yield* ArticleRepository;
+      const subscriptions = yield* FeedRepository;
       const alice = owner('alice');
       const subscribed = feed(
         'alice',
@@ -281,16 +291,28 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
       yield* articles.create(alice, [newest, tieFirst, tieSecond, oldest]);
 
       const expected = [newest.id, tieFirstId, tieSecondId, oldest.id];
-      expect(yield* ids(articles.list(alice, feedsQuery()))).toEqual(expected);
       expect(
-        yield* ids(articles.list(alice, { ...feedsQuery(), filter: 'unread' }))
+        yield* ids(articles.listFeeds(alice, undefined, feedsQuery()))
+      ).toEqual(expected);
+      expect(
+        yield* ids(
+          articles.listFeeds(alice, undefined, {
+            ...feedsQuery(),
+            filter: 'unread',
+          })
+        )
       ).toEqual([newest.id, tieFirstId]);
       expect(
-        yield* ids(articles.list(alice, { ...feedsQuery(), filter: 'read' }))
+        yield* ids(
+          articles.listFeeds(alice, undefined, {
+            ...feedsQuery(),
+            filter: 'read',
+          })
+        )
       ).toEqual([tieSecondId, oldest.id]);
       expect(
         yield* ids(
-          articles.list(alice, {
+          articles.listFeeds(alice, undefined, {
             ...feedsQuery(),
             after: {
               publishedAt: '2026-01-03T00:00:00.000Z',
@@ -301,7 +323,7 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
       ).toEqual([tieSecondId, oldest.id]);
       expect(
         yield* ids(
-          articles.list(alice, {
+          articles.listFeeds(alice, undefined, {
             ...feedsQuery(),
             through: {
               publishedAt: '2026-01-03T00:00:00.000Z',
@@ -312,7 +334,7 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
       ).toEqual([newest.id, tieFirstId, tieSecondId]);
       expect(
         yield* ids(
-          articles.list(alice, {
+          articles.listFeeds(alice, undefined, {
             ...feedsQuery(),
             after: {
               publishedAt: '2026-01-02T00:00:00.000Z',
@@ -322,7 +344,9 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
         )
       ).toEqual([]);
       expect(
-        yield* ids(articles.list(alice, { ...feedsQuery(), limit: 2 }))
+        yield* ids(
+          articles.listFeeds(alice, undefined, { ...feedsQuery(), limit: 2 })
+        )
       ).toEqual(expected.slice(0, 2));
     })
   )
@@ -331,8 +355,8 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
 it.effect('counts unread scopes and treats empty marks as no-ops', () =>
   runCheck(() =>
     Effect.gen(function* () {
-      const articles = yield* Port.Articles;
-      const subscriptions = yield* Port.Subscriptions;
+      const articles = yield* ArticleRepository;
+      const subscriptions = yield* FeedRepository;
       const alice = owner('alice');
       const firstFeed = feed(
         'alice',
@@ -399,13 +423,12 @@ it.effect('counts unread scopes and treats empty marks as no-ops', () =>
   )
 );
 
-it.effect('inventories, retains, extracts, and stores retention', () =>
+it.effect('inventories, retains, and extracts articles', () =>
   runCheck(() =>
     Effect.gen(function* () {
-      const articles = yield* Port.Articles;
-      const subscriptions = yield* Port.Subscriptions;
+      const articles = yield* ArticleRepository;
+      const subscriptions = yield* FeedRepository;
       const alice = owner('alice');
-      const bob = owner('bob');
       const subscribed = feed(
         'alice',
         'https://example.com/retain.xml',
@@ -433,17 +456,18 @@ it.effect('inventories, retains, extracts, and stores retention', () =>
         { publishedAt: '2026-01-01T00:00:00.000Z', id: first.id },
       ]);
       yield* articles.retain(alice, subscribed.id, [third.id, second.id]);
-      expect(yield* ids(articles.list(alice, feedsQuery()))).toEqual([
-        third.id,
-        second.id,
-      ]);
+      expect(
+        yield* ids(articles.listFeeds(alice, undefined, feedsQuery()))
+      ).toEqual([third.id, second.id]);
       expect(yield* articles.find(alice, second.id)).toEqual(
         Option.some({ ...second, read: true })
       );
       expect(yield* articles.find(alice, later.id)).toEqual(Option.some(later));
       yield* articles.retain(alice, subscribed.id, []);
-      expect(yield* articles.list(alice, feedsQuery())).toEqual([]);
-      expect(yield* articles.list(alice, laterQuery)).toEqual([later]);
+      expect(yield* articles.listFeeds(alice, undefined, feedsQuery())).toEqual(
+        []
+      );
+      expect(yield* articles.listLater(alice, laterQuery)).toEqual([later]);
 
       expect(
         yield* articles.saveExtracted(alice, later.id, '<p>Body</p>')
@@ -454,11 +478,6 @@ it.effect('inventories, retains, extracts, and stores retention', () =>
       expect(
         yield* articles.saveExtracted(alice, missingArticleId, '<p>Body</p>')
       ).toBe(false);
-      expect(yield* subscriptions.retention(alice)).toBe(100);
-      expect(yield* subscriptions.retention(bob)).toBe(100);
-      yield* subscriptions.setRetention(alice, 42);
-      expect(yield* subscriptions.retention(alice)).toBe(42);
-      expect(yield* subscriptions.retention(bob)).toBe(100);
     })
   )
 );
@@ -466,8 +485,8 @@ it.effect('inventories, retains, extracts, and stores retention', () =>
 it.effect('serializes feed deletion with article writes without orphans', () =>
   runCheck((db) =>
     Effect.gen(function* () {
-      const articles = yield* Port.Articles;
-      const subscriptions = yield* Port.Subscriptions;
+      const articles = yield* ArticleRepository;
+      const subscriptions = yield* FeedRepository;
       const alice = owner('alice');
       const subscribed = feed(
         'alice',
@@ -498,7 +517,9 @@ it.effect('serializes feed deletion with article writes without orphans', () =>
       expect(yield* subscriptions.find(alice, subscribed.id)).toEqual(
         Option.none()
       );
-      expect(yield* articles.list(alice, feedsQuery())).toEqual([]);
+      expect(yield* articles.listFeeds(alice, undefined, feedsQuery())).toEqual(
+        []
+      );
       expect(
         yield* query<{ total: number }>(
           db,

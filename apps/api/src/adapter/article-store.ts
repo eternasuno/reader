@@ -1,7 +1,17 @@
 import { Effect, Option, Schema, type Semaphore } from 'effect';
 import { RecordId, type Surreal } from 'surrealdb';
-import * as Model from '../../../../packages/business/src/entity/model.ts';
-import * as Port from '../../../../packages/business/src/port/reader-store.ts';
+import type { Article } from '../../../../packages/business/src/entity/article.ts';
+import {
+  ArticleId,
+  FeedId,
+  type OwnerId,
+} from '../../../../packages/business/src/entity/object-value.ts';
+import {
+  type ArticleQuery,
+  type ArticleReadError,
+  ArticleRepository,
+  type ArticleWriteError,
+} from '../../../../packages/business/src/port/article-repository.ts';
 import {
   articleReadError,
   articles,
@@ -16,7 +26,7 @@ import {
 const ARTICLE_COLUMNS =
   'articleId AS id, owner AS ownerId, feedId, url, title, description, content, extractedContent, publishedAt, read';
 
-const encodeArticle = (article: Model.Article) =>
+const encodeArticle = (article: Article) =>
   Object.fromEntries(
     Object.entries({
       id: article.id,
@@ -38,11 +48,11 @@ const encodeArticle = (article: Model.Article) =>
 
 const createArticles = (
   db: Surreal,
-  owner: Model.OwnerId,
-  items: readonly Model.Article[]
+  owner: OwnerId,
+  items: readonly Article[]
 ) => {
   if (items.length === 0) {
-    return Effect.succeed([] as readonly Model.ArticleId[]);
+    return Effect.succeed([] as readonly ArticleId[]);
   }
   const feedIds = [
     ...new Set(items.flatMap((item) => (item.feedId ? [item.feedId] : []))),
@@ -63,7 +73,7 @@ const createArticles = (
     .join(' ');
   const sql = `BEGIN TRANSACTION; LET $feeds = SELECT VALUE id FROM feed WHERE owner = $owner AND id IN $ids; IF array::len($feeds) != $count { THROW "Subscription not found or access denied"; }; ${inserts} COMMIT TRANSACTION;`;
 
-  return run<unknown, Port.ArticleWriteError>(
+  return run<unknown, ArticleWriteError>(
     db,
     sql,
     bindings,
@@ -81,8 +91,8 @@ const createArticles = (
 
 const setArticlesRead = (
   db: Surreal,
-  owner: Model.OwnerId,
-  ids: readonly Model.ArticleId[],
+  owner: OwnerId,
+  ids: readonly ArticleId[],
   readValue: boolean
 ) =>
   ids.length === 0
@@ -96,11 +106,11 @@ const setArticlesRead = (
 
 const saveExtractedContent = (
   db: Surreal,
-  owner: Model.OwnerId,
-  id: Model.ArticleId,
+  owner: OwnerId,
+  id: ArticleId,
   content: string
 ) =>
-  one<unknown[], Port.ArticleWriteError>(
+  one<unknown[], ArticleWriteError>(
     db,
     'UPDATE type::record("article", $id) SET extractedContent = $content WHERE owner = $owner RETURN AFTER;',
     { owner, id, content },
@@ -108,16 +118,16 @@ const saveExtractedContent = (
   ).pipe(Effect.map((rows) => rows.length > 0));
 
 const UnreadFeedRow = Schema.Struct({
-  id: Model.FeedId,
+  id: FeedId,
   total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 
 const BoundaryRow = Schema.Struct({
   publishedAt: Schema.String,
-  id: Model.ArticleId,
+  id: ArticleId,
 });
 
-const countUnreadFeeds = (db: Surreal, owner: Model.OwnerId) =>
+const countUnreadFeeds = (db: Surreal, owner: OwnerId) =>
   read(
     db,
     'SELECT feedId AS id, count() AS total FROM article WHERE owner = $owner AND feedId != NONE AND read = false GROUP BY feedId;',
@@ -131,18 +141,10 @@ const countUnreadFeeds = (db: Surreal, owner: Model.OwnerId) =>
     }))
   );
 
-const scopeClause = (scope: Port.ArticleScope) => {
-  if (scope.kind === 'later') {
-    return 'feedId = NONE';
-  }
-
-  return scope.feedId === undefined ? 'feedId != NONE' : 'feedId = $feedId';
-};
-
-const filterClause = (filter: Port.ArticleQuery['filter']) =>
+const filterClause = (filter: ArticleQuery['filter']) =>
   filter === 'all' ? '' : ' AND read = $read';
 
-const boundaryClauses = (query: Port.ArticleQuery) => {
+const boundaryClauses = (query: ArticleQuery) => {
   const after =
     query.after === undefined
       ? ''
@@ -155,31 +157,45 @@ const boundaryClauses = (query: Port.ArticleQuery) => {
   return `${after}${through}`;
 };
 
-const listArticles = (
+const pageBindings = (
+  owner: OwnerId,
+  query: ArticleQuery,
+  scopeBindings: Bindings = {}
+): Bindings => ({
+  owner,
+  limit: query.limit,
+  ...scopeBindings,
+  ...(query.filter === 'all' ? {} : { read: query.filter === 'read' }),
+  ...(query.after === undefined
+    ? {}
+    : { afterAt: query.after.publishedAt, afterId: query.after.id }),
+  ...(query.through === undefined
+    ? {}
+    : { throughAt: query.through.publishedAt, throughId: query.through.id }),
+});
+
+const pageSql = (query: ArticleQuery, scopeClause: string) =>
+  `SELECT ${ARTICLE_COLUMNS} FROM article WHERE owner = $owner AND ${scopeClause}${filterClause(query.filter)}${boundaryClauses(query)} ORDER BY publishedAt DESC, articleId ASC LIMIT $limit;`;
+
+const listLaterArticles = (db: Surreal, owner: OwnerId, query: ArticleQuery) =>
+  articles(db, pageSql(query, 'feedId = NONE'), pageBindings(owner, query));
+
+const listFeedArticles = (
   db: Surreal,
-  owner: Model.OwnerId,
-  query: Port.ArticleQuery
-) => {
-  const bindings: Bindings = {
-    owner,
-    limit: query.limit,
-    ...(query.scope.kind === 'feeds' && query.scope.feedId !== undefined
-      ? { feedId: query.scope.feedId }
-      : {}),
-    ...(query.filter === 'all' ? {} : { read: query.filter === 'read' }),
-    ...(query.after === undefined
-      ? {}
-      : { afterAt: query.after.publishedAt, afterId: query.after.id }),
-    ...(query.through === undefined
-      ? {}
-      : { throughAt: query.through.publishedAt, throughId: query.through.id }),
-  };
-  const sql = `SELECT ${ARTICLE_COLUMNS} FROM article WHERE owner = $owner AND ${scopeClause(query.scope)}${filterClause(query.filter)}${boundaryClauses(query)} ORDER BY publishedAt DESC, articleId ASC LIMIT $limit;`;
+  owner: OwnerId,
+  feedId: FeedId | undefined,
+  query: ArticleQuery
+) =>
+  articles(
+    db,
+    pageSql(
+      query,
+      feedId === undefined ? 'feedId != NONE' : 'feedId = $feedId'
+    ),
+    pageBindings(owner, query, feedId === undefined ? {} : { feedId })
+  );
 
-  return articles(db, sql, bindings);
-};
-
-const findArticle = (db: Surreal, owner: Model.OwnerId, id: Model.ArticleId) =>
+const findArticle = (db: Surreal, owner: OwnerId, id: ArticleId) =>
   articles(
     db,
     `SELECT ${ARTICLE_COLUMNS} FROM article WHERE owner = $owner AND id = type::record("article", $id);`,
@@ -187,19 +203,23 @@ const findArticle = (db: Surreal, owner: Model.OwnerId, id: Model.ArticleId) =>
   ).pipe(Effect.map((items) => Option.fromNullishOr(items[0])));
 
 const makeArticleQueries = (db: Surreal) => ({
-  find: (owner: Model.OwnerId, id: Model.ArticleId) =>
-    findArticle(db, owner, id),
-  list: (owner: Model.OwnerId, query: Port.ArticleQuery) =>
-    listArticles(db, owner, query),
-  unreadLater: (owner: Model.OwnerId) =>
-    one<{ total: number }[], Port.ArticleReadError>(
+  find: (owner: OwnerId, id: ArticleId) => findArticle(db, owner, id),
+  listLater: (owner: OwnerId, query: ArticleQuery) =>
+    listLaterArticles(db, owner, query),
+  listFeeds: (
+    owner: OwnerId,
+    feedId: FeedId | undefined,
+    query: ArticleQuery
+  ) => listFeedArticles(db, owner, feedId, query),
+  unreadLater: (owner: OwnerId) =>
+    one<{ total: number }[], ArticleReadError>(
       db,
       'SELECT count() AS total FROM article WHERE owner = $owner AND feedId = NONE AND read = false GROUP ALL;',
       { owner },
       articleReadError
     ).pipe(Effect.map((rows) => rows[0]?.total ?? 0)),
-  unreadFeeds: (owner: Model.OwnerId) => countUnreadFeeds(db, owner),
-  inventory: (owner: Model.OwnerId, feedId: Model.FeedId) =>
+  unreadFeeds: (owner: OwnerId) => countUnreadFeeds(db, owner),
+  inventory: (owner: OwnerId, feedId: FeedId) =>
     read(
       db,
       'SELECT publishedAt, articleId AS id FROM article WHERE owner = $owner AND feedId = $feedId ORDER BY publishedAt DESC, articleId ASC;',
@@ -210,21 +230,18 @@ const makeArticleQueries = (db: Surreal) => ({
 });
 
 const makeArticleWrites = (db: Surreal, lock: Semaphore.Semaphore) => ({
-  create: (owner: Model.OwnerId, items: readonly Model.Article[]) =>
+  create: (owner: OwnerId, items: readonly Article[]) =>
     createArticles(db, owner, items).pipe(lock.withPermit),
-  setRead: (
-    owner: Model.OwnerId,
-    ids: readonly Model.ArticleId[],
-    readValue: boolean
-  ) => setArticlesRead(db, owner, ids, readValue).pipe(lock.withPermit),
-  markLater: (owner: Model.OwnerId) =>
+  setRead: (owner: OwnerId, ids: readonly ArticleId[], readValue: boolean) =>
+    setArticlesRead(db, owner, ids, readValue).pipe(lock.withPermit),
+  markLater: (owner: OwnerId) =>
     write(
       db,
       'UPDATE article SET read = true WHERE owner = $owner AND feedId = NONE AND read = false;',
       { owner },
       articleWriteError
     ).pipe(lock.withPermit),
-  markFeeds: (owner: Model.OwnerId, ids: readonly Model.FeedId[]) =>
+  markFeeds: (owner: OwnerId, ids: readonly FeedId[]) =>
     ids.length === 0
       ? Effect.void
       : write(
@@ -233,23 +250,19 @@ const makeArticleWrites = (db: Surreal, lock: Semaphore.Semaphore) => ({
           { owner, ids },
           articleWriteError
         ).pipe(lock.withPermit),
-  removeLater: (owner: Model.OwnerId, id: Model.ArticleId) =>
+  removeLater: (owner: OwnerId, id: ArticleId) =>
     write(
       db,
       'DELETE article WHERE owner = $owner AND articleId = $id AND feedId = NONE;',
       { owner, id },
       articleWriteError
     ).pipe(lock.withPermit),
-  saveExtracted: (owner: Model.OwnerId, id: Model.ArticleId, content: string) =>
+  saveExtracted: (owner: OwnerId, id: ArticleId, content: string) =>
     saveExtractedContent(db, owner, id, content).pipe(lock.withPermit),
 });
 
 const makeArticleRetention = (db: Surreal, lock: Semaphore.Semaphore) => ({
-  retain: (
-    owner: Model.OwnerId,
-    feedId: Model.FeedId,
-    ids: readonly Model.ArticleId[]
-  ) =>
+  retain: (owner: OwnerId, feedId: FeedId, ids: readonly ArticleId[]) =>
     write(
       db,
       ids.length === 0
@@ -261,7 +274,7 @@ const makeArticleRetention = (db: Surreal, lock: Semaphore.Semaphore) => ({
 });
 
 export const makeArticles = (db: Surreal, lock: Semaphore.Semaphore) =>
-  Port.Articles.of({
+  ArticleRepository.of({
     ...makeArticleQueries(db),
     ...makeArticleWrites(db, lock),
     ...makeArticleRetention(db, lock),

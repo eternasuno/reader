@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ArticleId, FeedId, type OwnerId } from '../entity/model';
+import { ArticleId, FeedId, type OwnerId } from '../entity/object-value';
 
 const TRACKING_PARAMS = new Set([
   'utm_source',

@@ -1,28 +1,32 @@
-import { WebpageFetcherLive } from '@reader/webpage';
+import { BrowserConcurrencyLive } from '@reader/webpage';
 import { HttpFetchLive } from '@reader/webpage/http';
 import { Effect, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
 import { ArticleExtractorLive } from './adapter/article-extractor';
-import { ContentProcessorLive } from './adapter/content-processor';
-import { ExtractionSettingsLive } from './adapter/extraction-settings';
-import { ReaderCredentialsLive } from './adapter/reader-credentials';
+import { DocumentSantizeLive } from './adapter/document-santize';
+import { FeedParserLive } from './adapter/feed-parser';
+import { HtmlParserLive } from './adapter/html-parser';
 import { ReaderStoreLive } from './adapter/reader-store';
-import { SyndicationLive } from './adapter/syndication';
+import { SettingsRepositoryLive } from './adapter/settings-repository';
+import { WebpageFetcherFactoryLive } from './adapter/webpage-fetcher';
 import type { Auth } from './infrastructure/auth';
-import { CredentialCryptoLive } from './infrastructure/credential-crypto';
+import { FeedHttpClientLive } from './infrastructure/feed-http-client';
 import { authRoutes } from './routes/auth';
 import { libraryRoutes } from './routes/library';
 
 export const LibraryServicesLive = Layer.mergeAll(
   ReaderStoreLive,
-  ExtractionSettingsLive,
-  ReaderCredentialsLive,
+  SettingsRepositoryLive,
   ArticleExtractorLive,
-  WebpageFetcherLive,
-  SyndicationLive,
-  ContentProcessorLive,
+  WebpageFetcherFactoryLive.pipe(
+    Layer.provide(Layer.merge(SettingsRepositoryLive, BrowserConcurrencyLive))
+  ),
+  HtmlParserLive,
+  FeedHttpClientLive,
+  FeedParserLive,
+  DocumentSantizeLive,
   HttpFetchLive
-).pipe(Layer.provide(CredentialCryptoLive));
+);
 
 export type LibraryServices = Layer.Success<typeof LibraryServicesLive>;
 

@@ -9,28 +9,29 @@ import {
   Layer,
   Option,
 } from 'effect';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { TestClock } from 'effect/testing';
+import type { Feed } from '../../../../packages/business/src/entity/feed.ts';
 import {
-  type Feed,
   FeedId,
   OwnerId,
-} from '../../../../packages/business/src/entity/model.ts';
-import { ContentProcessor } from '../../../../packages/business/src/port/content-processor.ts';
-import {
-  Articles,
-  Subscriptions,
-} from '../../../../packages/business/src/port/reader-store.ts';
-import {
-  FetchSubscriptionError,
-  Syndication,
-} from '../../../../packages/business/src/port/syndication.ts';
+} from '../../../../packages/business/src/entity/object-value.ts';
+import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
+import { DocumentSantize } from '../../../../packages/business/src/port/document-santize.ts';
+import { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
+import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
+import { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
+import { HtmlParserLive } from '../../src/adapter/html-parser';
 import { SubscriptionSchedulerLive } from '../../src/infrastructure/subscription-scheduler';
 
 type Mocks = {
-  readonly subscriptions?: Partial<Context.Service.Shape<typeof Subscriptions>>;
-  readonly syndication?: Partial<Context.Service.Shape<typeof Syndication>>;
-  readonly articles?: Partial<Context.Service.Shape<typeof Articles>>;
-  readonly processor?: Partial<Context.Service.Shape<typeof ContentProcessor>>;
+  readonly subscriptions?: Partial<
+    Context.Service.Shape<typeof FeedRepository>
+  >;
+  readonly http?: (url: URL) => Effect.Effect<Response>;
+  readonly parser?: Partial<Context.Service.Shape<typeof FeedParser>>;
+  readonly articles?: Partial<Context.Service.Shape<typeof ArticleRepository>>;
+  readonly processor?: Partial<Context.Service.Shape<typeof DocumentSantize>>;
 };
 
 const feedId = (seed: string) => FeedId.make(seed.repeat(64).slice(0, 64));
@@ -45,17 +46,45 @@ const subscription = (owner: string, id: FeedId, url: string): Feed => ({
 
 const feed = { title: 'Feed', articles: [] };
 
+const document = () => new Response('<rss/>', { status: 200 });
+
+const httpClient = (
+  respond: (url: URL) => Effect.Effect<Response>
+): Layer.Layer<HttpClient.HttpClient> =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request, url) =>
+      Effect.map(respond(url), (response) =>
+        HttpClientResponse.fromWeb(request, response)
+      )
+    )
+  );
+
 const scheduler = (mocks: Mocks) =>
   SubscriptionSchedulerLive.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(Subscriptions, mocks.subscriptions ?? {}),
-        Layer.mock(Syndication, mocks.syndication ?? {}),
-        Layer.mock(Articles, mocks.articles ?? {}),
-        Layer.mock(ContentProcessor, {
-          process: (content) => Effect.succeed(content),
+        Layer.mock(FeedRepository, mocks.subscriptions ?? {}),
+        Layer.mock(SettingsRepository, {
+          get: () =>
+            Effect.succeed({
+              retention: 100,
+              provider: 'jina',
+              jinaConfigured: false,
+              browserEndpoint: '',
+            }),
+        }),
+        httpClient(mocks.http ?? (() => Effect.succeed(document()))),
+        Layer.mock(FeedParser, {
+          parse: () => Effect.succeed(feed),
+          ...mocks.parser,
+        }),
+        Layer.mock(ArticleRepository, mocks.articles ?? {}),
+        Layer.mock(DocumentSantize, {
+          sanitize: () => Effect.succeed(''),
           ...mocks.processor,
-        })
+        }),
+        HtmlParserLive
       )
     )
   );
@@ -82,20 +111,17 @@ it.effect('refreshes every subscription immediately on startup', () => {
         subscriptions: {
           all: Effect.succeed(items),
           find: findById(items),
-          retention: () => Effect.succeed(100),
           update: () => Effect.void,
         },
-        syndication: {
-          fetch: (url) =>
-            Effect.gen(function* () {
-              fetched.push(url.href);
-              if (fetched.length === items.length) {
-                yield* Deferred.succeed(done, undefined);
-              }
+        http: (url) =>
+          Effect.gen(function* () {
+            fetched.push(url.href);
+            if (fetched.length === items.length) {
+              yield* Deferred.succeed(done, undefined);
+            }
 
-              return feed;
-            }),
-        },
+            return document();
+          }),
         articles: {
           inventory: () => Effect.succeed([]),
           retain: () => Effect.void,
@@ -129,18 +155,15 @@ it.effect('skips a subscription removed before execution', () => {
         subscriptions: {
           all: Effect.succeed([removed, present]),
           find: findById([present]),
-          retention: () => Effect.succeed(100),
           update: () => Effect.void,
         },
-        syndication: {
-          fetch: (url) =>
-            Effect.gen(function* () {
-              fetched.push(url.href);
-              yield* Deferred.succeed(done, undefined);
+        http: (url) =>
+          Effect.gen(function* () {
+            fetched.push(url.href);
+            yield* Deferred.succeed(done, undefined);
 
-              return feed;
-            }),
-        },
+            return document();
+          }),
         articles: {
           inventory: () => Effect.succeed([]),
           retain: () => Effect.void,
@@ -183,23 +206,20 @@ it.effect('does not enqueue a feed while its refresh is still running', () => {
             return [item];
           }),
           find: findById([item]),
-          retention: () => Effect.succeed(100),
           update: () =>
             Effect.gen(function* () {
               updates += 1;
               yield* Deferred.succeed(finished, undefined);
             }),
         },
-        syndication: {
-          fetch: () =>
-            Effect.gen(function* () {
-              fetches += 1;
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(gate);
+        http: () =>
+          Effect.gen(function* () {
+            fetches += 1;
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(gate);
 
-              return feed;
-            }),
-        },
+            return document();
+          }),
         articles: {
           inventory: () => Effect.succeed([]),
           retain: () => Effect.void,
@@ -227,26 +247,21 @@ it.effect('logs a failed refresh and retries on the next scan', () => {
         subscriptions: {
           all: Effect.succeed([item]),
           find: findById([item]),
-          retention: () => Effect.succeed(100),
           update: () => Effect.void,
         },
-        syndication: {
-          fetch: () =>
-            Effect.gen(function* () {
-              attempts += 1;
-              if (attempts === 1) {
-                yield* Deferred.succeed(first, undefined);
+        http: () =>
+          Effect.gen(function* () {
+            attempts += 1;
+            if (attempts === 1) {
+              yield* Deferred.succeed(first, undefined);
 
-                return yield* new FetchSubscriptionError({
-                  message: 'failed',
-                });
-              }
+              return new Response('no', { status: 503 });
+            }
 
-              yield* Deferred.succeed(second, undefined);
+            yield* Deferred.succeed(second, undefined);
 
-              return feed;
-            }),
-        },
+            return document();
+          }),
         articles: {
           inventory: () => Effect.succeed([]),
           retain: () => Effect.void,
@@ -278,7 +293,6 @@ it.effect(
           subscriptions: {
             all: Effect.succeed(items),
             find: findById(items),
-            retention: () => Effect.succeed(100),
             update: () =>
               Effect.gen(function* () {
                 updated += 1;
@@ -287,18 +301,16 @@ it.effect(
                 }
               }),
           },
-          syndication: {
-            fetch: () =>
-              Effect.gen(function* () {
-                started += 1;
-                if (started === items.length) {
-                  yield* Deferred.succeed(barrier, undefined);
-                }
-                yield* Deferred.await(barrier);
+          http: () =>
+            Effect.gen(function* () {
+              started += 1;
+              if (started === items.length) {
+                yield* Deferred.succeed(barrier, undefined);
+              }
+              yield* Deferred.await(barrier);
 
-                return feed;
-              }),
-          },
+              return document();
+            }),
           articles: {
             inventory: () => Effect.succeed([]),
             retain: () => Effect.void,

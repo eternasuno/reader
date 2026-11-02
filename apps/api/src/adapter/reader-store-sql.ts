@@ -1,21 +1,29 @@
 import { Effect, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
-import * as Model from '../../../../packages/business/src/entity/model.ts';
-import * as Port from '../../../../packages/business/src/port/reader-store.ts';
+import { Article } from '../../../../packages/business/src/entity/article.ts';
+import { Feed } from '../../../../packages/business/src/entity/feed.ts';
+import {
+  ArticleReadError,
+  ArticleWriteError,
+} from '../../../../packages/business/src/port/article-repository.ts';
+import {
+  SubscriptionReadError,
+  SubscriptionWriteError,
+} from '../../../../packages/business/src/port/feed-repository.ts';
 
 export type Bindings = Record<string, unknown>;
 
 export const articleReadError = () =>
-  new Port.ArticleReadError({ message: 'Failed to read articles' });
+  new ArticleReadError({ message: 'Failed to read articles' });
 
 export const articleWriteError = () =>
-  new Port.ArticleWriteError({ message: 'Failed to write articles' });
+  new ArticleWriteError({ message: 'Failed to write articles' });
 
 export const subscriptionReadError = () =>
-  new Port.SubscriptionReadError({ message: 'Failed to read subscriptions' });
+  new SubscriptionReadError({ message: 'Failed to read subscriptions' });
 
 export const subscriptionWriteError = () =>
-  new Port.SubscriptionWriteError({ message: 'Failed to write subscriptions' });
+  new SubscriptionWriteError({ message: 'Failed to write subscriptions' });
 
 export const run = <A, E>(
   db: Surreal,
@@ -81,10 +89,10 @@ export const read = <A, E>(
   );
 
 export const articles = (db: Surreal, sql: string, bindings: Bindings) =>
-  read(db, sql, bindings, Schema.Array(Model.Article), articleReadError);
+  read(db, sql, bindings, Schema.Array(Article), articleReadError);
 
 export const subscriptions = (db: Surreal, sql: string, bindings: Bindings) =>
-  read(db, sql, bindings, Schema.Array(Model.Feed), subscriptionReadError);
+  read(db, sql, bindings, Schema.Array(Feed), subscriptionReadError);
 
 export const write = <E>(
   db: Surreal,

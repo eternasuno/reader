@@ -1,5 +1,5 @@
 import { expect, it } from '@effect/vitest';
-import { OwnerId } from '../../src/entity/model';
+import { OwnerId } from '../../src/entity/object-value';
 import { articleId, feedId, normalizeUrl } from '../../src/usecase/identity';
 
 const owner = OwnerId.make('alice');

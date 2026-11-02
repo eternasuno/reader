@@ -1,7 +1,7 @@
 import type { LibraryApi } from '@reader/api';
 import { Effect, Option } from 'effect';
 import type { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { OwnerId } from '../../../../packages/business/src/entity/model.ts';
+import { OwnerId } from '../../../../packages/business/src/entity/object-value.ts';
 import { Session } from '../middleware/session';
 
 type Groups =

@@ -1,10 +1,9 @@
 import { Context, Effect, Layer, Semaphore } from 'effect';
-import * as Port from '../../../../packages/business/src/port/reader-store.ts';
+import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
+import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
 import { Database } from '../infrastructure/db';
 import { makeArticles } from './article-store';
 import { makeSubscriptions } from './subscription-store';
-
-export { DEFAULT_RETENTION } from './subscription-store';
 
 export const readerStoreSchema = `
 DEFINE TABLE IF NOT EXISTS article SCHEMALESS;
@@ -12,10 +11,8 @@ DEFINE INDEX IF NOT EXISTS article_owner_feed ON article FIELDS owner, feedId;
 DEFINE INDEX IF NOT EXISTS article_owner_feed_published ON article FIELDS owner, feedId, publishedAt;
 DEFINE TABLE IF NOT EXISTS feed SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS reader_feed_owner ON feed FIELDS owner;
-DEFINE TABLE IF NOT EXISTS reader_setting SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS reader_setting_owner ON reader_setting FIELDS owner UNIQUE;
-DEFINE TABLE IF NOT EXISTS reader_credential SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS reader_credential_owner ON reader_credential FIELDS owner UNIQUE;
+DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS setting_owner ON setting FIELDS owner UNIQUE;
 `;
 
 export class ReaderStoreConcurrency extends Context.Service<
@@ -28,8 +25,8 @@ export const ReaderStoreConcurrencyLive = Layer.effect(
   Semaphore.make(1)
 );
 
-export const ArticlesLive = Layer.effect(
-  Port.Articles,
+export const ArticleRepositoryLive = Layer.effect(
+  ArticleRepository,
   Effect.gen(function* () {
     const db = yield* Database;
     const lock = yield* ReaderStoreConcurrency;
@@ -38,8 +35,8 @@ export const ArticlesLive = Layer.effect(
   })
 );
 
-export const SubscriptionsLive = Layer.effect(
-  Port.Subscriptions,
+export const FeedRepositoryLive = Layer.effect(
+  FeedRepository,
   Effect.gen(function* () {
     const db = yield* Database;
     const lock = yield* ReaderStoreConcurrency;
@@ -49,6 +46,6 @@ export const SubscriptionsLive = Layer.effect(
 );
 
 export const ReaderStoreLive = Layer.merge(
-  ArticlesLive,
-  SubscriptionsLive
+  ArticleRepositoryLive,
+  FeedRepositoryLive
 ).pipe(Layer.provide(ReaderStoreConcurrencyLive));

@@ -2,16 +2,15 @@ import { Effect, Option } from 'effect';
 import type {
   FeedId,
   OwnerId,
-} from '../../../../packages/business/src/entity/model.ts';
-import {
-  Articles,
-  Subscriptions,
-} from '../../../../packages/business/src/port/reader-store.ts';
-import { Syndication } from '../../../../packages/business/src/port/syndication.ts';
+} from '../../../../packages/business/src/entity/object-value.ts';
+import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
+import { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
+import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
 import {
   listFeedArticles,
   refreshFeedArticles,
 } from '../../../../packages/business/src/usecase/articles.ts';
+import { fetchFeed } from '../../../../packages/business/src/usecase/feed-fetch.ts';
 import { normalizeUrl } from '../../../../packages/business/src/usecase/identity.ts';
 import { subscribe } from '../../../../packages/business/src/usecase/subscriptions.ts';
 import { type HandlerRequest, withSession } from './library-contract';
@@ -35,8 +34,9 @@ const preview = (address: string) =>
           message: 'Subscription URL must use HTTP or HTTPS',
         }) as const,
     });
-    const syndication = yield* Syndication;
-    const feed = yield* syndication.fetch(url);
+    const feedParser = yield* FeedParser;
+    const document = yield* fetchFeed(url);
+    const feed = yield* feedParser.parse(document.content, document.url);
     const description = feed.description;
 
     return {
@@ -51,7 +51,7 @@ const preview = (address: string) =>
 
 const removeSubscription = (owner: OwnerId, id: FeedId) =>
   Effect.gen(function* () {
-    const subscriptions = yield* Subscriptions;
+    const subscriptions = yield* FeedRepository;
     const found = yield* subscriptions.find(owner, id);
     if (Option.isNone(found)) {
       return yield* subscriptionNotFound();
@@ -89,7 +89,7 @@ const feedRefresh = ({ query }: HandlerRequest<'feedRefresh'>) =>
 const feeds = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const subscriptions = yield* Subscriptions;
+      const subscriptions = yield* FeedRepository;
 
       return { items: yield* subscriptions.list(owner) };
     })
@@ -116,7 +116,7 @@ const unsubscribe = ({ payload }: HandlerRequest<'unsubscribe'>) =>
 const feedsUnread = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const articles = yield* Articles;
+      const articles = yield* ArticleRepository;
 
       return yield* articles.unreadFeeds(owner);
     })

@@ -1,8 +1,6 @@
 import { Data, Effect, Redacted } from 'effect';
-import type { ReaderProvider } from '../entity/article';
-import type { OwnerId } from '../entity/model';
-import { ExtractionSettings } from '../port/extraction-settings';
-import { Subscriptions } from '../port/reader-store';
+import type { OwnerId, ReaderProvider } from '../entity/object-value';
+import { SettingsRepository } from '../port/settings-repository';
 
 export class SettingsReadError extends Data.TaggedError('SettingsReadError')<{
   readonly error: string;
@@ -71,17 +69,17 @@ const isValidBrowserEndpoint = (value: string) => {
 export const getSettings = Effect.fn('settings.get')(function* (
   owner: OwnerId
 ) {
-  const subscriptions = yield* Subscriptions;
-  const extraction = yield* ExtractionSettings;
-  const readError = () =>
-    new SettingsReadError({ error: 'Failed to read settings' });
-  const retention = yield* subscriptions
-    .retention(owner)
-    .pipe(Effect.mapError(readError));
-  const value = yield* extraction.get(owner).pipe(Effect.mapError(readError));
+  const settingsRepository = yield* SettingsRepository;
+  const value = yield* settingsRepository
+    .get(owner)
+    .pipe(
+      Effect.mapError(
+        () => new SettingsReadError({ error: 'Failed to read settings' })
+      )
+    );
 
   return {
-    retention,
+    retention: value.retention,
     provider: value.provider,
     jinaConfigured: value.jinaConfigured,
     browserEndpoint: value.browserEndpoint,
@@ -98,8 +96,8 @@ export const updateRetention = Effect.fn('settings.updateRetention')(function* (
     });
   }
 
-  const subscriptions = yield* Subscriptions;
-  yield* subscriptions
+  const settingsRepository = yield* SettingsRepository;
+  yield* settingsRepository
     .setRetention(owner, value)
     .pipe(
       Effect.mapError(
@@ -163,8 +161,8 @@ export const updateExtraction = Effect.fn('settings.updateExtraction')(
       return yield* parsed.error;
     }
 
-    const extraction = yield* ExtractionSettings;
-    yield* extraction
+    const settingsRepository = yield* SettingsRepository;
+    yield* settingsRepository
       .save(owner, parsed.update)
       .pipe(
         Effect.mapError(

@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { ExtractionSettings } from '../../../../packages/business/src/port/extraction-settings.ts';
+import { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
 import {
   getSettings,
   updateExtraction,
@@ -37,7 +37,7 @@ const setExtraction = ({ payload }: HandlerRequest<'setExtraction'>) =>
 const deleteKey = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const extractionSettings = yield* ExtractionSettings;
+      const extractionSettings = yield* SettingsRepository;
       yield* extractionSettings.clearKey(owner);
 
       return { ok: true as const };
@@ -47,7 +47,7 @@ const deleteKey = () =>
 const deleteBrowser = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const extractionSettings = yield* ExtractionSettings;
+      const extractionSettings = yield* SettingsRepository;
       yield* extractionSettings.clearBrowser(owner);
 
       return { ok: true as const };

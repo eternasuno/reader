@@ -11,7 +11,7 @@ export type LibraryErrorTag =
   | 'ArticleMissingUrl'
   | 'ArticleEmptyContent'
   | 'DuplicateArticle'
-  | 'ReaderCredentialsError'
+  | 'SettingsRepositoryReadError'
   | 'WebpageFetchError'
   | 'ArticleExtractError'
   | 'SubscriptionUrlInvalid'
@@ -40,7 +40,7 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   ArticleMissingUrl: '该文章没有原始链接',
   ArticleEmptyContent: '未能提取到文章内容',
   DuplicateArticle: '该文章已在稍后阅读中',
-  ReaderCredentialsError: '正文提取凭据不可用，请检查设置',
+  SettingsRepositoryReadError: '正文提取设置读取失败，请检查设置',
   WebpageFetchError: '网页抓取失败，请稍后重试',
   ArticleExtractError: '正文提取失败，请稍后重试',
   SubscriptionUrlInvalid: '请输入有效的订阅地址',

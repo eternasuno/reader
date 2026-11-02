@@ -1,1 +1,6 @@
-export { WebpageFetcherLive } from './webpage-fetcher';
+export {
+  BrowserConcurrency,
+  BrowserConcurrencyLive,
+  BrowserWebpageFetcherLive,
+  JinaWebpageFetcherLive,
+} from './webpage-fetcher';

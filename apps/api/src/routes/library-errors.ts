@@ -61,10 +61,10 @@ export const duplicateArticle = (error: { readonly id: string }) =>
     id: error.id,
   } as const);
 
-export const readerCredentialsError = () =>
+export const settingsRepositoryReadError = () =>
   Effect.fail({
-    _tag: 'ReaderCredentialsError',
-    message: 'Reader extraction credentials are unavailable',
+    _tag: 'SettingsRepositoryReadError',
+    message: 'Unable to read extraction settings',
   } as const);
 
 export const webpageFetchError = (error?: { readonly code?: string }) =>
@@ -166,8 +166,8 @@ export const invalidProvider = () =>
     message: 'Choose a valid extraction provider',
   } as const);
 
-export const extractionSettingsWriteError = () =>
+export const settingsRepositoryWriteError = () =>
   Effect.fail({
-    _tag: 'ExtractionSettingsWriteError',
+    _tag: 'SettingsRepositoryWriteError',
     message: 'Unable to save extraction settings',
   } as const);

@@ -2,10 +2,7 @@
   "$schema": "node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
     "ignoreUnknown": true,
-    "includes": [
-      "**",
-      "!!.agents/skills"
-    ]
+    "includes": ["**", "!!.agents/skills"]
   },
   "formatter": {
     "indentStyle": "space",

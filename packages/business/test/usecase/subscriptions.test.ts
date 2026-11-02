@@ -2,25 +2,26 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each test declares its mocks alongside the asserted scenario.
 import { expect, it } from '@effect/vitest';
 import { type Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import {
-  type Article,
-  ArticleId,
-  type Feed,
-  OwnerId,
-} from '../../src/entity/model';
-import { ContentProcessor } from '../../src/port/content-processor';
+import type { Article } from '../../src/entity/article';
+import type { Feed } from '../../src/entity/feed';
+import { ArticleId, OwnerId } from '../../src/entity/object-value';
 import {
   type ArticleBoundary,
-  Articles,
+  ArticleRepository,
   ArticleWriteError,
-  Subscriptions,
-} from '../../src/port/reader-store';
+} from '../../src/port/article-repository';
+import { DocumentSantize } from '../../src/port/document-santize';
 import {
-  type SubscriptionEntry,
-  type SyndicatedFeed,
-  Syndication,
-} from '../../src/port/syndication';
+  FeedParser,
+  type ParsedArticle,
+  type ParsedFeed,
+  ParseSubscriptionError,
+} from '../../src/port/feed-parser';
+import { FeedRepository } from '../../src/port/feed-repository';
+import { HtmlParser } from '../../src/port/html-parser';
+import { SettingsRepository } from '../../src/port/settings-repository';
 import { articleId, feedId, normalizeUrl } from '../../src/usecase/identity';
 import {
   refreshSubscription,
@@ -34,21 +35,24 @@ const nowMillis = Date.UTC(2026, 0, 1, 12);
 
 const at = (iso: string) => DateTime.fromDateUnsafe(new Date(iso));
 
+// The processing services are mocked here, so the parser only needs the body
+// that the processor mock reads back.
+const parsedDocument = (html: string) =>
+  ({ URL: 'about:blank', body: { innerHTML: html } }) as Document;
+
 const encoded = (value: DateTime.Utc) =>
   Schema.encodeSync(Schema.DateTimeUtcFromString)(value);
 
-const entry = (
-  overrides: Partial<SubscriptionEntry> = {}
-): SubscriptionEntry => ({
+const entry = (overrides: Partial<ParsedArticle> = {}): ParsedArticle => ({
   title: 'One',
   url: new URL('https://example.com/one'),
   ...overrides,
 });
 
 const feed = (
-  articles: readonly SubscriptionEntry[],
+  articles: readonly ParsedArticle[],
   title = 'News'
-): SyndicatedFeed => ({ title, articles });
+): ParsedFeed => ({ title, articles });
 
 const subscription = (): Feed => ({
   id,
@@ -58,29 +62,70 @@ const subscription = (): Feed => ({
   updatedAt: at('2025-12-01T00:00:00.000Z'),
 });
 
+const feedBody = '<rss/>';
+
+const feedResponse = () =>
+  Effect.succeed(new Response(feedBody, { status: 200 }));
+
+const httpClient = (
+  respond: (url: URL) => Effect.Effect<Response>
+): Layer.Layer<HttpClient.HttpClient> =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request, url) =>
+      Effect.map(respond(url), (response) =>
+        HttpClientResponse.fromWeb(request, response)
+      )
+    )
+  );
+
+const settingsValue = (retention: number) => ({
+  retention,
+  provider: 'jina' as const,
+  jinaConfigured: false,
+  browserEndpoint: '',
+});
+
 const provide = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   layers: {
-    readonly syndication?: Partial<Context.Service.Shape<typeof Syndication>>;
-    readonly processor?: Partial<
-      Context.Service.Shape<typeof ContentProcessor>
+    readonly http?: (url: URL) => Effect.Effect<Response>;
+    readonly feedParser?: Partial<Context.Service.Shape<typeof FeedParser>>;
+    readonly parser?: Partial<Context.Service.Shape<typeof HtmlParser>>;
+    readonly processor?: Partial<Context.Service.Shape<typeof DocumentSantize>>;
+    readonly articles?: Partial<
+      Context.Service.Shape<typeof ArticleRepository>
     >;
-    readonly articles?: Partial<Context.Service.Shape<typeof Articles>>;
     readonly subscriptions?: Partial<
-      Context.Service.Shape<typeof Subscriptions>
+      Context.Service.Shape<typeof FeedRepository>
+    >;
+    readonly settings?: Partial<
+      Context.Service.Shape<typeof SettingsRepository>
     >;
   }
 ) =>
   effect.pipe(
     Effect.provide(
       Layer.mergeAll(
-        Layer.mock(Syndication, layers.syndication ?? {}),
-        Layer.mock(ContentProcessor, {
-          process: (content) => Effect.succeed(content),
+        httpClient(layers.http ?? feedResponse),
+        Layer.mock(FeedParser, {
+          parse: () => Effect.succeed(feed([])),
+          ...layers.feedParser,
+        }),
+        Layer.mock(HtmlParser, {
+          parse: (html) => Effect.succeed(parsedDocument(html)),
+          ...layers.parser,
+        }),
+        Layer.mock(DocumentSantize, {
+          sanitize: (document) => Effect.succeed(document.body.innerHTML),
           ...layers.processor,
         }),
-        Layer.mock(Articles, layers.articles ?? {}),
-        Layer.mock(Subscriptions, layers.subscriptions ?? {})
+        Layer.mock(ArticleRepository, layers.articles ?? {}),
+        Layer.mock(FeedRepository, layers.subscriptions ?? {}),
+        Layer.mock(SettingsRepository, {
+          get: () => Effect.succeed(settingsValue(100)),
+          ...layers.settings,
+        })
       )
     )
   );
@@ -98,9 +143,83 @@ it.effect('rejects a non-HTTP subscription URL before fetching', () => {
       expect(fetched).toBe(false);
     }),
     {
-      syndication: {
-        fetch: () => {
-          fetched = true;
+      http: () => {
+        fetched = true;
+
+        return feedResponse();
+      },
+    }
+  );
+});
+
+it.effect('parses the fetched document against its final URL', () => {
+  const finalUrl = new URL('https://final.example/feed.xml');
+  const calls: string[] = [];
+
+  return provide(
+    Effect.gen(function* () {
+      yield* refreshSubscription(alice, id);
+      expect(calls).toEqual([
+        `fetch ${url.href}`,
+        `fetch ${finalUrl.href}`,
+        `parse <rss/> ${finalUrl.href}`,
+      ]);
+    }),
+    {
+      settings: {
+        get: () => Effect.succeed(settingsValue(100)),
+      },
+      subscriptions: {
+        find: () => Effect.succeed(Option.some(subscription())),
+        update: () => Effect.void,
+      },
+      http: (requested) => {
+        calls.push(`fetch ${requested.href}`);
+
+        return Effect.succeed(
+          requested.href === url.href
+            ? new Response(null, {
+                status: 302,
+                headers: { location: finalUrl.href },
+              })
+            : new Response(feedBody, { status: 200 })
+        );
+      },
+      feedParser: {
+        parse: (content, sourceUrl) => {
+          calls.push(`parse ${content} ${sourceUrl.href}`);
+
+          return Effect.succeed(feed([]));
+        },
+      },
+      articles: {
+        inventory: () => Effect.succeed([]),
+        retain: () => Effect.void,
+      },
+    }
+  );
+});
+
+it.effect('reports a feed fetch failure without parsing the document', () => {
+  let parsed = false;
+
+  return provide(
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(refreshSubscription(alice, id));
+      expect(error).toMatchObject({
+        _tag: 'FetchSubscriptionError',
+        message: 'Failed to fetch the subscription feed',
+      });
+      expect(parsed).toBe(false);
+    }),
+    {
+      subscriptions: {
+        find: () => Effect.succeed(Option.some(subscription())),
+      },
+      http: () => Effect.succeed(new Response('no', { status: 503 })),
+      feedParser: {
+        parse: () => {
+          parsed = true;
 
           return Effect.succeed(feed([]));
         },
@@ -109,26 +228,72 @@ it.effect('rejects a non-HTTP subscription URL before fetching', () => {
   );
 });
 
+it.effect('reports an invalid redirect as a feed fetch failure', () =>
+  provide(
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(refreshSubscription(alice, id));
+      expect(error).toMatchObject({
+        _tag: 'FetchSubscriptionError',
+        message: 'Failed to fetch the subscription feed',
+      });
+    }),
+    {
+      subscriptions: {
+        find: () => Effect.succeed(Option.some(subscription())),
+      },
+      http: () =>
+        Effect.succeed(
+          new Response(null, {
+            status: 302,
+            headers: { location: 'http://[invalid' },
+          })
+        ),
+    }
+  )
+);
+
+it.effect('reports a feed parse failure', () =>
+  provide(
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(refreshSubscription(alice, id));
+      expect(error).toMatchObject({
+        _tag: 'ParseSubscriptionError',
+        message: 'Failed to parse the subscription feed',
+      });
+    }),
+    {
+      subscriptions: {
+        find: () => Effect.succeed(Option.some(subscription())),
+      },
+      feedParser: {
+        parse: () =>
+          Effect.fail(
+            new ParseSubscriptionError({
+              message: 'Failed to parse the subscription feed',
+            })
+          ),
+      },
+    }
+  )
+);
+
 it.effect(
   'creates the subscription before importing the newest distinct articles',
   () => {
     const events: string[] = [];
     const created: (readonly Article[])[] = [];
-    const processed: (readonly [string, boolean])[] = [];
+    const processed: string[] = [];
     const newest = entry({
       title: 'Newest',
       url: new URL('https://example.com/newest'),
       description: 'Plain summary',
-      descriptionText: true,
       content: '<p>Body</p>',
-      contentText: false,
       publishedAt: at('2026-01-02T00:00:00.000Z'),
     });
     const older = entry({
       title: 'Older',
       url: new URL('https://example.com/older'),
       content: 'plain body',
-      contentText: true,
       publishedAt: at('2026-01-01T00:00:00.000Z'),
     });
     const undated = entry({
@@ -156,9 +321,9 @@ it.effect(
         ).toBe('2026-01-01T12:00:00.000Z');
         expect(events).toEqual(['subscription', 'articles']);
         expect(processed).toEqual([
-          ['Plain summary', true],
-          ['<p>Body</p>', false],
-          ['plain body', true],
+          'Plain summary',
+          '<p>Body</p>',
+          'plain body',
         ]);
         const items = created[0] ?? [];
         expect(items.map((item) => item.title)).toEqual([
@@ -184,8 +349,8 @@ it.effect(
         ).toBe('2026-01-01T12:00:00.000Z');
       }),
       {
-        syndication: {
-          fetch: () =>
+        feedParser: {
+          parse: () =>
             Effect.succeed(feed([older, undated, newest, { ...newest }])),
         },
         subscriptions: {
@@ -197,11 +362,11 @@ it.effect(
             return Effect.succeed(true);
           },
         },
-        processor: {
-          process: (content, text) => {
-            processed.push([content, text]);
+        parser: {
+          parse: (html) => {
+            processed.push(html);
 
-            return Effect.succeed(content);
+            return Effect.succeed(parsedDocument(html));
           },
         },
         articles: {
@@ -223,7 +388,6 @@ it.effect('imports entries without a URL', () => {
     title: 'No URL',
     url: undefined,
     content: 'plain body',
-    contentText: true,
   });
 
   return provide(
@@ -242,7 +406,7 @@ it.effect('imports entries without a URL', () => {
       );
     }),
     {
-      syndication: { fetch: () => Effect.succeed(feed([linkless])) },
+      feedParser: { parse: () => Effect.succeed(feed([linkless])) },
       subscriptions: {
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed(true),
@@ -253,6 +417,36 @@ it.effect('imports entries without a URL', () => {
 
           return Effect.succeed(items.map((item) => item.id));
         },
+      },
+    }
+  );
+});
+
+it.effect('truncates feed content before parsing it', () => {
+  const parsed: string[] = [];
+  const long = entry({ content: 'a'.repeat(100_500) });
+
+  return provide(
+    Effect.gen(function* () {
+      yield* subscribe(alice, url.href);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0]).toHaveLength(100_000);
+    }),
+    {
+      feedParser: { parse: () => Effect.succeed(feed([long])) },
+      subscriptions: {
+        find: () => Effect.succeed(Option.none()),
+        create: () => Effect.succeed(true),
+      },
+      parser: {
+        parse: (html) => {
+          parsed.push(html);
+
+          return Effect.succeed(parsedDocument(html));
+        },
+      },
+      articles: {
+        create: (_owner, items) => Effect.succeed(items.map((item) => item.id)),
       },
     }
   );
@@ -277,7 +471,7 @@ it.effect('imports at most 30 articles from a large feed', () => {
       expect(items[29]?.title).toBe('Article 5');
     }),
     {
-      syndication: { fetch: () => Effect.succeed(feed(entries)) },
+      feedParser: { parse: () => Effect.succeed(feed(entries)) },
       subscriptions: {
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed(true),
@@ -310,12 +504,10 @@ it.effect('reports a duplicate subscription without fetching the feed', () => {
       subscriptions: {
         find: () => Effect.succeed(Option.some(subscription())),
       },
-      syndication: {
-        fetch: () => {
-          fetched = true;
+      http: () => {
+        fetched = true;
 
-          return Effect.succeed(feed([]));
-        },
+        return feedResponse();
       },
     }
   );
@@ -333,7 +525,7 @@ it.effect('reports a duplicate subscription when creation loses a race', () =>
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed(false),
       },
-      syndication: { fetch: () => Effect.succeed(feed([])) },
+      feedParser: { parse: () => Effect.succeed(feed([])) },
     }
   )
 );
@@ -353,7 +545,7 @@ it.effect('reports an article write failure as an import failure', () =>
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed(true),
       },
-      syndication: { fetch: () => Effect.succeed(feed([entry()])) },
+      feedParser: { parse: () => Effect.succeed(feed([entry()])) },
       articles: {
         create: () =>
           Effect.fail(new ArticleWriteError({ message: 'write failed' })),
@@ -377,12 +569,10 @@ it.effect('does not fetch a missing subscription', () => {
     }),
     {
       subscriptions: { find: () => Effect.succeed(Option.none()) },
-      syndication: {
-        fetch: () => {
-          fetched = true;
+      http: () => {
+        fetched = true;
 
-          return Effect.succeed(feed([]));
-        },
+        return feedResponse();
       },
     }
   );
@@ -432,23 +622,25 @@ it.effect(
         expect(result.item).toEqual(updated);
       }),
       {
+        settings: {
+          get: () => Effect.succeed(settingsValue(100)),
+        },
         subscriptions: {
           find: () => Effect.succeed(Option.some(subscription())),
-          retention: () => Effect.succeed(100),
           update: (item) =>
             Effect.sync(() => {
               events.push('update');
               updated = item;
             }),
         },
-        syndication: {
-          fetch: () => Effect.succeed(feed([tied, known], 'Updated')),
+        feedParser: {
+          parse: () => Effect.succeed(feed([tied, known], 'Updated')),
         },
         processor: {
-          process: (content) => {
-            processed.push(content);
+          sanitize: (document) => {
+            processed.push(document.body.innerHTML);
 
-            return Effect.succeed(content);
+            return Effect.succeed(document.body.innerHTML);
           },
         },
         articles: {
@@ -494,22 +686,24 @@ it.effect('keeps the configured retention and drops older new articles', () => {
       expect(retained[0]?.[49]).toBe(ArticleId.make(hex(50)));
     }),
     {
+      settings: {
+        get: () => Effect.succeed(settingsValue(50)),
+      },
       subscriptions: {
         find: () => Effect.succeed(Option.some(subscription())),
-        retention: () => Effect.succeed(50),
         update: () => Effect.void,
       },
-      syndication: {
-        fetch: () =>
+      feedParser: {
+        parse: () =>
           Effect.succeed(
             feed([entry({ publishedAt: at('2026-01-01T00:00:00.000Z') })])
           ),
       },
       processor: {
-        process: (content) => {
+        sanitize: () => {
           processed = true;
 
-          return Effect.succeed(content);
+          return Effect.succeed('');
         },
       },
       articles: {
@@ -564,13 +758,15 @@ it.effect(
         expect(retained[0]).toEqual([newestId]);
       }),
       {
+        settings: {
+          get: () => Effect.succeed(settingsValue(100)),
+        },
         subscriptions: {
           find: () => Effect.succeed(Option.some(subscription())),
-          retention: () => Effect.succeed(100),
           update: () => Effect.void,
         },
-        syndication: {
-          fetch: () => Effect.succeed(feed([stale, newest])),
+        feedParser: {
+          parse: () => Effect.succeed(feed([stale, newest])),
         },
         articles: {
           inventory: () => Effect.succeed([]),
@@ -644,13 +840,15 @@ it.effect(
         expect(retained[0]).toEqual([newestId, freshId]);
       }),
       {
+        settings: {
+          get: () => Effect.succeed(settingsValue(2)),
+        },
         subscriptions: {
           find: () => Effect.succeed(Option.some(subscription())),
-          retention: () => Effect.succeed(2),
           update: () => Effect.void,
         },
-        syndication: {
-          fetch: () => Effect.succeed(feed([stale, fresh, newest])),
+        feedParser: {
+          parse: () => Effect.succeed(feed([stale, fresh, newest])),
         },
         articles: {
           inventory: () => Effect.succeed(inventory),
@@ -683,11 +881,13 @@ it.effect(
         });
       }),
       {
+        settings: {
+          get: () => Effect.succeed(settingsValue(100)),
+        },
         subscriptions: {
           find: () => Effect.succeed(Option.some(subscription())),
-          retention: () => Effect.succeed(100),
         },
-        syndication: { fetch: () => Effect.succeed(feed([])) },
+        feedParser: { parse: () => Effect.succeed(feed([])) },
         articles: {
           inventory: () => Effect.succeed([]),
           retain: () =>

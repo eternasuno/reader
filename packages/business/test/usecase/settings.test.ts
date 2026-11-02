@@ -1,18 +1,13 @@
 import { expect, it } from '@effect/vitest';
 import { Effect, Layer, Redacted } from 'effect';
-import { OwnerId } from '../../src/entity/model';
+import { OwnerId } from '../../src/entity/object-value';
 import {
-  ExtractionSettings,
-  ExtractionSettingsReadError,
-  type ExtractionSettingsUpdate,
-  type ExtractionSettingsValue,
-  ExtractionSettingsWriteError,
-} from '../../src/port/extraction-settings';
-import {
-  type SubscriptionReadError,
-  Subscriptions,
-  type SubscriptionWriteError,
-} from '../../src/port/reader-store';
+  SettingsRepository,
+  SettingsRepositoryReadError,
+  type SettingsRepositoryUpdate,
+  type SettingsRepositoryValue,
+  SettingsRepositoryWriteError,
+} from '../../src/port/settings-repository';
 import {
   getSettings,
   updateExtraction,
@@ -21,33 +16,24 @@ import {
 
 const owner = OwnerId.make('alice');
 
-type SubscriptionMock = {
-  readonly retention?: (
+type SettingsMock = {
+  readonly get?: (
     owner: OwnerId
-  ) => Effect.Effect<number, SubscriptionReadError>;
+  ) => Effect.Effect<SettingsRepositoryValue, SettingsRepositoryReadError>;
+  readonly save?: (
+    owner: OwnerId,
+    update: SettingsRepositoryUpdate
+  ) => Effect.Effect<void, SettingsRepositoryWriteError>;
   readonly setRetention?: (
     owner: OwnerId,
     value: number
-  ) => Effect.Effect<void, SubscriptionWriteError>;
+  ) => Effect.Effect<void, SettingsRepositoryWriteError>;
 };
 
-type ExtractionMock = {
-  readonly get?: (
-    owner: OwnerId
-  ) => Effect.Effect<ExtractionSettingsValue, ExtractionSettingsReadError>;
-  readonly save?: (
-    owner: OwnerId,
-    update: ExtractionSettingsUpdate
-  ) => Effect.Effect<void, ExtractionSettingsWriteError>;
-};
+const settingsLayer = (handlers: SettingsMock) =>
+  Layer.mock(SettingsRepository, handlers);
 
-const subscriptionLayer = (handlers: SubscriptionMock) =>
-  Layer.mock(Subscriptions, handlers);
-
-const extractionLayer = (handlers: ExtractionMock) =>
-  Layer.mock(ExtractionSettings, handlers);
-
-it.effect('combines retention with extraction settings', () =>
+it.effect('returns retention with extraction settings', () =>
   Effect.gen(function* () {
     expect(yield* getSettings(owner)).toEqual({
       retention: 120,
@@ -57,17 +43,15 @@ it.effect('combines retention with extraction settings', () =>
     });
   }).pipe(
     Effect.provide(
-      Layer.merge(
-        subscriptionLayer({ retention: () => Effect.succeed(120) }),
-        extractionLayer({
-          get: () =>
-            Effect.succeed({
-              provider: 'browser',
-              jinaConfigured: true,
-              browserEndpoint: 'ws://127.0.0.1:9222',
-            }),
-        })
-      )
+      settingsLayer({
+        get: () =>
+          Effect.succeed({
+            retention: 120,
+            provider: 'browser',
+            jinaConfigured: true,
+            browserEndpoint: 'ws://127.0.0.1:9222',
+          }),
+      })
     )
   )
 );
@@ -78,13 +62,10 @@ it.effect('maps settings read failures', () =>
     expect(error._tag).toBe('SettingsReadError');
   }).pipe(
     Effect.provide(
-      Layer.merge(
-        subscriptionLayer({ retention: () => Effect.succeed(100) }),
-        extractionLayer({
-          get: () =>
-            Effect.fail(new ExtractionSettingsReadError({ error: 'read' })),
-        })
-      )
+      settingsLayer({
+        get: () =>
+          Effect.fail(new SettingsRepositoryReadError({ error: 'read' })),
+      })
     )
   )
 );
@@ -100,12 +81,26 @@ it.effect('persists valid retention choices', () => {
     expect(saved).toEqual([30, 100, 300]);
   }).pipe(
     Effect.provide(
-      subscriptionLayer({
+      settingsLayer({
         setRetention: (_owner, value) => {
           saved.push(value);
 
           return Effect.void;
         },
+      })
+    )
+  );
+});
+
+it.effect('maps retention save failures', () => {
+  return Effect.gen(function* () {
+    const error = yield* Effect.flip(updateRetention(owner, 120));
+    expect(error._tag).toBe('SettingsSaveError');
+  }).pipe(
+    Effect.provide(
+      settingsLayer({
+        setRetention: () =>
+          Effect.fail(new SettingsRepositoryWriteError({ error: 'write' })),
       })
     )
   );
@@ -121,7 +116,7 @@ it.effect('rejects retention outside the supported integer range', () => {
     }
   }).pipe(
     Effect.provide(
-      subscriptionLayer({
+      settingsLayer({
         setRetention: () => Effect.die('invalid retention must not persist'),
       })
     )
@@ -129,7 +124,7 @@ it.effect('rejects retention outside the supported integer range', () => {
 });
 
 it.effect('saves extraction settings in one atomic update', () => {
-  const saved: ExtractionSettingsUpdate[] = [];
+  const saved: SettingsRepositoryUpdate[] = [];
 
   return Effect.gen(function* () {
     expect(
@@ -149,7 +144,7 @@ it.effect('saves extraction settings in one atomic update', () => {
     }
   }).pipe(
     Effect.provide(
-      extractionLayer({
+      settingsLayer({
         save: (_owner, update) => {
           saved.push(update);
 
@@ -161,14 +156,14 @@ it.effect('saves extraction settings in one atomic update', () => {
 });
 
 it.effect('preserves omitted extraction fields', () => {
-  const saved: ExtractionSettingsUpdate[] = [];
+  const saved: SettingsRepositoryUpdate[] = [];
 
   return Effect.gen(function* () {
     yield* updateExtraction(owner, { provider: 'jina' });
     expect(saved).toEqual([{ provider: 'jina' }]);
   }).pipe(
     Effect.provide(
-      extractionLayer({
+      settingsLayer({
         save: (_owner, update) => {
           saved.push(update);
 
@@ -180,7 +175,7 @@ it.effect('preserves omitted extraction fields', () => {
 });
 
 it.effect('accepts browser endpoints and requires one for browser', () => {
-  const saved: ExtractionSettingsUpdate[] = [];
+  const saved: SettingsRepositoryUpdate[] = [];
   const endpoints = [
     'http://127.0.0.1:9222',
     'https://browser.example.com/devtools',
@@ -206,7 +201,7 @@ it.effect('accepts browser endpoints and requires one for browser', () => {
     expect(saved).toHaveLength(endpoints.length);
   }).pipe(
     Effect.provide(
-      extractionLayer({
+      settingsLayer({
         save: (_owner, update) => {
           saved.push(update);
 
@@ -237,7 +232,7 @@ it.effect('rejects invalid browser endpoints', () => {
     }
   }).pipe(
     Effect.provide(
-      extractionLayer({
+      settingsLayer({
         save: () => Effect.die('invalid endpoint must not persist'),
       })
     )
@@ -245,14 +240,14 @@ it.effect('rejects invalid browser endpoints', () => {
 });
 
 it.effect('clears the browser endpoint with an empty value', () => {
-  const saved: ExtractionSettingsUpdate[] = [];
+  const saved: SettingsRepositoryUpdate[] = [];
 
   return Effect.gen(function* () {
     yield* updateExtraction(owner, { provider: 'jina', browserEndpoint: '  ' });
     expect(saved).toEqual([{ provider: 'jina', browserEndpoint: '' }]);
   }).pipe(
     Effect.provide(
-      extractionLayer({
+      settingsLayer({
         save: (_owner, update) => {
           saved.push(update);
 
@@ -275,7 +270,7 @@ it.effect('rejects blank, multiline, and oversized keys', () => {
     }
   }).pipe(
     Effect.provide(
-      extractionLayer({
+      settingsLayer({
         save: () => Effect.die('invalid key must not persist'),
       })
     )
@@ -290,7 +285,7 @@ it.effect('rejects unknown providers', () => {
     }
   }).pipe(
     Effect.provide(
-      extractionLayer({
+      settingsLayer({
         save: () => Effect.die('invalid provider must not persist'),
       })
     )
@@ -305,9 +300,9 @@ it.effect('maps extraction save failures', () => {
     expect(error._tag).toBe('SettingsSaveError');
   }).pipe(
     Effect.provide(
-      extractionLayer({
+      settingsLayer({
         save: () =>
-          Effect.fail(new ExtractionSettingsWriteError({ error: 'write' })),
+          Effect.fail(new SettingsRepositoryWriteError({ error: 'write' })),
       })
     )
   );
