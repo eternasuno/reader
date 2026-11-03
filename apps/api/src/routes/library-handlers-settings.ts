@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
 import {
   getSettings,
@@ -8,9 +8,9 @@ import {
 import { type HandlerRequest, withSession } from './library-contract';
 import {
   extractionFailure,
-  extractionWriteFailure,
   retentionFailure,
   settingsReadFailure,
+  settingsRepositoryFailure,
 } from './library-failures';
 
 const settings = () =>
@@ -27,10 +27,14 @@ const setExtraction = ({ payload }: HandlerRequest<'setExtraction'>) =>
   withSession((owner) =>
     updateExtraction(owner, {
       provider: payload.provider,
-      ...(payload.jinaKey === undefined ? {} : { jinaKey: payload.jinaKey }),
-      ...(payload.browserEndpoint === undefined
-        ? {}
-        : { browserEndpoint: payload.browserEndpoint }),
+      ...Option.match(payload.jinaKey, {
+        onNone: () => ({}),
+        onSome: (jinaKey) => ({ jinaKey }),
+      }),
+      ...Option.match(payload.browserEndpoint, {
+        onNone: () => ({}),
+        onSome: (browserEndpoint) => ({ browserEndpoint }),
+      }),
     })
   ).pipe(Effect.catchTags(extractionFailure));
 
@@ -42,7 +46,7 @@ const deleteKey = () =>
 
       return { ok: true as const };
     })
-  ).pipe(Effect.catchTags(extractionWriteFailure));
+  ).pipe(Effect.catchTags(settingsRepositoryFailure));
 
 const deleteBrowser = () =>
   withSession((owner) =>
@@ -52,7 +56,7 @@ const deleteBrowser = () =>
 
       return { ok: true as const };
     })
-  ).pipe(Effect.catchTags(extractionWriteFailure));
+  ).pipe(Effect.catchTags(settingsRepositoryFailure));
 
 export const settingsHandlers = {
   settings,

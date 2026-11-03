@@ -2,12 +2,12 @@ import { expect, it } from '@effect/vitest';
 import {
   OwnerId,
   SettingsRepository,
-  SettingsRepositoryReadError,
+  SettingsRepositoryError,
   WebpageFetcher,
   WebpageFetcherFactory,
 } from '@reader/business';
 import { BrowserConcurrency, BrowserConcurrencyLive } from '@reader/webpage';
-import { Effect, Layer, Redacted, Schema, Semaphore } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema, Semaphore } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { WebpageFetcherFactoryLive } from '../../src/adapter/webpage-fetcher';
 
@@ -36,13 +36,13 @@ const settingsLayer = (
         retention: 100,
         provider: fixture?.provider ?? 'jina',
         jinaConfigured: fixture?.key !== undefined,
-        browserEndpoint: fixture?.browserEndpoint ?? '',
+        browserEndpoint: Option.fromUndefinedOr(fixture?.browserEndpoint),
       });
     },
     getKey: (owner) => {
       calls.push(`getKey:${owner}`);
 
-      return Effect.succeed(fixtures[owner]?.key);
+      return Effect.succeed(Option.fromUndefinedOr(fixtures[owner]?.key));
     },
   });
 
@@ -188,12 +188,12 @@ it.effect('shares one browser concurrency across owner layers', () => {
   );
 });
 
-it.effect('reports settings read failures from owner selection', () => {
+it.effect('reports settings repository failures from owner selection', () => {
   const failing = Layer.mock(SettingsRepository, {
     get: () =>
       Effect.fail(
-        new SettingsRepositoryReadError({
-          error: 'Failed to read extraction settings',
+        new SettingsRepositoryError({
+          error: 'Failed to access extraction settings',
         })
       ),
   });
@@ -201,8 +201,8 @@ it.effect('reports settings read failures from owner selection', () => {
   return Effect.gen(function* () {
     const factory = yield* WebpageFetcherFactory;
     const error = yield* Effect.flip(factory.forOwner(alice));
-    expect(error._tag).toBe('SettingsRepositoryReadError');
-    expect(error.error).toBe('Failed to read extraction settings');
+    expect(error._tag).toBe('SettingsRepositoryError');
+    expect(error.error).toBe('Failed to access extraction settings');
   }).pipe(
     Effect.provide(
       WebpageFetcherFactoryLive.pipe(

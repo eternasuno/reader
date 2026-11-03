@@ -7,9 +7,11 @@ import { makeSubscriptions } from './subscription-store';
 
 export const readerStoreSchema = `
 DEFINE TABLE IF NOT EXISTS article SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE article TYPE datetime;
 DEFINE INDEX IF NOT EXISTS article_owner_feed ON article FIELDS owner, feedId;
 DEFINE INDEX IF NOT EXISTS article_owner_feed_published ON article FIELDS owner, feedId, publishedAt;
 DEFINE TABLE IF NOT EXISTS feed SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS updatedAt ON TABLE feed TYPE datetime;
 DEFINE INDEX IF NOT EXISTS reader_feed_owner ON feed FIELDS owner;
 DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS setting_owner ON setting FIELDS owner UNIQUE;

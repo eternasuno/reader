@@ -37,7 +37,7 @@ describe('library read marks', () => {
     expect(model.state().counts.feeds['f1']).toBe(0);
     expect(model.state().pending.has('a')).toBe(true);
 
-    mark.reject(new LibraryError('ArticleWriteError'));
+    mark.reject(new LibraryError('ArticleRepositoryError'));
     await pending;
 
     expect(model.state().items[0]?.read).toBe(false);
@@ -46,7 +46,7 @@ describe('library read marks', () => {
     expect(model.state().pending.has('a')).toBe(false);
     expect(model.state().toast).toEqual({
       kind: 'error',
-      message: '暂时无法保存文章，请稍后重试',
+      message: '暂时无法访问文章，请稍后重试',
     });
   });
 
@@ -164,7 +164,7 @@ describe('library mark all', () => {
     expect(model.state().counts).toEqual(counts(0));
     expect(model.state().items.every((item) => item.read)).toBe(true);
 
-    mark.reject(new LibraryError('ArticleWriteError'));
+    mark.reject(new LibraryError('ArticleRepositoryError'));
     await pending;
 
     expect(model.state().counts).toEqual(counts(0, { f1: 1 }));

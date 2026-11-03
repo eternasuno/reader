@@ -4,7 +4,7 @@ import {
   BrowserWebpageFetcherLive,
   JinaWebpageFetcherLive,
 } from '@reader/webpage';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 
 export const WebpageFetcherFactoryLive = Layer.effect(
   WebpageFetcherFactory,
@@ -20,11 +20,14 @@ export const WebpageFetcherFactoryLive = Layer.effect(
           if (config.provider === 'jina') {
             const key = yield* settings.getKey(owner);
 
-            return JinaWebpageFetcherLive(key);
+            return JinaWebpageFetcherLive(Option.getOrUndefined(key));
           }
 
           return BrowserWebpageFetcherLive(
-            config.browserEndpoint.trim() || undefined
+            Option.match(config.browserEndpoint, {
+              onNone: () => undefined,
+              onSome: (endpoint) => endpoint.trim() || undefined,
+            })
           ).pipe(Layer.provide(Layer.succeed(BrowserConcurrency, concurrency)));
         }),
     });

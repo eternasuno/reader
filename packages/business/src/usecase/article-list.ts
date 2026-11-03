@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from 'effect';
-import { Article } from '../entity/article';
-import { ArticleId, FeedId, OwnerId } from '../entity/object-value';
+import { Article, ArticleId } from '../entity/article';
+import { FeedId, OwnerId } from '../entity/object-value';
 import {
   type ArticleBoundary,
   ArticleFilter,
@@ -9,7 +9,7 @@ import {
 } from '../port/article-repository';
 import {
   FeedRepository,
-  type SubscriptionReadError,
+  type FeedRepositoryError,
 } from '../port/feed-repository';
 import { InvalidCursor } from './article-errors';
 import { SubscriptionNotFound } from './subscriptions';
@@ -31,7 +31,7 @@ const CursorPayload = Schema.Struct({
     Schema.Struct({ kind: Schema.Literals(['later']) }),
     Schema.Struct({
       kind: Schema.Literals(['feeds']),
-      feedId: Schema.optional(FeedId),
+      feedId: Schema.OptionFromOptional(FeedId),
     }),
   ]),
   filter: ArticleFilter,
@@ -60,12 +60,16 @@ const decodeBase64 = (value: string): string => {
 };
 
 const scopeKey = (scope: CursorScope): string =>
-  scope.kind === 'later' ? 'later' : `feeds:${scope.feedId ?? ''}`;
+  scope.kind === 'later'
+    ? 'later'
+    : `feeds:${Option.getOrElse(scope.feedId, () => '')}`;
 
 const laterScope: CursorScope = { kind: 'later' };
 
-const feedScope = (feedId: FeedId | undefined): CursorScope =>
-  feedId === undefined ? { kind: 'feeds' } : { kind: 'feeds', feedId };
+const feedScope = (feedId: FeedId | undefined): CursorScope => ({
+  kind: 'feeds',
+  feedId: Option.fromUndefinedOr(feedId),
+});
 
 const boundaryOf = (article: Article): ArticleBoundary => ({
   publishedAt: Schema.encodeSync(Schema.DateTimeUtcFromString)(
@@ -214,7 +218,7 @@ const requireFeed = (
   feedId: FeedId
 ): Effect.Effect<
   void,
-  SubscriptionNotFound | SubscriptionReadError,
+  SubscriptionNotFound | FeedRepositoryError,
   FeedRepository
 > =>
   Effect.gen(function* () {

@@ -4,10 +4,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
 import { Effect, Layer, Option, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
-import { Article } from '../../../../packages/business/src/entity/article.ts';
+import {
+  Article,
+  ArticleId,
+} from '../../../../packages/business/src/entity/article.ts';
 import { Feed } from '../../../../packages/business/src/entity/feed.ts';
 import {
-  ArticleId,
   FeedId,
   OwnerId,
 } from '../../../../packages/business/src/entity/object-value.ts';
@@ -35,7 +37,7 @@ const feed = (ownerId: string, url: string, updatedAt: string, id?: string) =>
     ownerId,
     url,
     title: url,
-    updatedAt,
+    updatedAt: new Date(updatedAt),
   });
 
 const article = (
@@ -54,7 +56,7 @@ const article = (
     ownerId,
     ...(options.feedId === undefined ? {} : { feedId: options.feedId }),
     title: options.title ?? seed,
-    publishedAt: options.publishedAt ?? '2026-01-01T00:00:00.000Z',
+    publishedAt: new Date(options.publishedAt ?? '2026-01-01T00:00:00.000Z'),
     read: options.read ?? false,
   });
 
@@ -112,6 +114,24 @@ const runCheck = <A, E>(check: (db: Surreal) => Effect.Effect<A, E, Store>) =>
     (db) => Effect.promise(() => db.close())
   );
 
+it.effect('stores and reads publication dates as native datetimes', () =>
+  runCheck((db) =>
+    Effect.gen(function* () {
+      const articles = yield* ArticleRepository;
+      const alice = owner('alice');
+      const item = article('alice', 'native');
+      yield* articles.create(alice, [item]);
+      expect(
+        yield* query(
+          db,
+          'SELECT VALUE type::is_datetime(publishedAt) FROM article;'
+        )
+      ).toEqual([true]);
+      expect(yield* articles.find(alice, item.id)).toEqual(Option.some(item));
+    })
+  )
+);
+
 it.effect('creates subscriptions idempotently with owner-scoped identity', () =>
   runCheck((db) =>
     Effect.gen(function* () {
@@ -123,14 +143,20 @@ it.effect('creates subscriptions idempotently with owner-scoped identity', () =>
       const aliceFeed = feed('alice', url, now);
       const bobFeed = feed('bob', url, now);
 
-      expect(yield* subscriptions.create(aliceFeed)).toBe(true);
-      expect(yield* subscriptions.create(aliceFeed)).toBe(false);
       expect(
-        yield* subscriptions.create(feed('alice', url, now, hash('alternate')))
-      ).toBe(false);
-      expect(yield* subscriptions.create(bobFeed)).toBe(true);
+        yield* subscriptions.create([
+          aliceFeed,
+          aliceFeed,
+          feed('alice', url, now, hash('alternate')),
+        ])
+      ).toEqual([aliceFeed.id]);
+      expect(yield* subscriptions.create([bobFeed])).toEqual([bobFeed.id]);
+      expect(
+        yield* query(db, 'SELECT VALUE type::is_datetime(updatedAt) FROM feed;')
+      ).toEqual([true, true]);
+      expect(yield* subscriptions.create([])).toEqual([]);
       expect(yield* subscriptions.list(alice)).toEqual([aliceFeed]);
-      expect(yield* subscriptions.all).toHaveLength(2);
+      expect(yield* subscriptions.list()).toHaveLength(2);
       expect(yield* subscriptions.find(alice, aliceFeed.id)).toEqual(
         Option.some(aliceFeed)
       );
@@ -148,6 +174,87 @@ it.effect('creates subscriptions idempotently with owner-scoped identity', () =>
   )
 );
 
+it.effect('batches feed writes with owner protection and empty no-ops', () =>
+  runCheck((db) =>
+    Effect.gen(function* () {
+      const articles = yield* ArticleRepository;
+      const subscriptions = yield* FeedRepository;
+      const alice = owner('alice');
+      const bob = owner('bob');
+      const now = '2026-01-01T00:00:00.000Z';
+      const aliceFirst = feed('alice', 'https://example.com/first.xml', now);
+      const aliceSecond = feed('alice', 'https://example.com/second.xml', now);
+      const bobFirst = feed('bob', 'https://example.com/first.xml', now);
+
+      expect(
+        yield* subscriptions.create([aliceFirst, aliceSecond, bobFirst])
+      ).toEqual([aliceFirst.id, aliceSecond.id, bobFirst.id]);
+      expect(yield* subscriptions.list(alice)).toEqual([
+        aliceFirst,
+        aliceSecond,
+      ]);
+      expect(yield* subscriptions.create([aliceFirst, aliceSecond])).toEqual(
+        []
+      );
+      yield* articles.create(alice, [
+        article('alice', 'first', { feedId: aliceFirst.id }),
+        article('alice', 'second', { feedId: aliceSecond.id }),
+      ]);
+
+      const updatedFirst = {
+        ...aliceFirst,
+        title: 'Renamed',
+        updatedAt: Schema.decodeSync(Schema.DateTimeUtcFromString)(
+          '2026-01-02T00:00:00.000Z'
+        ),
+      };
+      yield* subscriptions.update([
+        updatedFirst,
+        { ...aliceSecond, title: 'Second' },
+      ]);
+      expect(yield* subscriptions.list(alice)).toEqual([
+        updatedFirst,
+        { ...aliceSecond, title: 'Second' },
+      ]);
+      expect(
+        yield* query(
+          db,
+          'SELECT VALUE updatedAt FROM feed WHERE feedId = $id;',
+          {
+            id: aliceFirst.id,
+          }
+        )
+      ).toEqual([new Date('2026-01-02T00:00:00.000Z')]);
+      yield* subscriptions.update([
+        { ...aliceFirst, ownerId: bob, title: 'Hijacked' },
+      ]);
+      yield* subscriptions.update([]);
+      yield* subscriptions.remove(bob, [aliceFirst.id]);
+      expect(yield* subscriptions.list(alice)).toEqual([
+        updatedFirst,
+        { ...aliceSecond, title: 'Second' },
+      ]);
+
+      yield* subscriptions.remove(alice, []);
+      expect(yield* subscriptions.list(alice)).toHaveLength(2);
+
+      yield* subscriptions.remove(alice, [aliceFirst.id, aliceSecond.id]);
+      expect(yield* subscriptions.list(alice)).toEqual([]);
+      expect(yield* subscriptions.list(bob)).toEqual([bobFirst]);
+      expect(yield* articles.listFeeds(alice, undefined, feedsQuery())).toEqual(
+        []
+      );
+      expect(
+        yield* query<{ total: number }>(
+          db,
+          'SELECT count() AS total FROM article WHERE owner = $owner GROUP ALL;',
+          { owner: 'alice' }
+        )
+      ).toEqual([{ total: 0 }]);
+    })
+  )
+);
+
 it.effect(
   'unsubscribes transactions with later copies and owner isolation',
   () =>
@@ -160,8 +267,8 @@ it.effect(
         const now = '2026-01-01T00:00:00.000Z';
         const aliceFeed = feed('alice', 'https://example.com/a.xml', now);
         const bobFeed = feed('bob', 'https://example.com/b.xml', now);
-        yield* subscriptions.create(aliceFeed);
-        yield* subscriptions.create(bobFeed);
+        yield* subscriptions.create([aliceFeed]);
+        yield* subscriptions.create([bobFeed]);
         const feedItem = article('alice', 'feed', { feedId: aliceFeed.id });
         const later = article('alice', 'later', {
           publishedAt: '2026-01-02T00:00:00.000Z',
@@ -170,7 +277,7 @@ it.effect(
         yield* articles.create(alice, [feedItem, later]);
         yield* articles.create(bob, [bobItem]);
 
-        yield* subscriptions.remove(alice, aliceFeed.id);
+        yield* subscriptions.remove(alice, [aliceFeed.id]);
 
         expect(yield* subscriptions.find(alice, aliceFeed.id)).toEqual(
           Option.none()
@@ -207,14 +314,14 @@ it.effect('writes atomically and preserves duplicates and read state', () =>
         'https://example.com/batch.xml',
         '2026-01-01T00:00:00.000Z'
       );
-      yield* subscriptions.create(subscribed);
+      yield* subscriptions.create([subscribed]);
       const valid = article('alice', 'valid', { feedId: subscribed.id });
       const invalid = article('alice', 'invalid', { feedId: missingFeedId });
 
       const error = yield* Effect.flip(
         articles.create(alice, [valid, invalid])
       );
-      expect(error._tag).toBe('ArticleWriteError');
+      expect(error._tag).toBe('ArticleRepositoryError');
       expect(yield* articles.find(alice, valid.id)).toEqual(Option.none());
 
       const first = article('alice', 'first', {
@@ -267,7 +374,7 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
         'https://example.com/tie.xml',
         '2026-01-01T00:00:00.000Z'
       );
-      yield* subscriptions.create(subscribed);
+      yield* subscriptions.create([subscribed]);
       const newest = article('alice', 'newest', {
         feedId: subscribed.id,
         publishedAt: '2026-01-04T00:00:00.000Z',
@@ -368,8 +475,8 @@ it.effect('counts unread scopes and treats empty marks as no-ops', () =>
         'https://example.com/two.xml',
         '2026-01-01T00:00:00.000Z'
       );
-      yield* subscriptions.create(firstFeed);
-      yield* subscriptions.create(secondFeed);
+      yield* subscriptions.create([firstFeed]);
+      yield* subscriptions.create([secondFeed]);
       const firstUnread = article('alice', 'first-unread', {
         feedId: firstFeed.id,
       });
@@ -434,7 +541,7 @@ it.effect('inventories, retains, and extracts articles', () =>
         'https://example.com/retain.xml',
         '2026-01-01T00:00:00.000Z'
       );
-      yield* subscriptions.create(subscribed);
+      yield* subscriptions.create([subscribed]);
       const first = article('alice', 'retain-a', { feedId: subscribed.id });
       const second = article('alice', 'retain-b', {
         feedId: subscribed.id,
@@ -473,7 +580,7 @@ it.effect('inventories, retains, and extracts articles', () =>
         yield* articles.saveExtracted(alice, later.id, '<p>Body</p>')
       ).toBe(true);
       expect(yield* articles.find(alice, later.id)).toEqual(
-        Option.some({ ...later, extractedContent: '<p>Body</p>' })
+        Option.some({ ...later, extractedContent: Option.some('<p>Body</p>') })
       );
       expect(
         yield* articles.saveExtracted(alice, missingArticleId, '<p>Body</p>')
@@ -493,7 +600,7 @@ it.effect('serializes feed deletion with article writes without orphans', () =>
         'https://example.com/race.xml',
         '2026-01-01T00:00:00.000Z'
       );
-      yield* subscriptions.create(subscribed);
+      yield* subscriptions.create([subscribed]);
       yield* articles.create(alice, [
         article('alice', 'race-initial', { feedId: subscribed.id }),
       ]);
@@ -506,7 +613,7 @@ it.effect('serializes feed deletion with article writes without orphans', () =>
 
       yield* Effect.all(
         [
-          Effect.result(subscriptions.remove(alice, subscribed.id)),
+          Effect.result(subscriptions.remove(alice, [subscribed.id])),
           ...writes.map((item) =>
             Effect.result(articles.create(alice, [item]))
           ),

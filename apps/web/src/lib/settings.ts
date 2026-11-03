@@ -4,7 +4,7 @@ export type LibrarySettings = {
   readonly retention: number;
   readonly provider: ReaderProvider;
   readonly jinaConfigured: boolean;
-  readonly browserEndpoint: string;
+  readonly browserEndpoint?: string;
 };
 
 export type ExtractionUpdate = {
@@ -25,10 +25,7 @@ const messages: Record<string, string> = {
   InvalidEndpoint: '请输入有效的浏览器服务地址',
   SettingsReadError: '暂时无法读取设置，请稍后重试',
   SettingsSaveError: '暂时无法保存设置，请稍后重试',
-  SubscriptionReadError: '暂时无法读取设置，请稍后重试',
-  SubscriptionWriteError: '暂时无法保存设置，请稍后重试',
-  SettingsRepositoryReadError: '暂时无法读取提取设置，请稍后重试',
-  SettingsRepositoryWriteError: '暂时无法保存提取设置，请稍后重试',
+  SettingsRepositoryError: '暂时无法更新提取设置，请稍后重试',
   NotFound: '要修改的设置不存在，请刷新页面后重试',
   Conflict: '设置已在别处修改，请刷新页面后重试',
   RequestFailed: '请求失败，请稍后重试',
@@ -143,6 +140,8 @@ const parseSettings = (value: unknown): LibrarySettings | undefined => {
 
   const provider =
     'provider' in value ? parseProvider(value.provider) : undefined;
+  const browserEndpoint =
+    'browserEndpoint' in value ? value.browserEndpoint : undefined;
   if (
     !('retention' in value) ||
     typeof value.retention !== 'number' ||
@@ -150,8 +149,7 @@ const parseSettings = (value: unknown): LibrarySettings | undefined => {
     provider === undefined ||
     !('jinaConfigured' in value) ||
     typeof value.jinaConfigured !== 'boolean' ||
-    !('browserEndpoint' in value) ||
-    typeof value.browserEndpoint !== 'string'
+    (browserEndpoint !== undefined && typeof browserEndpoint !== 'string')
   ) {
     return undefined;
   }
@@ -160,7 +158,7 @@ const parseSettings = (value: unknown): LibrarySettings | undefined => {
     retention: value.retention,
     provider,
     jinaConfigured: value.jinaConfigured,
-    browserEndpoint: value.browserEndpoint,
+    ...(browserEndpoint === undefined ? {} : { browserEndpoint }),
   };
 };
 

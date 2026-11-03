@@ -1,34 +1,29 @@
 import { createHash } from 'node:crypto';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
+import type { OwnerId } from '../../../../packages/business/src/entity/object-value.ts';
 import {
-  type OwnerId,
   ReaderProvider,
-} from '../../../../packages/business/src/entity/object-value.ts';
-import { Setting } from '../../../../packages/business/src/entity/setting.ts';
+  Setting,
+} from '../../../../packages/business/src/entity/setting.ts';
 import * as Port from '../../../../packages/business/src/port/settings-repository.ts';
 import { Database } from '../infrastructure/db';
 
 type Bindings = Record<string, unknown>;
 
 const StoredRow = Schema.Struct({
-  jinaKey: Schema.optional(Schema.String),
-  provider: Schema.optional(ReaderProvider),
-  browserEndpoint: Schema.optional(Schema.String),
-  retention: Schema.optional(Setting.fields.retention),
+  jinaKey: Schema.OptionFromOptional(Schema.String),
+  provider: Schema.OptionFromOptional(ReaderProvider),
+  browserEndpoint: Schema.OptionFromOptional(Schema.String),
+  retention: Schema.OptionFromOptional(Setting.fields.retention),
 });
 
 const ownerHash = (owner: OwnerId) =>
   createHash('sha256').update(owner).digest('hex');
 
-const readError = () =>
-  new Port.SettingsRepositoryReadError({
-    error: 'Failed to read extraction settings',
-  });
-
-const writeError = () =>
-  new Port.SettingsRepositoryWriteError({
-    error: 'Failed to save extraction settings',
+const repositoryError = () =>
+  new Port.SettingsRepositoryError({
+    error: 'Failed to access extraction settings',
   });
 
 const query = <A, E>(
@@ -45,72 +40,98 @@ const query = <A, E>(
 
 const decodeRows = (rows: unknown) =>
   Schema.decodeUnknownEffect(Schema.Array(StoredRow))(rows).pipe(
-    Effect.mapError(readError)
+    Effect.mapError(repositoryError)
   );
 
 const load = (db: Surreal, owner: OwnerId) =>
-  query<unknown, Port.SettingsRepositoryReadError>(
+  query<unknown, Port.SettingsRepositoryError>(
     db,
     'SELECT jinaKey, provider, browserEndpoint, retention FROM setting WHERE owner = $owner;',
     owner,
     {},
-    readError
+    repositoryError
   ).pipe(
     Effect.flatMap(decodeRows),
     Effect.map((rows): Port.SettingsRepositoryValue => {
-      const row = rows[0];
+      const row = Option.fromUndefinedOr(rows[0]);
+      const browserEndpoint = Option.map(
+        Option.flatMap(row, (value) => value.browserEndpoint),
+        (value) => value.trim()
+      );
 
       return {
-        retention: row?.retention ?? Port.DEFAULT_RETENTION,
-        provider: row?.provider ?? 'jina',
-        jinaConfigured: Boolean(row?.jinaKey),
-        browserEndpoint: row?.browserEndpoint?.trim() ?? '',
+        retention: Option.getOrElse(
+          Option.flatMap(row, (value) => value.retention),
+          () => Port.DEFAULT_RETENTION
+        ),
+        provider: Option.getOrElse(
+          Option.flatMap(row, (value) => value.provider),
+          () => 'jina' as const
+        ),
+        jinaConfigured: Option.match(
+          Option.flatMap(row, (value) => value.jinaKey),
+          { onNone: () => false, onSome: (key) => key !== '' }
+        ),
+        browserEndpoint: Option.filter(
+          browserEndpoint,
+          (value) => value !== ''
+        ),
       };
     })
   );
 
 const loadKey = (db: Surreal, owner: OwnerId) =>
-  query<unknown, Port.SettingsRepositoryReadError>(
+  query<unknown, Port.SettingsRepositoryError>(
     db,
     'SELECT jinaKey FROM setting WHERE owner = $owner;',
     owner,
     {},
-    readError
+    repositoryError
   ).pipe(
     Effect.flatMap(decodeRows),
-    Effect.map((rows) => {
-      const jinaKey = rows[0]?.jinaKey;
-
-      return jinaKey === undefined ? undefined : Redacted.make(jinaKey);
-    })
+    Effect.map((rows) =>
+      Option.map(
+        Option.flatMap(Option.fromUndefinedOr(rows[0]), (row) => row.jinaKey),
+        (jinaKey) => Redacted.make(jinaKey)
+      )
+    )
   );
 
 type SaveBindings = {
-  readonly provider: ReaderProvider;
-  readonly jinaKey?: string;
-  readonly browserEndpoint?: string;
+  provider: ReaderProvider;
+  jinaKey?: string;
+  browserEndpoint?: string;
 };
 
-const saveSql = (update: Port.SettingsRepositoryUpdate, jinaKey?: string) => {
+const saveSql = (
+  update: Port.SettingsRepositoryUpdate,
+  jinaKey: Option.Option<string>
+) => {
   const clauses = ['owner = $owner', 'provider = $provider'];
-  if (jinaKey !== undefined) {
-    clauses.push('jinaKey = $jinaKey');
-  }
+  const bindings: SaveBindings = { provider: update.provider };
 
-  const endpoint = update.browserEndpoint?.trim();
-  if (endpoint === '') {
-    clauses.push('browserEndpoint = NONE');
-  } else if (endpoint !== undefined) {
-    clauses.push('browserEndpoint = $browserEndpoint');
-  }
+  Option.match(jinaKey, {
+    onNone: () => undefined,
+    onSome: (key) => {
+      clauses.push('jinaKey = $jinaKey');
+      bindings.jinaKey = key;
+    },
+  });
 
-  const bindings: SaveBindings = {
-    provider: update.provider,
-    ...(jinaKey === undefined ? {} : { jinaKey }),
-    ...(endpoint === undefined || endpoint === ''
-      ? {}
-      : { browserEndpoint: endpoint }),
-  };
+  Option.match(
+    Option.map(update.browserEndpoint, (value) => value.trim()),
+    {
+      onNone: () => undefined,
+      onSome: (endpoint) => {
+        if (endpoint === '') {
+          clauses.push('browserEndpoint = NONE');
+        } else {
+          clauses.push('browserEndpoint = $browserEndpoint');
+          bindings.browserEndpoint = endpoint;
+        }
+      },
+    }
+  );
 
   return {
     sql: `UPSERT type::record("setting", $id) SET ${clauses.join(', ')};`,
@@ -124,43 +145,42 @@ const save = (
   update: Port.SettingsRepositoryUpdate
 ) =>
   Effect.gen(function* () {
-    const jinaKey =
-      update.key === undefined ? undefined : Redacted.value(update.key);
+    const jinaKey = Option.map(update.key, (key) => Redacted.value(key));
     const statement = saveSql(update, jinaKey);
-    yield* query<unknown, Port.SettingsRepositoryWriteError>(
+    yield* query<unknown, Port.SettingsRepositoryError>(
       db,
       statement.sql,
       owner,
       statement.bindings,
-      writeError
+      repositoryError
     ).pipe(Effect.asVoid);
   });
 
 const setRetention = (db: Surreal, owner: OwnerId, retention: number) =>
-  query<unknown, Port.SettingsRepositoryWriteError>(
+  query<unknown, Port.SettingsRepositoryError>(
     db,
     `UPSERT type::record("setting", $id) SET owner = $owner, retention = $retention;`,
     owner,
     { retention },
-    writeError
+    repositoryError
   ).pipe(Effect.asVoid);
 
 const clearKey = (db: Surreal, owner: OwnerId) =>
-  query<unknown, Port.SettingsRepositoryWriteError>(
+  query<unknown, Port.SettingsRepositoryError>(
     db,
     'UPDATE setting SET jinaKey = NONE WHERE owner = $owner;',
     owner,
     {},
-    writeError
+    repositoryError
   ).pipe(Effect.asVoid);
 
 const clearBrowser = (db: Surreal, owner: OwnerId) =>
-  query<unknown, Port.SettingsRepositoryWriteError>(
+  query<unknown, Port.SettingsRepositoryError>(
     db,
     'BEGIN TRANSACTION; UPDATE setting SET browserEndpoint = NONE WHERE owner = $owner; UPDATE setting SET provider = "jina" WHERE owner = $owner AND provider = "browser"; COMMIT TRANSACTION;',
     owner,
     {},
-    writeError
+    repositoryError
   ).pipe(Effect.asVoid);
 
 const makeSettings = (db: Surreal) =>

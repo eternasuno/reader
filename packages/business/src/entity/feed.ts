@@ -6,7 +6,7 @@ export const Feed = Schema.Struct({
   ownerId: OwnerId,
   url: Schema.URLFromString,
   title: Schema.String,
-  updatedAt: Schema.DateTimeUtcFromString,
+  updatedAt: Schema.DateTimeUtcFromDate,
 });
 
 export type Feed = typeof Feed.Type;

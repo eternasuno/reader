@@ -51,7 +51,7 @@ describe('library bulk read marks', () => {
   it('reloads counts after a failed bulk mark', async () => {
     const { client, model } = await withRows();
     client.markArticles.mockRejectedValue(
-      new LibraryError('ArticleWriteError')
+      new LibraryError('ArticleRepositoryError')
     );
     client.laterUnread.mockResolvedValue(3);
 

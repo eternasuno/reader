@@ -51,8 +51,26 @@ describe('getSettings', () => {
     });
   });
 
+  it('accepts settings without a saved browser endpoint', async () => {
+    const withoutEndpoint = {
+      retention: 120,
+      provider: 'jina',
+      jinaConfigured: true,
+    };
+    fetchMock.mockResolvedValue(json(withoutEndpoint));
+
+    await expect(getSettings()).resolves.toEqual(withoutEndpoint);
+  });
+
   it('rejects malformed settings payloads', async () => {
     fetchMock.mockResolvedValueOnce(json({ ...settings, retention: '120' }));
+    await expect(getSettings()).rejects.toThrow(
+      '设置数据格式不正确，请稍后重试'
+    );
+
+    fetchMock.mockResolvedValueOnce(
+      json({ ...settings, browserEndpoint: 9222 })
+    );
     await expect(getSettings()).rejects.toThrow(
       '设置数据格式不正确，请稍后重试'
     );

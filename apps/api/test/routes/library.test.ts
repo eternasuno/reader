@@ -3,13 +3,13 @@
 import { expect, it } from '@effect/vitest';
 import { surrealAdapter } from '@surrealdb/better-auth';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
-import { Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { HttpClient, HttpClientResponse, HttpRouter } from 'effect/http';
 import type { Surreal } from 'surrealdb';
 import { ArticleExtractor } from '../../../../packages/business/src/port/article-extractor.ts';
 import {
-  ArticleReadError,
   ArticleRepository,
+  ArticleRepositoryError,
 } from '../../../../packages/business/src/port/article-repository.ts';
 import { DocumentSantize } from '../../../../packages/business/src/port/document-santize.ts';
 import { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
@@ -37,6 +37,10 @@ import { Auth } from '../../src/infrastructure/auth';
 import { createSurreal, Database } from '../../src/infrastructure/db';
 
 const origin = 'http://localhost:3000';
+
+const publishedAt = DateTime.fromDateUnsafe(
+  new Date('2026-01-01T00:00:00.000Z')
+);
 
 type Handler = (request: Request) => Promise<Response>;
 
@@ -203,9 +207,11 @@ const verifyArticles = async (
   expect(feedPageText).not.toContain('"description":null');
   expect(feedPageText).not.toContain('"content":null');
   expect(feedPageText).not.toContain('"extractedContent":null');
-  const page = await Schema.decodeUnknownPromise(ArticlePageSchema)(
-    JSON.parse(feedPageText)
-  );
+  const pagePayload = JSON.parse(feedPageText) as {
+    readonly items: readonly object[];
+  };
+  const page =
+    await Schema.decodeUnknownPromise(ArticlePageSchema)(pagePayload);
   expect(page.items.map(({ title }) => title).toSorted()).toEqual(
     ['One', 'Two', 'Three', 'Four'].toSorted()
   );
@@ -215,8 +221,12 @@ const verifyArticles = async (
   if (first === undefined) {
     throw new Error('Missing seeded article');
   }
-  expect(Object.hasOwn(first, 'content')).toBe(false);
-  expect(Object.hasOwn(first, 'extractedContent')).toBe(false);
+  const rawFirst = pagePayload.items[0];
+  if (rawFirst === undefined) {
+    throw new Error('Missing seeded article payload');
+  }
+  expect(Object.hasOwn(rawFirst, 'content')).toBe(false);
+  expect(Object.hasOwn(rawFirst, 'extractedContent')).toBe(false);
 
   const saved = await call(
     handler,
@@ -290,11 +300,13 @@ const verifyArticles = async (
   const savedUrlLessText = await savedUrlLess.text();
   expect(savedUrlLessText).not.toContain('"feedId":null');
   expect(savedUrlLessText).not.toContain('"url":null');
-  const { item: urlLessLater } = await Schema.decodeUnknownPromise(
-    ArticleItemSchema
-  )(JSON.parse(savedUrlLessText));
-  expect(urlLessLater.feedId).toBeUndefined();
-  expect(urlLessLater.url).toBeUndefined();
+  const urlLessPayload = JSON.parse(savedUrlLessText) as {
+    readonly item: object;
+  };
+  expect(Object.hasOwn(urlLessPayload.item, 'feedId')).toBe(false);
+  expect(Object.hasOwn(urlLessPayload.item, 'url')).toBe(false);
+  const { item: urlLessLater } =
+    await Schema.decodeUnknownPromise(ArticleItemSchema)(urlLessPayload);
 
   const laterPageText = await (
     await call(handler, 'GET', '/api/library/later?filter=all', alice)
@@ -348,7 +360,6 @@ const verifySettings = async (handler: Handler, alice: string) => {
     retention: 100,
     provider: 'jina',
     jinaConfigured: false,
-    browserEndpoint: '',
   });
 
   expect(
@@ -406,7 +417,6 @@ const verifySettings = async (handler: Handler, alice: string) => {
     retention: 120,
     provider: 'jina',
     jinaConfigured: false,
-    browserEndpoint: '',
   });
 };
 
@@ -462,22 +472,35 @@ const feedSource = Layer.mergeAll(
     parse: () =>
       Effect.succeed({
         title: 'Example feed',
-        description: 'Daily updates',
+        description: Option.some('Daily updates'),
         articles: [
           {
             title: 'One',
-            url: new URL('https://example.com/one'),
+            url: Option.some(new URL('https://example.com/one')),
+            description: Option.none(),
+            content: Option.none(),
+            publishedAt,
           },
           {
             title: 'Two',
-            url: new URL('https://example.com/two'),
+            url: Option.some(new URL('https://example.com/two')),
+            description: Option.none(),
+            content: Option.none(),
+            publishedAt,
           },
           {
             title: 'Three',
-            url: new URL('https://example.com/three'),
+            url: Option.some(new URL('https://example.com/three')),
+            description: Option.none(),
+            content: Option.none(),
+            publishedAt,
           },
           {
             title: 'Four',
+            url: Option.none(),
+            description: Option.none(),
+            content: Option.none(),
+            publishedAt,
           },
         ],
       }),
@@ -486,7 +509,12 @@ const feedSource = Layer.mergeAll(
 
 const articleExtractor = Layer.succeed(ArticleExtractor, {
   extract: () =>
-    Effect.succeed({ title: 'Example article', content: '<p>Body</p>' }),
+    Effect.succeed({
+      title: 'Example article',
+      description: Option.none(),
+      content: Option.some('<p>Body</p>'),
+      publishedAt,
+    }),
 });
 
 const authOptions = (db: Surreal) => ({
@@ -529,7 +557,9 @@ const failingCounter = (
       const lock = yield* ReaderStoreConcurrency;
       const articles = makeArticles(db, lock);
       const failure = () =>
-        Effect.fail(new ArticleReadError({ message: 'Unread count failed' }));
+        Effect.fail(
+          new ArticleRepositoryError({ message: 'Unread count failed' })
+        );
 
       return counter === 'unreadLater'
         ? { ...articles, unreadLater: failure }

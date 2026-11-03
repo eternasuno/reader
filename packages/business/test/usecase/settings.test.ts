@@ -1,12 +1,12 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: settings tests share one set of repository mocks and layers.
 import { expect, it } from '@effect/vitest';
-import { Effect, Layer, Redacted } from 'effect';
+import { Effect, Layer, Option, Redacted } from 'effect';
 import { OwnerId } from '../../src/entity/object-value';
 import {
   SettingsRepository,
-  SettingsRepositoryReadError,
+  SettingsRepositoryError,
   type SettingsRepositoryUpdate,
   type SettingsRepositoryValue,
-  SettingsRepositoryWriteError,
 } from '../../src/port/settings-repository';
 import {
   getSettings,
@@ -19,15 +19,15 @@ const owner = OwnerId.make('alice');
 type SettingsMock = {
   readonly get?: (
     owner: OwnerId
-  ) => Effect.Effect<SettingsRepositoryValue, SettingsRepositoryReadError>;
+  ) => Effect.Effect<SettingsRepositoryValue, SettingsRepositoryError>;
   readonly save?: (
     owner: OwnerId,
     update: SettingsRepositoryUpdate
-  ) => Effect.Effect<void, SettingsRepositoryWriteError>;
+  ) => Effect.Effect<void, SettingsRepositoryError>;
   readonly setRetention?: (
     owner: OwnerId,
     value: number
-  ) => Effect.Effect<void, SettingsRepositoryWriteError>;
+  ) => Effect.Effect<void, SettingsRepositoryError>;
 };
 
 const settingsLayer = (handlers: SettingsMock) =>
@@ -39,7 +39,7 @@ it.effect('returns retention with extraction settings', () =>
       retention: 120,
       provider: 'browser',
       jinaConfigured: true,
-      browserEndpoint: 'ws://127.0.0.1:9222',
+      browserEndpoint: Option.some('ws://127.0.0.1:9222'),
     });
   }).pipe(
     Effect.provide(
@@ -49,7 +49,30 @@ it.effect('returns retention with extraction settings', () =>
             retention: 120,
             provider: 'browser',
             jinaConfigured: true,
-            browserEndpoint: 'ws://127.0.0.1:9222',
+            browserEndpoint: Option.some('ws://127.0.0.1:9222'),
+          }),
+      })
+    )
+  )
+);
+
+it.effect('returns no endpoint option when none is stored', () =>
+  Effect.gen(function* () {
+    expect(yield* getSettings(owner)).toEqual({
+      retention: 100,
+      provider: 'jina',
+      jinaConfigured: false,
+      browserEndpoint: Option.none(),
+    });
+  }).pipe(
+    Effect.provide(
+      settingsLayer({
+        get: () =>
+          Effect.succeed({
+            retention: 100,
+            provider: 'jina',
+            jinaConfigured: false,
+            browserEndpoint: Option.none(),
           }),
       })
     )
@@ -63,8 +86,7 @@ it.effect('maps settings read failures', () =>
   }).pipe(
     Effect.provide(
       settingsLayer({
-        get: () =>
-          Effect.fail(new SettingsRepositoryReadError({ error: 'read' })),
+        get: () => Effect.fail(new SettingsRepositoryError({ error: 'read' })),
       })
     )
   )
@@ -100,7 +122,7 @@ it.effect('maps retention save failures', () => {
     Effect.provide(
       settingsLayer({
         setRetention: () =>
-          Effect.fail(new SettingsRepositoryWriteError({ error: 'write' })),
+          Effect.fail(new SettingsRepositoryError({ error: 'write' })),
       })
     )
   );
@@ -137,10 +159,12 @@ it.effect('saves extraction settings in one atomic update', () => {
     expect(saved).toHaveLength(1);
     const update = saved[0];
     expect(update?.provider).toBe('jina');
-    expect(update?.browserEndpoint).toBe('http://127.0.0.1:9222');
-    expect(update?.key).toBeDefined();
-    if (update?.key) {
-      expect(Redacted.value(update.key)).toBe('secret');
+    expect(update?.browserEndpoint).toEqual(
+      Option.some('http://127.0.0.1:9222')
+    );
+    expect(update && Option.isSome(update.key)).toBe(true);
+    if (update && Option.isSome(update.key)) {
+      expect(Redacted.value(update.key.value)).toBe('secret');
     }
   }).pipe(
     Effect.provide(
@@ -160,7 +184,13 @@ it.effect('preserves omitted extraction fields', () => {
 
   return Effect.gen(function* () {
     yield* updateExtraction(owner, { provider: 'jina' });
-    expect(saved).toEqual([{ provider: 'jina' }]);
+    expect(saved).toEqual([
+      {
+        provider: 'jina',
+        key: Option.none(),
+        browserEndpoint: Option.none(),
+      },
+    ]);
   }).pipe(
     Effect.provide(
       settingsLayer({
@@ -187,7 +217,9 @@ it.effect('accepts browser endpoints and requires one for browser', () => {
     for (const browserEndpoint of endpoints) {
       yield* updateExtraction(owner, { provider: 'browser', browserEndpoint });
     }
-    expect(saved.map((update) => update.browserEndpoint)).toEqual(endpoints);
+    expect(
+      saved.map((update) => Option.getOrUndefined(update.browserEndpoint))
+    ).toEqual(endpoints);
 
     for (const browserEndpoint of [undefined, '', '   ']) {
       const error = yield* Effect.flip(
@@ -244,7 +276,13 @@ it.effect('clears the browser endpoint with an empty value', () => {
 
   return Effect.gen(function* () {
     yield* updateExtraction(owner, { provider: 'jina', browserEndpoint: '  ' });
-    expect(saved).toEqual([{ provider: 'jina', browserEndpoint: '' }]);
+    expect(saved).toEqual([
+      {
+        provider: 'jina',
+        key: Option.none(),
+        browserEndpoint: Option.some(''),
+      },
+    ]);
   }).pipe(
     Effect.provide(
       settingsLayer({
@@ -302,7 +340,7 @@ it.effect('maps extraction save failures', () => {
     Effect.provide(
       settingsLayer({
         save: () =>
-          Effect.fail(new SettingsRepositoryWriteError({ error: 'write' })),
+          Effect.fail(new SettingsRepositoryError({ error: 'write' })),
       })
     )
   );

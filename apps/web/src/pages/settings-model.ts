@@ -133,7 +133,7 @@ const applySettings = (drafts: DraftStore, data: LibrarySettings) => {
   drafts.setSettings(data);
   drafts.setRetention(String(data.retention));
   drafts.setProvider(data.provider);
-  drafts.setBrowserEndpoint(data.browserEndpoint);
+  drafts.setBrowserEndpoint(data.browserEndpoint ?? '');
   drafts.setJinaKey('');
 };
 
@@ -168,7 +168,7 @@ const extractionDirty = (drafts: DraftStore) => {
   return (
     drafts.provider() !== base.provider ||
     drafts.jinaKey().trim() !== '' ||
-    drafts.browserEndpoint().trim() !== base.browserEndpoint
+    drafts.browserEndpoint().trim() !== (base.browserEndpoint ?? '')
   );
 };
 
@@ -188,7 +188,7 @@ const resetExtraction = (drafts: DraftStore) => {
   if (base === undefined) return;
 
   drafts.setProvider(base.provider);
-  drafts.setBrowserEndpoint(base.browserEndpoint);
+  drafts.setBrowserEndpoint(base.browserEndpoint ?? '');
   drafts.setJinaKey('');
 };
 
@@ -271,7 +271,7 @@ export const submitExtraction: SubmitForm = (drafts, status, form) => {
     data.get('provider') === 'browser' ? 'browser' : 'jina';
   const jinaKey = String(data.get('jinaKey') ?? '');
   const endpoint = String(data.get('browserEndpoint') ?? '').trim();
-  const browserEndpoint = endpoint === '' ? base.browserEndpoint : endpoint;
+  const browserEndpoint = endpoint || (base.browserEndpoint ?? '');
 
   void runAction(
     status,

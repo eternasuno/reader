@@ -1,7 +1,7 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: integration tests share fixtures around one settings boundary.
 import { randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
 import { OwnerId } from '../../../../packages/business/src/entity/object-value.ts';
 import { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
@@ -96,9 +96,9 @@ it.effect('defaults unknown owners to anonymous jina settings', () =>
         retention: 100,
         provider: 'jina',
         jinaConfigured: false,
-        browserEndpoint: '',
+        browserEndpoint: Option.none(),
       });
-      expect(yield* settings.getKey(owner)).toBeUndefined();
+      expect(yield* settings.getKey(owner)).toEqual(Option.none());
     })
   )
 );
@@ -110,24 +110,24 @@ it.effect('saves provider, key, and endpoint in one row', () =>
 
       yield* settings.save(owner, {
         provider: 'browser',
-        key: Redacted.make('alice-secret'),
-        browserEndpoint: '  http://127.0.0.1:9222  ',
+        key: Option.some(Redacted.make('alice-secret')),
+        browserEndpoint: Option.some('  http://127.0.0.1:9222  '),
       });
 
       expect(yield* settings.get(owner)).toEqual({
         retention: 100,
         provider: 'browser',
         jinaConfigured: true,
-        browserEndpoint: 'http://127.0.0.1:9222',
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
       const row = yield* selectRow(owner);
       expect(row?.jinaKey).toBe('alice-secret');
       expect(row?.provider).toBe('browser');
       expect(row?.browserEndpoint).toBe('http://127.0.0.1:9222');
       const stored = yield* settings.getKey(owner);
-      expect(stored).toBeDefined();
-      if (stored) {
-        expect(Redacted.value(stored)).toBe('alice-secret');
+      expect(Option.isSome(stored)).toBe(true);
+      if (Option.isSome(stored)) {
+        expect(Redacted.value(stored.value)).toBe('alice-secret');
       }
     })
   )
@@ -140,7 +140,8 @@ it.effect('defaults legacy rows without a provider to jina', () =>
 
       yield* settings.save(owner, {
         provider: 'jina',
-        key: Redacted.make('alice-secret'),
+        key: Option.some(Redacted.make('alice-secret')),
+        browserEndpoint: Option.none(),
       });
       yield* unsetProvider(owner);
 
@@ -149,11 +150,11 @@ it.effect('defaults legacy rows without a provider to jina', () =>
         retention: 100,
         provider: 'jina',
         jinaConfigured: true,
-        browserEndpoint: '',
+        browserEndpoint: Option.none(),
       });
       const stored = yield* settings.getKey(owner);
-      if (stored) {
-        expect(Redacted.value(stored)).toBe('alice-secret');
+      if (Option.isSome(stored)) {
+        expect(Redacted.value(stored.value)).toBe('alice-secret');
       }
     })
   )
@@ -166,32 +167,37 @@ it.effect('preserves unspecified fields when patching', () =>
 
       yield* settings.save(owner, {
         provider: 'jina',
-        key: Redacted.make('secret'),
-        browserEndpoint: 'http://127.0.0.1:9222',
+        key: Option.some(Redacted.make('secret')),
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
-      yield* settings.save(owner, { provider: 'browser' });
+      yield* settings.save(owner, {
+        provider: 'browser',
+        key: Option.none(),
+        browserEndpoint: Option.none(),
+      });
 
       expect(yield* settings.get(owner)).toEqual({
         retention: 100,
         provider: 'browser',
         jinaConfigured: true,
-        browserEndpoint: 'http://127.0.0.1:9222',
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
 
       yield* settings.save(owner, {
         provider: 'jina',
-        key: Redacted.make('next'),
+        key: Option.some(Redacted.make('next')),
+        browserEndpoint: Option.none(),
       });
 
       expect(yield* settings.get(owner)).toEqual({
         retention: 100,
         provider: 'jina',
         jinaConfigured: true,
-        browserEndpoint: 'http://127.0.0.1:9222',
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
       const stored = yield* settings.getKey(owner);
-      if (stored) {
-        expect(Redacted.value(stored)).toBe('next');
+      if (Option.isSome(stored)) {
+        expect(Redacted.value(stored.value)).toBe('next');
       }
     })
   )
@@ -204,8 +210,8 @@ it.effect('clears the key without changing provider or endpoint', () =>
 
       yield* settings.save(owner, {
         provider: 'browser',
-        key: Redacted.make('alice-secret'),
-        browserEndpoint: 'ws://127.0.0.1:9222',
+        key: Option.some(Redacted.make('alice-secret')),
+        browserEndpoint: Option.some('ws://127.0.0.1:9222'),
       });
       yield* settings.clearKey(owner);
 
@@ -213,9 +219,9 @@ it.effect('clears the key without changing provider or endpoint', () =>
         retention: 100,
         provider: 'browser',
         jinaConfigured: false,
-        browserEndpoint: 'ws://127.0.0.1:9222',
+        browserEndpoint: Option.some('ws://127.0.0.1:9222'),
       });
-      expect(yield* settings.getKey(owner)).toBeUndefined();
+      expect(yield* settings.getKey(owner)).toEqual(Option.none());
     })
   )
 );
@@ -227,8 +233,8 @@ it.effect('clears the browser endpoint and resets browser to jina', () =>
 
       yield* settings.save(owner, {
         provider: 'browser',
-        key: Redacted.make('alice-secret'),
-        browserEndpoint: 'ws://127.0.0.1:9222',
+        key: Option.some(Redacted.make('alice-secret')),
+        browserEndpoint: Option.some('ws://127.0.0.1:9222'),
       });
       yield* settings.clearBrowser(owner);
 
@@ -236,31 +242,37 @@ it.effect('clears the browser endpoint and resets browser to jina', () =>
         retention: 100,
         provider: 'jina',
         jinaConfigured: true,
-        browserEndpoint: '',
+        browserEndpoint: Option.none(),
       });
 
       yield* settings.save(owner, {
         provider: 'jina',
-        browserEndpoint: 'http://127.0.0.1:9222',
+        key: Option.none(),
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
       yield* settings.clearBrowser(owner);
       expect(yield* settings.get(owner)).toEqual({
         retention: 100,
         provider: 'jina',
         jinaConfigured: true,
-        browserEndpoint: '',
+        browserEndpoint: Option.none(),
       });
 
       yield* settings.save(owner, {
         provider: 'jina',
-        browserEndpoint: 'http://127.0.0.1:9222',
+        key: Option.none(),
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
-      yield* settings.save(owner, { provider: 'jina', browserEndpoint: '' });
+      yield* settings.save(owner, {
+        provider: 'jina',
+        key: Option.none(),
+        browserEndpoint: Option.some(''),
+      });
       expect(yield* settings.get(owner)).toEqual({
         retention: 100,
         provider: 'jina',
         jinaConfigured: true,
-        browserEndpoint: '',
+        browserEndpoint: Option.none(),
       });
     })
   )
@@ -273,37 +285,39 @@ it.effect('isolates settings between owners', () =>
 
       yield* settings.save(owner, {
         provider: 'jina',
-        key: Redacted.make('alice-secret'),
+        key: Option.some(Redacted.make('alice-secret')),
+        browserEndpoint: Option.none(),
       });
       yield* settings.save(other, {
         provider: 'browser',
-        browserEndpoint: 'http://127.0.0.1:9222',
+        key: Option.none(),
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
 
       expect(yield* settings.get(owner)).toEqual({
         retention: 100,
         provider: 'jina',
         jinaConfigured: true,
-        browserEndpoint: '',
+        browserEndpoint: Option.none(),
       });
       expect(yield* settings.get(other)).toEqual({
         retention: 100,
         provider: 'browser',
         jinaConfigured: false,
-        browserEndpoint: 'http://127.0.0.1:9222',
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
       const stored = yield* settings.getKey(owner);
-      if (stored) {
-        expect(Redacted.value(stored)).toBe('alice-secret');
+      if (Option.isSome(stored)) {
+        expect(Redacted.value(stored.value)).toBe('alice-secret');
       }
-      expect(yield* settings.getKey(other)).toBeUndefined();
+      expect(yield* settings.getKey(other)).toEqual(Option.none());
 
       yield* settings.clearKey(owner);
       expect(yield* settings.get(other)).toEqual({
         retention: 100,
         provider: 'browser',
         jinaConfigured: false,
-        browserEndpoint: 'http://127.0.0.1:9222',
+        browserEndpoint: Option.some('http://127.0.0.1:9222'),
       });
     })
   )
@@ -316,8 +330,8 @@ it.effect('stores retention on the same row without clobbering fields', () =>
 
       yield* settings.save(owner, {
         provider: 'browser',
-        key: Redacted.make('alice-secret'),
-        browserEndpoint: 'ws://127.0.0.1:9222',
+        key: Option.some(Redacted.make('alice-secret')),
+        browserEndpoint: Option.some('ws://127.0.0.1:9222'),
       });
       yield* settings.setRetention(owner, 42);
 
@@ -325,74 +339,86 @@ it.effect('stores retention on the same row without clobbering fields', () =>
         retention: 42,
         provider: 'browser',
         jinaConfigured: true,
-        browserEndpoint: 'ws://127.0.0.1:9222',
+        browserEndpoint: Option.some('ws://127.0.0.1:9222'),
       });
       expect((yield* selectRow(owner))?.retention).toBe(42);
       expect(yield* settings.get(other)).toEqual({
         retention: 100,
         provider: 'jina',
         jinaConfigured: false,
-        browserEndpoint: '',
+        browserEndpoint: Option.none(),
       });
 
-      yield* settings.save(owner, { provider: 'jina' });
+      yield* settings.save(owner, {
+        provider: 'jina',
+        key: Option.none(),
+        browserEndpoint: Option.none(),
+      });
       expect(yield* settings.get(owner)).toEqual({
         retention: 42,
         provider: 'jina',
         jinaConfigured: true,
-        browserEndpoint: 'ws://127.0.0.1:9222',
+        browserEndpoint: Option.some('ws://127.0.0.1:9222'),
       });
     })
   )
 );
 
-it.effect('reports unreadable rows as read failures', () =>
+it.effect('reports unreadable rows as repository failures', () =>
   runWithSettings(
     Effect.gen(function* () {
       const settings = yield* SettingsRepository;
 
-      yield* settings.save(owner, { provider: 'jina' });
+      yield* settings.save(owner, {
+        provider: 'jina',
+        key: Option.none(),
+        browserEndpoint: Option.none(),
+      });
       yield* corruptField(owner, 'provider');
 
       const error = yield* Effect.flip(settings.get(owner));
-      expect(error._tag).toBe('SettingsRepositoryReadError');
+      expect(error._tag).toBe('SettingsRepositoryError');
     })
   )
 );
 
-it.effect('reports a zero retention as a read failure', () =>
+it.effect('reports a zero retention as a repository failure', () =>
   runWithSettings(
     Effect.gen(function* () {
       const settings = yield* SettingsRepository;
 
-      yield* settings.save(owner, { provider: 'jina' });
+      yield* settings.save(owner, {
+        provider: 'jina',
+        key: Option.none(),
+        browserEndpoint: Option.none(),
+      });
       yield* corruptField(owner, 'retention', 0);
 
       expect((yield* selectRow(owner))?.retention).toBe(0);
       const error = yield* Effect.flip(settings.get(owner));
-      expect(error._tag).toBe('SettingsRepositoryReadError');
+      expect(error._tag).toBe('SettingsRepositoryError');
     })
   )
 );
 
-it.effect('reports unreadable keys and endpoints as read failures', () =>
+it.effect('reports unreadable keys and endpoints as repository failures', () =>
   runWithSettings(
     Effect.gen(function* () {
       const settings = yield* SettingsRepository;
 
       yield* settings.save(owner, {
         provider: 'browser',
-        key: Redacted.make('alice-secret'),
-        browserEndpoint: 'ws://127.0.0.1:9222',
+        key: Option.some(Redacted.make('alice-secret')),
+        browserEndpoint: Option.some('ws://127.0.0.1:9222'),
       });
       yield* corruptField(owner, 'jinaKey');
 
       const keyError = yield* Effect.flip(settings.getKey(owner));
-      expect(keyError._tag).toBe('SettingsRepositoryReadError');
+      expect(keyError._tag).toBe('SettingsRepositoryError');
 
       yield* corruptField(owner, 'browserEndpoint');
       const settingsError = yield* Effect.flip(settings.get(owner));
-      expect(settingsError._tag).toBe('SettingsRepositoryReadError');
+      expect(settingsError._tag).toBe('SettingsRepositoryError');
     })
   )
 );

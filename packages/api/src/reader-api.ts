@@ -5,9 +5,9 @@ import {
   HttpApiGroup,
   HttpApiSchema,
 } from 'effect/http-api';
-import { Article } from '../../business/src/entity/article.ts';
+import { Article, ArticleId } from '../../business/src/entity/article.ts';
 import { Feed } from '../../business/src/entity/feed.ts';
-import { ArticleId, FeedId } from '../../business/src/entity/object-value.ts';
+import { FeedId } from '../../business/src/entity/object-value.ts';
 import { Setting } from '../../business/src/entity/setting.ts';
 import { ArticleFilter } from '../../business/src/port/article-repository.ts';
 import { ArticlePage } from '../../business/src/usecase/article-list.ts';
@@ -16,8 +16,8 @@ const failure = <Tag extends string>(tag: Tag, status: number) =>
   Schema.Struct({
     _tag: Schema.Literal(tag),
     message: Schema.String,
-    id: Schema.optional(Schema.String),
-    code: Schema.optional(Schema.String),
+    id: Schema.OptionFromOptional(Schema.String),
+    code: Schema.OptionFromOptional(Schema.String),
   }).pipe(HttpApiSchema.status(status));
 
 export const UnauthorizedSchema = Schema.Struct({
@@ -36,8 +36,10 @@ export const ArticleMissingUrlSchema = failure('ArticleMissingUrl', 422);
 export const ArticleEmptyContentSchema = failure('ArticleEmptyContent', 422);
 export const DuplicateArticleSchema = failure('DuplicateArticle', 409);
 export const InvalidCursorSchema = failure('InvalidCursor', 400);
-export const ArticleReadErrorSchema = failure('ArticleReadError', 500);
-export const ArticleWriteErrorSchema = failure('ArticleWriteError', 500);
+export const ArticleRepositoryErrorSchema = failure(
+  'ArticleRepositoryError',
+  500
+);
 export const WebpageFetchErrorSchema = failure('WebpageFetchError', 422);
 export const ArticleExtractErrorSchema = failure('ArticleExtractError', 422);
 
@@ -63,14 +65,7 @@ export const ParseSubscriptionErrorSchema = failure(
   'ParseSubscriptionError',
   422
 );
-export const SubscriptionReadErrorSchema = failure(
-  'SubscriptionReadError',
-  500
-);
-export const SubscriptionWriteErrorSchema = failure(
-  'SubscriptionWriteError',
-  500
-);
+export const FeedRepositoryErrorSchema = failure('FeedRepositoryError', 500);
 
 export const SettingsReadErrorSchema = failure('SettingsReadError', 500);
 export const SettingsSaveErrorSchema = failure('SettingsSaveError', 500);
@@ -78,31 +73,27 @@ export const InvalidRetentionSchema = failure('InvalidRetention', 400);
 export const InvalidKeySchema = failure('InvalidKey', 400);
 export const InvalidEndpointSchema = failure('InvalidEndpoint', 400);
 export const InvalidProviderSchema = failure('InvalidProvider', 400);
-export const SettingsRepositoryReadErrorSchema = failure(
-  'SettingsRepositoryReadError',
-  500
-);
-export const SettingsRepositoryWriteErrorSchema = failure(
-  'SettingsRepositoryWriteError',
+export const SettingsRepositoryErrorSchema = failure(
+  'SettingsRepositoryError',
   500
 );
 
 const authErrors = [UnauthorizedSchema, ForbiddenSchema];
 
-const readErrors = [InvalidCursorSchema, ArticleReadErrorSchema, ...authErrors];
+const articleErrors = [ArticleRepositoryErrorSchema, ...authErrors];
 
-const articleWriteErrors = [ArticleWriteErrorSchema, ...authErrors];
+const readErrors = [InvalidCursorSchema, ...articleErrors];
 
-const subscriptionReadErrors = [SubscriptionReadErrorSchema, ...authErrors];
+const feedRepositoryErrors = [FeedRepositoryErrorSchema, ...authErrors];
 
 const pageQuery = {
-  filter: Schema.optional(ArticleFilter),
-  cursor: Schema.optional(Schema.String),
-  through: Schema.optional(Schema.String),
+  filter: Schema.OptionFromOptional(ArticleFilter),
+  cursor: Schema.OptionFromOptional(Schema.String),
+  through: Schema.OptionFromOptional(Schema.String),
 };
 
 const refreshQuery = {
-  filter: Schema.optional(ArticleFilter),
+  filter: Schema.OptionFromOptional(ArticleFilter),
   through: Schema.String,
 };
 
@@ -115,7 +106,7 @@ const urlPayload = Schema.Struct({
 const SubscriptionPreview = Schema.Struct({
   url: Schema.URLFromString,
   title: Schema.String,
-  description: Schema.optional(Schema.String),
+  description: Schema.OptionFromOptional(Schema.String),
   titles: Schema.Array(Schema.String),
 });
 
@@ -133,12 +124,12 @@ const library = HttpApiGroup.make('library').add(
     error: readErrors,
   }),
   HttpApiEndpoint.get('feedArticles', '/api/library/feeds/articles', {
-    query: { ...pageQuery, feedId: Schema.optional(FeedId) },
+    query: { ...pageQuery, feedId: Schema.OptionFromOptional(FeedId) },
     success: ArticlePage,
     error: [
       ...readErrors,
       SubscriptionNotFoundSchema,
-      SubscriptionReadErrorSchema,
+      FeedRepositoryErrorSchema,
     ],
   }),
   HttpApiEndpoint.get('laterRefresh', '/api/library/later/refresh', {
@@ -147,17 +138,17 @@ const library = HttpApiGroup.make('library').add(
     error: readErrors,
   }),
   HttpApiEndpoint.get('feedRefresh', '/api/library/feeds/refresh', {
-    query: { ...refreshQuery, feedId: Schema.optional(FeedId) },
+    query: { ...refreshQuery, feedId: Schema.OptionFromOptional(FeedId) },
     success: Schema.Struct({ items: Schema.Array(Article) }),
     error: [
       ...readErrors,
       SubscriptionNotFoundSchema,
-      SubscriptionReadErrorSchema,
+      FeedRepositoryErrorSchema,
     ],
   }),
   HttpApiEndpoint.get('feeds', '/api/library/feeds', {
     success: Schema.Struct({ items: Schema.Array(Feed) }),
-    error: subscriptionReadErrors,
+    error: feedRepositoryErrors,
   }),
   HttpApiEndpoint.post('preview', '/api/library/feeds/preview', {
     payload: urlPayload,
@@ -178,8 +169,7 @@ const library = HttpApiGroup.make('library').add(
       SubscriptionImportFailedSchema,
       FetchSubscriptionErrorSchema,
       ParseSubscriptionErrorSchema,
-      SubscriptionReadErrorSchema,
-      SubscriptionWriteErrorSchema,
+      FeedRepositoryErrorSchema,
       ...authErrors,
     ],
   }),
@@ -188,26 +178,25 @@ const library = HttpApiGroup.make('library').add(
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: [
       SubscriptionNotFoundSchema,
-      SubscriptionReadErrorSchema,
-      SubscriptionWriteErrorSchema,
+      FeedRepositoryErrorSchema,
       ...authErrors,
     ],
   }),
   HttpApiEndpoint.get('laterUnread', '/api/library/later/unread', {
     success: Schema.Struct({ count: Schema.Int }),
-    error: [ArticleReadErrorSchema, ...authErrors],
+    error: [ArticleRepositoryErrorSchema, ...authErrors],
   }),
   HttpApiEndpoint.get('feedsUnread', '/api/library/feeds/unread', {
     success: Schema.Struct({
       total: Schema.Int,
       feeds: Schema.Array(Schema.Struct({ id: FeedId, count: Schema.Int })),
     }),
-    error: [ArticleReadErrorSchema, ...authErrors],
+    error: [ArticleRepositoryErrorSchema, ...authErrors],
   }),
   HttpApiEndpoint.get('article', '/api/library/articles', {
     query: articleId,
     success: Schema.Struct({ item: Schema.NullOr(Article) }),
-    error: [ArticleReadErrorSchema, ...authErrors],
+    error: [ArticleRepositoryErrorSchema, ...authErrors],
   }),
   HttpApiEndpoint.post('addArticle', '/api/library/articles', {
     payload: urlPayload,
@@ -216,10 +205,10 @@ const library = HttpApiGroup.make('library').add(
       InvalidArticleUrlSchema,
       DuplicateArticleSchema,
       ArticleEmptyContentSchema,
-      SettingsRepositoryReadErrorSchema,
+      SettingsRepositoryErrorSchema,
       WebpageFetchErrorSchema,
       ArticleExtractErrorSchema,
-      ...articleWriteErrors,
+      ...articleErrors,
     ],
   }),
   HttpApiEndpoint.post('saveArticle', '/api/library/articles/save', {
@@ -229,8 +218,8 @@ const library = HttpApiGroup.make('library').add(
       ArticleNotFoundSchema,
       ArticleNotInFeedSchema,
       DuplicateArticleSchema,
-      ArticleReadErrorSchema,
-      ...articleWriteErrors,
+      ArticleRepositoryErrorSchema,
+      ...articleErrors,
     ],
   }),
   HttpApiEndpoint.post('extractArticle', '/api/library/articles/extract', {
@@ -240,44 +229,44 @@ const library = HttpApiGroup.make('library').add(
       ArticleNotFoundSchema,
       ArticleMissingUrlSchema,
       ArticleEmptyContentSchema,
-      ArticleReadErrorSchema,
-      SettingsRepositoryReadErrorSchema,
+      ArticleRepositoryErrorSchema,
+      SettingsRepositoryErrorSchema,
       WebpageFetchErrorSchema,
       ArticleExtractErrorSchema,
-      ...articleWriteErrors,
+      ...articleErrors,
     ],
   }),
   HttpApiEndpoint.patch('markRead', '/api/library/articles', {
     payload: Schema.Struct({ id: ArticleId, read: Schema.Boolean }),
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: articleWriteErrors,
+    error: articleErrors,
   }),
   HttpApiEndpoint.post('markLater', '/api/library/mark-later', {
     payload: Schema.Struct({}),
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: articleWriteErrors,
+    error: articleErrors,
   }),
   HttpApiEndpoint.post('markFeeds', '/api/library/mark-feeds', {
     payload: Schema.Struct({
       feedIds: Schema.Array(FeedId).check(Schema.isMaxLength(5000)),
     }),
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: articleWriteErrors,
+    error: articleErrors,
   }),
   HttpApiEndpoint.post('markArticles', '/api/library/mark-articles', {
     payload: Schema.Struct({
       ids: Schema.Array(ArticleId).check(Schema.isMaxLength(5000)),
     }),
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: articleWriteErrors,
+    error: articleErrors,
   }),
   HttpApiEndpoint.delete('removeArticle', '/api/library/articles', {
     payload: Schema.Struct(articleId),
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: [
       ArticleNotLaterSchema,
-      ArticleReadErrorSchema,
-      ...articleWriteErrors,
+      ArticleRepositoryErrorSchema,
+      ...articleErrors,
     ],
   }),
   HttpApiEndpoint.get('settings', '/api/library/settings', {
@@ -292,8 +281,8 @@ const library = HttpApiGroup.make('library').add(
   HttpApiEndpoint.put('setExtraction', '/api/library/settings/extraction', {
     payload: Schema.Struct({
       provider: Schema.String,
-      jinaKey: Schema.optional(Schema.String),
-      browserEndpoint: Schema.optional(Schema.String),
+      jinaKey: Schema.OptionFromOptional(Schema.String),
+      browserEndpoint: Schema.OptionFromOptional(Schema.String),
     }),
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: [
@@ -306,11 +295,11 @@ const library = HttpApiGroup.make('library').add(
   }),
   HttpApiEndpoint.delete('deleteKey', '/api/library/settings/key', {
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [SettingsRepositoryWriteErrorSchema, ...authErrors],
+    error: [SettingsRepositoryErrorSchema, ...authErrors],
   }),
   HttpApiEndpoint.delete('deleteBrowser', '/api/library/settings/browser', {
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [SettingsRepositoryWriteErrorSchema, ...authErrors],
+    error: [SettingsRepositoryErrorSchema, ...authErrors],
   })
 );
 

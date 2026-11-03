@@ -1,5 +1,6 @@
-import { Data, Effect, Redacted } from 'effect';
-import type { OwnerId, ReaderProvider } from '../entity/object-value';
+import { Data, Effect, Option, Redacted } from 'effect';
+import type { OwnerId } from '../entity/object-value';
+import type { ReaderProvider } from '../entity/setting';
 import { SettingsRepository } from '../port/settings-repository';
 
 export class SettingsReadError extends Data.TaggedError('SettingsReadError')<{
@@ -146,10 +147,10 @@ const parseExtraction = (input: ExtractionUpdate) => {
     ok: true,
     update: {
       provider,
-      ...(input.jinaKey === undefined
-        ? {}
-        : { key: Redacted.make(input.jinaKey.trim()) }),
-      ...(endpoint === undefined ? {} : { browserEndpoint: endpoint }),
+      key: Option.map(Option.fromUndefinedOr(input.jinaKey), (value) =>
+        Redacted.make(value.trim())
+      ),
+      browserEndpoint: Option.fromUndefinedOr(endpoint),
     },
   } as const;
 };

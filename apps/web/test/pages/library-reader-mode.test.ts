@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import { createRoot, createSignal } from 'solid-js';
 import { describe, expect, it } from 'vitest';
 import { useReaderMode } from '../../src/pages/library-reader-mode';
@@ -5,10 +6,9 @@ import { article, deferred } from './library-fixtures';
 
 const setup = () =>
   createRoot((dispose) => {
-    const [current, setCurrent] = createSignal<ReturnType<typeof article>>({
-      ...article('a'),
-      url: 'https://example.com/a',
-    });
+    const [current, setCurrent] = createSignal<ReturnType<typeof article>>(
+      article('a', { url: 'https://example.com/a' })
+    );
     const extraction = deferred<ReturnType<typeof article> | undefined>();
     const view = useReaderMode(current, async () => {
       const updated = await extraction.promise;
@@ -28,7 +28,7 @@ describe('reader extraction mode', () => {
       expect(state.view.extracting()).toBe(true);
       state.extraction.resolve({
         ...state.current(),
-        extractedContent: '<p>Extracted</p>',
+        extractedContent: Option.some('<p>Extracted</p>'),
       });
       await pending;
       expect(state.view.extracting()).toBe(false);
@@ -45,10 +45,10 @@ describe('reader extraction mode', () => {
     try {
       state.setCurrent({
         ...state.current(),
-        extractedContent: '<p>Extracted</p>',
+        extractedContent: Option.some('<p>Extracted</p>'),
       });
       await state.view.pick('extracted');
-      state.setCurrent({ ...article('b'), url: 'https://example.com/b' });
+      state.setCurrent(article('b', { url: 'https://example.com/b' }));
       expect(state.view.mode()).toBe('original');
     } finally {
       state.dispose();

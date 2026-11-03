@@ -44,7 +44,7 @@ const subscription = (owner: string, id: FeedId, url: string): Feed => ({
   updatedAt: DateTime.fromDateUnsafe(new Date('2026-01-01T00:00:00.000Z')),
 });
 
-const feed = { title: 'Feed', articles: [] };
+const feed = { title: 'Feed', description: Option.none(), articles: [] };
 
 const document = () => new Response('<rss/>', { status: 200 });
 
@@ -71,7 +71,7 @@ const scheduler = (mocks: Mocks) =>
               retention: 100,
               provider: 'jina',
               jinaConfigured: false,
-              browserEndpoint: '',
+              browserEndpoint: Option.none(),
             }),
         }),
         httpClient(mocks.http ?? (() => Effect.succeed(document()))),
@@ -109,7 +109,7 @@ it.effect('refreshes every subscription immediately on startup', () => {
     Effect.provide(
       scheduler({
         subscriptions: {
-          all: Effect.succeed(items),
+          list: () => Effect.succeed(items),
           find: findById(items),
           update: () => Effect.void,
         },
@@ -153,7 +153,7 @@ it.effect('skips a subscription removed before execution', () => {
     Effect.provide(
       scheduler({
         subscriptions: {
-          all: Effect.succeed([removed, present]),
+          list: () => Effect.succeed([removed, present]),
           find: findById([present]),
           update: () => Effect.void,
         },
@@ -197,14 +197,15 @@ it.effect('does not enqueue a feed while its refresh is still running', () => {
     Effect.provide(
       scheduler({
         subscriptions: {
-          all: Effect.gen(function* () {
-            scans += 1;
-            if (scans === 2) {
-              yield* Deferred.succeed(nextScan, undefined);
-            }
+          list: () =>
+            Effect.gen(function* () {
+              scans += 1;
+              if (scans === 2) {
+                yield* Deferred.succeed(nextScan, undefined);
+              }
 
-            return [item];
-          }),
+              return [item];
+            }),
           find: findById([item]),
           update: () =>
             Effect.gen(function* () {
@@ -245,7 +246,7 @@ it.effect('logs a failed refresh and retries on the next scan', () => {
     Effect.provide(
       scheduler({
         subscriptions: {
-          all: Effect.succeed([item]),
+          list: () => Effect.succeed([item]),
           find: findById([item]),
           update: () => Effect.void,
         },
@@ -291,7 +292,7 @@ it.effect(
       Effect.provide(
         scheduler({
           subscriptions: {
-            all: Effect.succeed(items),
+            list: () => Effect.succeed(items),
             find: findById(items),
             update: () =>
               Effect.gen(function* () {

@@ -1,6 +1,10 @@
 import { Readability } from '@mozilla/readability';
-import { ArticleExtractError, ArticleExtractor } from '@reader/business';
-import { Effect, Layer, Option, Schema } from 'effect';
+import {
+  ArticleExtractError,
+  ArticleExtractor,
+  type ExtractedArticle,
+} from '@reader/business';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { cleanArticle } from '../infrastructure/article-sanitizer';
 
 const UNTITLED = 'Untitled';
@@ -19,22 +23,28 @@ const escapeText = (document: Document, value: string): string => {
 const descriptionOf = (
   document: Document,
   excerpt: string | null | undefined
-) => {
+): Option.Option<string> => {
   const text = excerpt?.trim();
   if (text === undefined || text === '') {
-    return {};
+    return Option.none();
   }
 
-  return { description: escapeText(document, text) };
+  return Option.some(escapeText(document, text));
 };
 
-const publishedAtOf = (publishedTime: string | null | undefined) => {
+const publishedAtOf = (
+  publishedTime: string | null | undefined,
+  now: DateTime.Utc
+): DateTime.Utc => {
   const publishedAt = decodePublishedAt(publishedTime ?? '');
 
-  return Option.isSome(publishedAt) ? { publishedAt: publishedAt.value } : {};
+  return Option.isSome(publishedAt) ? publishedAt.value : now;
 };
 
-const readArticle = (document: Document) => {
+const readArticle = (
+  document: Document,
+  now: DateTime.Utc
+): ExtractedArticle => {
   const result = new Readability(document, {
     maxElemsToParse: 50_000,
   }).parse();
@@ -46,19 +56,21 @@ const readArticle = (document: Document) => {
 
   return {
     title: result.title?.trim() || UNTITLED,
-    content: document.body.innerHTML,
-    ...descriptionOf(document, result.excerpt),
-    ...publishedAtOf(result.publishedTime),
+    description: descriptionOf(document, result.excerpt),
+    content: Option.some(document.body.innerHTML),
+    publishedAt: publishedAtOf(result.publishedTime, now),
   };
 };
 
 export const ArticleExtractorLive = Layer.succeed(ArticleExtractor, {
   extract: (document) =>
-    Effect.try({
-      try: () => readArticle(document),
-      catch: () =>
-        new ArticleExtractError({
-          error: 'Unable to extract article content; open the original page',
-        }),
-    }),
+    Effect.flatMap(DateTime.now, (now) =>
+      Effect.try({
+        try: () => readArticle(document, now),
+        catch: () =>
+          new ArticleExtractError({
+            error: 'Unable to extract article content; open the original page',
+          }),
+      })
+    ),
 });

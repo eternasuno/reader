@@ -2,8 +2,7 @@ export type LibraryErrorTag =
   | 'Unauthorized'
   | 'Forbidden'
   | 'InvalidCursor'
-  | 'ArticleReadError'
-  | 'ArticleWriteError'
+  | 'ArticleRepositoryError'
   | 'InvalidArticleUrl'
   | 'ArticleNotFound'
   | 'ArticleNotInFeed'
@@ -11,7 +10,7 @@ export type LibraryErrorTag =
   | 'ArticleMissingUrl'
   | 'ArticleEmptyContent'
   | 'DuplicateArticle'
-  | 'SettingsRepositoryReadError'
+  | 'SettingsRepositoryError'
   | 'WebpageFetchError'
   | 'ArticleExtractError'
   | 'SubscriptionUrlInvalid'
@@ -21,8 +20,7 @@ export type LibraryErrorTag =
   | 'SubscriptionRefreshFailed'
   | 'FetchSubscriptionError'
   | 'ParseSubscriptionError'
-  | 'SubscriptionReadError'
-  | 'SubscriptionWriteError'
+  | 'FeedRepositoryError'
   | 'RequestFailed'
   | 'NetworkError'
   | 'InvalidResponse';
@@ -31,8 +29,7 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   Unauthorized: '登录状态已失效，请重新登录',
   Forbidden: '不允许跨站修改',
   InvalidCursor: '列表已更新，请刷新后重试',
-  ArticleReadError: '暂时无法读取文章，请稍后重试',
-  ArticleWriteError: '暂时无法保存文章，请稍后重试',
+  ArticleRepositoryError: '暂时无法访问文章，请稍后重试',
   InvalidArticleUrl: '请输入有效的 http 或 https 链接',
   ArticleNotFound: '文章不存在，可能已被删除',
   ArticleNotInFeed: '该文章不属于任何订阅',
@@ -40,7 +37,7 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   ArticleMissingUrl: '该文章没有原始链接',
   ArticleEmptyContent: '未能提取到文章内容',
   DuplicateArticle: '该文章已在稍后阅读中',
-  SettingsRepositoryReadError: '正文提取设置读取失败，请检查设置',
+  SettingsRepositoryError: '正文提取设置暂时不可用，请稍后重试',
   WebpageFetchError: '网页抓取失败，请稍后重试',
   ArticleExtractError: '正文提取失败，请稍后重试',
   SubscriptionUrlInvalid: '请输入有效的订阅地址',
@@ -50,8 +47,7 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   SubscriptionRefreshFailed: '订阅刷新失败，请稍后重试',
   FetchSubscriptionError: '无法获取订阅内容，请稍后重试',
   ParseSubscriptionError: '无法解析订阅源，请确认地址正确',
-  SubscriptionReadError: '暂时无法读取订阅，请稍后重试',
-  SubscriptionWriteError: '暂时无法保存订阅，请稍后重试',
+  FeedRepositoryError: '暂时无法访问订阅，请稍后重试',
   RequestFailed: '请求失败，请稍后重试',
   NetworkError: '网络连接失败，请检查网络后重试',
   InvalidResponse: '响应数据格式不正确，请稍后重试',

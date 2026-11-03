@@ -1,9 +1,14 @@
+import { Option } from 'effect';
 import { createEffect, createMemo, createSignal, on } from 'solid-js';
 import type { Article } from '../lib/library';
 
 export type LibraryReaderMode = 'original' | 'extracted' | 'webpage';
 
-const hasText = (value: string | undefined): boolean => (value ?? '') !== '';
+const hasText = (value: Option.Option<string>): boolean =>
+  Option.match(value, {
+    onNone: () => false,
+    onSome: (text) => text !== '',
+  });
 
 export const useReaderMode = (
   article: () => Article,

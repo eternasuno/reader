@@ -2,10 +2,9 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each test declares its dependency mocks alongside the scenario.
 import { expect, it } from '@effect/vitest';
 import { type Context, Effect, Layer, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
-import { Article } from '../../src/entity/article';
+import { Article, ArticleId } from '../../src/entity/article';
 import { Feed } from '../../src/entity/feed';
-import { ArticleId, FeedId, OwnerId } from '../../src/entity/object-value';
+import { FeedId, OwnerId } from '../../src/entity/object-value';
 import { ArticleExtractor } from '../../src/port/article-extractor';
 import {
   type ArticleBoundary,
@@ -44,12 +43,16 @@ const firstId = ArticleId.make('a'.repeat(64));
 const secondId = ArticleId.make('b'.repeat(64));
 const now = Date.UTC(2026, 0, 1, 12);
 
+const extractedPublishedAt = Schema.decodeSync(Schema.DateTimeUtcFromString)(
+  '2024-05-06T07:08:09.000Z'
+);
+
 const makeArticle = (overrides: Record<string, unknown> = {}): Article =>
   Schema.decodeUnknownSync(Article)({
     id: firstId,
     ownerId: alice,
     title: 'Title',
-    publishedAt: '2026-01-01T00:00:00.000Z',
+    publishedAt: new Date('2026-01-01T00:00:00.000Z'),
     read: false,
     ...overrides,
   });
@@ -64,7 +67,7 @@ const series = (count: number): Article[] =>
     makeArticle({
       id: hex(index),
       title: `Article ${index}`,
-      publishedAt: new Date(now + index * 60_000).toISOString(),
+      publishedAt: new Date(now + index * 60_000),
     })
   );
 
@@ -111,7 +114,7 @@ const subscription = (id: FeedId): Feed =>
     ownerId: alice,
     url: 'https://example.com/feed.xml',
     title: 'Feed',
-    updatedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
   });
 
 const parsedDocument = (html = ''): Document =>
@@ -193,19 +196,21 @@ it.effect('adds an anonymous Jina article with normalized URL and body', () => {
 
   return provide(
     Effect.gen(function* () {
-      yield* TestClock.setTime(now);
       const result = yield* addArticle(
         alice,
         'https://Example.com/post?utm_source=x'
       );
       expect(result.item.title).toBe('Untitled');
-      expect(result.item.url?.href).toBe('https://example.com/post');
-      expect(result.item.content).toBe('<p>Body</p>');
-      expect(result.item.extractedContent).toBe('<p>Body</p>');
+      expect(result.item.url).toEqual(
+        Option.some(new URL('https://example.com/post'))
+      );
+      expect(result.item.description).toEqual(Option.some(''));
+      expect(result.item.content).toEqual(Option.some('<p>Body</p>'));
+      expect(result.item.extractedContent).toEqual(Option.some('<p>Body</p>'));
       expect(result.item.ownerId).toBe(alice);
-      expect(result.item.feedId).toBeUndefined();
+      expect(result.item.feedId).toEqual(Option.none());
       expect(result.item.read).toBe(false);
-      expect(encodedTime(result.item)).toBe('2026-01-01T12:00:00.000Z');
+      expect(encodedTime(result.item)).toBe('2024-05-06T07:08:09.000Z');
       expect(saved).toEqual(result.item);
     }),
     {
@@ -236,7 +241,12 @@ it.effect('adds an anonymous Jina article with normalized URL and body', () => {
         extract: (received) => {
           expect(received).toBe(document);
 
-          return Effect.succeed({ title: '  ', content: '<p>Body</p>' });
+          return Effect.succeed({
+            title: '  ',
+            description: Option.some(''),
+            content: Option.some('<p>Body</p>'),
+            publishedAt: extractedPublishedAt,
+          });
         },
       },
     }
@@ -245,17 +255,13 @@ it.effect('adds an anonymous Jina article with normalized URL and body', () => {
 
 it.effect('keeps extracted description and published date when adding', () => {
   const url = new URL('https://example.com/post');
-  const publishedAt = Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(
-    '2024-05-06T07:08:09.000Z'
-  );
   let saved: Article | undefined;
 
   return provide(
     Effect.gen(function* () {
-      yield* TestClock.setTime(now);
       const result = yield* addArticle(alice, url.href);
       expect(result.item.title).toBe('Post');
-      expect(result.item.description).toBe('Summary');
+      expect(result.item.description).toEqual(Option.some('Summary'));
       expect(encodedTime(result.item)).toBe('2024-05-06T07:08:09.000Z');
       expect(result.item.id).toBe(
         articleId(alice, undefined, url, 'Post', 'Summary')
@@ -275,9 +281,9 @@ it.effect('keeps extracted description and published date when adding', () => {
         extract: () =>
           Effect.succeed({
             title: 'Post',
-            content: '<p>Body</p>',
-            description: 'Summary',
-            publishedAt,
+            content: Option.some('<p>Body</p>'),
+            description: Option.some('Summary'),
+            publishedAt: extractedPublishedAt,
           }),
       },
     }
@@ -293,7 +299,6 @@ it.effect(
 
     return provide(
       Effect.gen(function* () {
-        yield* TestClock.setTime(now);
         yield* addArticle(alice, url.href);
         yield* addArticle(alice, url.href);
         expect(ids).toEqual([
@@ -317,8 +322,9 @@ it.effect(
 
             return Effect.succeed({
               title: 'Post',
-              content: '<p>Body</p>',
-              description: `Summary ${attempt}`,
+              content: Option.some('<p>Body</p>'),
+              description: Option.some(`Summary ${attempt}`),
+              publishedAt: extractedPublishedAt,
             });
           },
         },
@@ -349,7 +355,12 @@ it.effect('reports duplicate additions with the derived article id', () => {
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
         extract: () =>
-          Effect.succeed({ title: 'Post', content: '<p>Body</p>' }),
+          Effect.succeed({
+            title: 'Post',
+            content: Option.some('<p>Body</p>'),
+            description: Option.some(''),
+            publishedAt: extractedPublishedAt,
+          }),
       },
     }
   );
@@ -367,7 +378,13 @@ it.effect('rejects an empty extracted body without saving', () =>
       articles: { create: () => Effect.die('must not save an empty article') },
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
-        extract: () => Effect.succeed({ title: 'Post', content: '   ' }),
+        extract: () =>
+          Effect.succeed({
+            title: 'Post',
+            description: Option.some(''),
+            content: Option.some('   '),
+            publishedAt: extractedPublishedAt,
+          }),
       },
     }
   )
@@ -448,11 +465,13 @@ it.effect('saves a feed article copy without fetching or extracting', () => {
     Effect.gen(function* () {
       const result = yield* saveArticle(alice, source.id);
       expect(result.item.id).not.toBe(source.id);
-      expect(result.item.feedId).toBeUndefined();
-      expect(result.item.url?.href).toBe('https://example.com/a');
+      expect(result.item.feedId).toEqual(Option.none());
+      expect(result.item.url).toEqual(
+        Option.some(new URL('https://example.com/a'))
+      );
       expect(result.item.title).toBe(source.title);
-      expect(result.item.description).toBe('Summary');
-      expect(result.item.content).toBe('<p>Feed</p>');
+      expect(result.item.description).toEqual(Option.some('Summary'));
+      expect(result.item.content).toEqual(Option.some('<p>Feed</p>'));
       expect(result.item.publishedAt).toEqual(source.publishedAt);
       expect(result.item.read).toBe(false);
       expect(source.read).toBe(true);
@@ -487,9 +506,13 @@ it.effect('keeps extracted content on the saved copy and the source', () => {
   return provide(
     Effect.gen(function* () {
       const result = yield* saveArticle(alice, source.id);
-      expect(result.item.extractedContent).toBe('<p>Extracted</p>');
+      expect(result.item.extractedContent).toEqual(
+        Option.some('<p>Extracted</p>')
+      );
       expect(result.item.read).toBe(false);
-      expect(created?.extractedContent).toBe('<p>Extracted</p>');
+      expect(created?.extractedContent).toEqual(
+        Option.some('<p>Extracted</p>')
+      );
       expect(source).toEqual(snapshot);
     }),
     {
@@ -599,7 +622,7 @@ it.effect('extracts, persists, and returns an article body', () => {
   return provide(
     Effect.gen(function* () {
       expect(yield* extractArticle(alice, article.id)).toEqual({
-        item: { ...article, extractedContent: '<p>Fresh</p>' },
+        item: { ...article, extractedContent: Option.some('<p>Fresh</p>') },
       });
       expect(saved).toEqual([[alice, article.id, '<p>Fresh</p>']]);
     }),
@@ -615,7 +638,12 @@ it.effect('extracts, persists, and returns an article body', () => {
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
         extract: () =>
-          Effect.succeed({ title: 'Fresh', content: '<p>Fresh</p>' }),
+          Effect.succeed({
+            title: 'Fresh',
+            description: Option.some(''),
+            content: Option.some('<p>Fresh</p>'),
+            publishedAt: extractedPublishedAt,
+          }),
       },
     }
   );
@@ -638,7 +666,12 @@ it.effect('treats a deleted article as missing after extraction', () =>
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
         extract: () =>
-          Effect.succeed({ title: 'Fresh', content: '<p>Fresh</p>' }),
+          Effect.succeed({
+            title: 'Fresh',
+            description: Option.some(''),
+            content: Option.some('<p>Fresh</p>'),
+            publishedAt: extractedPublishedAt,
+          }),
       },
     }
   )

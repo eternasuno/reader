@@ -3,12 +3,12 @@ import { Schema } from 'effect';
 export const ArticleSchema = Schema.Struct({
   id: Schema.String,
   ownerId: Schema.String,
-  feedId: Schema.optional(Schema.String),
-  url: Schema.optional(Schema.String),
+  feedId: Schema.OptionFromOptional(Schema.String),
+  url: Schema.OptionFromOptional(Schema.String),
   title: Schema.String,
-  description: Schema.optional(Schema.String),
-  content: Schema.optional(Schema.String),
-  extractedContent: Schema.optional(Schema.String),
+  description: Schema.OptionFromOptional(Schema.String),
+  content: Schema.OptionFromOptional(Schema.String),
+  extractedContent: Schema.OptionFromOptional(Schema.String),
   publishedAt: Schema.String,
   read: Schema.Boolean,
 });
@@ -28,7 +28,7 @@ export type Feed = typeof FeedSchema.Type;
 export const PreviewSchema = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
-  description: Schema.optional(Schema.String),
+  description: Schema.OptionFromOptional(Schema.String),
   titles: Schema.Array(Schema.String),
 });
 

@@ -6,6 +6,7 @@ import {
   isSettingsBusy,
   resetSettingsSection,
   submitRetention,
+  useSettingsModel,
 } from '../../src/pages/settings-model';
 
 const fetchMock = vi.fn();
@@ -123,6 +124,45 @@ describe('settings busy guard', () => {
 });
 
 describe('settings draft state', () => {
+  it('loads a missing browser endpoint into an empty draft', async () => {
+    fetchMock.mockResolvedValue(
+      json({ retention: 100, provider: 'jina', jinaConfigured: false }, 200)
+    );
+    const [model, dispose] = createRoot(
+      (disposeRoot) => [useSettingsModel(), disposeRoot] as const
+    );
+
+    try {
+      await flush();
+
+      expect(model.status.loadError()).toBe('');
+      expect(model.drafts.settings()?.browserEndpoint).toBeUndefined();
+      expect(model.drafts.browserEndpoint()).toBe('');
+      expect(isSectionDirty(model.drafts, 'extraction')).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('treats a missing saved endpoint as an empty draft when resetting', () => {
+    const { drafts, dispose } = setup();
+    try {
+      drafts.setSettings({
+        retention: baseline.retention,
+        provider: baseline.provider,
+        jinaConfigured: baseline.jinaConfigured,
+      });
+      drafts.setBrowserEndpoint('ws://127.0.0.1:9222');
+      expect(isSectionDirty(drafts, 'extraction')).toBe(true);
+
+      resetSettingsSection(drafts, 'extraction');
+      expect(drafts.browserEndpoint()).toBe('');
+      expect(isSectionDirty(drafts, 'extraction')).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
   it('tracks retention dirtiness and restores the baseline on reset', () => {
     const { drafts, dispose } = setup();
     try {

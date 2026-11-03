@@ -2,28 +2,16 @@ import { Effect, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
 import { Article } from '../../../../packages/business/src/entity/article.ts';
 import { Feed } from '../../../../packages/business/src/entity/feed.ts';
-import {
-  ArticleReadError,
-  ArticleWriteError,
-} from '../../../../packages/business/src/port/article-repository.ts';
-import {
-  SubscriptionReadError,
-  SubscriptionWriteError,
-} from '../../../../packages/business/src/port/feed-repository.ts';
+import { ArticleRepositoryError } from '../../../../packages/business/src/port/article-repository.ts';
+import { FeedRepositoryError } from '../../../../packages/business/src/port/feed-repository.ts';
 
 export type Bindings = Record<string, unknown>;
 
-export const articleReadError = () =>
-  new ArticleReadError({ message: 'Failed to read articles' });
+export const articleRepositoryError = () =>
+  new ArticleRepositoryError({ message: 'Failed to access articles' });
 
-export const articleWriteError = () =>
-  new ArticleWriteError({ message: 'Failed to write articles' });
-
-export const subscriptionReadError = () =>
-  new SubscriptionReadError({ message: 'Failed to read subscriptions' });
-
-export const subscriptionWriteError = () =>
-  new SubscriptionWriteError({ message: 'Failed to write subscriptions' });
+export const feedRepositoryError = () =>
+  new FeedRepositoryError({ message: 'Failed to access feeds' });
 
 export const run = <A, E>(
   db: Surreal,
@@ -89,10 +77,10 @@ export const read = <A, E>(
   );
 
 export const articles = (db: Surreal, sql: string, bindings: Bindings) =>
-  read(db, sql, bindings, Schema.Array(Article), articleReadError);
+  read(db, sql, bindings, Schema.Array(Article), articleRepositoryError);
 
 export const subscriptions = (db: Surreal, sql: string, bindings: Bindings) =>
-  read(db, sql, bindings, Schema.Array(Feed), subscriptionReadError);
+  read(db, sql, bindings, Schema.Array(Feed), feedRepositoryError);
 
 export const write = <E>(
   db: Surreal,

@@ -1,9 +1,10 @@
-import { Context, type Effect, Schema } from 'effect';
+import { Context, Data, type Effect } from 'effect';
 
-export class DocumentSantizeError extends Schema.TaggedError<DocumentSantizeError>()(
-  'DocumentSantizeError',
-  { message: Schema.String }
-) {}
+export class DocumentSantizeError extends Data.TaggedError(
+  'DocumentSantizeError'
+)<{
+  readonly message: string;
+}> {}
 
 export interface IDocumentSantize {
   readonly sanitize: (

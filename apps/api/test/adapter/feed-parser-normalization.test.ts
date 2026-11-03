@@ -1,11 +1,13 @@
 import { expect, it } from '@effect/vitest';
 import { DocumentSantize, HtmlParser } from '@reader/business';
-import { Effect, Layer } from 'effect';
+import { DateTime, Effect, Layer, Option } from 'effect';
 import { DocumentSantizeLive } from '../../src/adapter/document-santize';
 import { parseFeed } from '../../src/adapter/feed-parser';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 
 const base = new URL('https://example.com/feed.xml');
+
+const now = DateTime.fromDateUnsafe(new Date('2026-02-01T00:00:00.000Z'));
 
 const Live = Layer.mergeAll(HtmlParserLive, DocumentSantizeLive);
 
@@ -41,19 +43,15 @@ it('escapes explicitly plain Atom and JSON fields and leaves RSS HTML unchanged'
   </rss>`;
   const escaped = '&lt;title&gt; &amp;copy; &amp; more';
 
-  const atomEntry = parseFeed(atom, base).articles[0];
-  const jsonEntry = parseFeed(json, base).articles[0];
-  const rssEntry = parseFeed(rss, base).articles[0];
+  const atomEntry = parseFeed(atom, base, now).articles[0];
+  const jsonEntry = parseFeed(json, base, now).articles[0];
+  const rssEntry = parseFeed(rss, base, now).articles[0];
 
-  expect(atomEntry).toMatchObject({
-    description: escaped,
-    content: '&lt;b&gt;bold&lt;/b&gt;',
-  });
-  expect(jsonEntry).toMatchObject({
-    description: escaped,
-    content: '&lt;b&gt;bold&lt;/b&gt;',
-  });
-  expect(rssEntry).toMatchObject({ description: '<title> &copy; & more' });
+  expect(atomEntry?.description).toEqual(Option.some(escaped));
+  expect(atomEntry?.content).toEqual(Option.some('&lt;b&gt;bold&lt;/b&gt;'));
+  expect(jsonEntry?.description).toEqual(Option.some(escaped));
+  expect(jsonEntry?.content).toEqual(Option.some('&lt;b&gt;bold&lt;/b&gt;'));
+  expect(rssEntry?.description).toEqual(Option.some('<title> &copy; & more'));
 });
 
 it('escapes plain text exactly once without decoding existing entities', () => {
@@ -63,7 +61,9 @@ it('escapes plain text exactly once without decoding existing entities', () => {
     items: [{ id: '1', title: 'Once', content_text: '&amp;' }],
   });
 
-  expect(parseFeed(json, base).articles[0]?.content).toBe('&amp;amp;');
+  expect(parseFeed(json, base, now).articles[0]?.content).toEqual(
+    Option.some('&amp;amp;')
+  );
 });
 
 it.effect('retains escaped plain text literally after DOM sanitization', () =>
@@ -79,7 +79,10 @@ it.effect('retains escaped plain text literally after DOM sanitization', () =>
         },
       ],
     });
-    const content = parseFeed(json, base).articles[0]?.content ?? '';
+    const content =
+      Option.getOrUndefined(
+        parseFeed(json, base, now).articles[0]?.content ?? Option.none()
+      ) ?? '';
     const parser = yield* HtmlParser;
     const processor = yield* DocumentSantize;
     const document = yield* parser.parse(content, base);

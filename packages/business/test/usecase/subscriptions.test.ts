@@ -4,13 +4,13 @@ import { expect, it } from '@effect/vitest';
 import { type Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import type { Article } from '../../src/entity/article';
+import { type Article, ArticleId } from '../../src/entity/article';
 import type { Feed } from '../../src/entity/feed';
-import { ArticleId, OwnerId } from '../../src/entity/object-value';
+import { OwnerId } from '../../src/entity/object-value';
 import {
   type ArticleBoundary,
   ArticleRepository,
-  ArticleWriteError,
+  ArticleRepositoryError,
 } from '../../src/port/article-repository';
 import { DocumentSantize } from '../../src/port/document-santize';
 import {
@@ -45,14 +45,17 @@ const encoded = (value: DateTime.Utc) =>
 
 const entry = (overrides: Partial<ParsedArticle> = {}): ParsedArticle => ({
   title: 'One',
-  url: new URL('https://example.com/one'),
+  url: Option.some(new URL('https://example.com/one')),
+  description: Option.none(),
+  content: Option.none(),
+  publishedAt: at('2026-01-01T12:00:00.000Z'),
   ...overrides,
 });
 
 const feed = (
   articles: readonly ParsedArticle[],
   title = 'News'
-): ParsedFeed => ({ title, articles });
+): ParsedFeed => ({ title, description: Option.none(), articles });
 
 const subscription = (): Feed => ({
   id,
@@ -83,7 +86,7 @@ const settingsValue = (retention: number) => ({
   retention,
   provider: 'jina' as const,
   jinaConfigured: false,
-  browserEndpoint: '',
+  browserEndpoint: Option.none<string>(),
 });
 
 const provide = <A, E, R>(
@@ -285,20 +288,20 @@ it.effect(
     const processed: string[] = [];
     const newest = entry({
       title: 'Newest',
-      url: new URL('https://example.com/newest'),
-      description: 'Plain summary',
-      content: '<p>Body</p>',
+      url: Option.some(new URL('https://example.com/newest')),
+      description: Option.some('Plain summary'),
+      content: Option.some('<p>Body</p>'),
       publishedAt: at('2026-01-02T00:00:00.000Z'),
     });
     const older = entry({
       title: 'Older',
-      url: new URL('https://example.com/older'),
-      content: 'plain body',
+      url: Option.some(new URL('https://example.com/older')),
+      content: Option.some('plain body'),
       publishedAt: at('2026-01-01T00:00:00.000Z'),
     });
     const undated = entry({
       title: 'Undated',
-      url: new URL('https://example.com/undated'),
+      url: Option.some(new URL('https://example.com/undated')),
     });
     let stored: Feed | undefined;
 
@@ -332,18 +335,24 @@ it.effect(
           'Older',
         ]);
         expect(items[0]).toMatchObject({
-          description: 'Plain summary',
-          content: '<p>Body</p>',
-          feedId: id,
+          description: Option.some('Plain summary'),
+          content: Option.some('<p>Body</p>'),
+          feedId: Option.some(id),
           read: false,
         });
         expect(items[0]?.id).toBe(
-          articleId(alice, id, newest.url, newest.title, newest.description)
+          articleId(
+            alice,
+            id,
+            Option.getOrUndefined(newest.url),
+            newest.title,
+            Option.getOrUndefined(newest.description)
+          )
         );
         expect(
           encoded(items[0]?.publishedAt ?? at('1970-01-01T00:00:00.000Z'))
         ).toBe('2026-01-02T00:00:00.000Z');
-        expect(items[2]).toMatchObject({ content: 'plain body' });
+        expect(items[2]).toMatchObject({ content: Option.some('plain body') });
         expect(
           encoded(items[1]?.publishedAt ?? at('1970-01-01T00:00:00.000Z'))
         ).toBe('2026-01-01T12:00:00.000Z');
@@ -355,11 +364,11 @@ it.effect(
         },
         subscriptions: {
           find: () => Effect.succeed(Option.none()),
-          create: (item) => {
+          create: (items) => {
             events.push('subscription');
-            stored = item;
+            stored = items[0];
 
-            return Effect.succeed(true);
+            return Effect.succeed(items.map((item) => item.id));
           },
         },
         parser: {
@@ -386,8 +395,8 @@ it.effect('imports entries without a URL', () => {
   const created: (readonly Article[])[] = [];
   const linkless = entry({
     title: 'No URL',
-    url: undefined,
-    content: 'plain body',
+    url: Option.none(),
+    content: Option.some('plain body'),
   });
 
   return provide(
@@ -397,10 +406,10 @@ it.effect('imports entries without a URL', () => {
       expect(items).toHaveLength(1);
       expect(items[0]).toMatchObject({
         title: 'No URL',
-        content: 'plain body',
-        feedId: id,
+        content: Option.some('plain body'),
+        feedId: Option.some(id),
       });
-      expect(items[0]?.url).toBeUndefined();
+      expect(items[0]?.url).toEqual(Option.none());
       expect(items[0]?.id).toBe(
         articleId(alice, id, undefined, 'No URL', undefined)
       );
@@ -409,7 +418,7 @@ it.effect('imports entries without a URL', () => {
       feedParser: { parse: () => Effect.succeed(feed([linkless])) },
       subscriptions: {
         find: () => Effect.succeed(Option.none()),
-        create: () => Effect.succeed(true),
+        create: () => Effect.succeed([id]),
       },
       articles: {
         create: (_owner, items) => {
@@ -424,7 +433,7 @@ it.effect('imports entries without a URL', () => {
 
 it.effect('truncates feed content before parsing it', () => {
   const parsed: string[] = [];
-  const long = entry({ content: 'a'.repeat(100_500) });
+  const long = entry({ content: Option.some('a'.repeat(100_500)) });
 
   return provide(
     Effect.gen(function* () {
@@ -436,7 +445,7 @@ it.effect('truncates feed content before parsing it', () => {
       feedParser: { parse: () => Effect.succeed(feed([long])) },
       subscriptions: {
         find: () => Effect.succeed(Option.none()),
-        create: () => Effect.succeed(true),
+        create: () => Effect.succeed([id]),
       },
       parser: {
         parse: (html) => {
@@ -457,7 +466,7 @@ it.effect('imports at most 30 articles from a large feed', () => {
   const entries = Array.from({ length: 35 }, (_, index) =>
     entry({
       title: `Article ${index}`,
-      url: new URL(`https://example.com/${index}`),
+      url: Option.some(new URL(`https://example.com/${index}`)),
       publishedAt: at(new Date(nowMillis + index * 60_000).toISOString()),
     })
   );
@@ -474,7 +483,7 @@ it.effect('imports at most 30 articles from a large feed', () => {
       feedParser: { parse: () => Effect.succeed(feed(entries)) },
       subscriptions: {
         find: () => Effect.succeed(Option.none()),
-        create: () => Effect.succeed(true),
+        create: () => Effect.succeed([id]),
       },
       articles: {
         create: (_owner, items) => {
@@ -523,7 +532,7 @@ it.effect('reports a duplicate subscription when creation loses a race', () =>
     {
       subscriptions: {
         find: () => Effect.succeed(Option.none()),
-        create: () => Effect.succeed(false),
+        create: () => Effect.succeed([]),
       },
       feedParser: { parse: () => Effect.succeed(feed([])) },
     }
@@ -543,12 +552,12 @@ it.effect('reports an article write failure as an import failure', () =>
     {
       subscriptions: {
         find: () => Effect.succeed(Option.none()),
-        create: () => Effect.succeed(true),
+        create: () => Effect.succeed([id]),
       },
       feedParser: { parse: () => Effect.succeed(feed([entry()])) },
       articles: {
         create: () =>
-          Effect.fail(new ArticleWriteError({ message: 'write failed' })),
+          Effect.fail(new ArticleRepositoryError({ message: 'write failed' })),
       },
     }
   )
@@ -589,11 +598,11 @@ it.effect(
     const knownId = articleId(alice, id, knownUrl, 'Known', undefined);
     const tied = entry({
       title: 'Tied',
-      url: new URL('https://example.com/tied'),
-      content: '<p>Tied body</p>',
+      url: Option.some(new URL('https://example.com/tied')),
+      content: Option.some('<p>Tied body</p>'),
       publishedAt: at('2026-01-02T00:00:00.000Z'),
     });
-    const known = entry({ title: 'Known', url: knownUrl });
+    const known = entry({ title: 'Known', url: Option.some(knownUrl) });
     const inventory: ArticleBoundary[] = [
       {
         id: ArticleId.make('b'.repeat(64)),
@@ -611,7 +620,13 @@ it.effect(
         expect(created[0]?.map((item) => item.title)).toEqual(['Tied']);
         expect(retained[0]).toEqual([
           ArticleId.make('b'.repeat(64)),
-          articleId(alice, id, tied.url, tied.title, tied.description),
+          articleId(
+            alice,
+            id,
+            Option.getOrUndefined(tied.url),
+            tied.title,
+            Option.getOrUndefined(tied.description)
+          ),
           knownId,
         ]);
         expect(processed).toEqual(['<p>Tied body</p>']);
@@ -627,10 +642,10 @@ it.effect(
         },
         subscriptions: {
           find: () => Effect.succeed(Option.some(subscription())),
-          update: (item) =>
+          update: (items) =>
             Effect.sync(() => {
               events.push('update');
-              updated = item;
+              updated = items[0];
             }),
         },
         feedParser: {
@@ -731,12 +746,12 @@ it.effect(
     const repeated = new URL('https://example.com/repeated');
     const stale = entry({
       title: 'Repeated',
-      url: repeated,
+      url: Option.some(repeated),
       publishedAt: at('2026-01-01T00:00:00.000Z'),
     });
     const newest = entry({
       title: 'Repeated',
-      url: repeated,
+      url: Option.some(repeated),
       publishedAt: at('2026-01-05T00:00:00.000Z'),
     });
     const newestId = articleId(
@@ -744,7 +759,7 @@ it.effect(
       id,
       repeated,
       newest.title,
-      newest.description
+      Option.getOrUndefined(newest.description)
     );
 
     return provide(
@@ -794,17 +809,17 @@ it.effect(
     const repeated = new URL('https://example.com/repeated');
     const stale = entry({
       title: 'Repeated',
-      url: repeated,
+      url: Option.some(repeated),
       publishedAt: at('2026-01-01T00:00:00.000Z'),
     });
     const fresh = entry({
       title: 'Fresh',
-      url: new URL('https://example.com/fresh'),
+      url: Option.some(new URL('https://example.com/fresh')),
       publishedAt: at('2026-01-15T00:00:00.000Z'),
     });
     const newest = entry({
       title: 'Repeated',
-      url: repeated,
+      url: Option.some(repeated),
       publishedAt: at('2026-01-20T00:00:00.000Z'),
     });
     const newestId = articleId(
@@ -812,9 +827,15 @@ it.effect(
       id,
       repeated,
       newest.title,
-      newest.description
+      Option.getOrUndefined(newest.description)
     );
-    const freshId = articleId(alice, id, fresh.url, fresh.title, undefined);
+    const freshId = articleId(
+      alice,
+      id,
+      Option.getOrUndefined(fresh.url),
+      fresh.title,
+      undefined
+    );
     const inventory: ArticleBoundary[] = [
       {
         id: ArticleId.make('c'.repeat(64)),
@@ -891,7 +912,9 @@ it.effect(
         articles: {
           inventory: () => Effect.succeed([]),
           retain: () =>
-            Effect.fail(new ArticleWriteError({ message: 'retain failed' })),
+            Effect.fail(
+              new ArticleRepositoryError({ message: 'retain failed' })
+            ),
         },
       }
     )

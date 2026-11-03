@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import { createEffect, createSignal, For, Show } from 'solid-js';
 import type { Preview } from '../../lib/library';
 import type { PreviewResult } from '../../pages/library-model';
@@ -118,7 +119,7 @@ const PreviewPanel = (props: {
     class="mt-2 rounded-box border border-base-content/20 p-3"
   >
     <h3 class="font-semibold tracking-tight">{props.preview.title}</h3>
-    <Show when={props.preview.description}>
+    <Show when={Option.getOrUndefined(props.preview.description)}>
       {(text) => (
         <p class="mt-1 whitespace-pre-line text-sm text-base-content/70">
           {text()}

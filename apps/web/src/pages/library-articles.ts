@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import type { Article, Scope } from '../lib/library';
 import { withReadCount } from './library-counts';
 import type { LibraryState } from './library-state';
@@ -38,11 +39,13 @@ export const setItemsRead = (
 };
 
 const inScope = (scope: Scope, article: Article): boolean => {
+  const feedId = Option.getOrUndefined(article.feedId);
+
   if (scope.kind === 'later') {
-    return article.feedId === undefined;
+    return feedId === undefined;
   }
 
-  return scope.feedId === undefined || scope.feedId === article.feedId;
+  return scope.feedId === undefined || scope.feedId === feedId;
 };
 
 export const upsertItem = (

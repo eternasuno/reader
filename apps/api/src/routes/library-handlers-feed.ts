@@ -16,12 +16,11 @@ import { subscribe } from '../../../../packages/business/src/usecase/subscriptio
 import { type HandlerRequest, withSession } from './library-contract';
 import { subscriptionNotFound } from './library-errors';
 import {
-  articleReadFailure,
+  articleFailure,
   feedPageFailure,
+  feedRepositoryFailure,
   previewFailure,
   subscribeFailure,
-  subscriptionReadFailure,
-  subscriptionWriteFailure,
 } from './library-failures';
 
 const preview = (address: string) =>
@@ -37,13 +36,12 @@ const preview = (address: string) =>
     const feedParser = yield* FeedParser;
     const document = yield* fetchFeed(url);
     const feed = yield* feedParser.parse(document.content, document.url);
-    const description = feed.description;
 
     return {
       preview: {
         url,
         title: feed.title,
-        ...(description === undefined ? {} : { description }),
+        description: feed.description,
         titles: feed.articles.map((article) => article.title),
       },
     };
@@ -57,7 +55,7 @@ const removeSubscription = (owner: OwnerId, id: FeedId) =>
       return yield* subscriptionNotFound();
     }
 
-    yield* subscriptions.remove(owner, id);
+    yield* subscriptions.remove(owner, [id]);
 
     return { ok: true as const };
   });
@@ -66,10 +64,10 @@ const feedArticles = ({ query }: HandlerRequest<'feedArticles'>) =>
   withSession((owner) =>
     listFeedArticles(
       owner,
-      query.feedId,
-      query.filter ?? 'all',
-      query.cursor,
-      query.through
+      Option.getOrUndefined(query.feedId),
+      Option.getOrElse(query.filter, () => 'all'),
+      Option.getOrUndefined(query.cursor),
+      Option.getOrUndefined(query.through)
     )
   ).pipe(Effect.catchTags(feedPageFailure));
 
@@ -78,8 +76,8 @@ const feedRefresh = ({ query }: HandlerRequest<'feedRefresh'>) =>
     Effect.map(
       refreshFeedArticles(
         owner,
-        query.feedId,
-        query.filter ?? 'all',
+        Option.getOrUndefined(query.feedId),
+        Option.getOrElse(query.filter, () => 'all'),
         query.through
       ),
       (items) => ({ items })
@@ -93,7 +91,7 @@ const feeds = () =>
 
       return { items: yield* subscriptions.list(owner) };
     })
-  ).pipe(Effect.catchTags(subscriptionReadFailure));
+  ).pipe(Effect.catchTags(feedRepositoryFailure));
 
 const previewHandler = ({ payload }: HandlerRequest<'preview'>) =>
   withSession(() => preview(payload.url)).pipe(
@@ -107,10 +105,7 @@ const subscribeHandler = ({ payload }: HandlerRequest<'subscribe'>) =>
 
 const unsubscribe = ({ payload }: HandlerRequest<'unsubscribe'>) =>
   withSession((owner) => removeSubscription(owner, payload.id)).pipe(
-    Effect.catchTags({
-      ...subscriptionReadFailure,
-      ...subscriptionWriteFailure,
-    })
+    Effect.catchTags(feedRepositoryFailure)
   );
 
 const feedsUnread = () =>
@@ -120,7 +115,7 @@ const feedsUnread = () =>
 
       return yield* articles.unreadFeeds(owner);
     })
-  ).pipe(Effect.catchTags(articleReadFailure));
+  ).pipe(Effect.catchTags(articleFailure));
 
 export const feedHandlers = {
   feedArticles,

@@ -1,5 +1,6 @@
-import { DateTime, Effect } from 'effect';
-import type { ArticleId, FeedId, OwnerId } from '../entity/object-value';
+import { DateTime, Effect, Option } from 'effect';
+import type { ArticleId } from '../entity/article';
+import type { FeedId, OwnerId } from '../entity/object-value';
 import {
   type ArticleBoundary,
   ArticleRepository,
@@ -31,20 +32,21 @@ const newCandidate = (
   ownerId: OwnerId,
   id: FeedId,
   entry: ParsedArticle,
-  now: DateTime.Utc,
   order: number
-): Candidate => {
-  const publishedAt = entry.publishedAt ?? now;
-
-  return {
-    id: articleId(ownerId, id, entry.url, entry.title, entry.description),
-    publishedAtIso: DateTime.formatIso(publishedAt),
-    existing: false,
-    order,
-    entry,
-    publishedAt,
-  };
-};
+): Candidate => ({
+  id: articleId(
+    ownerId,
+    id,
+    Option.getOrUndefined(entry.url),
+    entry.title,
+    Option.getOrUndefined(entry.description)
+  ),
+  publishedAtIso: DateTime.formatIso(entry.publishedAt),
+  existing: false,
+  order,
+  entry,
+  publishedAt: entry.publishedAt,
+});
 
 const existingCandidate = (boundary: ArticleBoundary): Candidate => ({
   id: boundary.id,
@@ -73,13 +75,12 @@ const compareCandidates = (left: Candidate, right: Candidate) =>
 export const initialSelection = (
   ownerId: OwnerId,
   id: FeedId,
-  entries: readonly ParsedArticle[],
-  now: DateTime.Utc
+  entries: readonly ParsedArticle[]
 ) => {
   const seen = new Set<ArticleId>();
 
   return entries
-    .map((entry, order) => newCandidate(ownerId, id, entry, now, order))
+    .map((entry, order) => newCandidate(ownerId, id, entry, order))
     .toSorted(compareCandidates)
     .filter((candidate) => {
       if (seen.has(candidate.id)) {
@@ -97,12 +98,11 @@ export const refreshSelection = (
   ownerId: OwnerId,
   id: FeedId,
   inventory: readonly ArticleBoundary[],
-  entries: readonly ParsedArticle[],
-  now: DateTime.Utc
+  entries: readonly ParsedArticle[]
 ) => {
   const known = new Set(inventory.map((boundary) => boundary.id));
   const fresh = entries
-    .map((entry, order) => newCandidate(ownerId, id, entry, now, order))
+    .map((entry, order) => newCandidate(ownerId, id, entry, order))
     .toSorted(compareCandidates)
     .filter((candidate) => {
       if (known.has(candidate.id)) {
@@ -129,23 +129,23 @@ const sanitizeDocument = (document: Document) =>
     const processor = yield* DocumentSantize;
     const processed = yield* processor.sanitize(document);
 
-    return processed === '' ? undefined : processed;
+    return processed === '' ? Option.none<string>() : Option.some(processed);
   });
 
-const processHtml = (value: string | undefined, url?: URL) =>
-  Effect.gen(function* () {
-    if (value === undefined) {
-      return undefined;
-    }
+const processHtml = (value: Option.Option<string>, url: Option.Option<URL>) =>
+  Option.match(value, {
+    onNone: () => Effect.succeed(Option.none<string>()),
+    onSome: (html) =>
+      Effect.gen(function* () {
+        const parser = yield* HtmlParser;
+        const document = yield* parser.parse(
+          html.slice(0, MAX_CONTENT_LENGTH),
+          Option.getOrUndefined(url)
+        );
 
-    const parser = yield* HtmlParser;
-    const document = yield* parser.parse(
-      value.slice(0, MAX_CONTENT_LENGTH),
-      url
-    );
-
-    return yield* sanitizeDocument(document);
-  }).pipe(Effect.scoped);
+        return yield* sanitizeDocument(document);
+      }).pipe(Effect.scoped),
+  });
 
 const buildArticle = (
   ownerId: OwnerId,
@@ -160,13 +160,14 @@ const buildArticle = (
     return {
       id: candidate.id,
       ownerId,
-      feedId: id,
+      feedId: Option.some(id),
       title: entry.title,
       publishedAt: candidate.publishedAt,
       read: false,
-      ...(entry.url === undefined ? {} : { url: entry.url }),
-      ...(description === undefined ? {} : { description }),
-      ...(content === undefined ? {} : { content }),
+      url: entry.url,
+      description,
+      content,
+      extractedContent: Option.none(),
     };
   });
 

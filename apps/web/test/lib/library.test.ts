@@ -1,12 +1,15 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: the transport test covers every endpoint and error mapping in one client boundary.
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: grouped endpoint cases stay together with their shared request fixture.
+import { Option, Schema } from 'effect';
 import { describe, expect, it } from 'vitest';
 import {
   type Article,
+  ArticleSchema,
   createLibraryClient,
   type Feed,
   LibraryError,
   type Preview,
+  PreviewSchema,
 } from '../../src/lib/library';
 
 type RecordedRequest = {
@@ -24,8 +27,17 @@ const article = (id: string, extra: Partial<Article> = {}): Article => ({
   title: `Article ${id}`,
   publishedAt: '2026-01-01T00:00:00.000Z',
   read: false,
+  feedId: Option.none(),
+  url: Option.none(),
+  description: Option.none(),
+  content: Option.none(),
+  extractedContent: Option.none(),
   ...extra,
 });
+
+/** Encodes a stored article back to the JSON shape the API returns. */
+const articleJson = (item: Article) =>
+  Schema.encodeUnknownSync(ArticleSchema)(item);
 
 const feed = (id: string): Feed => ({
   id,
@@ -38,8 +50,13 @@ const feed = (id: string): Feed => ({
 const preview: Preview = {
   url: 'https://example.com/feed.xml',
   title: 'Feed',
+  description: Option.none(),
   titles: ['One'],
 };
+
+/** Encodes a preview back to the JSON shape the API returns. */
+const previewJson = (item: Preview) =>
+  Schema.encodeUnknownSync(PreviewSchema)(item);
 
 type Handler = (request: RecordedRequest) => Response | Promise<Response>;
 
@@ -78,7 +95,11 @@ const failure = async (task: Promise<unknown>): Promise<unknown> =>
 describe('library list requests', () => {
   it('lists later articles with the filter and cursor', async () => {
     const { client, requests } = makeClient(
-      json({ items: [article('a')], cursor: 'next', boundary: 'top' })
+      json({
+        items: [articleJson(article('a'))],
+        cursor: 'next',
+        boundary: 'top',
+      })
     );
     const page = await client.list({ kind: 'later' }, 'unread', 'cursor-1');
     const request = requests[0];
@@ -120,7 +141,9 @@ describe('library feed scope', () => {
   });
 
   it('syncs through the stored boundary of the loaded tail', async () => {
-    const { client, requests } = makeClient(json({ items: [article('new')] }));
+    const { client, requests } = makeClient(
+      json({ items: [articleJson(article('new'))] })
+    );
     const items = await client.refresh(
       { kind: 'feeds', feedId: 'feed-1' },
       'unread',
@@ -170,12 +193,12 @@ describe('library reads', () => {
   it('keeps one unread query usable when the other fails', async () => {
     const { client } = makeClient((current) =>
       current.path === '/api/library/later/unread'
-        ? Response.json({ _tag: 'ArticleReadError' }, { status: 500 })
+        ? Response.json({ _tag: 'ArticleRepositoryError' }, { status: 500 })
         : Response.json({ total: 2, feeds: [{ id: 'f1', count: 2 }] })
     );
 
     expect(await failure(client.laterUnread())).toMatchObject({
-      tag: 'ArticleReadError',
+      tag: 'ArticleRepositoryError',
     });
     expect(await client.feedUnread()).toEqual({
       total: 2,
@@ -184,7 +207,9 @@ describe('library reads', () => {
   });
 
   it('reads one article and reports deletion as null', async () => {
-    const found = makeClient(json({ item: article('a', { title: 'One' }) }));
+    const found = makeClient(
+      json({ item: articleJson(article('a', { title: 'One' })) })
+    );
     const missing = makeClient(json({ item: null }));
 
     expect(await found.client.article('a')).toEqual(
@@ -199,8 +224,8 @@ describe('library article writes', () => {
   it('sends article mutations as JSON payloads', async () => {
     const { client, requests } = makeClient((current) =>
       current.method === 'POST' && current.path === '/api/library/articles'
-        ? Response.json({ item: article('a') }, { status: 201 })
-        : Response.json({ item: article('a') })
+        ? Response.json({ item: articleJson(article('a')) }, { status: 201 })
+        : Response.json({ item: articleJson(article('a')) })
     );
 
     await client.markRead('a', true);
@@ -234,7 +259,7 @@ describe('library subscription writes', () => {
   it('sends preview, subscribe, and unsubscribe payloads', async () => {
     const { client, requests } = makeClient((current) => {
       if (current.path === '/api/library/feeds/preview') {
-        return Response.json({ preview });
+        return Response.json({ preview: previewJson(preview) });
       }
       if (current.method === 'POST') {
         return Response.json({ item: feed('f1') });

@@ -1,6 +1,7 @@
 import { expect, it } from '@effect/vitest';
 import { ArticleExtractor, HtmlParser } from '@reader/business';
-import { type DateTime, Effect, Layer, Schema } from 'effect';
+import { type DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { ArticleExtractorLive } from '../../src/adapter/article-extractor';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 
@@ -21,32 +22,39 @@ const makeMetadataHtml = (publishedTime: string) =>
 const untitledHtml = (publishedTime: string) =>
   `<!doctype html><html><head><meta property="article:published_time" content="${publishedTime}"></head><body><main><article>${paragraph()}${paragraph()}</article></main></body></html>`;
 
-const expectNoActiveContent = (content: string | undefined) => {
-  expect(content).toEqual(expect.any(String));
-  expect(content).not.toContain('<script');
-  expect(content).not.toContain('<iframe');
-  expect(content).not.toContain('onclick');
-  expect(content).not.toContain('onerror');
+const contentOf = (content: Option.Option<string>): string =>
+  Option.getOrThrow(content);
+
+const expectNoActiveContent = (content: Option.Option<string>) => {
+  const html = contentOf(content);
+  expect(html).not.toContain('<script');
+  expect(html).not.toContain('<iframe');
+  expect(html).not.toContain('onclick');
+  expect(html).not.toContain('onerror');
 };
 
-const expectNoUnsafeUrls = (content: string | undefined) => {
-  expect(content).toEqual(expect.any(String));
-  expect(content).not.toContain('javascript:');
-  expect(content).not.toContain('data:');
-  expect(content).not.toContain('secret@example.com');
+const expectNoUnsafeUrls = (content: Option.Option<string>) => {
+  const html = contentOf(content);
+  expect(html).not.toContain('javascript:');
+  expect(html).not.toContain('data:');
+  expect(html).not.toContain('secret@example.com');
 };
 
-const expectResolvedMedia = (content: string | undefined) => {
-  expect(content).toEqual(expect.any(String));
-  expect(content).toContain('href="https://example.com/relative/path"');
-  expect(content).toContain('src="https://example.com/photo.png"');
-  expect(content).toContain('target="_blank"');
-  expect(content).toContain('rel="noopener noreferrer"');
-  expect(content).toContain('loading="lazy"');
-  expect(content).toContain('referrerpolicy="no-referrer"');
+const expectResolvedMedia = (content: Option.Option<string>) => {
+  const html = contentOf(content);
+  expect(html).toContain('href="https://example.com/relative/path"');
+  expect(html).toContain('src="https://example.com/photo.png"');
+  expect(html).toContain('target="_blank"');
+  expect(html).toContain('rel="noopener noreferrer"');
+  expect(html).toContain('loading="lazy"');
+  expect(html).toContain('referrerpolicy="no-referrer"');
 };
 
 const Live = Layer.mergeAll(HtmlParserLive, ArticleExtractorLive);
+
+const nowMillis = Date.UTC(2026, 0, 1, 12);
+
+const nowIso = '2026-01-01T12:00:00.000Z';
 
 const extractHtml = (html: string, sourceUrl: URL = new URL(baseUrl)) =>
   Effect.gen(function* () {
@@ -68,12 +76,9 @@ const verifySanitizedOutput = Effect.gen(function* () {
 const verifyRedirectedBase = Effect.gen(function* () {
   const redirected = new URL('https://mirror.example.com/section/story');
   const result = yield* extractHtml(makeHtml(), redirected);
-  expect(result.content).toContain(
-    'href="https://mirror.example.com/relative/path"'
-  );
-  expect(result.content).toContain(
-    'src="https://mirror.example.com/photo.png"'
-  );
+  const html = contentOf(result.content);
+  expect(html).toContain('href="https://mirror.example.com/relative/path"');
+  expect(html).toContain('src="https://mirror.example.com/photo.png"');
   expectNoUnsafeUrls(result.content);
 });
 
@@ -89,21 +94,21 @@ const verifyMetadata = Effect.gen(function* () {
   const result = yield* extractHtml(
     makeMetadataHtml('2024-05-06T07:08:09.000Z')
   );
-  const publishedAt = result.publishedAt;
   expect(result.title).toBe('Metadata Fixture');
-  expect(result.description).toBe(
-    'A &lt;b&gt;bold&lt;/b&gt; summary &amp; more'
+  expect(result.description).toEqual(
+    Option.some('A &lt;b&gt;bold&lt;/b&gt; summary &amp; more')
   );
-  expect(
-    publishedAt === undefined ? undefined : encodePublishedAt(publishedAt)
-  ).toBe('2024-05-06T07:08:09.000Z');
+  expect(encodePublishedAt(result.publishedAt)).toBe(
+    '2024-05-06T07:08:09.000Z'
+  );
 });
 
 const verifyUntitledFallback = Effect.gen(function* () {
+  yield* TestClock.setTime(nowMillis);
   const result = yield* extractHtml(untitledHtml('not a date'));
   expect(result.title).toBe('Untitled');
   expect(result.title).not.toContain(baseUrl);
-  expect(result.publishedAt).toBeUndefined();
+  expect(encodePublishedAt(result.publishedAt)).toBe(nowIso);
 });
 
 it.effect(
@@ -124,6 +129,18 @@ it.effect('escapes the description and parses the published time', () =>
   verifyMetadata.pipe(Effect.scoped, Effect.provide(Live))
 );
 
-it.effect('falls back to an Untitled title and drops invalid dates', () =>
-  verifyUntitledFallback.pipe(Effect.scoped, Effect.provide(Live))
+it.effect('defaults missing description and publication time', () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(nowMillis);
+    const result = yield* extractHtml(
+      `<html><head><title>Missing metadata</title></head><body><article><h2>${sentence.repeat(12)}</h2></article></body></html>`
+    );
+    expect(result.description).toEqual(Option.none());
+    expect(encodePublishedAt(result.publishedAt)).toBe(nowIso);
+  }).pipe(Effect.scoped, Effect.provide(Live))
+);
+
+it.effect(
+  'falls back to an Untitled title and the current time for invalid dates',
+  () => verifyUntitledFallback.pipe(Effect.scoped, Effect.provide(Live))
 );

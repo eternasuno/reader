@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import { vi } from 'vitest';
 import type {
   Article,
@@ -15,6 +16,10 @@ export const article = (
     readonly feedId?: string;
     readonly read?: boolean;
     readonly publishedAt?: string;
+    readonly url?: string;
+    readonly description?: string;
+    readonly content?: string;
+    readonly extractedContent?: string;
   } = {}
 ): Article => ({
   id,
@@ -22,7 +27,11 @@ export const article = (
   title: `Article ${id}`,
   publishedAt: options.publishedAt ?? '2026-01-01T00:00:00.000Z',
   read: options.read ?? false,
-  ...(options.feedId === undefined ? {} : { feedId: options.feedId }),
+  feedId: Option.fromUndefinedOr(options.feedId),
+  url: Option.fromUndefinedOr(options.url),
+  description: Option.fromUndefinedOr(options.description),
+  content: Option.fromUndefinedOr(options.content),
+  extractedContent: Option.fromUndefinedOr(options.extractedContent),
 });
 
 /** Article newer than the shared default so it sorts ahead of loaded rows. */
@@ -58,6 +67,7 @@ export const counts = (
 export const preview: Preview = {
   url: 'https://example.com/feed.xml',
   title: 'Feed',
+  description: Option.none(),
   titles: ['One'],
 };
 

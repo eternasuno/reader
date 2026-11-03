@@ -1,19 +1,13 @@
-import { DateTime, Effect, Option } from 'effect';
-import type { Article } from '../entity/article';
-import type { ArticleId, FeedId, OwnerId } from '../entity/object-value';
+import { Effect, Option } from 'effect';
+import type { Article, ArticleId } from '../entity/article';
+import type { FeedId, OwnerId } from '../entity/object-value';
 import {
   ArticleExtractError,
   ArticleExtractor,
-  type ExtractedArticle,
 } from '../port/article-extractor';
 import { ArticleRepository } from '../port/article-repository';
 import { HtmlParser } from '../port/html-parser';
-import type { SettingsRepositoryReadError } from '../port/settings-repository';
-import {
-  type WebpageFetchError,
-  WebpageFetcher,
-  WebpageFetcherFactory,
-} from '../port/webpage-fetcher';
+import { WebpageFetcher, WebpageFetcherFactory } from '../port/webpage-fetcher';
 import {
   ArticleEmptyContent,
   ArticleMissingUrl,
@@ -44,17 +38,7 @@ export {
 
 const UNTITLED = 'Untitled';
 
-const fetchAndExtract = (
-  owner: OwnerId,
-  sourceUrl: URL
-): Effect.Effect<
-  ExtractedArticle,
-  | SettingsRepositoryReadError
-  | WebpageFetchError
-  | ArticleExtractError
-  | ArticleEmptyContent,
-  ArticleExtractor | HtmlParser | WebpageFetcherFactory
-> =>
+const fetchAndExtract = (owner: OwnerId, sourceUrl: URL) =>
   Effect.gen(function* () {
     const factory = yield* WebpageFetcherFactory;
     const fetcherLayer = yield* factory.forOwner(owner);
@@ -74,8 +58,8 @@ const fetchAndExtract = (
     );
     const extractor = yield* ArticleExtractor;
     const extracted = yield* extractor.extract(document);
-    const content = extracted.content;
-    if (content.trim() === '') {
+    const content = Option.getOrUndefined(extracted.content);
+    if (content === undefined || content.trim() === '') {
       return yield* new ArticleEmptyContent({
         message: 'Article content is empty',
       });
@@ -107,24 +91,22 @@ export const addArticle = Effect.fn('articles.add')(function* (
       new InvalidArticleUrl({ message: 'Article URL must use HTTP or HTTPS' }),
   });
   const extracted = yield* fetchAndExtract(owner, url);
-  const publishedAt = extracted.publishedAt ?? (yield* DateTime.now);
   const article: Article = {
     id: articleId(
       owner,
       undefined,
       url,
       extracted.title,
-      extracted.description
+      Option.getOrUndefined(extracted.description)
     ),
     ownerId: owner,
-    url,
+    feedId: Option.none(),
+    url: Option.some(url),
     title: extracted.title,
-    ...(extracted.description === undefined
-      ? {}
-      : { description: extracted.description }),
-    content: extracted.content,
-    extractedContent: extracted.content,
-    publishedAt,
+    description: extracted.description,
+    content: Option.some(extracted.content),
+    extractedContent: Option.some(extracted.content),
+    publishedAt: extracted.publishedAt,
     read: false,
   };
   const articles = yield* ArticleRepository;
@@ -150,7 +132,7 @@ export const saveArticle = Effect.fn('articles.save')(function* (
   }
 
   const source = found.value;
-  if (source.feedId === undefined) {
+  if (Option.isNone(source.feedId)) {
     return yield* new ArticleNotInFeed({
       message: 'Article is not part of a subscription',
     });
@@ -160,22 +142,19 @@ export const saveArticle = Effect.fn('articles.save')(function* (
     id: articleId(
       owner,
       undefined,
-      source.url,
+      Option.getOrUndefined(source.url),
       source.title,
-      source.description
+      Option.getOrUndefined(source.description)
     ),
     ownerId: owner,
+    feedId: Option.none(),
+    url: source.url,
     title: source.title,
+    description: source.description,
+    content: source.content,
+    extractedContent: source.extractedContent,
     publishedAt: source.publishedAt,
     read: false,
-    ...(source.url === undefined ? {} : { url: source.url }),
-    ...(source.description === undefined
-      ? {}
-      : { description: source.description }),
-    ...(source.content === undefined ? {} : { content: source.content }),
-    ...(source.extractedContent === undefined
-      ? {}
-      : { extractedContent: source.extractedContent }),
   };
   const created = yield* articles.create(owner, [copy]);
   if (created.length === 0) {
@@ -199,23 +178,25 @@ export const extractArticle = Effect.fn('articles.extract')(function* (
   }
 
   const article = found.value;
-  if (article.extractedContent !== undefined) {
+  if (Option.isSome(article.extractedContent)) {
     return { item: article };
   }
 
-  if (article.url === undefined) {
+  if (Option.isNone(article.url)) {
     return yield* new ArticleMissingUrl({
       message: 'Article has no source URL',
     });
   }
 
-  const extracted = yield* fetchAndExtract(owner, article.url);
+  const extracted = yield* fetchAndExtract(owner, article.url.value);
   const saved = yield* articles.saveExtracted(owner, id, extracted.content);
   if (!saved) {
     return yield* new ArticleNotFound({ message: 'Article not found' });
   }
 
-  return { item: { ...article, extractedContent: extracted.content } };
+  return {
+    item: { ...article, extractedContent: Option.some(extracted.content) },
+  };
 });
 
 export const markArticle = Effect.fn('articles.mark')(function* (
@@ -264,7 +245,7 @@ export const removeArticle = Effect.fn('articles.remove')(function* (
 ) {
   const articles = yield* ArticleRepository;
   const found = yield* articles.find(owner, id);
-  if (Option.isSome(found) && found.value.feedId !== undefined) {
+  if (Option.isSome(found) && Option.isSome(found.value.feedId)) {
     return yield* new ArticleNotLater({
       message: 'Subscription articles cannot be removed directly',
     });

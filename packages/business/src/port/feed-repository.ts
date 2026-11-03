@@ -2,32 +2,29 @@ import { Context, Data, type Effect, type Option } from 'effect';
 import type { Feed } from '../entity/feed';
 import type { FeedId, OwnerId } from '../entity/object-value';
 
-export class SubscriptionReadError extends Data.TaggedError(
-  'SubscriptionReadError'
+export class FeedRepositoryError extends Data.TaggedError(
+  'FeedRepositoryError'
 )<{ readonly message: string }> {}
 
-export class SubscriptionWriteError extends Data.TaggedError(
-  'SubscriptionWriteError'
-)<{ readonly message: string }> {}
-
-export interface IFeedRepository {
+export type IFeedRepository = {
   readonly find: (
     ownerId: OwnerId,
     id: FeedId
-  ) => Effect.Effect<Option.Option<Feed>, SubscriptionReadError>;
+  ) => Effect.Effect<Option.Option<Feed>, FeedRepositoryError>;
   readonly list: (
-    ownerId: OwnerId
-  ) => Effect.Effect<readonly Feed[], SubscriptionReadError>;
+    ownerId?: OwnerId
+  ) => Effect.Effect<readonly Feed[], FeedRepositoryError>;
   readonly create: (
-    feed: Feed
-  ) => Effect.Effect<boolean, SubscriptionWriteError>;
+    feeds: readonly Feed[]
+  ) => Effect.Effect<readonly FeedId[], FeedRepositoryError>;
   readonly remove: (
     ownerId: OwnerId,
-    id: FeedId
-  ) => Effect.Effect<void, SubscriptionWriteError>;
-  readonly update: (feed: Feed) => Effect.Effect<void, SubscriptionWriteError>;
-  readonly all: Effect.Effect<readonly Feed[], SubscriptionReadError>;
-}
+    ids: readonly FeedId[]
+  ) => Effect.Effect<void, FeedRepositoryError>;
+  readonly update: (
+    feeds: readonly Feed[]
+  ) => Effect.Effect<void, FeedRepositoryError>;
+};
 
 export class FeedRepository extends Context.Service<
   FeedRepository,

@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { ArticleId } from '../entity/object-value';
+import { ArticleId } from '../entity/article';
 
 export class InvalidArticleUrl extends Schema.TaggedError<InvalidArticleUrl>()(
   'InvalidArticleUrl',

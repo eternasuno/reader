@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
 import {
   addArticle,
@@ -20,9 +20,8 @@ import {
 } from './library-contract';
 import {
   addFailure,
+  articleFailure,
   articlePageFailure,
-  articleReadFailure,
-  articleWriteFailure,
   extractFailure,
   removeFailure,
   saveFailure,
@@ -30,13 +29,22 @@ import {
 
 const laterList = ({ query }: HandlerRequest<'laterList'>) =>
   withSession((owner) =>
-    listLaterArticles(owner, query.filter ?? 'all', query.cursor, query.through)
+    listLaterArticles(
+      owner,
+      Option.getOrElse(query.filter, () => 'all'),
+      Option.getOrUndefined(query.cursor),
+      Option.getOrUndefined(query.through)
+    )
   ).pipe(Effect.catchTags(articlePageFailure));
 
 const laterRefresh = ({ query }: HandlerRequest<'laterRefresh'>) =>
   withSession((owner) =>
     Effect.map(
-      refreshLaterArticles(owner, query.filter ?? 'all', query.through),
+      refreshLaterArticles(
+        owner,
+        Option.getOrElse(query.filter, () => 'all'),
+        query.through
+      ),
       (items) => ({ items })
     )
   ).pipe(Effect.catchTags(articlePageFailure));
@@ -48,14 +56,14 @@ const laterUnread = () =>
 
       return { count: yield* articles.unreadLater(owner) };
     })
-  ).pipe(Effect.catchTags(articleReadFailure));
+  ).pipe(Effect.catchTags(articleFailure));
 
 const article = ({ query }: HandlerRequest<'article'>) =>
   withSession((owner) =>
     Effect.map(getArticle(owner, query.id), (found) => ({
       item: optionToNull(found),
     }))
-  ).pipe(Effect.catchTags(articleReadFailure));
+  ).pipe(Effect.catchTags(articleFailure));
 
 const add = ({ payload }: HandlerRequest<'addArticle'>) =>
   withSession((owner) => addArticle(owner, payload.url)).pipe(
@@ -74,20 +82,20 @@ const extract = ({ payload }: HandlerRequest<'extractArticle'>) =>
 
 const markRead = ({ payload }: HandlerRequest<'markRead'>) =>
   withSession((owner) => markArticle(owner, payload.id, payload.read)).pipe(
-    Effect.catchTags(articleWriteFailure)
+    Effect.catchTags(articleFailure)
   );
 
 const markLater = () =>
-  withSession(markLaterRead).pipe(Effect.catchTags(articleWriteFailure));
+  withSession(markLaterRead).pipe(Effect.catchTags(articleFailure));
 
 const markFeeds = ({ payload }: HandlerRequest<'markFeeds'>) =>
   withSession((owner) => markFeedsRead(owner, payload.feedIds)).pipe(
-    Effect.catchTags(articleWriteFailure)
+    Effect.catchTags(articleFailure)
   );
 
 const markArticles = ({ payload }: HandlerRequest<'markArticles'>) =>
   withSession((owner) => markArticlesRead(owner, payload.ids)).pipe(
-    Effect.catchTags(articleWriteFailure)
+    Effect.catchTags(articleFailure)
   );
 
 const remove = ({ payload }: HandlerRequest<'removeArticle'>) =>

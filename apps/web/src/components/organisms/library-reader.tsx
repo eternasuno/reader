@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import { Show } from 'solid-js';
 import type { Article } from '../../lib/library';
 import {
@@ -69,10 +70,13 @@ const ExtractAction = (props: { readonly view: ReaderModeView }) => (
 const readableHtml = (
   article: Article,
   mode: LibraryReaderMode
-): string | undefined =>
-  mode === 'extracted'
-    ? article.extractedContent
-    : (article.content ?? article.description);
+): string | undefined => {
+  const content = Option.getOrUndefined(article.content);
+
+  return mode === 'extracted'
+    ? Option.getOrUndefined(article.extractedContent)
+    : (content ?? Option.getOrUndefined(article.description));
+};
 
 const ReaderHtml = (props: { readonly html: string | undefined }) => (
   <Show
@@ -93,8 +97,11 @@ const ReaderDocument = (props: {
 }) => (
   <div class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
     <div class="mx-auto flex max-w-208 flex-col gap-4 px-6 py-8 max-sm:px-4 max-sm:py-6">
-      <ReaderTitle title={props.article.title} url={props.article.url ?? ''} />
-      <Show when={props.article.url}>
+      <ReaderTitle
+        title={props.article.title}
+        url={Option.getOrUndefined(props.article.url) ?? ''}
+      />
+      <Show when={Option.getOrUndefined(props.article.url)}>
         {(url) => <ReaderSourceLink url={url()} />}
       </Show>
       <ReaderHtml html={readableHtml(props.article, props.view.mode())} />
@@ -130,7 +137,7 @@ const ReaderOverflow = (props: {
     {(close) => (
       <>
         <WebpageOption view={props.view} onClose={close} />
-        <Show when={props.pane.article.url}>
+        <Show when={Option.getOrUndefined(props.pane.article.url)}>
           {(url) => (
             <li>
               <a
@@ -145,7 +152,7 @@ const ReaderOverflow = (props: {
             </li>
           )}
         </Show>
-        <Show when={props.pane.article.feedId === undefined}>
+        <Show when={Option.isNone(props.pane.article.feedId)}>
           <li>
             <Button
               type="button"
@@ -207,7 +214,7 @@ const ReaderHeader = (props: {
       onOpen={props.pane.onOpen}
     />
     <div class="ms-auto flex items-center gap-1">
-      <Show when={props.pane.article.feedId !== undefined}>
+      <Show when={Option.isSome(props.pane.article.feedId)}>
         <IconButton
           label="保存到稍后阅读"
           disabled={props.pane.pending}
@@ -240,7 +247,7 @@ const ReaderPane = (props: ReaderPaneProps) => {
         when={webpage()}
         fallback={<ReaderDocument article={props.article} view={view} />}
       >
-        <WebpageFrame url={props.article.url ?? ''} />
+        <WebpageFrame url={Option.getOrUndefined(props.article.url) ?? ''} />
       </Show>
     </section>
   );

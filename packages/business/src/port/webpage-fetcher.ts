@@ -1,6 +1,6 @@
 import { Context, Data, type Effect, type Layer } from 'effect';
 import type { OwnerId } from '../entity/object-value';
-import type { SettingsRepositoryReadError } from './settings-repository';
+import type { SettingsRepositoryError } from './settings-repository';
 
 export type WebpageFetchCode = 'rate_limited' | 'key_rejected' | 'fetch_failed';
 
@@ -21,7 +21,7 @@ export class WebpageFetcher extends Context.Service<
 export interface IWebpageFetcherFactory {
   readonly forOwner: (
     owner: OwnerId
-  ) => Effect.Effect<Layer.Layer<WebpageFetcher>, SettingsRepositoryReadError>;
+  ) => Effect.Effect<Layer.Layer<WebpageFetcher>, SettingsRepositoryError>;
 }
 
 export class WebpageFetcherFactory extends Context.Service<

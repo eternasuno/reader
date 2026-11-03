@@ -1,173 +1,115 @@
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
+
+const failure = <Tag extends string>(tag: Tag, message: string) =>
+  Effect.fail({
+    _tag: tag,
+    message,
+    id: Option.none(),
+    code: Option.none(),
+  } as const);
+
+const identifiedFailure = <Tag extends string>(
+  tag: Tag,
+  message: string,
+  id: string
+) =>
+  Effect.fail({
+    _tag: tag,
+    message,
+    id: Option.some(id),
+    code: Option.none(),
+  } as const);
 
 export const invalidCursor = () =>
-  Effect.fail({
-    _tag: 'InvalidCursor',
-    message: 'Invalid pagination cursor',
-  } as const);
+  failure('InvalidCursor', 'Invalid pagination cursor');
 
-export const articleReadError = () =>
-  Effect.fail({
-    _tag: 'ArticleReadError',
-    message: 'Unable to read articles',
-  } as const);
-
-export const articleWriteError = () =>
-  Effect.fail({
-    _tag: 'ArticleWriteError',
-    message: 'Unable to save articles',
-  } as const);
+export const articleRepositoryError = () =>
+  failure('ArticleRepositoryError', 'Unable to access articles');
 
 export const invalidArticleUrl = () =>
-  Effect.fail({
-    _tag: 'InvalidArticleUrl',
-    message: 'Article URL must use HTTP or HTTPS without credentials',
-  } as const);
+  failure(
+    'InvalidArticleUrl',
+    'Article URL must use HTTP or HTTPS without credentials'
+  );
 
 export const articleNotFound = () =>
-  Effect.fail({
-    _tag: 'ArticleNotFound',
-    message: 'Article not found',
-  } as const);
+  failure('ArticleNotFound', 'Article not found');
 
 export const articleNotInFeed = () =>
-  Effect.fail({
-    _tag: 'ArticleNotInFeed',
-    message: 'Article does not belong to a subscription',
-  } as const);
+  failure('ArticleNotInFeed', 'Article does not belong to a subscription');
 
 export const articleNotLater = () =>
-  Effect.fail({
-    _tag: 'ArticleNotLater',
-    message: 'Subscribed articles cannot be deleted',
-  } as const);
+  failure('ArticleNotLater', 'Subscribed articles cannot be deleted');
 
 export const articleMissingUrl = () =>
-  Effect.fail({
-    _tag: 'ArticleMissingUrl',
-    message: 'Article has no original URL',
-  } as const);
+  failure('ArticleMissingUrl', 'Article has no original URL');
 
 export const articleEmptyContent = () =>
-  Effect.fail({
-    _tag: 'ArticleEmptyContent',
-    message: 'Extracted article content is empty',
-  } as const);
+  failure('ArticleEmptyContent', 'Extracted article content is empty');
 
 export const duplicateArticle = (error: { readonly id: string }) =>
-  Effect.fail({
-    _tag: 'DuplicateArticle',
-    message: 'Article already exists',
-    id: error.id,
-  } as const);
+  identifiedFailure('DuplicateArticle', 'Article already exists', error.id);
 
-export const settingsRepositoryReadError = () =>
-  Effect.fail({
-    _tag: 'SettingsRepositoryReadError',
-    message: 'Unable to read extraction settings',
-  } as const);
+export const settingsRepositoryError = () =>
+  failure('SettingsRepositoryError', 'Unable to access extraction settings');
 
 export const webpageFetchError = (error?: { readonly code?: string }) =>
   Effect.fail({
     _tag: 'WebpageFetchError',
     message: 'Unable to fetch the article page',
-    ...(error?.code === undefined ? {} : { code: error.code }),
+    id: Option.none(),
+    code: Option.fromUndefinedOr(error?.code),
   } as const);
 
 export const articleExtractError = () =>
-  Effect.fail({
-    _tag: 'ArticleExtractError',
-    message: 'Unable to extract article content',
-  } as const);
+  failure('ArticleExtractError', 'Unable to extract article content');
 
 export const subscriptionUrlInvalid = () =>
-  Effect.fail({
-    _tag: 'SubscriptionUrlInvalid',
-    message: 'Subscription URL must use HTTP or HTTPS',
-  } as const);
+  failure('SubscriptionUrlInvalid', 'Subscription URL must use HTTP or HTTPS');
 
 export const subscriptionExists = (error: { readonly id: string }) =>
-  Effect.fail({
-    _tag: 'SubscriptionExists',
-    message: 'Subscription already exists',
-    id: error.id,
-  } as const);
+  identifiedFailure(
+    'SubscriptionExists',
+    'Subscription already exists',
+    error.id
+  );
 
 export const subscriptionNotFound = () =>
-  Effect.fail({
-    _tag: 'SubscriptionNotFound',
-    message: 'Subscription not found',
-  } as const);
+  failure('SubscriptionNotFound', 'Subscription not found');
 
 export const subscriptionImportFailed = (error: { readonly id: string }) =>
-  Effect.fail({
-    _tag: 'SubscriptionImportFailed',
-    message: 'Failed to import subscription articles',
-    id: error.id,
-  } as const);
+  identifiedFailure(
+    'SubscriptionImportFailed',
+    'Failed to import subscription articles',
+    error.id
+  );
 
 export const fetchSubscriptionError = () =>
-  Effect.fail({
-    _tag: 'FetchSubscriptionError',
-    message: 'Unable to fetch the subscription feed',
-  } as const);
+  failure('FetchSubscriptionError', 'Unable to fetch the subscription feed');
 
 export const parseSubscriptionError = () =>
-  Effect.fail({
-    _tag: 'ParseSubscriptionError',
-    message: 'Unable to parse the subscription feed',
-  } as const);
+  failure('ParseSubscriptionError', 'Unable to parse the subscription feed');
 
-export const subscriptionReadError = () =>
-  Effect.fail({
-    _tag: 'SubscriptionReadError',
-    message: 'Unable to read subscriptions',
-  } as const);
-
-export const subscriptionWriteError = () =>
-  Effect.fail({
-    _tag: 'SubscriptionWriteError',
-    message: 'Unable to save subscriptions',
-  } as const);
+export const feedRepositoryError = () =>
+  failure('FeedRepositoryError', 'Unable to access feeds');
 
 export const settingsReadError = () =>
-  Effect.fail({
-    _tag: 'SettingsReadError',
-    message: 'Unable to read settings',
-  } as const);
+  failure('SettingsReadError', 'Unable to read settings');
 
 export const settingsSaveError = () =>
-  Effect.fail({
-    _tag: 'SettingsSaveError',
-    message: 'Unable to save settings',
-  } as const);
+  failure('SettingsSaveError', 'Unable to save settings');
 
 export const invalidRetention = () =>
-  Effect.fail({
-    _tag: 'InvalidRetention',
-    message: 'Retention must be an integer between 30 and 300',
-  } as const);
+  failure(
+    'InvalidRetention',
+    'Retention must be an integer between 30 and 300'
+  );
 
 export const invalidKey = () =>
-  Effect.fail({
-    _tag: 'InvalidKey',
-    message: 'Enter a valid Jina API key',
-  } as const);
+  failure('InvalidKey', 'Enter a valid Jina API key');
 
 export const invalidEndpoint = () =>
-  Effect.fail({
-    _tag: 'InvalidEndpoint',
-    message: 'Enter a valid browser service address',
-  } as const);
+  failure('InvalidEndpoint', 'Enter a valid browser service address');
 
 export const invalidProvider = () =>
-  Effect.fail({
-    _tag: 'InvalidProvider',
-    message: 'Choose a valid extraction provider',
-  } as const);
-
-export const settingsRepositoryWriteError = () =>
-  Effect.fail({
-    _tag: 'SettingsRepositoryWriteError',
-    message: 'Unable to save extraction settings',
-  } as const);
+  failure('InvalidProvider', 'Choose a valid extraction provider');

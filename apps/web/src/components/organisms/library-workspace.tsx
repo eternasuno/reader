@@ -1,4 +1,5 @@
 import { useLocation, useNavigate, useParams } from '@solidjs/router';
+import { Option } from 'effect';
 import { createEffect, createMemo, createSignal, on, onMount } from 'solid-js';
 import type { Article, Feed, Scope } from '../../lib/library';
 import {
@@ -23,11 +24,8 @@ type LibraryParams = {
   readonly key?: string | undefined;
 };
 
-const articleKind = (article: Article): 'link' | 'feed' =>
-  article.feedId === undefined ? 'link' : 'feed';
-
 const articlePath = (article: Article): string =>
-  `/read/${articleKind(article)}/${encodeURIComponent(article.id)}`;
+  `/read/${Option.isNone(article.feedId) ? 'link' : 'feed'}/${encodeURIComponent(article.id)}`;
 
 const listPathOf = (scope: Scope): string =>
   scope.kind === 'later' ? '/' : '/rss';

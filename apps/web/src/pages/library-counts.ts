@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import type { Article, Counts, Scope } from '../lib/library';
 
 export const emptyCounts: Counts = { later: 0, feeds: {}, feedsTotal: 0 };
@@ -8,7 +9,8 @@ export const withReadCount = (
   read: boolean
 ): Counts => {
   const delta = read ? -1 : 1;
-  const feedId = article.feedId;
+  const feedId = Option.getOrUndefined(article.feedId);
+
   if (feedId === undefined) {
     return { ...counts, later: Math.max(0, counts.later + delta) };
   }

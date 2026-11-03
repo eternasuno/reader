@@ -5,9 +5,9 @@ import {
   articleNotFound,
   articleNotInFeed,
   articleNotLater,
-  articleReadError,
-  articleWriteError,
+  articleRepositoryError,
   duplicateArticle,
+  feedRepositoryError,
   fetchSubscriptionError,
   invalidArticleUrl,
   invalidCursor,
@@ -17,78 +17,68 @@ import {
   invalidRetention,
   parseSubscriptionError,
   settingsReadError,
-  settingsRepositoryReadError,
-  settingsRepositoryWriteError,
+  settingsRepositoryError,
   settingsSaveError,
   subscriptionExists,
   subscriptionImportFailed,
   subscriptionNotFound,
-  subscriptionReadError,
   subscriptionUrlInvalid,
-  subscriptionWriteError,
   webpageFetchError,
 } from './library-errors';
 
-export const articleReadFailure = {
-  ArticleReadError: articleReadError,
+export const articleFailure = {
+  ArticleRepositoryError: articleRepositoryError,
 };
 
 export const articlePageFailure = {
   InvalidCursor: invalidCursor,
-  ...articleReadFailure,
+  ...articleFailure,
 };
 
 export const feedPageFailure = {
   ...articlePageFailure,
   SubscriptionNotFound: subscriptionNotFound,
-  SubscriptionReadError: subscriptionReadError,
+  FeedRepositoryError: feedRepositoryError,
 };
 
-export const articleWriteFailure = {
-  ArticleWriteError: articleWriteError,
+export const settingsRepositoryFailure = {
+  SettingsRepositoryError: settingsRepositoryError,
 };
 
 export const addFailure = {
   InvalidArticleUrl: invalidArticleUrl,
   ArticleEmptyContent: articleEmptyContent,
-  SettingsRepositoryReadError: settingsRepositoryReadError,
+  ...settingsRepositoryFailure,
   WebpageFetchError: webpageFetchError,
   ArticleExtractError: articleExtractError,
   DuplicateArticle: duplicateArticle,
-  ...articleWriteFailure,
+  ...articleFailure,
 };
 
 export const saveFailure = {
   ArticleNotFound: articleNotFound,
   ArticleNotInFeed: articleNotInFeed,
   DuplicateArticle: duplicateArticle,
-  ...articleReadFailure,
-  ...articleWriteFailure,
+  ...articleFailure,
 };
 
 export const extractFailure = {
   ArticleNotFound: articleNotFound,
   ArticleMissingUrl: articleMissingUrl,
   ArticleEmptyContent: articleEmptyContent,
-  SettingsRepositoryReadError: settingsRepositoryReadError,
+  ...settingsRepositoryFailure,
   WebpageFetchError: webpageFetchError,
   ArticleExtractError: articleExtractError,
-  ...articleReadFailure,
-  ...articleWriteFailure,
+  ...articleFailure,
 };
 
 export const removeFailure = {
   ArticleNotLater: articleNotLater,
-  ...articleReadFailure,
-  ...articleWriteFailure,
+  ...articleFailure,
 };
 
-export const subscriptionReadFailure = {
-  SubscriptionReadError: subscriptionReadError,
-};
-
-export const subscriptionWriteFailure = {
-  SubscriptionWriteError: subscriptionWriteError,
+export const feedRepositoryFailure = {
+  FeedRepositoryError: feedRepositoryError,
 };
 
 export const previewFailure = {
@@ -103,8 +93,7 @@ export const subscribeFailure = {
   SubscriptionImportFailed: subscriptionImportFailed,
   FetchSubscriptionError: fetchSubscriptionError,
   ParseSubscriptionError: parseSubscriptionError,
-  ...subscriptionReadFailure,
-  ...subscriptionWriteFailure,
+  ...feedRepositoryFailure,
 };
 
 export const settingsReadFailure = {
@@ -121,8 +110,4 @@ export const extractionFailure = {
   InvalidKey: invalidKey,
   InvalidEndpoint: invalidEndpoint,
   SettingsSaveError: settingsSaveError,
-};
-
-export const extractionWriteFailure = {
-  SettingsRepositoryWriteError: settingsRepositoryWriteError,
 };

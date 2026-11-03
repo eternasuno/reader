@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import { createMemo, Show } from 'solid-js';
 import type { Article, Feed } from '../../lib/library';
 import {
@@ -23,16 +24,17 @@ const hostOf = (value: string | undefined): string | undefined => {
 };
 
 const entrySource = (article: Article, feeds: readonly Feed[]): string => {
+  const feedId = Option.getOrUndefined(article.feedId);
   const feed =
-    article.feedId === undefined
-      ? undefined
-      : feeds.find((item) => item.id === article.feedId);
+    feedId === undefined ? undefined : feeds.find((item) => item.id === feedId);
 
-  return feed?.title ?? hostOf(article.url) ?? '稍后阅读';
+  return (
+    feed?.title ?? hostOf(Option.getOrUndefined(article.url)) ?? '稍后阅读'
+  );
 };
 
 const entryPath = (article: Article): string =>
-  `/read/${article.feedId === undefined ? 'link' : 'feed'}/${encodeURIComponent(article.id)}`;
+  `/read/${Option.isNone(article.feedId) ? 'link' : 'feed'}/${encodeURIComponent(article.id)}`;
 
 const openEntry = (
   event: MouseEvent,
@@ -61,11 +63,12 @@ export const LibraryEntry = (props: {
   readonly onOpen: (article: Article) => void;
   readonly onToggleRead: (article: Article) => void;
 }) => {
-  const description = createMemo(() => {
-    const html = props.article.description;
-
-    return html === undefined ? '' : plainText(html);
-  });
+  const description = createMemo(() =>
+    Option.match(props.article.description, {
+      onNone: () => '',
+      onSome: plainText,
+    })
+  );
 
   return (
     <EntrySurface

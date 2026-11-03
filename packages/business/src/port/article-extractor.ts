@@ -1,5 +1,5 @@
-import { Context, Data, type Effect } from 'effect';
-import type { Article } from '../entity/article';
+import { Context, Data, type Effect, Struct } from 'effect';
+import { Article } from '../entity/article';
 
 export class ArticleExtractError extends Data.TaggedError(
   'ArticleExtractError'
@@ -7,16 +7,17 @@ export class ArticleExtractError extends Data.TaggedError(
   readonly error: string;
 }> {}
 
-export type ExtractedArticle = Pick<Article, 'title'> &
-  Partial<Pick<Article, 'description' | 'publishedAt'>> & {
-    readonly content: NonNullable<Article['content']>;
-  };
+export const ExtractedArticle = Article.mapFields(
+  Struct.pick(['title', 'description', 'content', 'publishedAt'])
+);
 
-export interface IArticleExtractor {
+export type ExtractedArticle = typeof ExtractedArticle.Type;
+
+export type IArticleExtractor = {
   readonly extract: (
     document: Document
   ) => Effect.Effect<ExtractedArticle, ArticleExtractError>;
-}
+};
 
 export class ArticleExtractor extends Context.Service<
   ArticleExtractor,

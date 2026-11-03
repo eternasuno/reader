@@ -64,7 +64,7 @@ const importErrors = (id: FeedId) => {
   return {
     DocumentSantizeError: fail,
     HtmlParseError: fail,
-    ArticleWriteError: fail,
+    ArticleRepositoryError: fail,
   };
 };
 
@@ -80,8 +80,8 @@ const refreshErrors = (id: FeedId) => {
   return {
     DocumentSantizeError: fail,
     HtmlParseError: fail,
-    ArticleWriteError: fail,
-    SubscriptionWriteError: fail,
+    ArticleRepositoryError: fail,
+    FeedRepositoryError: fail,
   };
 };
 
@@ -107,14 +107,14 @@ export const subscribe = Effect.fn('subscriptions.subscribe')(function* (
     title: feed.title,
     updatedAt: now,
   };
-  if (!(yield* subscriptions.create(subscription))) {
+  if (!(yield* subscriptions.create([subscription])).includes(id)) {
     return yield* existsError(id);
   }
 
   yield* importArticles(
     ownerId,
     id,
-    initialSelection(ownerId, id, feed.articles, now)
+    initialSelection(ownerId, id, feed.articles)
   ).pipe(Effect.catchTags(importErrors(id)));
 
   return { item: subscription };
@@ -158,8 +158,7 @@ export const refreshSubscription = Effect.fn('subscriptions.refresh')(
       ownerId,
       id,
       inventory,
-      feed.articles,
-      now
+      feed.articles
     ).slice(0, retention);
     const updated: Feed = {
       ...subscription.value,
@@ -175,7 +174,7 @@ export const refreshSubscription = Effect.fn('subscriptions.refresh')(
           retained.map((candidate) => candidate.id)
         )
       ),
-      Effect.andThen(subscriptions.update(updated)),
+      Effect.andThen(subscriptions.update([updated])),
       Effect.catchTags(refreshErrors(id))
     );
 

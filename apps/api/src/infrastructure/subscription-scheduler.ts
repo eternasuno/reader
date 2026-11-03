@@ -106,7 +106,7 @@ const scan = (
   subscriptions: Context.Service.Shape<typeof FeedRepository>,
   enqueueJob: (job: SubscriptionJob) => Effect.Effect<void>
 ) =>
-  subscriptions.all.pipe(
+  subscriptions.list().pipe(
     Effect.flatMap((items) =>
       Effect.forEach(
         items,
