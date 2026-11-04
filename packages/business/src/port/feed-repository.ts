@@ -34,18 +34,18 @@ export type IFeedRepository = {
   ) => Effect.Effect<Option.Option<Feed>, FeedRepositoryError>;
   readonly list: (
     ownerId: OwnerId
-  ) => Effect.Effect<readonly Feed[], FeedRepositoryError>;
+  ) => Effect.Effect<ReadonlyArray<Feed>, FeedRepositoryError>;
   readonly create: (
     ownerId: OwnerId,
-    feeds: readonly Feed[]
-  ) => Effect.Effect<readonly FeedId[], FeedRepositoryError>;
+    feeds: ReadonlyArray<Feed>
+  ) => Effect.Effect<ReadonlyArray<FeedId>, FeedRepositoryError>;
   readonly remove: (
     ownerId: OwnerId,
-    ids: readonly FeedId[]
+    ids: ReadonlyArray<FeedId>
   ) => Effect.Effect<void, FeedRepositoryError>;
   readonly update: (
     ownerId: OwnerId,
-    updates: readonly FeedUpdate[]
+    updates: ReadonlyArray<FeedUpdate>
   ) => Effect.Effect<void, FeedRepositoryError>;
 };
 

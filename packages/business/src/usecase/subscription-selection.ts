@@ -75,7 +75,7 @@ const compareCandidates = (left: Candidate, right: Candidate) =>
 export const initialSelection = (
   ownerId: OwnerId,
   id: FeedId,
-  entries: readonly ParsedArticle[]
+  entries: ReadonlyArray<ParsedArticle>
 ) => {
   const seen = new Set<ArticleId>();
 
@@ -97,8 +97,8 @@ export const initialSelection = (
 export const refreshSelection = (
   ownerId: OwnerId,
   id: FeedId,
-  inventory: readonly ArticleBoundary[],
-  entries: readonly ParsedArticle[]
+  inventory: ReadonlyArray<ArticleBoundary>,
+  entries: ReadonlyArray<ParsedArticle>
 ) => {
   const known = new Set(inventory.map((boundary) => boundary.id));
   const fresh = entries
@@ -174,7 +174,7 @@ const buildArticle = (
 export const importArticles = (
   ownerId: OwnerId,
   id: FeedId,
-  candidates: readonly Candidate[]
+  candidates: ReadonlyArray<Candidate>
 ) =>
   Effect.gen(function* () {
     const retained = candidates.filter(isRetained);

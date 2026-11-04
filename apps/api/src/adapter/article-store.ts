@@ -37,13 +37,13 @@ type PatchScope = {
 const LATER_SCOPE: PatchScope = { clause: 'feedId = NONE', bindings: {} };
 const ALL_FEEDS_SCOPE: PatchScope = { clause: 'feedId != NONE', bindings: {} };
 
-const articleScope = (ids: readonly ArticleId[]): PatchScope | undefined =>
+const articleScope = (ids: ReadonlyArray<ArticleId>): PatchScope | undefined =>
   ids.length === 0
     ? undefined
     : { clause: 'articleId IN $ids', bindings: { ids } };
 
 const feedsScope = (
-  feedIds: Option.Option<readonly FeedId[]>
+  feedIds: Option.Option<ReadonlyArray<FeedId>>
 ): PatchScope | undefined =>
   Option.match(feedIds, {
     onNone: () => ALL_FEEDS_SCOPE,
@@ -56,10 +56,10 @@ const feedsScope = (
 const createArticles = (
   db: Surreal,
   owner: OwnerId,
-  items: readonly Article[]
+  items: ReadonlyArray<Article>
 ) => {
   if (items.length === 0) {
-    return Effect.succeed([] as readonly ArticleId[]);
+    return Effect.succeed([] as ReadonlyArray<ArticleId>);
   }
 
   const feedIds = [
@@ -98,7 +98,7 @@ const createArticles = (
 };
 
 const articlePatchSet = (articlePatch: ArticlePatch) => {
-  const fields: string[] = [];
+  const fields: Array<string> = [];
   const bindings: { read?: boolean; extractedContent?: string } = {};
 
   if (articlePatch.read !== undefined) {
@@ -129,8 +129,8 @@ const updateArticles = (
   const set = articlePatchSet(articlePatch);
 
   return set === undefined || scope === undefined
-    ? Effect.succeed([] as readonly ArticleId[])
-    : one<{ articleId: ArticleId }[], ArticleRepositoryError>(
+    ? Effect.succeed([] as ReadonlyArray<ArticleId>)
+    : one<Array<{ articleId: ArticleId }>, ArticleRepositoryError>(
         db,
         `UPDATE article SET ${set.clause} WHERE owner = $owner AND ${scope.clause} RETURN AFTER;`,
         { owner, ...scope.bindings, ...set.bindings },
@@ -141,7 +141,7 @@ const updateArticles = (
 const removeLaterArticles = (
   db: Surreal,
   owner: OwnerId,
-  ids: readonly ArticleId[]
+  ids: ReadonlyArray<ArticleId>
 ) =>
   ids.length === 0
     ? Effect.void
@@ -230,7 +230,7 @@ const listArticles = (
   scope: PatchScope | undefined
 ) =>
   scope === undefined
-    ? Effect.succeed([] as readonly Article[])
+    ? Effect.succeed([] as ReadonlyArray<Article>)
     : articles(
         db,
         pageSql(query, scope.clause),
@@ -250,7 +250,7 @@ const makeArticleQueries = (db: Surreal) => ({
     listArticles(db, owner, query, LATER_SCOPE),
   listFeeds: (
     owner: OwnerId,
-    feedIds: Option.Option<readonly FeedId[]>,
+    feedIds: Option.Option<ReadonlyArray<FeedId>>,
     query: ArticleQuery
   ) => listArticles(db, owner, query, feedsScope(feedIds)),
   unreadCounts: (owner: OwnerId) => readUnreadCounts(db, owner),
@@ -272,11 +272,11 @@ const makeArticleQueries = (db: Surreal) => ({
 });
 
 const makeArticleWrites = (db: Surreal, lock: Semaphore.Semaphore) => ({
-  create: (owner: OwnerId, items: readonly Article[]) =>
+  create: (owner: OwnerId, items: ReadonlyArray<Article>) =>
     createArticles(db, owner, items).pipe(lock.withPermit),
   updateByArticleIds: (
     owner: OwnerId,
-    ids: readonly ArticleId[],
+    ids: ReadonlyArray<ArticleId>,
     articlePatch: ArticlePatch
   ) =>
     updateArticles(db, owner, articleScope(ids), articlePatch).pipe(
@@ -286,18 +286,18 @@ const makeArticleWrites = (db: Surreal, lock: Semaphore.Semaphore) => ({
     updateArticles(db, owner, LATER_SCOPE, articlePatch).pipe(lock.withPermit),
   updateFeeds: (
     owner: OwnerId,
-    feedIds: Option.Option<readonly FeedId[]>,
+    feedIds: Option.Option<ReadonlyArray<FeedId>>,
     articlePatch: ArticlePatch
   ) =>
     updateArticles(db, owner, feedsScope(feedIds), articlePatch).pipe(
       lock.withPermit
     ),
-  removeLater: (owner: OwnerId, ids: readonly ArticleId[]) =>
+  removeLater: (owner: OwnerId, ids: ReadonlyArray<ArticleId>) =>
     removeLaterArticles(db, owner, ids).pipe(lock.withPermit),
 });
 
 const makeArticleRetention = (db: Surreal, lock: Semaphore.Semaphore) => ({
-  retain: (owner: OwnerId, feedId: FeedId, ids: readonly ArticleId[]) =>
+  retain: (owner: OwnerId, feedId: FeedId, ids: ReadonlyArray<ArticleId>) =>
     write(
       db,
       ids.length === 0

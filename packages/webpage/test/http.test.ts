@@ -31,7 +31,7 @@ const textFetch =
     Promise.resolve(new Response(body, { status: 200, headers }));
 
 const streamingRedirect = (
-  events: string[],
+  events: Array<string>,
   location: string,
   signal: AbortSignal | null | undefined
 ) => {
@@ -75,7 +75,7 @@ it('rejects unsafe URLs and private or mixed DNS results', () => {
 
 it('pins the validated address for single and all lookups', () => {
   const lookup = pinnedAddressLookup('93.184.216.34');
-  const calls: unknown[] = [];
+  const calls: Array<unknown> = [];
   lookup('example.com', { all: true }, (...args) => calls.push(args));
   lookup('example.com', {}, (...args) => calls.push(args));
   expect(calls).toEqual([
@@ -86,7 +86,7 @@ it('pins the validated address for single and all lookups', () => {
 
 it('resolves public addresses and rejects private ones during lookup', async () => {
   const resolve = (hostname: string) =>
-    new Promise<readonly unknown[]>((resolve) => {
+    new Promise<ReadonlyArray<unknown>>((resolve) => {
       publicAddressLookup(hostname, {}, (...args) => resolve(args));
     });
   expect(await resolve('8.8.8.8')).toEqual([null, '8.8.8.8', 4]);
@@ -124,7 +124,7 @@ it.effect(
         'http://1.1.1.1/two',
         'http://9.9.9.9/three',
       ];
-      const events: string[] = [];
+      const events: Array<string> = [];
       const fetchImpl = (input: FetchInput, init?: FetchInit) => {
         const url = String(input);
         events.push(`request:${url}`);
@@ -162,7 +162,7 @@ it.effect('rejects a redirect to a private address', () =>
           headers: { location: 'http://127.0.0.1/private' },
         })
       );
-    const seen: string[] = [];
+    const seen: Array<string> = [];
     const fetchImpl = (input: FetchInput) => {
       seen.push(String(input));
 
@@ -186,7 +186,7 @@ it.effect(
         'http://8.8.8.9:8080/next',
         'http://user:pass@8.8.8.9/next',
       ]) {
-        const seen: string[] = [];
+        const seen: Array<string> = [];
         const fetchImpl = (input: FetchInput) => {
           seen.push(String(input));
 
@@ -251,7 +251,7 @@ it.effect('fails typed on an invalid or missing redirect location', () =>
 
 it.effect('stops after three redirects without requesting a fourth', () =>
   Effect.gen(function* () {
-    const seen: string[] = [];
+    const seen: Array<string> = [];
     const fetchImpl = (input: FetchInput) => {
       seen.push(String(input));
 

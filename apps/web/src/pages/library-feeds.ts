@@ -37,9 +37,9 @@ export const restoreFeed = (
 });
 
 export const upsertFeed = (
-  feeds: readonly Feed[],
+  feeds: ReadonlyArray<Feed>,
   feed: Feed
-): readonly Feed[] =>
+): ReadonlyArray<Feed> =>
   [...feeds.filter((item) => item.id !== feed.id), feed].sort((left, right) =>
     left.title === right.title
       ? left.id.localeCompare(right.id)

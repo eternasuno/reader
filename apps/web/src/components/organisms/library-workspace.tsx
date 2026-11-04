@@ -30,7 +30,7 @@ const articlePath = (article: Article): string =>
 const listPathOf = (scope: Scope): string =>
   scope.kind === 'later' ? '/' : '/rss';
 
-const scopeLabel = (scope: Scope, feeds: readonly Feed[]): string => {
+const scopeLabel = (scope: Scope, feeds: ReadonlyArray<Feed>): string => {
   if (scope.kind === 'later') return '稍后阅读';
   if (scope.feedId === undefined) return '全部订阅';
 

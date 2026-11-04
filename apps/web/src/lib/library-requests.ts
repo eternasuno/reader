@@ -41,7 +41,7 @@ export const readRefresh = async (
   scope: Scope,
   filter: Filter,
   through: string
-): Promise<readonly Article[]> => {
+): Promise<ReadonlyArray<Article>> => {
   const path =
     scope.kind === 'later'
       ? '/api/library/later/refresh'
@@ -55,7 +55,7 @@ export const readRefresh = async (
   ).items;
 };
 
-export const readFeeds = async (send: Send): Promise<readonly Feed[]> =>
+export const readFeeds = async (send: Send): Promise<ReadonlyArray<Feed>> =>
   (await decodeBody(FeedItemsSchema, await sendGet(send, '/api/library/feeds')))
     .items;
 
@@ -119,11 +119,11 @@ export const markLater = async (send: Send) => {
   await sendJson(send, '/api/library/mark-later', {});
 };
 
-export const markFeeds = async (send: Send, feedIds: readonly string[]) => {
+export const markFeeds = async (send: Send, feedIds: ReadonlyArray<string>) => {
   await sendJson(send, '/api/library/mark-feeds', { feedIds });
 };
 
-export const markArticles = async (send: Send, ids: readonly string[]) => {
+export const markArticles = async (send: Send, ids: ReadonlyArray<string>) => {
   await sendJson(send, '/api/library/mark-articles', { ids });
 };
 

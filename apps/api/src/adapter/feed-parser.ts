@@ -152,7 +152,7 @@ const jsonEntry = (item: JsonItem): RawEntry => ({
   date: item.date_published,
 });
 
-const rawEntries = (parsed: AnyFeed): readonly RawEntry[] =>
+const rawEntries = (parsed: AnyFeed): ReadonlyArray<RawEntry> =>
   Match.value(parsed).pipe(
     Match.when({ format: 'rss' }, (feed) =>
       (feed.feed.items ?? []).map(rssEntry)

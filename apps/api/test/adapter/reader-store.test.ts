@@ -26,7 +26,7 @@ import { createSurreal, Database } from '../../src/infrastructure/db';
 
 type Store = ArticleRepository | FeedRepository | Database;
 
-const hash = (...values: string[]) =>
+const hash = (...values: Array<string>) =>
   createHash('sha256').update(JSON.stringify(values)).digest('hex');
 
 const owner = (value: string) => Schema.decodeSync(OwnerId)(value);
@@ -75,14 +75,14 @@ const pageQuery = (limit = 100): ArticleQuery => ({
   limit,
 });
 
-const sorted = (values: readonly string[]) => [...values].sort();
+const sorted = (values: ReadonlyArray<string>) => [...values].sort();
 
 const sortedFeeds = (
-  feeds: readonly { readonly id: string; readonly count: number }[]
+  feeds: ReadonlyArray<{ readonly id: string; readonly count: number }>
 ) => [...feeds].sort((left, right) => left.id.localeCompare(right.id));
 
 const ids = <A extends { readonly id: string }, E, R>(
-  effect: Effect.Effect<readonly A[], E, R>
+  effect: Effect.Effect<ReadonlyArray<A>, E, R>
 ) => effect.pipe(Effect.map((items) => items.map((item) => item.id)));
 
 const query = <A>(
@@ -91,7 +91,7 @@ const query = <A>(
   bindings: Record<string, unknown> = {}
 ) =>
   Effect.promise(async () => {
-    const [rows] = await db.query<[A[]]>(sql, bindings);
+    const [rows] = await db.query<[Array<A>]>(sql, bindings);
 
     return rows;
   });

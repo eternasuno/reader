@@ -20,7 +20,7 @@ export const run = <A, E>(
   onError: (cause: unknown) => E
 ) =>
   Effect.tryPromise({
-    try: () => db.query<A[]>(sql, bindings),
+    try: () => db.query<Array<A>>(sql, bindings),
     catch: onError,
   });
 

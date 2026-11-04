@@ -45,13 +45,13 @@ const settingRows = (ownerId: OwnerId) =>
     const [rows] = yield* Effect.promise(() =>
       db.query<
         [
-          {
+          Array<{
             id?: string;
             jinaKey?: string;
             provider?: string;
             browserEndpoint?: string;
             retention?: number;
-          }[],
+          }>,
         ]
       >(
         'SELECT id, jinaKey, provider, browserEndpoint, retention FROM setting WHERE owner = $owner;',

@@ -117,7 +117,7 @@ const feedActive = (scope: Scope, id: string): boolean =>
 type LibrarySidebarProps = {
   readonly scope: Scope;
   readonly counts: Counts;
-  readonly feeds: readonly Feed[];
+  readonly feeds: ReadonlyArray<Feed>;
   readonly pending: ReadonlySet<string>;
   readonly filter: Filter;
   readonly onFilterScope: (scope: Scope, checked: boolean) => void;

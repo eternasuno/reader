@@ -15,7 +15,7 @@ const TRACKING_PARAMS = new Set([
   'msclkid',
 ]);
 
-const sha256 = (values: readonly unknown[]): string =>
+const sha256 = (values: ReadonlyArray<unknown>): string =>
   createHash('sha256').update(JSON.stringify(values)).digest('hex');
 
 const normalizeHref = (url: URL): string => normalizeUrl(url.href).href;

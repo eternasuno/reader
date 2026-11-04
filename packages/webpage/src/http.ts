@@ -33,7 +33,7 @@ export type PublicTextResponse = {
 
 type LookupCallback = (
   error: NodeJS.ErrnoException | null,
-  address: string | LookupAddress[],
+  address: string | Array<LookupAddress>,
   family?: number
 ) => void;
 
@@ -81,7 +81,7 @@ export const parsePublicUrl = (address: string): URL => {
   return url;
 };
 
-export const selectPublicAddress = (records: readonly string[]): string => {
+export const selectPublicAddress = (records: ReadonlyArray<string>): string => {
   const [first] = records;
 
   if (!first || records.some((address) => !isPublicIPv4(address))) {
@@ -172,7 +172,7 @@ const readTextBody = (
 ): Effect.Effect<string, FetchFailure> =>
   Stream.runFoldEffect(
     response.stream,
-    () => ({ chunks: [] as Uint8Array[], size: 0 }),
+    () => ({ chunks: [] as Array<Uint8Array>, size: 0 }),
     (state, chunk) => {
       const size = state.size + chunk.length;
 

@@ -61,7 +61,7 @@ const previewJson = (item: Preview) =>
 type Handler = (request: RecordedRequest) => Response | Promise<Response>;
 
 const makeClient = (handler: Handler) => {
-  const requests: RecordedRequest[] = [];
+  const requests: Array<RecordedRequest> = [];
   const client = createLibraryClient({
     baseUrl: 'http://api.test',
     fetch: async (input, init) => {

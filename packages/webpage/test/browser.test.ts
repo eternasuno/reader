@@ -6,7 +6,7 @@ import type { ClientOptions } from 'ws';
 import { fetchBrowser } from '../src/browser';
 
 type SocketMode = 'open' | 'hang' | 'error';
-type Listener = (...args: unknown[]) => void;
+type Listener = (...args: Array<unknown>) => void;
 
 type SocketStub = {
   readonly url: string;
@@ -22,7 +22,7 @@ const { connectMock, fetchMock, sockets, socketMode, realSockets } = vi.hoisted(
   () => ({
     connectMock: vi.fn(),
     fetchMock: vi.fn(),
-    sockets: [] as SocketStub[],
+    sockets: [] as Array<SocketStub>,
     socketMode: { value: 'open' as SocketMode },
     realSockets: { value: false },
   })
@@ -49,7 +49,8 @@ const createFakeSocket = (url: string, options: ClientOptions): SocketStub => {
     on: (event: string, listener: Listener) => emitter.on(event, listener),
     once: (event: string, listener: Listener) => emitter.once(event, listener),
     send: () => {},
-    emit: (event: string, ...args: unknown[]) => emitter.emit(event, ...args),
+    emit: (event: string, ...args: Array<unknown>) =>
+      emitter.emit(event, ...args),
   });
   sockets.push(socket);
   queueMicrotask(() => {
@@ -70,13 +71,13 @@ vi.mock('ws', async () => {
   const actual = await vi.importActual<{
     default: new (
       url: string,
-      protocols: string[],
+      protocols: Array<string>,
       options: ClientOptions
     ) => unknown;
   }>('ws');
   function Delegating(
     url: string,
-    protocols: string[],
+    protocols: Array<string>,
     options: ClientOptions
   ) {
     return realSockets.value
@@ -117,7 +118,7 @@ const pageFixture = (html = '<html>ok</html>', status = 200) => {
       listeners.delete(listener)
     ),
     goto: vi.fn(async () => ({ status: () => status })),
-    waitForNetworkIdle: vi.fn(async (..._args: unknown[]) => {}),
+    waitForNetworkIdle: vi.fn(async (..._args: Array<unknown>) => {}),
     content: vi.fn(async () => html),
     emit: (request: RequestFixture) => {
       for (const listener of listeners) listener(request);

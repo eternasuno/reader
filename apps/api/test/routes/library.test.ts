@@ -108,7 +108,7 @@ type ArticleItem = {
   readonly extractedContent?: string;
 };
 type Page = {
-  readonly items: readonly ArticleItem[];
+  readonly items: ReadonlyArray<ArticleItem>;
   readonly cursor: string | null;
   readonly boundary: string | null;
 };
@@ -140,7 +140,7 @@ const verifyAuthAndPreview = async (handler: Handler, alice: string) => {
       url: string;
       title: string;
       description?: string;
-      titles: readonly string[];
+      titles: ReadonlyArray<string>;
     };
   }>(
     await call(handler, 'POST', '/api/library/feeds/preview', alice, {
@@ -191,7 +191,7 @@ const verifyArticles = async (
   bob: string,
   feedId: string
 ) => {
-  const feeds = await json<{ items: readonly FeedItem[] }>(
+  const feeds = await json<{ items: ReadonlyArray<FeedItem> }>(
     await call(handler, 'GET', '/api/library/feeds', alice)
   );
   expect(feeds.items.map(({ id }) => id)).toEqual([feedId]);
@@ -223,7 +223,7 @@ const verifyArticles = async (
   expect(feedPageText).not.toContain('"content":null');
   expect(feedPageText).not.toContain('"extractedContent":null');
   const pagePayload = JSON.parse(feedPageText) as {
-    readonly items: readonly object[];
+    readonly items: ReadonlyArray<object>;
   };
   const page =
     await Schema.decodeUnknownPromise(ArticlePageSchema)(pagePayload);

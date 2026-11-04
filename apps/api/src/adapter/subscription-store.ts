@@ -35,8 +35,8 @@ type PatchField = {
   readonly value: unknown;
 };
 
-const patchFields = (feedPatch: FeedPatch): readonly PatchField[] => {
-  const fields: PatchField[] = [];
+const patchFields = (feedPatch: FeedPatch): ReadonlyArray<PatchField> => {
+  const fields: Array<PatchField> = [];
 
   if (feedPatch.url !== undefined) {
     fields.push({ column: 'url', value: encodeUrl(feedPatch.url) });
@@ -73,10 +73,10 @@ const listSubscriptions = (db: Surreal, owner: OwnerId) =>
 const createSubscriptions = (
   db: Surreal,
   owner: OwnerId,
-  items: readonly Feed[]
+  items: ReadonlyArray<Feed>
 ) => {
   if (items.length === 0) {
-    return Effect.succeed([] as readonly FeedId[]);
+    return Effect.succeed([] as ReadonlyArray<FeedId>);
   }
 
   const bindings: Bindings = { owner };
@@ -112,7 +112,7 @@ const createSubscriptions = (
 const removeSubscriptions = (
   db: Surreal,
   owner: OwnerId,
-  ids: readonly FeedId[]
+  ids: ReadonlyArray<FeedId>
 ) =>
   ids.length === 0
     ? Effect.void
@@ -130,7 +130,7 @@ const removeSubscriptions = (
 const updateSubscriptions = (
   db: Surreal,
   owner: OwnerId,
-  updates: readonly FeedUpdate[]
+  updates: ReadonlyArray<FeedUpdate>
 ) => {
   const bindings: Bindings = { owner };
   const statements = updates.flatMap((update, index) => {

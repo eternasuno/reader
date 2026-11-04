@@ -31,8 +31,8 @@ import {
 
 type Mocks = {
   readonly schedules:
-    | readonly SubscriptionSchedule[]
-    | (() => readonly SubscriptionSchedule[]);
+    | ReadonlyArray<SubscriptionSchedule>
+    | (() => ReadonlyArray<SubscriptionSchedule>);
   readonly subscriptions?: Partial<
     Context.Service.Shape<typeof FeedRepository>
   >;
@@ -123,10 +123,11 @@ const scheduler = (mocks: Mocks) =>
     )
   );
 
-const findById = (items: readonly Feed[]) => (_owner: OwnerId, id: FeedId) =>
-  Effect.succeed(Option.fromNullishOr(items.find((item) => item.id === id)));
+const findById =
+  (items: ReadonlyArray<Feed>) => (_owner: OwnerId, id: FeedId) =>
+    Effect.succeed(Option.fromNullishOr(items.find((item) => item.id === id)));
 
-const ownedBy = (items: readonly Feed[]) => (ownerId: OwnerId) =>
+const ownedBy = (items: ReadonlyArray<Feed>) => (ownerId: OwnerId) =>
   Effect.succeed(items.filter((item) => item.ownerId === ownerId));
 
 it.effect(
@@ -137,8 +138,8 @@ it.effect(
       subscription('alice', feedId('b'), 'https://example.com/b.xml'),
       subscription('bob', feedId('c'), 'https://example.com/c.xml'),
     ];
-    const listed: string[] = [];
-    const fetched: string[] = [];
+    const listed: Array<string> = [];
+    const fetched: Array<string> = [];
     const done = Deferred.makeUnsafe<void>();
 
     return Effect.gen(function* () {
@@ -359,7 +360,7 @@ it.effect('isolates a failing subscription from the rest of the owner', () => {
     feedId('i'),
     'https://example.com/healthy.xml'
   );
-  const updated: string[] = [];
+  const updated: Array<string> = [];
   const done = Deferred.makeUnsafe<void>();
 
   return Effect.gen(function* () {
@@ -404,7 +405,7 @@ it.effect('skips a subscription removed before it refreshes', () => {
     feedId('k'),
     'https://example.com/present.xml'
   );
-  const fetched: string[] = [];
+  const fetched: Array<string> = [];
   const done = Deferred.makeUnsafe<void>();
 
   return Effect.gen(function* () {
@@ -451,7 +452,7 @@ it.effect('reconciles owners that are added or removed', () => {
     'https://example.com/bob-added.xml'
   );
   let current = [schedule('alice', '30 minutes')];
-  const fetched: string[] = [];
+  const fetched: Array<string> = [];
   const aliceFirst = Deferred.makeUnsafe<void>();
   const bobFirst = Deferred.makeUnsafe<void>();
 

@@ -19,7 +19,7 @@ const fetchWith = (url: URL, fetchImpl: typeof globalThis.fetch) =>
   );
 
 const streamingRedirect = (
-  events: string[],
+  events: Array<string>,
   location: string,
   signal: AbortSignal | null | undefined
 ): Response => {
@@ -78,7 +78,7 @@ it.effect('rejects a private target before requesting', () =>
 
 it.effect('rejects a redirect to a private target before following', () =>
   Effect.gen(function* () {
-    const seen: string[] = [];
+    const seen: Array<string> = [];
     const fetchImpl = (input: RequestInfo | URL) => {
       seen.push(String(input));
 
@@ -102,7 +102,7 @@ it.effect('rejects a redirect to a private target before following', () =>
 
 it.effect('releases a redirect body before the next request', () =>
   Effect.gen(function* () {
-    const events: string[] = [];
+    const events: Array<string> = [];
     const fetchImpl = (input: FetchInput, init?: FetchInit) => {
       const url = String(input);
       events.push(`request:${url}`);

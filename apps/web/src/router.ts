@@ -3,7 +3,7 @@ import { lazy } from 'solid-js';
 
 const EmptyRoute = () => null;
 
-export const routes: RouteDefinition[] = [
+export const routes: Array<RouteDefinition> = [
   {
     path: '/',
     component: lazy(() => import('./pages/library')),

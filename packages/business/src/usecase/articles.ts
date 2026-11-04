@@ -223,7 +223,7 @@ export const markLaterRead = Effect.fn('articles.markLater')(function* (
 
 export const markFeedsRead = Effect.fn('articles.markFeeds')(function* (
   owner: OwnerId,
-  ids: readonly FeedId[]
+  ids: ReadonlyArray<FeedId>
 ) {
   const articles = yield* ArticleRepository;
   yield* articles.updateFeeds(owner, Option.some(ids), { read: true });
@@ -233,7 +233,7 @@ export const markFeedsRead = Effect.fn('articles.markFeeds')(function* (
 
 export const markArticlesRead = Effect.fn('articles.markArticles')(function* (
   owner: OwnerId,
-  ids: readonly ArticleId[]
+  ids: ReadonlyArray<ArticleId>
 ) {
   const articles = yield* ArticleRepository;
   yield* articles.updateByArticleIds(owner, ids, { read: true });

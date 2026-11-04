@@ -17,8 +17,8 @@ const alice = OwnerId.make('alice');
 const bob = OwnerId.make('bob');
 
 it.effect('selects each owner key when building a Jina layer', () => {
-  const headers: string[] = [];
-  const calls: string[] = [];
+  const headers: Array<string> = [];
+  const calls: Array<string> = [];
   const settings = Layer.mock(SettingsRepository, {
     get: (owner) => {
       calls.push(`get:${owner}`);
@@ -69,7 +69,7 @@ it.effect('selects each owner key when building a Jina layer', () => {
 });
 
 it.effect('shares browser concurrency across owners', () => {
-  const permits: number[] = [];
+  const permits: Array<number> = [];
   const semaphore = Semaphore.makeUnsafe(2);
   const concurrency = Layer.mock(BrowserConcurrency, {
     withPermit: <A, E, R>(self: Effect.Effect<A, E, R>) => {

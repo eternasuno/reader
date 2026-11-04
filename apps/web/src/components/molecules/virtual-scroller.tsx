@@ -9,7 +9,7 @@ import {
 } from 'solid-js';
 
 type VirtualScrollerProps<T> = {
-  readonly items: readonly T[];
+  readonly items: ReadonlyArray<T>;
   readonly revision: number;
   readonly getKey: (item: T) => string;
   readonly estimateSize: number;

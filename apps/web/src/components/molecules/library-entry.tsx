@@ -23,7 +23,7 @@ const hostOf = (value: string | undefined): string | undefined => {
   }
 };
 
-const entrySource = (article: Article, feeds: readonly Feed[]): string => {
+const entrySource = (article: Article, feeds: ReadonlyArray<Feed>): string => {
   const feedId = Option.getOrUndefined(article.feedId);
   const feed =
     feedId === undefined ? undefined : feeds.find((item) => item.id === feedId);
@@ -57,7 +57,7 @@ const openEntry = (
 
 export const LibraryEntry = (props: {
   readonly article: Article;
-  readonly feeds: readonly Feed[];
+  readonly feeds: ReadonlyArray<Feed>;
   readonly selected: boolean;
   readonly pending: boolean;
   readonly onOpen: (article: Article) => void;

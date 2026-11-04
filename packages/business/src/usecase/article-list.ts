@@ -156,7 +156,7 @@ const tailToken = (
   owner: OwnerId,
   scope: CursorScope,
   filter: ArticleFilter,
-  items: readonly Article[]
+  items: ReadonlyArray<Article>
 ): string | null => {
   const last = items.at(-1);
 
@@ -169,7 +169,7 @@ const pageOf = (
   owner: OwnerId,
   scope: CursorScope,
   filter: ArticleFilter,
-  rows: readonly Article[]
+  rows: ReadonlyArray<Article>
 ): ArticlePage => {
   const items = rows.slice(0, PAGE_SIZE);
   const tail = tailToken(owner, scope, filter, items);
@@ -182,7 +182,7 @@ const pageOf = (
 };
 
 const continuationOf = (
-  rows: readonly Article[]
+  rows: ReadonlyArray<Article>
 ): ArticleBoundary | undefined => {
   const last = rows.at(-1);
 
@@ -193,7 +193,7 @@ const continuationOf = (
 
 const feedSelection = (
   feedId: FeedId | undefined
-): Option.Option<readonly FeedId[]> =>
+): Option.Option<ReadonlyArray<FeedId>> =>
   feedId === undefined ? Option.none() : Option.some([feedId]);
 
 export const listLaterArticles = Effect.fn('articles.listLater')(function* (
@@ -264,7 +264,7 @@ export const refreshLaterArticles = Effect.fn('articles.refreshLater')(
   function* (owner: OwnerId, filter: ArticleFilter, through: string) {
     const boundary = yield* decodeCursor(owner, laterScope, filter, through);
     const articles = yield* ArticleRepository;
-    const items: Article[] = [];
+    const items: Array<Article> = [];
     let after: ArticleBoundary | undefined;
 
     while (true) {
@@ -297,7 +297,7 @@ export const refreshFeedArticles = Effect.fn('articles.refreshFeeds')(
     const scope = feedScope(feedId);
     const boundary = yield* decodeCursor(owner, scope, filter, through);
     const articles = yield* ArticleRepository;
-    const items: Article[] = [];
+    const items: Array<Article> = [];
     let after: ArticleBoundary | undefined;
 
     while (true) {

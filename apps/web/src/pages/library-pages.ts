@@ -39,10 +39,10 @@ export const failList = (
 
 const mergeNewItems = (
   state: LibraryState,
-  incoming: readonly Article[]
-): readonly Article[] => {
+  incoming: ReadonlyArray<Article>
+): ReadonlyArray<Article> => {
   const known = new Set(state.items.map((item) => item.id));
-  const added: Article[] = [];
+  const added: Array<Article> = [];
   for (const item of incoming) {
     if (known.has(item.id) || state.pending.has(item.id)) {
       continue;

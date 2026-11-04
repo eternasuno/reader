@@ -9,8 +9,8 @@ export type LibraryToast = {
 export type LibraryState = {
   readonly scope: Scope;
   readonly filter: Filter;
-  readonly items: readonly Article[];
-  readonly feeds: readonly Feed[];
+  readonly items: ReadonlyArray<Article>;
+  readonly feeds: ReadonlyArray<Feed>;
   readonly counts: Counts;
   readonly loading: boolean;
   readonly refreshing: boolean;

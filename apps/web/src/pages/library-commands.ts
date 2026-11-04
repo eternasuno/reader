@@ -9,7 +9,7 @@ const ID_CHUNK = 5000;
 
 export const markArticleIds = async (
   client: LibraryClient,
-  ids: readonly string[]
+  ids: ReadonlyArray<string>
 ) => {
   for (let index = 0; index < ids.length; index += ID_CHUNK) {
     await client.markArticles(ids.slice(index, index + ID_CHUNK));
@@ -18,8 +18,8 @@ export const markArticleIds = async (
 
 export const feedScopeIds = (
   scope: Scope,
-  feeds: readonly Feed[]
-): readonly string[] | undefined => {
+  feeds: ReadonlyArray<Feed>
+): ReadonlyArray<string> | undefined => {
   if (scope.kind === 'later') {
     return undefined;
   }
@@ -33,8 +33,8 @@ export const feedScopeIds = (
 export const markScope = async (
   client: LibraryClient,
   scope: Scope,
-  feedIds: readonly string[] | undefined,
-  ids: readonly string[]
+  feedIds: ReadonlyArray<string> | undefined,
+  ids: ReadonlyArray<string>
 ) => {
   if (scope.kind === 'later') {
     await client.markLater();

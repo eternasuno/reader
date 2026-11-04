@@ -56,7 +56,7 @@ const entry = (overrides: Partial<ParsedArticle> = {}): ParsedArticle => ({
 });
 
 const feed = (
-  articles: readonly ParsedArticle[],
+  articles: ReadonlyArray<ParsedArticle>,
   title = 'News'
 ): ParsedFeed => ({ title, url, description: Option.none(), articles });
 
@@ -160,7 +160,7 @@ it.effect('rejects a non-HTTP subscription URL before fetching', () => {
 
 it.effect('parses the fetched document against its final URL', () => {
   const finalUrl = new URL('https://final.example/feed.xml');
-  const calls: string[] = [];
+  const calls: Array<string> = [];
 
   return provide(
     Effect.gen(function* () {
@@ -286,9 +286,9 @@ it.effect('reports a feed parse failure', () =>
 it.effect(
   'creates the subscription before importing the newest distinct articles',
   () => {
-    const events: string[] = [];
-    const created: (readonly Article[])[] = [];
-    const processed: string[] = [];
+    const events: Array<string> = [];
+    const created: Array<ReadonlyArray<Article>> = [];
+    const processed: Array<string> = [];
     const newest = entry({
       title: 'Newest',
       url: Option.some(new URL('https://example.com/newest')),
@@ -396,7 +396,7 @@ it.effect(
 );
 
 it.effect('imports entries without a URL', () => {
-  const created: (readonly Article[])[] = [];
+  const created: Array<ReadonlyArray<Article>> = [];
   const linkless = entry({
     title: 'No URL',
     url: Option.none(),
@@ -436,7 +436,7 @@ it.effect('imports entries without a URL', () => {
 });
 
 it.effect('truncates feed content before parsing it', () => {
-  const parsed: string[] = [];
+  const parsed: Array<string> = [];
   const long = entry({ content: Option.some('a'.repeat(100_500)) });
 
   return provide(
@@ -466,7 +466,7 @@ it.effect('truncates feed content before parsing it', () => {
 });
 
 it.effect('imports at most 30 articles from a large feed', () => {
-  const created: (readonly Article[])[] = [];
+  const created: Array<ReadonlyArray<Article>> = [];
   const entries = Array.from({ length: 35 }, (_, index) =>
     entry({
       title: `Article ${index}`,
@@ -594,10 +594,10 @@ it.effect('does not fetch a missing subscription', () => {
 it.effect(
   'keeps existing articles first on ties and imports only retained new ones',
   () => {
-    const events: string[] = [];
-    const created: (readonly Article[])[] = [];
-    const retained: (readonly ArticleId[])[] = [];
-    const processed: string[] = [];
+    const events: Array<string> = [];
+    const created: Array<ReadonlyArray<Article>> = [];
+    const retained: Array<ReadonlyArray<ArticleId>> = [];
+    const processed: Array<string> = [];
     const knownUrl = new URL('https://example.com/known');
     const knownId = articleId(alice, id, knownUrl, 'Known', undefined);
     const tied = entry({
@@ -607,14 +607,14 @@ it.effect(
       publishedAt: at('2026-01-02T00:00:00.000Z'),
     });
     const known = entry({ title: 'Known', url: Option.some(knownUrl) });
-    const inventory: ArticleBoundary[] = [
+    const inventory: Array<ArticleBoundary> = [
       {
         id: ArticleId.make('b'.repeat(64)),
         publishedAt: '2026-01-02T00:00:00.000Z',
       },
       { id: knownId, publishedAt: '2026-01-01T00:00:00.000Z' },
     ];
-    const patches: FeedUpdate[] = [];
+    const patches: Array<FeedUpdate> = [];
     let patchedOwner: string | undefined;
 
     return provide(
@@ -695,15 +695,15 @@ it.effect(
 
 it.effect('keeps the configured retention and drops older new articles', () => {
   const hex = (value: number) => value.toString(16).padStart(64, '0');
-  const inventory: ArticleBoundary[] = Array.from(
+  const inventory: Array<ArticleBoundary> = Array.from(
     { length: 100 },
     (_, index) => ({
       id: ArticleId.make(hex(index)),
       publishedAt: new Date(nowMillis + index * 60_000).toISOString(),
     })
   );
-  const created: (readonly Article[])[] = [];
-  const retained: (readonly ArticleId[])[] = [];
+  const created: Array<ReadonlyArray<Article>> = [];
+  const retained: Array<ReadonlyArray<ArticleId>> = [];
   let processed = false;
 
   return provide(
@@ -756,8 +756,8 @@ it.effect('keeps the configured retention and drops older new articles', () => {
 it.effect(
   'imports the newest copy when a feed repeats an article identity',
   () => {
-    const created: (readonly Article[])[] = [];
-    const retained: (readonly ArticleId[])[] = [];
+    const created: Array<ReadonlyArray<Article>> = [];
+    const retained: Array<ReadonlyArray<ArticleId>> = [];
     const repeated = new URL('https://example.com/repeated');
     const stale = entry({
       title: 'Repeated',
@@ -819,8 +819,8 @@ it.effect(
 it.effect(
   'retains the newest duplicated article over older existing ones',
   () => {
-    const created: (readonly Article[])[] = [];
-    const retained: (readonly ArticleId[])[] = [];
+    const created: Array<ReadonlyArray<Article>> = [];
+    const retained: Array<ReadonlyArray<ArticleId>> = [];
     const repeated = new URL('https://example.com/repeated');
     const stale = entry({
       title: 'Repeated',
@@ -851,7 +851,7 @@ it.effect(
       fresh.title,
       undefined
     );
-    const inventory: ArticleBoundary[] = [
+    const inventory: Array<ArticleBoundary> = [
       {
         id: ArticleId.make('c'.repeat(64)),
         publishedAt: '2026-01-10T00:00:00.000Z',

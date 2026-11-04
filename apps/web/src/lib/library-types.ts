@@ -1,7 +1,7 @@
 import type { Article } from './library-schema';
 
 export type ArticlePage = {
-  readonly items: readonly Article[];
+  readonly items: ReadonlyArray<Article>;
   readonly cursor: string | null;
   readonly boundary: string | null;
 };

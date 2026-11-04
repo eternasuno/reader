@@ -30,7 +30,7 @@ const readBody = (
 ): Effect.Effect<string, FetchSubscriptionError> =>
   Stream.runFoldEffect(
     response.stream,
-    () => ({ chunks: [] as Uint8Array[], size: 0 }),
+    () => ({ chunks: [] as Array<Uint8Array>, size: 0 }),
     (state, chunk) => {
       const size = state.size + chunk.length;
 

@@ -93,7 +93,7 @@ it.effect('maps settings read failures', () =>
 );
 
 it.effect('persists valid retention choices', () => {
-  const saved: SettingsPatch[] = [];
+  const saved: Array<SettingsPatch> = [];
 
   return Effect.gen(function* () {
     for (const value of [30, 100, 300]) {
@@ -156,7 +156,7 @@ it.effect('rejects retention outside the supported integer range', () => {
 });
 
 it.effect('saves extraction settings in one atomic update', () => {
-  const saved: SettingsPatch[] = [];
+  const saved: Array<SettingsPatch> = [];
 
   return Effect.gen(function* () {
     expect(
@@ -192,7 +192,7 @@ it.effect('saves extraction settings in one atomic update', () => {
 });
 
 it.effect('preserves omitted extraction fields', () => {
-  const saved: SettingsPatch[] = [];
+  const saved: Array<SettingsPatch> = [];
 
   return Effect.gen(function* () {
     yield* updateExtraction(owner, { provider: 'jina' });
@@ -215,7 +215,7 @@ it.effect('preserves omitted extraction fields', () => {
 });
 
 it.effect('accepts browser endpoints and requires one for browser', () => {
-  const saved: SettingsPatch[] = [];
+  const saved: Array<SettingsPatch> = [];
   const endpoints = [
     'http://127.0.0.1:9222',
     'https://browser.example.com/devtools',
@@ -284,7 +284,7 @@ it.effect('rejects invalid browser endpoints', () => {
 });
 
 it.effect('clears the browser endpoint with an empty value', () => {
-  const saved: SettingsPatch[] = [];
+  const saved: Array<SettingsPatch> = [];
 
   return Effect.gen(function* () {
     yield* updateExtraction(owner, { provider: 'jina', browserEndpoint: '  ' });

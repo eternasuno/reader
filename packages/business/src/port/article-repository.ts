@@ -54,33 +54,33 @@ export type IArticleRepository = {
   readonly listLater: (
     ownerId: OwnerId,
     query: ArticleQuery
-  ) => Effect.Effect<readonly Article[], ArticleRepositoryError>;
+  ) => Effect.Effect<ReadonlyArray<Article>, ArticleRepositoryError>;
   readonly listFeeds: (
     ownerId: OwnerId,
-    feedIds: Option.Option<readonly FeedId[]>,
+    feedIds: Option.Option<ReadonlyArray<FeedId>>,
     query: ArticleQuery
-  ) => Effect.Effect<readonly Article[], ArticleRepositoryError>;
+  ) => Effect.Effect<ReadonlyArray<Article>, ArticleRepositoryError>;
   readonly create: (
     ownerId: OwnerId,
-    articles: readonly Article[]
-  ) => Effect.Effect<readonly ArticleId[], ArticleRepositoryError>;
+    articles: ReadonlyArray<Article>
+  ) => Effect.Effect<ReadonlyArray<ArticleId>, ArticleRepositoryError>;
   readonly updateByArticleIds: (
     ownerId: OwnerId,
-    ids: readonly ArticleId[],
+    ids: ReadonlyArray<ArticleId>,
     articlePatch: ArticlePatch
-  ) => Effect.Effect<readonly ArticleId[], ArticleRepositoryError>;
+  ) => Effect.Effect<ReadonlyArray<ArticleId>, ArticleRepositoryError>;
   readonly updateLater: (
     ownerId: OwnerId,
     articlePatch: ArticlePatch
-  ) => Effect.Effect<readonly ArticleId[], ArticleRepositoryError>;
+  ) => Effect.Effect<ReadonlyArray<ArticleId>, ArticleRepositoryError>;
   readonly updateFeeds: (
     ownerId: OwnerId,
-    feedIds: Option.Option<readonly FeedId[]>,
+    feedIds: Option.Option<ReadonlyArray<FeedId>>,
     articlePatch: ArticlePatch
-  ) => Effect.Effect<readonly ArticleId[], ArticleRepositoryError>;
+  ) => Effect.Effect<ReadonlyArray<ArticleId>, ArticleRepositoryError>;
   readonly removeLater: (
     ownerId: OwnerId,
-    ids: readonly ArticleId[]
+    ids: ReadonlyArray<ArticleId>
   ) => Effect.Effect<void, ArticleRepositoryError>;
   readonly unreadCounts: (
     ownerId: OwnerId
@@ -88,11 +88,11 @@ export type IArticleRepository = {
   readonly inventory: (
     ownerId: OwnerId,
     feedId: FeedId
-  ) => Effect.Effect<readonly ArticleBoundary[], ArticleRepositoryError>;
+  ) => Effect.Effect<ReadonlyArray<ArticleBoundary>, ArticleRepositoryError>;
   readonly retain: (
     ownerId: OwnerId,
     feedId: FeedId,
-    ids: readonly ArticleId[]
+    ids: ReadonlyArray<ArticleId>
   ) => Effect.Effect<void, ArticleRepositoryError>;
 };
 

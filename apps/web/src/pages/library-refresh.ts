@@ -13,7 +13,7 @@ const compareArticles = (left: Article, right: Article): number => {
   return left.id < right.id ? -1 : 1;
 };
 
-const insertByOrder = (items: Article[], article: Article) => {
+const insertByOrder = (items: Array<Article>, article: Article) => {
   const index = items.findIndex((item) => compareArticles(article, item) < 0);
   if (index < 0) {
     items.push(article);
@@ -24,11 +24,11 @@ const insertByOrder = (items: Article[], article: Article) => {
 
 const mergeServerRefresh = (
   state: LibraryState,
-  items: readonly Article[],
+  items: ReadonlyArray<Article>,
   previous: ReadonlyMap<string, Article>
-): { readonly items: Article[]; readonly seen: Set<string> } => {
+): { readonly items: Array<Article>; readonly seen: Set<string> } => {
   const seen = new Set<string>();
-  const next: Article[] = [];
+  const next: Array<Article> = [];
   for (const item of items) {
     if (seen.has(item.id)) {
       continue;
@@ -49,10 +49,10 @@ const mergeServerRefresh = (
 
 const retainRefreshRows = (
   state: LibraryState,
-  merged: { items: Article[]; seen: Set<string> },
+  merged: { items: Array<Article>; seen: Set<string> },
   covered: ReadonlySet<string>
 ) => {
-  const retained: Article[] = [];
+  const retained: Array<Article> = [];
   for (const item of state.items) {
     if (merged.seen.has(item.id)) {
       continue;
@@ -70,7 +70,7 @@ const retainRefreshRows = (
 const removedCounts = (
   counts: Counts,
   previous: ReadonlyMap<string, Article>,
-  items: readonly Article[]
+  items: ReadonlyArray<Article>
 ): Counts => {
   const finalIds = new Set(items.map((item) => item.id));
   let result = counts;
@@ -86,7 +86,7 @@ const removedCounts = (
 const updatedCounts = (
   counts: Counts,
   previous: ReadonlyMap<string, Article>,
-  items: readonly Article[]
+  items: ReadonlyArray<Article>
 ): Counts => {
   let result = counts;
   for (const item of items) {
@@ -106,14 +106,14 @@ const updatedCounts = (
 const refreshCounts = (
   counts: Counts,
   previous: ReadonlyMap<string, Article>,
-  items: readonly Article[]
+  items: ReadonlyArray<Article>
 ): Counts =>
   updatedCounts(removedCounts(counts, previous, items), previous, items);
 
 const refreshSelection = (
   state: LibraryState,
   previous: ReadonlyMap<string, Article>,
-  items: readonly Article[],
+  items: ReadonlyArray<Article>,
   counts: Counts
 ): { readonly counts: Counts; readonly selected: Article | undefined } => {
   const selected = state.selected;
@@ -136,7 +136,7 @@ const refreshSelection = (
 
 export const applyRefresh = (
   state: LibraryState,
-  items: readonly Article[],
+  items: ReadonlyArray<Article>,
   generation: number,
   covered: ReadonlySet<string> = new Set(state.items.map((item) => item.id))
 ): LibraryState => {

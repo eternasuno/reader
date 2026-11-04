@@ -42,7 +42,7 @@ export const newerArticle = (
   article(id, { ...options, publishedAt: '2026-01-02T00:00:00.000Z' });
 
 export const page = (
-  items: readonly Article[],
+  items: ReadonlyArray<Article>,
   cursor: string | null = null,
   boundary: string | null = null
 ): ArticlePage => ({ items, cursor, boundary });
@@ -89,9 +89,9 @@ export const createStubClient = () => ({
   ),
   refresh: vi.fn(
     async (_scope: Scope, _filter: Filter, _through: string) =>
-      [] as readonly Article[]
+      [] as ReadonlyArray<Article>
   ),
-  feeds: vi.fn(async () => [] as readonly Feed[]),
+  feeds: vi.fn(async () => [] as ReadonlyArray<Feed>),
   unreadCounts: vi.fn(async (): Promise<Counts> => counts()),
   article: vi.fn(async (_id: string) => null as Article | null),
   markRead: vi.fn(
@@ -99,10 +99,10 @@ export const createStubClient = () => ({
   ),
   markLater: vi.fn(async (): Promise<void> => undefined),
   markFeeds: vi.fn(
-    async (_feedIds: readonly string[]): Promise<void> => undefined
+    async (_feedIds: ReadonlyArray<string>): Promise<void> => undefined
   ),
   markArticles: vi.fn(
-    async (_ids: readonly string[]): Promise<void> => undefined
+    async (_ids: ReadonlyArray<string>): Promise<void> => undefined
   ),
   remove: vi.fn(async (_id: string): Promise<void> => undefined),
   save: vi.fn(async (_id: string) => article('saved')),

@@ -16,7 +16,7 @@ export class SubscriptionScheduleError extends Data.TaggedError(
 
 export type ISubscriptionSchedules = {
   readonly list: () => Effect.Effect<
-    readonly SubscriptionSchedule[],
+    ReadonlyArray<SubscriptionSchedule>,
     SubscriptionScheduleError
   >;
 };
@@ -39,7 +39,7 @@ const scheduleError = () =>
 
 const discoverOwners = (db: Surreal) =>
   Effect.tryPromise({
-    try: () => db.query<unknown[]>(OWNER_SQL),
+    try: () => db.query<Array<unknown>>(OWNER_SQL),
     catch: scheduleError,
   }).pipe(
     Effect.flatMap(([rows]) =>

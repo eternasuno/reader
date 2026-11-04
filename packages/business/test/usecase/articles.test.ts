@@ -63,7 +63,7 @@ const encodedTime = (article: Article): string =>
 
 const hex = (value: number): string => value.toString(16).padStart(64, '0');
 
-const series = (count: number): Article[] =>
+const series = (count: number): Array<Article> =>
   Array.from({ length: count }, (_, index) =>
     makeArticle({
       id: hex(index),
@@ -79,7 +79,7 @@ const series = (count: number): Article[] =>
  * article still bounds the returned page.
  */
 const pagedStore =
-  (items: readonly Article[]) => (_owner: OwnerId, query: ArticleQuery) => {
+  (items: ReadonlyArray<Article>) => (_owner: OwnerId, query: ArticleQuery) => {
     const isLaterThan = (item: Article, boundary: ArticleBoundary): boolean => {
       const publishedAt = encodedTime(item);
 
@@ -100,12 +100,12 @@ const pagedStore =
     );
   };
 
-const pagedArticles = (items: readonly Article[]) => ({
+const pagedArticles = (items: ReadonlyArray<Article>) => ({
   listLater: (owner: OwnerId, query: ArticleQuery) =>
     pagedStore(items)(owner, query),
   listFeeds: (
     owner: OwnerId,
-    _feedIds: Option.Option<readonly FeedId[]>,
+    _feedIds: Option.Option<ReadonlyArray<FeedId>>,
     query: ArticleQuery
   ) => pagedStore(items)(owner, query),
 });
@@ -159,7 +159,7 @@ const provide = <A, E, R>(
 
 it.effect('gets an article scoped to the requesting owner', () => {
   const item = makeArticle();
-  const calls: (readonly [OwnerId, ArticleId])[] = [];
+  const calls: Array<readonly [OwnerId, ArticleId]> = [];
 
   return provide(
     Effect.gen(function* () {
@@ -288,7 +288,7 @@ it.effect(
   'derives distinct identities for one url when metadata differs',
   () => {
     const url = new URL('https://example.com/post');
-    const ids: ArticleId[] = [];
+    const ids: Array<ArticleId> = [];
     let attempt = 0;
 
     return provide(
@@ -609,7 +609,9 @@ it.effect('rejects extraction when the article has no URL', () =>
 
 it.effect('extracts, persists, and returns an article body', () => {
   const article = makeArticle({ url: 'https://example.com/a' });
-  const saved: (readonly [OwnerId, readonly ArticleId[], ArticlePatch])[] = [];
+  const saved: Array<
+    readonly [OwnerId, ReadonlyArray<ArticleId>, ArticlePatch]
+  > = [];
 
   return provide(
     Effect.gen(function* () {
@@ -701,7 +703,7 @@ it.effect('preserves fetch failure messages while extracting', () =>
 );
 
 it.effect('patches articles through owner-scoped repository operations', () => {
-  const calls: unknown[] = [];
+  const calls: Array<unknown> = [];
 
   return provide(
     Effect.gen(function* () {
@@ -743,7 +745,7 @@ it.effect('patches articles through owner-scoped repository operations', () => {
 });
 
 it.effect('forwards an empty feed selection when marking feeds read', () => {
-  const calls: unknown[] = [];
+  const calls: Array<unknown> = [];
 
   return provide(
     Effect.gen(function* () {
@@ -767,7 +769,7 @@ it.effect('forwards an empty feed selection when marking feeds read', () => {
 it.effect(
   'removes only later articles and treats unknown ids as success',
   () => {
-    const removed: ArticleId[] = [];
+    const removed: Array<ArticleId> = [];
 
     return provide(
       Effect.gen(function* () {
@@ -805,8 +807,8 @@ it.effect(
 
 it.effect('pages thirty later articles and continues from the cursor', () => {
   const items = series(31);
-  const calls: ArticleQuery[] = [];
-  const owners: OwnerId[] = [];
+  const calls: Array<ArticleQuery> = [];
+  const owners: Array<OwnerId> = [];
 
   return provide(
     Effect.gen(function* () {
@@ -874,12 +876,10 @@ it.effect('binds cursors to owner, scope, and filter', () => {
 });
 
 it.effect('lists a scoped feed or every subscription feed', () => {
-  const calls: (readonly [
-    OwnerId,
-    Option.Option<readonly FeedId[]>,
-    ArticleQuery,
-  ])[] = [];
-  const checks: (readonly [OwnerId, FeedId])[] = [];
+  const calls: Array<
+    readonly [OwnerId, Option.Option<ReadonlyArray<FeedId>>, ArticleQuery]
+  > = [];
+  const checks: Array<readonly [OwnerId, FeedId]> = [];
 
   return provide(
     Effect.gen(function* () {
@@ -914,7 +914,7 @@ it.effect('lists a scoped feed or every subscription feed', () => {
 
 it.effect('refreshes through the original boundary article inclusively', () => {
   const items = series(80);
-  const calls: ArticleQuery[] = [];
+  const calls: Array<ArticleQuery> = [];
 
   return provide(
     Effect.gen(function* () {
@@ -1001,7 +1001,7 @@ it.effect('reports no boundary for an empty page', () =>
 
 it.effect('refreshes from a boundary whose article was removed', () => {
   const items = series(40);
-  const calls: ArticleQuery[] = [];
+  const calls: Array<ArticleQuery> = [];
   let stored = items;
 
   return provide(

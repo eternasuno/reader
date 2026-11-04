@@ -62,7 +62,7 @@ export const writeRead = async (
   }
 };
 
-const rollbackRead = (store: LibraryStore, ids: readonly string[]) => {
+const rollbackRead = (store: LibraryStore, ids: ReadonlyArray<string>) => {
   const pending = store.state().pending;
   const targets = ids.filter((id) => !pending.has(id));
   if (targets.length > 0) {
@@ -72,7 +72,7 @@ const rollbackRead = (store: LibraryStore, ids: readonly string[]) => {
 
 const endAll = (
   store: LibraryStore,
-  entries: readonly (readonly [string, number])[]
+  entries: ReadonlyArray<readonly [string, number]>
 ) => {
   for (const [id, token] of entries) {
     store.end(id, token);

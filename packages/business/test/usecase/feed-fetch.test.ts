@@ -23,7 +23,7 @@ const withFetch =
 const feedUrl = new URL('http://8.8.8.8/rss');
 
 const trackedResponse = (
-  events: string[],
+  events: Array<string>,
   label: string,
   init: ResponseInit,
   signal: AbortSignal | null | undefined
@@ -44,7 +44,7 @@ const trackedResponse = (
 };
 
 const redirectResponse = (
-  events: string[],
+  events: Array<string>,
   location: string,
   status = 302,
   signal?: AbortSignal | null
@@ -53,7 +53,7 @@ const redirectResponse = (
 
 it.effect('fetches a feed and reports its address', () =>
   Effect.gen(function* () {
-    const requests: string[] = [];
+    const requests: Array<string> = [];
     const fetchImpl = (input: FetchInput) => {
       requests.push(String(input));
 
@@ -71,7 +71,7 @@ it.effect('fetches a feed and reports its address', () =>
 it.effect('follows the supported redirect statuses to the final address', () =>
   Effect.gen(function* () {
     for (const status of [301, 302, 303, 307, 308]) {
-      const requests: string[] = [];
+      const requests: Array<string> = [];
       const fetchImpl = (input: FetchInput) => {
         const url = String(input);
         requests.push(url);
@@ -98,7 +98,7 @@ it.effect('follows the supported redirect statuses to the final address', () =>
 it.effect('rejects other redirect statuses without another request', () =>
   Effect.gen(function* () {
     for (const status of [300, 304]) {
-      const requests: string[] = [];
+      const requests: Array<string> = [];
       const fetchImpl = (input: FetchInput) => {
         requests.push(String(input));
 
@@ -120,7 +120,7 @@ it.effect('rejects other redirect statuses without another request', () =>
 
 it.effect('stops after three redirects without a fourth request', () =>
   Effect.gen(function* () {
-    const requests: string[] = [];
+    const requests: Array<string> = [];
     const fetchImpl = (input: FetchInput) => {
       requests.push(String(input));
 
@@ -141,7 +141,7 @@ it.effect('stops after three redirects without a fourth request', () =>
 
 it.effect('releases a redirect body before the next request', () =>
   Effect.gen(function* () {
-    const events: string[] = [];
+    const events: Array<string> = [];
     const fetchImpl = (input: FetchInput, init?: FetchInit) => {
       const url = String(input);
       events.push(`request:${url}`);
@@ -166,7 +166,7 @@ it.effect('releases a redirect body before the next request', () =>
 
 it.effect('releases a failing response body and aborts its request', () =>
   Effect.gen(function* () {
-    const events: string[] = [];
+    const events: Array<string> = [];
     let aborted = false;
     const fetchImpl = (_input: FetchInput, init?: FetchInit) => {
       const signal = init?.signal;
@@ -189,7 +189,7 @@ it.effect('releases a failing response body and aborts its request', () =>
 
 it.effect('releases an endless body once the byte limit is exceeded', () =>
   Effect.gen(function* () {
-    const events: string[] = [];
+    const events: Array<string> = [];
     let pulls = 0;
     let aborted = false;
     const fetchImpl = (_input: FetchInput, init?: FetchInit) => {

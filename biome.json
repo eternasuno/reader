@@ -58,6 +58,10 @@
         "noSecrets": "off"
       },
       "style": {
+        "useConsistentArrayType": {
+          "level": "error",
+          "options": { "syntax": "generic" }
+        },
         "noExcessiveLinesPerFile": {
           "level": "error",
           "options": {
