@@ -164,45 +164,43 @@ describe('library reads', () => {
     expect(await client.feeds()).toEqual([feed('f1')]);
   });
 
-  it('reads later and feed unread counts independently', async () => {
-    const { client, requests } = makeClient((current) => {
-      if (current.path === '/api/library/later/unread') {
-        return Response.json({ count: 3 });
-      }
-
-      return Response.json({
-        total: 5,
+  it('reads the combined unread counts in one request', async () => {
+    const { client, requests } = makeClient(
+      json({
+        later: 3,
+        feedsTotal: 5,
         feeds: [
           { id: 'f1', count: 2 },
           { id: 'f2', count: 3 },
         ],
-      });
-    });
+      })
+    );
 
-    expect(await client.laterUnread()).toBe(3);
-    expect(await client.feedUnread()).toEqual({
-      total: 5,
+    expect(await client.unreadCounts()).toEqual({
+      later: 3,
+      feedsTotal: 5,
       feeds: { f1: 2, f2: 3 },
     });
     expect(requests.map((request) => request.path)).toEqual([
-      '/api/library/later/unread',
-      '/api/library/feeds/unread',
+      '/api/library/unread',
     ]);
   });
 
-  it('keeps one unread query usable when the other fails', async () => {
-    const { client } = makeClient((current) =>
-      current.path === '/api/library/later/unread'
-        ? Response.json({ _tag: 'ArticleRepositoryError' }, { status: 500 })
-        : Response.json({ total: 2, feeds: [{ id: 'f1', count: 2 }] })
+  it('reports a failed unread counts request', async () => {
+    const { client } = makeClient(() =>
+      Response.json({ _tag: 'ArticleRepositoryError' }, { status: 500 })
     );
 
-    expect(await failure(client.laterUnread())).toMatchObject({
+    expect(await failure(client.unreadCounts())).toMatchObject({
       tag: 'ArticleRepositoryError',
     });
-    expect(await client.feedUnread()).toEqual({
-      total: 2,
-      feeds: { f1: 2 },
+  });
+
+  it('rejects unread counts that omit the feed totals', async () => {
+    const { client } = makeClient(json({ later: 3, feeds: [] }));
+
+    expect(await failure(client.unreadCounts())).toMatchObject({
+      tag: 'InvalidResponse',
     });
   });
 
@@ -303,7 +301,6 @@ describe('library error tags', () => {
     expect(error).toMatchObject({
       tag: 'DuplicateArticle',
       id: 'a1',
-      code: undefined,
       message: '该文章已在稍后阅读中',
     });
   });
@@ -323,13 +320,12 @@ describe('library error tags', () => {
     });
   });
 
-  it('carries the fetch code reported by the API', async () => {
+  it('localizes a fetcher failure despite its API message', async () => {
     const { client } = makeClient(
       json(
         {
-          _tag: 'WebpageFetchError',
-          message: 'Unable to fetch the article page',
-          code: 'HTTP_404',
+          _tag: 'WebpageFetcherError',
+          message: 'The page blocked automated access',
         },
         422
       )
@@ -337,9 +333,37 @@ describe('library error tags', () => {
     const error = await failure(client.add('https://example.com/missing'));
 
     expect(error).toMatchObject({
-      tag: 'WebpageFetchError',
-      code: 'HTTP_404',
+      tag: 'WebpageFetcherError',
       message: '网页抓取失败，请稍后重试',
+    });
+  });
+
+  it('localizes a fetcher failure that carries no message', async () => {
+    const { client } = makeClient(json({ _tag: 'WebpageFetcherError' }, 422));
+
+    expect(
+      await failure(client.add('https://example.com/missing'))
+    ).toMatchObject({
+      tag: 'WebpageFetcherError',
+      message: '网页抓取失败，请稍后重试',
+    });
+  });
+
+  it('localizes parser and extractor failures despite their API message', async () => {
+    const parser = makeClient(
+      json({ _tag: 'FeedParserError', message: 'Malformed feed' }, 422)
+    );
+    const extractor = makeClient(
+      json({ _tag: 'ArticleExtractorError', message: 'No readable text' }, 422)
+    );
+
+    expect(await failure(parser.client.feeds())).toMatchObject({
+      tag: 'FeedParserError',
+      message: '无法解析订阅源，请确认地址正确',
+    });
+    expect(await failure(extractor.client.feeds())).toMatchObject({
+      tag: 'ArticleExtractorError',
+      message: '正文提取失败，请稍后重试',
     });
   });
 });

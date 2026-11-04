@@ -17,8 +17,7 @@ describe('library initial load', () => {
     const client = createStubClient();
     client.list.mockResolvedValue(page([article('a')], 'cursor-1', 'top'));
     client.feeds.mockResolvedValue([feed('f1')]);
-    client.laterUnread.mockResolvedValue(1);
-    client.feedUnread.mockResolvedValue({ total: 0, feeds: { f1: 0 } });
+    client.unreadCounts.mockResolvedValue(counts(1, { f1: 0 }));
     const model = createLibraryModel(client);
 
     await model.refresh();
@@ -33,7 +32,8 @@ describe('library initial load', () => {
     });
     expect(model.state().items.map((item) => item.id)).toEqual(['a']);
     expect(model.state().feeds).toEqual([feed('f1')]);
-    expect(model.state().counts.later).toBe(1);
+    expect(model.state().counts).toEqual(counts(1, { f1: 0 }));
+    expect(client.unreadCounts).toHaveBeenCalledTimes(1);
     expect(model.state().error).toBeUndefined();
   });
 
@@ -41,10 +41,7 @@ describe('library initial load', () => {
     const client = createStubClient();
     client.list.mockResolvedValue(page([article('a')], null, 'top'));
     client.feeds.mockRejectedValue(new LibraryError('FeedRepositoryError'));
-    client.laterUnread.mockRejectedValue(
-      new LibraryError('ArticleRepositoryError')
-    );
-    client.feedUnread.mockRejectedValue(
+    client.unreadCounts.mockRejectedValue(
       new LibraryError('ArticleRepositoryError')
     );
     const model = createLibraryModel(client);
@@ -61,36 +58,28 @@ describe('library initial load', () => {
     });
   });
 
-  it('keeps the successful side of independent count queries', async () => {
+  it('keeps the last counts when the combined count request fails', async () => {
     const client = createStubClient();
     client.list.mockResolvedValue(page([article('a')], null, 'top'));
-    client.laterUnread.mockResolvedValue(4);
-    client.feedUnread.mockRejectedValue(
-      new LibraryError('ArticleRepositoryError')
-    );
+    client.unreadCounts.mockResolvedValueOnce(counts(4, { f1: 2 }));
+    client.refresh.mockResolvedValue([article('a')]);
     const model = createLibraryModel(client);
 
     await model.refresh();
+    expect(model.state().counts).toEqual(counts(4, { f1: 2 }));
 
-    expect(model.state().counts).toEqual(counts(4));
-
-    const other = createStubClient();
-    other.list.mockResolvedValue(page([article('a')], null, 'top'));
-    other.laterUnread.mockRejectedValue(
+    client.unreadCounts.mockRejectedValueOnce(
       new LibraryError('ArticleRepositoryError')
     );
-    other.feedUnread.mockResolvedValue({ total: 2, feeds: { f1: 2 } });
-    const reversed = createLibraryModel(other);
+    await model.refresh();
 
-    await reversed.refresh();
-
-    expect(reversed.state().counts).toEqual(counts(0, { f1: 2 }));
+    expect(model.state().counts).toEqual(counts(4, { f1: 2 }));
   });
 
-  it('deduplicates count failure toasts per category until recovery', async () => {
+  it('deduplicates count failure toasts until recovery', async () => {
     const client = createStubClient();
     client.list.mockResolvedValue(page([article('a')], null, 'top'));
-    client.feedUnread.mockRejectedValue(
+    client.unreadCounts.mockRejectedValue(
       new LibraryError('ArticleRepositoryError')
     );
     const model = createLibraryModel(client);
@@ -105,9 +94,9 @@ describe('library initial load', () => {
     await model.refresh();
     expect(model.state().toast).toBeUndefined();
 
-    client.feedUnread.mockResolvedValue({ total: 0, feeds: {} });
+    client.unreadCounts.mockResolvedValue(counts());
     await model.refresh();
-    client.feedUnread.mockRejectedValue(
+    client.unreadCounts.mockRejectedValue(
       new LibraryError('ArticleRepositoryError')
     );
     await model.refresh();

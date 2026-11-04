@@ -7,44 +7,16 @@ export const loadFeeds = async (store: LibraryStore): Promise<void> => {
   } catch {}
 };
 
-export const loadLaterUnread = async (store: LibraryStore): Promise<void> => {
-  try {
-    const later = await store.client.laterUnread();
-    store.clearNotified('later-unread');
-    store.setState((current) => ({
-      ...current,
-      counts: { ...current.counts, later },
-    }));
-  } catch (error) {
-    store.notifyCategory('later-unread', error);
-  }
-};
-
-export const loadFeedUnread = async (store: LibraryStore): Promise<void> => {
-  try {
-    const unread = await store.client.feedUnread();
-    store.clearNotified('feeds-unread');
-    store.setState((current) => ({
-      ...current,
-      counts: {
-        ...current.counts,
-        feeds: unread.feeds,
-        feedsTotal: unread.total,
-      },
-    }));
-  } catch (error) {
-    store.notifyCategory('feeds-unread', error);
-  }
-};
-
 export const loadCounts = async (store: LibraryStore): Promise<void> => {
-  await Promise.all([loadLaterUnread(store), loadFeedUnread(store)]);
+  try {
+    const counts = await store.client.unreadCounts();
+    store.clearNotified('unread-counts');
+    store.setState((current) => ({ ...current, counts }));
+  } catch (error) {
+    store.notifyCategory('unread-counts', error);
+  }
 };
 
 export const loadReference = async (store: LibraryStore): Promise<void> => {
-  await Promise.all([
-    loadFeeds(store),
-    loadLaterUnread(store),
-    loadFeedUnread(store),
-  ]);
+  await Promise.all([loadFeeds(store), loadCounts(store)]);
 };

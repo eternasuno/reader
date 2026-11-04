@@ -9,7 +9,10 @@ import { Article, ArticleId } from '../../business/src/entity/article.ts';
 import { Feed } from '../../business/src/entity/feed.ts';
 import { FeedId } from '../../business/src/entity/object-value.ts';
 import { Setting } from '../../business/src/entity/setting.ts';
-import { ArticleFilter } from '../../business/src/port/article-repository.ts';
+import {
+  ArticleFilter,
+  ArticleUnreadCounts,
+} from '../../business/src/port/article-repository.ts';
 import { ArticlePage } from '../../business/src/usecase/article-list.ts';
 
 const failure = <Tag extends string>(tag: Tag, status: number) =>
@@ -17,7 +20,6 @@ const failure = <Tag extends string>(tag: Tag, status: number) =>
     _tag: Schema.Literal(tag),
     message: Schema.String,
     id: Schema.OptionFromOptional(Schema.String),
-    code: Schema.OptionFromOptional(Schema.String),
   }).pipe(HttpApiSchema.status(status));
 
 export const UnauthorizedSchema = Schema.Struct({
@@ -40,8 +42,11 @@ export const ArticleRepositoryErrorSchema = failure(
   'ArticleRepositoryError',
   500
 );
-export const WebpageFetchErrorSchema = failure('WebpageFetchError', 422);
-export const ArticleExtractErrorSchema = failure('ArticleExtractError', 422);
+export const WebpageFetcherErrorSchema = failure('WebpageFetcherError', 422);
+export const ArticleExtractorErrorSchema = failure(
+  'ArticleExtractorError',
+  422
+);
 
 export const SubscriptionUrlInvalidSchema = failure(
   'SubscriptionUrlInvalid',
@@ -61,10 +66,7 @@ export const FetchSubscriptionErrorSchema = failure(
   'FetchSubscriptionError',
   422
 );
-export const ParseSubscriptionErrorSchema = failure(
-  'ParseSubscriptionError',
-  422
-);
+export const FeedParserErrorSchema = failure('FeedParserError', 422);
 export const FeedRepositoryErrorSchema = failure('FeedRepositoryError', 500);
 
 export const SettingsReadErrorSchema = failure('SettingsReadError', 500);
@@ -156,7 +158,7 @@ const library = HttpApiGroup.make('library').add(
     error: [
       SubscriptionUrlInvalidSchema,
       FetchSubscriptionErrorSchema,
-      ParseSubscriptionErrorSchema,
+      FeedParserErrorSchema,
       ...authErrors,
     ],
   }),
@@ -168,7 +170,7 @@ const library = HttpApiGroup.make('library').add(
       SubscriptionExistsSchema,
       SubscriptionImportFailedSchema,
       FetchSubscriptionErrorSchema,
-      ParseSubscriptionErrorSchema,
+      FeedParserErrorSchema,
       FeedRepositoryErrorSchema,
       ...authErrors,
     ],
@@ -182,15 +184,8 @@ const library = HttpApiGroup.make('library').add(
       ...authErrors,
     ],
   }),
-  HttpApiEndpoint.get('laterUnread', '/api/library/later/unread', {
-    success: Schema.Struct({ count: Schema.Int }),
-    error: [ArticleRepositoryErrorSchema, ...authErrors],
-  }),
-  HttpApiEndpoint.get('feedsUnread', '/api/library/feeds/unread', {
-    success: Schema.Struct({
-      total: Schema.Int,
-      feeds: Schema.Array(Schema.Struct({ id: FeedId, count: Schema.Int })),
-    }),
+  HttpApiEndpoint.get('unreadCounts', '/api/library/unread', {
+    success: ArticleUnreadCounts,
     error: [ArticleRepositoryErrorSchema, ...authErrors],
   }),
   HttpApiEndpoint.get('article', '/api/library/articles', {
@@ -206,8 +201,8 @@ const library = HttpApiGroup.make('library').add(
       DuplicateArticleSchema,
       ArticleEmptyContentSchema,
       SettingsRepositoryErrorSchema,
-      WebpageFetchErrorSchema,
-      ArticleExtractErrorSchema,
+      WebpageFetcherErrorSchema,
+      ArticleExtractorErrorSchema,
       ...articleErrors,
     ],
   }),
@@ -231,8 +226,8 @@ const library = HttpApiGroup.make('library').add(
       ArticleEmptyContentSchema,
       ArticleRepositoryErrorSchema,
       SettingsRepositoryErrorSchema,
-      WebpageFetchErrorSchema,
-      ArticleExtractErrorSchema,
+      WebpageFetcherErrorSchema,
+      ArticleExtractorErrorSchema,
       ...articleErrors,
     ],
   }),

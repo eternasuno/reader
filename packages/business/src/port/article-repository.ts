@@ -1,6 +1,13 @@
-import { Context, Data, type Effect, type Option, Schema } from 'effect';
-import type { Article, ArticleId } from '../entity/article';
-import type { FeedId, OwnerId } from '../entity/object-value';
+import {
+  Context,
+  Data,
+  type Effect,
+  type Option,
+  Schema,
+  Struct,
+} from 'effect';
+import { Article, type ArticleId } from '../entity/article';
+import { FeedId, type OwnerId } from '../entity/object-value';
 
 export class ArticleRepositoryError extends Data.TaggedError(
   'ArticleRepositoryError'
@@ -22,7 +29,24 @@ export type ArticleQuery = {
   readonly limit: number;
 };
 
-export interface IArticleRepository {
+export const ArticlePatch = Article.mapFields((fields) =>
+  Struct.map(
+    Struct.pick(fields, ['read', 'extractedContent']),
+    Schema.optionalKey
+  )
+);
+
+export type ArticlePatch = typeof ArticlePatch.Type;
+
+export const ArticleUnreadCounts = Schema.Struct({
+  later: Schema.Int,
+  feedsTotal: Schema.Int,
+  feeds: Schema.Array(Schema.Struct({ id: FeedId, count: Schema.Int })),
+});
+
+export type ArticleUnreadCounts = typeof ArticleUnreadCounts.Type;
+
+export type IArticleRepository = {
   readonly find: (
     ownerId: OwnerId,
     id: ArticleId
@@ -33,47 +57,34 @@ export interface IArticleRepository {
   ) => Effect.Effect<readonly Article[], ArticleRepositoryError>;
   readonly listFeeds: (
     ownerId: OwnerId,
-    feedId: FeedId | undefined,
+    feedIds: Option.Option<readonly FeedId[]>,
     query: ArticleQuery
   ) => Effect.Effect<readonly Article[], ArticleRepositoryError>;
   readonly create: (
     ownerId: OwnerId,
     articles: readonly Article[]
   ) => Effect.Effect<readonly ArticleId[], ArticleRepositoryError>;
-  readonly setRead: (
+  readonly updateByArticleIds: (
     ownerId: OwnerId,
     ids: readonly ArticleId[],
-    read: boolean
-  ) => Effect.Effect<void, ArticleRepositoryError>;
-  readonly markLater: (
-    ownerId: OwnerId
-  ) => Effect.Effect<void, ArticleRepositoryError>;
-  readonly markFeeds: (
+    articlePatch: ArticlePatch
+  ) => Effect.Effect<readonly ArticleId[], ArticleRepositoryError>;
+  readonly updateLater: (
     ownerId: OwnerId,
-    ids: readonly FeedId[]
-  ) => Effect.Effect<void, ArticleRepositoryError>;
+    articlePatch: ArticlePatch
+  ) => Effect.Effect<readonly ArticleId[], ArticleRepositoryError>;
+  readonly updateFeeds: (
+    ownerId: OwnerId,
+    feedIds: Option.Option<readonly FeedId[]>,
+    articlePatch: ArticlePatch
+  ) => Effect.Effect<readonly ArticleId[], ArticleRepositoryError>;
   readonly removeLater: (
     ownerId: OwnerId,
-    id: ArticleId
+    ids: readonly ArticleId[]
   ) => Effect.Effect<void, ArticleRepositoryError>;
-  readonly saveExtracted: (
-    ownerId: OwnerId,
-    id: ArticleId,
-    content: string
-  ) => Effect.Effect<boolean, ArticleRepositoryError>;
-  readonly unreadLater: (
+  readonly unreadCounts: (
     ownerId: OwnerId
-  ) => Effect.Effect<number, ArticleRepositoryError>;
-  readonly unreadFeeds: (ownerId: OwnerId) => Effect.Effect<
-    {
-      readonly total: number;
-      readonly feeds: readonly {
-        readonly id: FeedId;
-        readonly count: number;
-      }[];
-    },
-    ArticleRepositoryError
-  >;
+  ) => Effect.Effect<ArticleUnreadCounts, ArticleRepositoryError>;
   readonly inventory: (
     ownerId: OwnerId,
     feedId: FeedId
@@ -83,7 +94,7 @@ export interface IArticleRepository {
     feedId: FeedId,
     ids: readonly ArticleId[]
   ) => Effect.Effect<void, ArticleRepositoryError>;
-}
+};
 
 export class ArticleRepository extends Context.Service<
   ArticleRepository,

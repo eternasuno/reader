@@ -42,7 +42,7 @@ const deleteKey = () =>
   withSession((owner) =>
     Effect.gen(function* () {
       const extractionSettings = yield* SettingsRepository;
-      yield* extractionSettings.clearKey(owner);
+      yield* extractionSettings.update(owner, { jinaKey: Option.none() });
 
       return { ok: true as const };
     })
@@ -52,7 +52,10 @@ const deleteBrowser = () =>
   withSession((owner) =>
     Effect.gen(function* () {
       const extractionSettings = yield* SettingsRepository;
-      yield* extractionSettings.clearBrowser(owner);
+      yield* extractionSettings.update(owner, {
+        browserEndpoint: Option.none(),
+        provider: 'jina',
+      });
 
       return { ok: true as const };
     })

@@ -3,6 +3,7 @@ import { Effect, Layer, Option, Redacted, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
 import type { OwnerId } from '../../../../packages/business/src/entity/object-value.ts';
 import {
+  DEFAULT_RETENTION,
   ReaderProvider,
   Setting,
 } from '../../../../packages/business/src/entity/setting.ts';
@@ -23,7 +24,7 @@ const ownerHash = (owner: OwnerId) =>
 
 const repositoryError = () =>
   new Port.SettingsRepositoryError({
-    error: 'Failed to access extraction settings',
+    message: 'Failed to access extraction settings',
   });
 
 const query = <A, E>(
@@ -43,6 +44,12 @@ const decodeRows = (rows: unknown) =>
     Effect.mapError(repositoryError)
   );
 
+const toJinaKey = (stored: Option.Option<string>) =>
+  Option.map(
+    Option.filter(stored, (key) => key !== ''),
+    (key) => Redacted.make(key)
+  );
+
 const load = (db: Surreal, owner: OwnerId) =>
   query<unknown, Port.SettingsRepositoryError>(
     db,
@@ -54,7 +61,8 @@ const load = (db: Surreal, owner: OwnerId) =>
     Effect.flatMap(decodeRows),
     Effect.map((rows): Port.SettingsRepositoryValue => {
       const row = Option.fromUndefinedOr(rows[0]);
-      const browserEndpoint = Option.map(
+      const storedKey = Option.flatMap(row, (value) => value.jinaKey);
+      const endpoint = Option.map(
         Option.flatMap(row, (value) => value.browserEndpoint),
         (value) => value.trim()
       );
@@ -62,76 +70,66 @@ const load = (db: Surreal, owner: OwnerId) =>
       return {
         retention: Option.getOrElse(
           Option.flatMap(row, (value) => value.retention),
-          () => Port.DEFAULT_RETENTION
+          () => DEFAULT_RETENTION
         ),
         provider: Option.getOrElse(
           Option.flatMap(row, (value) => value.provider),
           () => 'jina' as const
         ),
-        jinaConfigured: Option.match(
-          Option.flatMap(row, (value) => value.jinaKey),
-          { onNone: () => false, onSome: (key) => key !== '' }
-        ),
-        browserEndpoint: Option.filter(
-          browserEndpoint,
-          (value) => value !== ''
-        ),
+        jinaKey: toJinaKey(storedKey),
+        browserEndpoint: Option.filter(endpoint, (value) => value !== ''),
       };
     })
   );
 
-const loadKey = (db: Surreal, owner: OwnerId) =>
-  query<unknown, Port.SettingsRepositoryError>(
-    db,
-    'SELECT jinaKey FROM setting WHERE owner = $owner;',
-    owner,
-    {},
-    repositoryError
-  ).pipe(
-    Effect.flatMap(decodeRows),
-    Effect.map((rows) =>
-      Option.map(
-        Option.flatMap(Option.fromUndefinedOr(rows[0]), (row) => row.jinaKey),
-        (jinaKey) => Redacted.make(jinaKey)
-      )
-    )
-  );
-
 type SaveBindings = {
-  provider: ReaderProvider;
+  provider?: ReaderProvider;
   jinaKey?: string;
   browserEndpoint?: string;
+  retention?: number;
 };
 
-const saveSql = (
-  update: Port.SettingsRepositoryUpdate,
-  jinaKey: Option.Option<string>
-) => {
-  const clauses = ['owner = $owner', 'provider = $provider'];
-  const bindings: SaveBindings = { provider: update.provider };
+const saveSql = (settingsPatch: Port.SettingsPatch) => {
+  const clauses = ['owner = $owner'];
+  const bindings: SaveBindings = {};
 
-  Option.match(jinaKey, {
-    onNone: () => undefined,
-    onSome: (key) => {
-      clauses.push('jinaKey = $jinaKey');
-      bindings.jinaKey = key;
-    },
-  });
+  if (settingsPatch.provider !== undefined) {
+    clauses.push('provider = $provider');
+    bindings.provider = settingsPatch.provider;
+  }
 
-  Option.match(
-    Option.map(update.browserEndpoint, (value) => value.trim()),
-    {
-      onNone: () => undefined,
-      onSome: (endpoint) => {
-        if (endpoint === '') {
-          clauses.push('browserEndpoint = NONE');
-        } else {
-          clauses.push('browserEndpoint = $browserEndpoint');
-          bindings.browserEndpoint = endpoint;
-        }
+  if (settingsPatch.jinaKey !== undefined) {
+    Option.match(
+      Option.map(settingsPatch.jinaKey, (key) => Redacted.value(key)),
+      {
+        onNone: () => clauses.push('jinaKey = NONE'),
+        onSome: (key) => {
+          clauses.push('jinaKey = $jinaKey');
+          bindings.jinaKey = key;
+        },
+      }
+    );
+  }
+
+  if (settingsPatch.browserEndpoint !== undefined) {
+    const endpoint = Option.filter(
+      Option.map(settingsPatch.browserEndpoint, (value) => value.trim()),
+      (value) => value !== ''
+    );
+
+    Option.match(endpoint, {
+      onNone: () => clauses.push('browserEndpoint = NONE'),
+      onSome: (value) => {
+        clauses.push('browserEndpoint = $browserEndpoint');
+        bindings.browserEndpoint = value;
       },
-    }
-  );
+    });
+  }
+
+  if (settingsPatch.retention !== undefined) {
+    clauses.push('retention = $retention');
+    bindings.retention = settingsPatch.retention;
+  }
 
   return {
     sql: `UPSERT type::record("setting", $id) SET ${clauses.join(', ')};`,
@@ -139,58 +137,35 @@ const saveSql = (
   };
 };
 
-const save = (
+const update = (
   db: Surreal,
   owner: OwnerId,
-  update: Port.SettingsRepositoryUpdate
-) =>
-  Effect.gen(function* () {
-    const jinaKey = Option.map(update.key, (key) => Redacted.value(key));
-    const statement = saveSql(update, jinaKey);
-    yield* query<unknown, Port.SettingsRepositoryError>(
-      db,
-      statement.sql,
-      owner,
-      statement.bindings,
-      repositoryError
-    ).pipe(Effect.asVoid);
-  });
+  settingsPatch: Port.SettingsPatch
+) => {
+  if (
+    settingsPatch.provider === undefined &&
+    settingsPatch.jinaKey === undefined &&
+    settingsPatch.browserEndpoint === undefined &&
+    settingsPatch.retention === undefined
+  ) {
+    return Effect.void;
+  }
 
-const setRetention = (db: Surreal, owner: OwnerId, retention: number) =>
-  query<unknown, Port.SettingsRepositoryError>(
+  const statement = saveSql(settingsPatch);
+
+  return query<unknown, Port.SettingsRepositoryError>(
     db,
-    `UPSERT type::record("setting", $id) SET owner = $owner, retention = $retention;`,
+    statement.sql,
     owner,
-    { retention },
+    statement.bindings,
     repositoryError
   ).pipe(Effect.asVoid);
-
-const clearKey = (db: Surreal, owner: OwnerId) =>
-  query<unknown, Port.SettingsRepositoryError>(
-    db,
-    'UPDATE setting SET jinaKey = NONE WHERE owner = $owner;',
-    owner,
-    {},
-    repositoryError
-  ).pipe(Effect.asVoid);
-
-const clearBrowser = (db: Surreal, owner: OwnerId) =>
-  query<unknown, Port.SettingsRepositoryError>(
-    db,
-    'BEGIN TRANSACTION; UPDATE setting SET browserEndpoint = NONE WHERE owner = $owner; UPDATE setting SET provider = "jina" WHERE owner = $owner AND provider = "browser"; COMMIT TRANSACTION;',
-    owner,
-    {},
-    repositoryError
-  ).pipe(Effect.asVoid);
+};
 
 const makeSettings = (db: Surreal) =>
   Port.SettingsRepository.of({
     get: (owner) => load(db, owner),
-    getKey: (owner) => loadKey(db, owner),
-    save: (owner, update) => save(db, owner, update),
-    setRetention: (owner, retention) => setRetention(db, owner, retention),
-    clearKey: (owner) => clearKey(db, owner),
-    clearBrowser: (owner) => clearBrowser(db, owner),
+    update: (owner, settingsPatch) => update(db, owner, settingsPatch),
   });
 
 export const SettingsRepositoryLive = Layer.effect(

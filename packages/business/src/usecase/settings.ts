@@ -4,27 +4,27 @@ import type { ReaderProvider } from '../entity/setting';
 import { SettingsRepository } from '../port/settings-repository';
 
 export class SettingsReadError extends Data.TaggedError('SettingsReadError')<{
-  readonly error: string;
+  readonly message: string;
 }> {}
 
 export class SettingsSaveError extends Data.TaggedError('SettingsSaveError')<{
-  readonly error: string;
+  readonly message: string;
 }> {}
 
 export class InvalidRetention extends Data.TaggedError('InvalidRetention')<{
-  readonly error: string;
+  readonly message: string;
 }> {}
 
 export class InvalidKey extends Data.TaggedError('InvalidKey')<{
-  readonly error: string;
+  readonly message: string;
 }> {}
 
 export class InvalidEndpoint extends Data.TaggedError('InvalidEndpoint')<{
-  readonly error: string;
+  readonly message: string;
 }> {}
 
 export class InvalidProvider extends Data.TaggedError('InvalidProvider')<{
-  readonly error: string;
+  readonly message: string;
 }> {}
 
 export type ExtractionUpdate = {
@@ -75,14 +75,14 @@ export const getSettings = Effect.fn('settings.get')(function* (
     .get(owner)
     .pipe(
       Effect.mapError(
-        () => new SettingsReadError({ error: 'Failed to read settings' })
+        () => new SettingsReadError({ message: 'Failed to read settings' })
       )
     );
 
   return {
     retention: value.retention,
     provider: value.provider,
-    jinaConfigured: value.jinaConfigured,
+    jinaConfigured: Option.isSome(value.jinaKey),
     browserEndpoint: value.browserEndpoint,
   };
 });
@@ -93,20 +93,37 @@ export const updateRetention = Effect.fn('settings.updateRetention')(function* (
 ) {
   if (!isValidRetention(value)) {
     return yield* new InvalidRetention({
-      error: 'Retention must be an integer between 30 and 300',
+      message: 'Retention must be an integer between 30 and 300',
     });
   }
 
   const settingsRepository = yield* SettingsRepository;
   yield* settingsRepository
-    .setRetention(owner, value)
+    .update(owner, { retention: value })
     .pipe(
       Effect.mapError(
-        () => new SettingsSaveError({ error: 'Failed to save settings' })
+        () => new SettingsSaveError({ message: 'Failed to save settings' })
       )
     );
 
   return { ok: true };
+});
+
+const extractionPatch = (
+  input: ExtractionUpdate,
+  provider: ReaderProvider,
+  endpoint: string | undefined
+) => ({
+  provider,
+  ...(input.jinaKey === undefined
+    ? {}
+    : { jinaKey: Option.some(Redacted.make(input.jinaKey.trim())) }),
+  ...(endpoint === undefined
+    ? {}
+    : {
+        browserEndpoint:
+          endpoint === '' ? Option.none<string>() : Option.some(endpoint),
+      }),
 });
 
 const parseExtraction = (input: ExtractionUpdate) => {
@@ -115,7 +132,7 @@ const parseExtraction = (input: ExtractionUpdate) => {
     return {
       ok: false,
       error: new InvalidProvider({
-        error: 'Select a valid article extraction method',
+        message: 'Select a valid article extraction method',
       }),
     } as const;
   }
@@ -123,7 +140,7 @@ const parseExtraction = (input: ExtractionUpdate) => {
   if (input.jinaKey !== undefined && !isValidKey(input.jinaKey)) {
     return {
       ok: false,
-      error: new InvalidKey({ error: 'Enter a valid Jina API key' }),
+      error: new InvalidKey({ message: 'Enter a valid Jina API key' }),
     } as const;
   }
 
@@ -138,20 +155,14 @@ const parseExtraction = (input: ExtractionUpdate) => {
     return {
       ok: false,
       error: new InvalidEndpoint({
-        error: 'Enter a valid browser service endpoint',
+        message: 'Enter a valid browser service endpoint',
       }),
     } as const;
   }
 
   return {
     ok: true,
-    update: {
-      provider,
-      key: Option.map(Option.fromUndefinedOr(input.jinaKey), (value) =>
-        Redacted.make(value.trim())
-      ),
-      browserEndpoint: Option.fromUndefinedOr(endpoint),
-    },
+    settingsPatch: extractionPatch(input, provider, endpoint),
   } as const;
 };
 
@@ -164,10 +175,10 @@ export const updateExtraction = Effect.fn('settings.updateExtraction')(
 
     const settingsRepository = yield* SettingsRepository;
     yield* settingsRepository
-      .save(owner, parsed.update)
+      .update(owner, parsed.settingsPatch)
       .pipe(
         Effect.mapError(
-          () => new SettingsSaveError({ error: 'Failed to save settings' })
+          () => new SettingsSaveError({ message: 'Failed to save settings' })
         )
       );
 

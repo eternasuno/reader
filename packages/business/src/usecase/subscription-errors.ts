@@ -1,6 +1,5 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class FetchSubscriptionError extends Schema.TaggedError<FetchSubscriptionError>()(
-  'FetchSubscriptionError',
-  { message: Schema.String }
-) {}
+export class FetchSubscriptionError extends Data.TaggedError(
+  'FetchSubscriptionError'
+)<{ readonly message: string }> {}

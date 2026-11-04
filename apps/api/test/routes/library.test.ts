@@ -1,10 +1,16 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: one integration scenario exercises the library API boundary.
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: the scenario follows the user journey in order.
 import { expect, it } from '@effect/vitest';
+import { BrowserConcurrencyLive } from '@reader/webpage';
 import { surrealAdapter } from '@surrealdb/better-auth';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
 import { DateTime, Effect, Layer, Option, Schema } from 'effect';
-import { HttpClient, HttpClientResponse, HttpRouter } from 'effect/http';
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientResponse,
+  HttpRouter,
+} from 'effect/http';
 import type { Surreal } from 'surrealdb';
 import { ArticleExtractor } from '../../../../packages/business/src/port/article-extractor.ts';
 import {
@@ -13,14 +19,11 @@ import {
 } from '../../../../packages/business/src/port/article-repository.ts';
 import { DocumentSantize } from '../../../../packages/business/src/port/document-santize.ts';
 import { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
-import {
-  WebpageFetcher,
-  WebpageFetcherFactory,
-} from '../../../../packages/business/src/port/webpage-fetcher.ts';
 import { HttpFetchLive } from '../../../../packages/webpage/src/http.ts';
 import {
   ArticleItemSchema,
   ArticlePageSchema,
+  UnreadCountsSchema,
 } from '../../../web/src/lib/library-schema.ts';
 import { makeArticles } from '../../src/adapter/article-store';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
@@ -89,6 +92,13 @@ const call = (
 
 const json = async <A>(response: Response): Promise<A> =>
   (await response.json()) as A;
+
+const readCounts = async (handler: Handler, cookie?: string) => {
+  const response = await call(handler, 'GET', '/api/library/unread', cookie);
+  expect(response.status).toBe(200);
+
+  return Schema.decodeUnknownPromise(UnreadCountsSchema)(await json(response));
+};
 
 type FeedItem = { readonly id: string; readonly title: string };
 type ArticleItem = {
@@ -189,12 +199,17 @@ const verifyArticles = async (
     await json(await call(handler, 'GET', '/api/library/feeds', bob))
   ).toEqual({ items: [] });
 
-  expect(
-    await json(await call(handler, 'GET', '/api/library/feeds/unread', alice))
-  ).toEqual({ total: 4, feeds: [{ id: feedId, count: 4 }] });
-  expect(
-    await json(await call(handler, 'GET', '/api/library/later/unread', alice))
-  ).toEqual({ count: 0 });
+  expect(await readCounts(handler, alice)).toEqual({
+    later: 0,
+    feedsTotal: 4,
+    feeds: [{ id: feedId, count: 4 }],
+  });
+  expect(await readCounts(handler, bob)).toEqual({
+    later: 0,
+    feedsTotal: 0,
+    feeds: [],
+  });
+  expect((await call(handler, 'GET', '/api/library/unread')).status).toBe(401);
 
   const feedPageText = await (
     await call(
@@ -237,9 +252,11 @@ const verifyArticles = async (
   );
   expect(saved.status).toBe(200);
   const { item: later } = await json<{ item: ArticleItem }>(saved);
-  expect(
-    await json(await call(handler, 'GET', '/api/library/later/unread', alice))
-  ).toEqual({ count: 1 });
+  expect(await readCounts(handler, alice)).toEqual({
+    later: 1,
+    feedsTotal: 4,
+    feeds: [{ id: feedId, count: 4 }],
+  });
 
   expect(
     (
@@ -249,9 +266,11 @@ const verifyArticles = async (
       })
     ).status
   ).toBe(200);
-  expect(
-    await json(await call(handler, 'GET', '/api/library/feeds/unread', alice))
-  ).toEqual({ total: 3, feeds: [{ id: feedId, count: 3 }] });
+  expect(await readCounts(handler, alice)).toEqual({
+    later: 1,
+    feedsTotal: 3,
+    feeds: [{ id: feedId, count: 3 }],
+  });
 
   expect(
     await json<Page>(
@@ -267,9 +286,11 @@ const verifyArticles = async (
   expect(
     (await call(handler, 'POST', '/api/library/mark-later', alice, {})).status
   ).toBe(200);
-  expect(
-    await json(await call(handler, 'GET', '/api/library/later/unread', alice))
-  ).toEqual({ count: 0 });
+  expect(await readCounts(handler, alice)).toEqual({
+    later: 0,
+    feedsTotal: 3,
+    feeds: [{ id: feedId, count: 3 }],
+  });
 
   expect(
     (
@@ -348,9 +369,10 @@ const verifyAddedArticle = async (handler: Handler, alice: string) => {
       })
     ).status
   ).toBe(200);
-  expect(
-    await json(await call(handler, 'GET', '/api/library/later/unread', alice))
-  ).toEqual({ count: 1 });
+  expect(await readCounts(handler, alice)).toMatchObject({
+    later: 1,
+    feedsTotal: 3,
+  });
 };
 
 const verifySettings = async (handler: Handler, alice: string) => {
@@ -439,9 +461,11 @@ const verifyUnsubscribe = async (
   expect(
     await json(await call(handler, 'GET', '/api/library/feeds', alice))
   ).toEqual({ items: [] });
-  expect(
-    await json(await call(handler, 'GET', '/api/library/feeds/unread', alice))
-  ).toEqual({ total: 0, feeds: [] });
+  expect(await readCounts(handler, alice)).toEqual({
+    later: 1,
+    feedsTotal: 0,
+    feeds: [],
+  });
 };
 
 const verifyLibrary = async (handler: Handler) => {
@@ -472,6 +496,7 @@ const feedSource = Layer.mergeAll(
     parse: () =>
       Effect.succeed({
         title: 'Example feed',
+        url: new URL('https://example.com/feed.xml'),
         description: Option.some('Daily updates'),
         articles: [
           {
@@ -547,23 +572,22 @@ type ArticleStore = Layer.Layer<
   Database | ReaderStoreConcurrency
 >;
 
-const failingCounter = (
-  db: Surreal,
-  counter: 'unreadLater' | 'unreadFeeds'
+const failingCounts = (
+  db: Surreal
 ): Layer.Layer<ArticleRepository, never, ReaderStoreConcurrency> =>
   Layer.effect(
     ArticleRepository,
     Effect.gen(function* () {
       const lock = yield* ReaderStoreConcurrency;
       const articles = makeArticles(db, lock);
-      const failure = () =>
-        Effect.fail(
-          new ArticleRepositoryError({ message: 'Unread count failed' })
-        );
 
-      return counter === 'unreadLater'
-        ? { ...articles, unreadLater: failure }
-        : { ...articles, unreadFeeds: failure };
+      return {
+        ...articles,
+        unreadCounts: () =>
+          Effect.fail(
+            new ArticleRepositoryError({ message: 'Unread count failed' })
+          ),
+      };
     })
   );
 
@@ -580,15 +604,10 @@ const makeHandler = (
     Layer.succeed(DocumentSantize, {
       sanitize: () => Effect.succeed('<p>Body</p>'),
     }),
-    Layer.succeed(WebpageFetcherFactory, {
-      forOwner: () =>
-        Effect.succeed(
-          Layer.succeed(WebpageFetcher, {
-            fetch: () =>
-              Effect.succeed('<html><body><p>Body</p></body></html>'),
-          })
-        ),
-    }),
+    BrowserConcurrencyLive,
+    Layer.succeed(FetchHttpClient.Fetch, () =>
+      Promise.resolve(new Response('<html><body><p>Body</p></body></html>'))
+    ),
     articleExtractor,
     HtmlParserLive,
     HttpFetchLive
@@ -630,26 +649,17 @@ it.effect('serves authenticated owner-scoped library operations', () =>
   )
 );
 
-it.effect('serves each unread count while the other counter fails', () =>
+it.effect('reports repository failures for the unified unread counts', () =>
   Effect.acquireUseRelease(
     openDatabase('route-unread'),
     (db) =>
       Effect.promise(async () => {
         const options = await setupDatabase(db);
-        const laterFails = makeHandler(
-          db,
-          options,
-          failingCounter(db, 'unreadLater')
-        );
-        const feedsFails = makeHandler(
-          db,
-          options,
-          failingCounter(db, 'unreadFeeds')
-        );
+        const unreadFails = makeHandler(db, options, failingCounts(db));
         try {
-          const alice = await signIn(laterFails.handler, 'alice@example.com');
+          const alice = await signIn(unreadFails.handler, 'alice@example.com');
           const subscribed = await call(
-            laterFails.handler,
+            unreadFails.handler,
             'POST',
             '/api/library/feeds',
             alice,
@@ -660,7 +670,7 @@ it.effect('serves each unread count while the other counter fails', () =>
           expect(
             (
               await call(
-                laterFails.handler,
+                unreadFails.handler,
                 'POST',
                 '/api/library/articles',
                 alice,
@@ -668,48 +678,35 @@ it.effect('serves each unread count while the other counter fails', () =>
               )
             ).status
           ).toBe(201);
+
+          const failed = await call(
+            unreadFails.handler,
+            'GET',
+            '/api/library/unread',
+            alice
+          );
+          expect(failed.status).toBe(500);
+          expect(await json(failed)).toMatchObject({
+            _tag: 'ArticleRepositoryError',
+            message: 'Unable to access articles',
+          });
+
+          expect(
+            (await call(unreadFails.handler, 'GET', '/api/library/unread'))
+              .status
+          ).toBe(401);
           expect(
             await json(
               await call(
-                laterFails.handler,
+                unreadFails.handler,
                 'GET',
-                '/api/library/feeds/unread',
+                '/api/library/feeds',
                 alice
               )
             )
-          ).toEqual({ total: 4, feeds: [{ id: item.id, count: 4 }] });
-          expect(
-            (
-              await call(
-                laterFails.handler,
-                'GET',
-                '/api/library/later/unread',
-                alice
-              )
-            ).status
-          ).toBe(500);
-          expect(
-            await json(
-              await call(
-                feedsFails.handler,
-                'GET',
-                '/api/library/later/unread',
-                alice
-              )
-            )
-          ).toEqual({ count: 1 });
-          expect(
-            (
-              await call(
-                feedsFails.handler,
-                'GET',
-                '/api/library/feeds/unread',
-                alice
-              )
-            ).status
-          ).toBe(500);
+          ).toMatchObject({ items: [{ id: item.id }] });
         } finally {
-          await Promise.all([laterFails.dispose(), feedsFails.dispose()]);
+          await unreadFails.dispose();
         }
       }),
     (db) => Effect.promise(() => db.close())

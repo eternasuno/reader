@@ -1,8 +1,8 @@
 import {
   FeedParser,
+  FeedParserError,
   type ParsedArticle,
   type ParsedFeed,
-  ParseSubscriptionError,
 } from '@reader/business';
 import { DateTime, Effect, Layer, Match, Option } from 'effect';
 import { type AnyFeed, parseFeed as parseSyndication } from 'feedsmith';
@@ -254,6 +254,7 @@ export const parseFeed = (
 
   return {
     title: feedTitle(parsed),
+    url: sourceUrl,
     description,
     articles: feedEntries(parsed, sourceUrl, now),
   };
@@ -264,7 +265,7 @@ const parse = (content: string, sourceUrl: URL) =>
     Effect.try({
       try: () => parseFeed(content, sourceUrl, now),
       catch: () =>
-        new ParseSubscriptionError({
+        new FeedParserError({
           message: 'Failed to parse the subscription feed',
         }),
     })

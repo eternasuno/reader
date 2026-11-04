@@ -17,8 +17,3 @@ export type Counts = {
   readonly feeds: Readonly<Record<string, number>>;
   readonly feedsTotal: number;
 };
-
-export type FeedUnread = {
-  readonly total: number;
-  readonly feeds: Readonly<Record<string, number>>;
-};

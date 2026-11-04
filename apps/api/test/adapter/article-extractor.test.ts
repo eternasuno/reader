@@ -84,7 +84,10 @@ const verifyRedirectedBase = Effect.gen(function* () {
 
 const verifyTypedFailure = Effect.gen(function* () {
   const failure = yield* Effect.flip(extractHtml('<html></html>'));
-  expect(failure._tag).toBe('ArticleExtractError');
+  expect(failure).toMatchObject({
+    _tag: 'ArticleExtractorError',
+    message: 'Unable to extract article content; open the original page',
+  });
 });
 
 const encodePublishedAt = (publishedAt: DateTime.Utc): string =>

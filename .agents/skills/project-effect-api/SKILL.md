@@ -21,6 +21,16 @@ description: Follow the server API constraints when working on this repository's
 - Prefer framework-provided route Layers over manually constructing equivalent handlers.
 - After composing multiple dependency Layers, call `Effect.provide` only once on the target Effect.
 
+## Reader Repository Contracts
+
+- User repository operations require an explicit owner; FeedRepository has no ownerless listing. Batch feed creation takes ownership from that argument, and feed updates patch only permitted fields.
+- Keep `listLater` / `updateLater` separate from `listFeeds` / `updateFeeds`. Feed selection is `Option<readonly FeedId[]>`: `None` selects all subscribed articles, `Some(ids)` selects those feeds, and `Some([])` returns no rows or performs no update. All feed scopes exclude later reading. Empty article-ID selections also perform no update.
+- Derive `ArticlePatch`, `FeedPatch`, and `SettingsPatch` from entity fields with `Schema.optionalKey`; omit identity and ownership fields. Omitted fields preserve values, `Option.none()` clears optional values, and `Option.some(value)` sets them. Name mutation parameters `articlePatch`, `feedPatch`, or `settingsPatch`.
+- SettingsRepository exposes `get` and `update`; keep secret keys redacted in the repository result and derive public configuration flags in the use case. Empty patches must not create rows.
+- Unread counts use one owner-scoped grouped query and one browser request, returning later, subscription total, and per-feed counts together. Preserve the existing cursor pagination; `inventory` is the lightweight per-feed refresh inventory, not a full-list pagination step.
+- Discover subscription schedule owners through separate infrastructure, then list and refresh subscriptions within each owner. Keep timers and queue deduplication scoped; prevent overlapping work for one owner and isolate individual feed failures. Do not add refresh-frequency settings without a product requirement.
+- Keep adapter failures in typed Effect errors with a message. The webpage-fetch failure shown to the user remains generic: `网页抓取失败，请稍后重试`.
+
 ## API Details
 
 When current API routes, startup procedure, or Better Auth configuration details need confirmation, first read the relevant section of `README.md`; do not duplicate volatile lists or defaults in this skill.

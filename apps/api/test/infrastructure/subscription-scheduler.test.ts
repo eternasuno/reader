@@ -5,6 +5,7 @@ import {
   type Context,
   DateTime,
   Deferred,
+  type Duration,
   Effect,
   Layer,
   Option,
@@ -23,8 +24,15 @@ import { FeedRepository } from '../../../../packages/business/src/port/feed-repo
 import { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 import { SubscriptionSchedulerLive } from '../../src/infrastructure/subscription-scheduler';
+import {
+  type SubscriptionSchedule,
+  SubscriptionSchedules,
+} from '../../src/infrastructure/subscription-schedules';
 
 type Mocks = {
+  readonly schedules:
+    | readonly SubscriptionSchedule[]
+    | (() => readonly SubscriptionSchedule[]);
   readonly subscriptions?: Partial<
     Context.Service.Shape<typeof FeedRepository>
   >;
@@ -36,15 +44,27 @@ type Mocks = {
 
 const feedId = (seed: string) => FeedId.make(seed.repeat(64).slice(0, 64));
 
-const subscription = (owner: string, id: FeedId, url: string): Feed => ({
+const owner = (value: string) => OwnerId.make(value);
+
+const schedule = (ownerId: string, interval: Duration.Input) => ({
+  ownerId: owner(ownerId),
+  interval,
+});
+
+const subscription = (ownerId: string, id: FeedId, url: string): Feed => ({
   id,
-  ownerId: OwnerId.make(owner),
+  ownerId: owner(ownerId),
   url: new URL(url),
   title: url,
   updatedAt: DateTime.fromDateUnsafe(new Date('2026-01-01T00:00:00.000Z')),
 });
 
-const feed = { title: 'Feed', description: Option.none(), articles: [] };
+const feed = {
+  title: 'Feed',
+  url: new URL('https://example.com/feed'),
+  description: Option.none(),
+  articles: [],
+};
 
 const document = () => new Response('<rss/>', { status: 200 });
 
@@ -60,17 +80,31 @@ const httpClient = (
     )
   );
 
+const schedulesLayer = (mocks: Mocks) =>
+  Layer.succeed(
+    SubscriptionSchedules,
+    SubscriptionSchedules.of({
+      list: () =>
+        Effect.sync(() =>
+          typeof mocks.schedules === 'function'
+            ? mocks.schedules()
+            : mocks.schedules
+        ),
+    })
+  );
+
 const scheduler = (mocks: Mocks) =>
   SubscriptionSchedulerLive.pipe(
     Layer.provide(
       Layer.mergeAll(
+        schedulesLayer(mocks),
         Layer.mock(FeedRepository, mocks.subscriptions ?? {}),
         Layer.mock(SettingsRepository, {
           get: () =>
             Effect.succeed({
               retention: 100,
               provider: 'jina',
-              jinaConfigured: false,
+              jinaKey: Option.none(),
               browserEndpoint: Option.none(),
             }),
         }),
@@ -92,32 +126,111 @@ const scheduler = (mocks: Mocks) =>
 const findById = (items: readonly Feed[]) => (_owner: OwnerId, id: FeedId) =>
   Effect.succeed(Option.fromNullishOr(items.find((item) => item.id === id)));
 
-it.effect('refreshes every subscription immediately on startup', () => {
-  const items = [
-    subscription('alice', feedId('a'), 'https://example.com/a.xml'),
-    subscription('bob', feedId('b'), 'https://example.com/b.xml'),
-  ];
-  const fetched: string[] = [];
-  const done = Deferred.makeUnsafe<void>();
+const ownedBy = (items: readonly Feed[]) => (ownerId: OwnerId) =>
+  Effect.succeed(items.filter((item) => item.ownerId === ownerId));
+
+it.effect(
+  'refreshes every discovered owner immediately, scoped to its own feeds',
+  () => {
+    const items = [
+      subscription('alice', feedId('a'), 'https://example.com/a.xml'),
+      subscription('alice', feedId('b'), 'https://example.com/b.xml'),
+      subscription('bob', feedId('c'), 'https://example.com/c.xml'),
+    ];
+    const listed: string[] = [];
+    const fetched: string[] = [];
+    const done = Deferred.makeUnsafe<void>();
+
+    return Effect.gen(function* () {
+      yield* Deferred.await(done);
+      expect([...listed].sort()).toEqual(['alice', 'bob']);
+      expect([...fetched].sort()).toEqual(
+        items.map((item) => item.url.href).sort()
+      );
+    }).pipe(
+      Effect.provide(
+        scheduler({
+          schedules: [
+            schedule('alice', '30 minutes'),
+            schedule('bob', '30 minutes'),
+          ],
+          subscriptions: {
+            list: (ownerId) =>
+              Effect.gen(function* () {
+                listed.push(ownerId);
+
+                return yield* ownedBy(items)(ownerId);
+              }),
+            find: findById(items),
+            update: () => Effect.void,
+          },
+          http: (url) =>
+            Effect.gen(function* () {
+              fetched.push(url.href);
+              if (fetched.length === items.length) {
+                yield* Deferred.succeed(done, undefined);
+              }
+
+              return document();
+            }),
+          articles: {
+            inventory: () => Effect.succeed([]),
+            retain: () => Effect.void,
+          },
+        })
+      )
+    );
+  }
+);
+
+it.effect('runs independent owner schedules at their own intervals', () => {
+  const alice = subscription(
+    'alice',
+    feedId('d'),
+    'https://example.com/alice.xml'
+  );
+  const bob = subscription('bob', feedId('e'), 'https://example.com/bob.xml');
+  const fetches = new Map<string, number>();
+  const started = Deferred.makeUnsafe<void>();
+  const aliceAgain = Deferred.makeUnsafe<void>();
+  const bobAgain = Deferred.makeUnsafe<void>();
+
+  const fetchCount = () =>
+    [...fetches.values()].reduce((sum, count) => sum + count, 0);
 
   return Effect.gen(function* () {
-    yield* Deferred.await(done);
-    expect([...fetched].sort()).toEqual(
-      items.map((item) => item.url.href).sort()
-    );
+    yield* Deferred.await(started);
+    expect(fetches.get(alice.url.href)).toBe(1);
+    expect(fetches.get(bob.url.href)).toBe(1);
+
+    yield* TestClock.adjust('30 minutes');
+    yield* Deferred.await(aliceAgain);
+    expect(fetches.get(alice.url.href)).toBe(2);
+    expect(fetches.get(bob.url.href)).toBe(1);
+
+    yield* TestClock.adjust('30 minutes');
+    yield* Deferred.await(bobAgain);
+    expect(fetches.get(alice.url.href)).toBe(3);
+    expect(fetches.get(bob.url.href)).toBe(2);
   }).pipe(
     Effect.provide(
       scheduler({
+        schedules: [schedule('alice', '30 minutes'), schedule('bob', '1 hour')],
         subscriptions: {
-          list: () => Effect.succeed(items),
-          find: findById(items),
+          list: ownedBy([alice, bob]),
+          find: findById([alice, bob]),
           update: () => Effect.void,
         },
         http: (url) =>
           Effect.gen(function* () {
-            fetched.push(url.href);
-            if (fetched.length === items.length) {
-              yield* Deferred.succeed(done, undefined);
+            const count = (fetches.get(url.href) ?? 0) + 1;
+            fetches.set(url.href, count);
+            if (fetchCount() === 2) {
+              yield* Deferred.succeed(started, undefined);
+            }
+            const repeat = url.href === alice.url.href ? aliceAgain : bobAgain;
+            if (count === 2) {
+              yield* Deferred.succeed(repeat, undefined);
             }
 
             return document();
@@ -131,15 +244,164 @@ it.effect('refreshes every subscription immediately on startup', () => {
   );
 });
 
-it.effect('skips a subscription removed before execution', () => {
+it.effect(
+  'does not refresh an owner while its refresh is still running',
+  () => {
+    const item = subscription(
+      'alice',
+      feedId('f'),
+      'https://example.com/f.xml'
+    );
+    let fetches = 0;
+    let updates = 0;
+    const started = Deferred.makeUnsafe<void>();
+    const gate = Deferred.makeUnsafe<void>();
+    const finished = Deferred.makeUnsafe<void>();
+
+    return Effect.gen(function* () {
+      yield* Deferred.await(started);
+      yield* TestClock.adjust('30 minutes');
+      expect(fetches).toBe(1);
+
+      yield* Deferred.succeed(gate, undefined);
+      yield* Deferred.await(finished);
+      expect(fetches).toBe(1);
+      expect(updates).toBe(1);
+    }).pipe(
+      Effect.provide(
+        scheduler({
+          schedules: [schedule('alice', '30 minutes')],
+          subscriptions: {
+            list: ownedBy([item]),
+            find: findById([item]),
+            update: () =>
+              Effect.gen(function* () {
+                updates += 1;
+                yield* Deferred.succeed(finished, undefined);
+              }),
+          },
+          http: () =>
+            Effect.gen(function* () {
+              fetches += 1;
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(gate);
+
+              return document();
+            }),
+          articles: {
+            inventory: () => Effect.succeed([]),
+            retain: () => Effect.void,
+          },
+        })
+      )
+    );
+  }
+);
+
+it.effect(
+  'logs a failed owner refresh and retries on the next interval',
+  () => {
+    const item = subscription(
+      'alice',
+      feedId('g'),
+      'https://example.com/g.xml'
+    );
+    let attempts = 0;
+    const first = Deferred.makeUnsafe<void>();
+    const second = Deferred.makeUnsafe<void>();
+
+    return Effect.gen(function* () {
+      yield* Deferred.await(first);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust('30 minutes');
+      yield* Deferred.await(second);
+      expect(attempts).toBe(2);
+    }).pipe(
+      Effect.provide(
+        scheduler({
+          schedules: [schedule('alice', '30 minutes')],
+          subscriptions: {
+            list: ownedBy([item]),
+            find: findById([item]),
+            update: () => Effect.void,
+          },
+          http: () =>
+            Effect.gen(function* () {
+              attempts += 1;
+              if (attempts === 1) {
+                yield* Deferred.succeed(first, undefined);
+
+                return new Response('no', { status: 503 });
+              }
+
+              yield* Deferred.succeed(second, undefined);
+
+              return document();
+            }),
+          articles: {
+            inventory: () => Effect.succeed([]),
+            retain: () => Effect.void,
+          },
+        })
+      )
+    );
+  }
+);
+
+it.effect('isolates a failing subscription from the rest of the owner', () => {
+  const broken = subscription(
+    'alice',
+    feedId('h'),
+    'https://example.com/broken.xml'
+  );
+  const healthy = subscription(
+    'alice',
+    feedId('i'),
+    'https://example.com/healthy.xml'
+  );
+  const updated: string[] = [];
+  const done = Deferred.makeUnsafe<void>();
+
+  return Effect.gen(function* () {
+    yield* Deferred.await(done);
+    expect(updated).toEqual([healthy.id]);
+  }).pipe(
+    Effect.provide(
+      scheduler({
+        schedules: [schedule('alice', '30 minutes')],
+        subscriptions: {
+          list: ownedBy([broken, healthy]),
+          find: findById([broken, healthy]),
+          update: (_ownerId, updates) =>
+            Effect.gen(function* () {
+              updated.push(...updates.map((update) => update.id));
+              yield* Deferred.succeed(done, undefined);
+            }),
+        },
+        http: (url) =>
+          Effect.succeed(
+            url.href === broken.url.href
+              ? new Response('no', { status: 503 })
+              : document()
+          ),
+        articles: {
+          inventory: () => Effect.succeed([]),
+          retain: () => Effect.void,
+        },
+      })
+    )
+  );
+});
+
+it.effect('skips a subscription removed before it refreshes', () => {
   const removed = subscription(
     'alice',
-    feedId('c'),
+    feedId('j'),
     'https://example.com/removed.xml'
   );
   const present = subscription(
     'bob',
-    feedId('d'),
+    feedId('k'),
     'https://example.com/present.xml'
   );
   const fetched: string[] = [];
@@ -152,8 +414,12 @@ it.effect('skips a subscription removed before execution', () => {
   }).pipe(
     Effect.provide(
       scheduler({
+        schedules: [
+          schedule('alice', '30 minutes'),
+          schedule('bob', '30 minutes'),
+        ],
         subscriptions: {
-          list: () => Effect.succeed([removed, present]),
+          list: ownedBy([removed, present]),
           find: findById([present]),
           update: () => Effect.void,
         },
@@ -173,93 +439,54 @@ it.effect('skips a subscription removed before execution', () => {
   );
 });
 
-it.effect('does not enqueue a feed while its refresh is still running', () => {
-  const item = subscription('alice', feedId('e'), 'https://example.com/e.xml');
-  let scans = 0;
-  let fetches = 0;
-  let updates = 0;
-  const started = Deferred.makeUnsafe<void>();
-  const gate = Deferred.makeUnsafe<void>();
-  const nextScan = Deferred.makeUnsafe<void>();
-  const finished = Deferred.makeUnsafe<void>();
-
-  return Effect.gen(function* () {
-    yield* Deferred.await(started);
-    yield* TestClock.adjust('30 minutes');
-    yield* Deferred.await(nextScan);
-    expect(fetches).toBe(1);
-
-    yield* Deferred.succeed(gate, undefined);
-    yield* Deferred.await(finished);
-    expect(fetches).toBe(1);
-    expect(updates).toBe(1);
-  }).pipe(
-    Effect.provide(
-      scheduler({
-        subscriptions: {
-          list: () =>
-            Effect.gen(function* () {
-              scans += 1;
-              if (scans === 2) {
-                yield* Deferred.succeed(nextScan, undefined);
-              }
-
-              return [item];
-            }),
-          find: findById([item]),
-          update: () =>
-            Effect.gen(function* () {
-              updates += 1;
-              yield* Deferred.succeed(finished, undefined);
-            }),
-        },
-        http: () =>
-          Effect.gen(function* () {
-            fetches += 1;
-            yield* Deferred.succeed(started, undefined);
-            yield* Deferred.await(gate);
-
-            return document();
-          }),
-        articles: {
-          inventory: () => Effect.succeed([]),
-          retain: () => Effect.void,
-        },
-      })
-    )
+it.effect('reconciles owners that are added or removed', () => {
+  const alice = subscription(
+    'alice',
+    feedId('l'),
+    'https://example.com/alice-cleanup.xml'
   );
-});
-
-it.effect('logs a failed refresh and retries on the next scan', () => {
-  const item = subscription('alice', feedId('f'), 'https://example.com/f.xml');
-  let attempts = 0;
-  const first = Deferred.makeUnsafe<void>();
-  const second = Deferred.makeUnsafe<void>();
+  const bob = subscription(
+    'bob',
+    feedId('m'),
+    'https://example.com/bob-added.xml'
+  );
+  let current = [schedule('alice', '30 minutes')];
+  const fetched: string[] = [];
+  const aliceFirst = Deferred.makeUnsafe<void>();
+  const bobFirst = Deferred.makeUnsafe<void>();
 
   return Effect.gen(function* () {
-    yield* Deferred.await(first);
-    yield* Effect.yieldNow;
+    yield* Deferred.await(aliceFirst);
+    expect(fetched).toEqual([alice.url.href]);
+
+    current = [schedule('alice', '30 minutes'), schedule('bob', '30 minutes')];
+    yield* TestClock.adjust('1 minute');
+    yield* Deferred.await(bobFirst);
+
+    current = [schedule('bob', '30 minutes')];
+    yield* TestClock.adjust('1 minute');
     yield* TestClock.adjust('30 minutes');
-    yield* Deferred.await(second);
-    expect(attempts).toBe(2);
+
+    expect(fetched.filter((href) => href === alice.url.href)).toHaveLength(1);
+    expect(fetched.filter((href) => href === bob.url.href)).toHaveLength(2);
   }).pipe(
     Effect.provide(
       scheduler({
+        schedules: () => current,
         subscriptions: {
-          list: () => Effect.succeed([item]),
-          find: findById([item]),
+          list: ownedBy([alice, bob]),
+          find: findById([alice, bob]),
           update: () => Effect.void,
         },
-        http: () =>
+        http: (url) =>
           Effect.gen(function* () {
-            attempts += 1;
-            if (attempts === 1) {
-              yield* Deferred.succeed(first, undefined);
-
-              return new Response('no', { status: 503 });
+            fetched.push(url.href);
+            if (url.href === alice.url.href) {
+              yield* Deferred.succeed(aliceFirst, undefined);
             }
-
-            yield* Deferred.succeed(second, undefined);
+            if (url.href === bob.url.href) {
+              yield* Deferred.succeed(bobFirst, undefined);
+            }
 
             return document();
           }),
@@ -273,7 +500,7 @@ it.effect('logs a failed refresh and retries on the next scan', () => {
 });
 
 it.effect(
-  'processes refreshes with three concurrent workers',
+  'refreshes three owners concurrently with three workers',
   () => {
     const items = [
       subscription('alice', feedId('1'), 'https://example.com/1.xml'),
@@ -291,8 +518,9 @@ it.effect(
     }).pipe(
       Effect.provide(
         scheduler({
+          schedules: items.map((item) => schedule(item.ownerId, '30 minutes')),
           subscriptions: {
-            list: () => Effect.succeed(items),
+            list: ownedBy(items),
             find: findById(items),
             update: () =>
               Effect.gen(function* () {

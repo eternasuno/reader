@@ -1,6 +1,8 @@
 import { Schema } from 'effect';
 import { OwnerId } from './object-value';
 
+export const DEFAULT_RETENTION = 100;
+
 export const ReaderProvider = Schema.Literals(['jina', 'browser']);
 
 export type ReaderProvider = typeof ReaderProvider.Type;

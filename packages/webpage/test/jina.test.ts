@@ -62,34 +62,38 @@ it.effect('omits credentials when no key is configured', () =>
   })
 );
 
-it.effect('classifies rate limits, rejected keys and other failures', () =>
-  Effect.gen(function* () {
-    const responses = [
-      new Response('slow down', { status: 429 }),
-      new Response('denied', { status: 401 }),
-      new Response('denied', { status: 403 }),
-      new Response('boom', { status: 502 }),
-    ];
-    const fetchImpl = () => {
-      const response = responses.shift();
+it.effect(
+  'reports distinct rate limit, rejected key and failure messages',
+  () =>
+    Effect.gen(function* () {
+      const responses = [
+        new Response('slow down', { status: 429 }),
+        new Response('denied', { status: 401 }),
+        new Response('denied', { status: 403 }),
+        new Response('boom', { status: 502 }),
+      ];
+      const fetchImpl = () => {
+        const response = responses.shift();
 
-      if (!response) {
-        throw new Error('Unexpected request');
-      }
+        if (!response) {
+          throw new Error('Unexpected request');
+        }
 
-      return Promise.resolve(response);
-    };
-    const run = () =>
-      Effect.flip(
-        fetchJina(article, key).pipe(
-          provideFetch(fetchImpl as typeof globalThis.fetch)
-        )
+        return Promise.resolve(response);
+      };
+      const run = () =>
+        Effect.flip(
+          fetchJina(article, key).pipe(
+            provideFetch(fetchImpl as typeof globalThis.fetch)
+          )
+        );
+      expect((yield* run()).message).toBe('Jina rate limit exceeded');
+      expect((yield* run()).message).toBe('Jina API key rejected');
+      expect((yield* run()).message).toBe('Jina API key rejected');
+      expect((yield* run()).message).toBe(
+        'Jina request failed with status 502'
       );
-    expect((yield* run()).code).toBe('rate_limited');
-    expect((yield* run()).code).toBe('key_rejected');
-    expect((yield* run()).code).toBe('key_rejected');
-    expect((yield* run()).code).toBe('fetch_failed');
-  })
+    })
 );
 
 it.effect('rejects unsupported or credentialed targets before fetching', () =>
@@ -173,6 +177,5 @@ it.effect('reports a forty second timeout', () =>
     const error = yield* Fiber.join(fiber).pipe(Effect.flip);
     expect(error._tag).toBe('FetchFailure');
     expect(error.message).toBe('Jina request timed out');
-    expect(error.code).toBe('fetch_failed');
   })
 );

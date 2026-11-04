@@ -62,7 +62,7 @@ it.effect('fetches anonymously when no Jina key is configured', () =>
   }).pipe(Effect.provide(JinaWebpageFetcherLive(undefined)))
 );
 
-it.effect('exposes stable Jina failure codes with English messages', () =>
+it.effect('exposes distinct Jina failure messages', () =>
   Effect.gen(function* () {
     const responses = [
       new Response('slow down', { status: 429 }),
@@ -88,14 +88,11 @@ it.effect('exposes stable Jina failure codes with English messages', () =>
     const limited = yield* run();
     const rejected = yield* run();
     const failed = yield* run();
-    expect([limited.code, rejected.code, failed.code]).toEqual([
-      'rate_limited',
-      'key_rejected',
-      'fetch_failed',
+    expect([limited.message, rejected.message, failed.message]).toEqual([
+      'Jina rate limit exceeded',
+      'Jina API key rejected',
+      'Jina request failed with status 502',
     ]);
-    expect(limited.error).toBe('Jina rate limit exceeded');
-    expect(rejected.error).toBe('Jina API key rejected');
-    expect(failed.error).toBe('Jina request failed with status 502');
   }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
 );
 
@@ -115,8 +112,8 @@ it.effect('rejects credentialed or unsupported addresses before fetching', () =>
         .fetch('ftp://example.com/a')
         .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
     );
-    expect(credentialed._tag).toBe('WebpageFetchError');
-    expect(unsupported._tag).toBe('WebpageFetchError');
+    expect(credentialed._tag).toBe('WebpageFetcherError');
+    expect(unsupported._tag).toBe('WebpageFetcherError');
   }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
 );
 
@@ -154,9 +151,9 @@ it.effect('rejects redirects, oversized bodies and failed statuses', () =>
         .fetch(article)
         .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
     );
-    expect(redirect._tag).toBe('WebpageFetchError');
-    expect(oversized._tag).toBe('WebpageFetchError');
-    expect(failed._tag).toBe('WebpageFetchError');
+    expect(redirect._tag).toBe('WebpageFetcherError');
+    expect(oversized._tag).toBe('WebpageFetcherError');
+    expect(failed._tag).toBe('WebpageFetcherError');
   }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
 );
 
@@ -164,8 +161,8 @@ it.effect('requires a browser endpoint instead of an environment default', () =>
   Effect.gen(function* () {
     const fetcher = yield* WebpageFetcher;
     const error = yield* Effect.flip(fetcher.fetch(article));
-    expect(error._tag).toBe('WebpageFetchError');
-    expect(error.error).toBe('Browser service address is required');
+    expect(error._tag).toBe('WebpageFetcherError');
+    expect(error.message).toBe('Browser service address is required');
   }).pipe(
     Effect.provide(
       Layer.merge(
@@ -200,8 +197,8 @@ it.effect('rejects unsupported browser endpoint input before connecting', () =>
           return yield* fetcher.fetch(article);
         }).pipe(Effect.provide(browserLayer(endpoint)))
       );
-      expect(error._tag).toBe('WebpageFetchError');
-      expect(error.error).toBe('Invalid browser service address');
+      expect(error._tag).toBe('WebpageFetcherError');
+      expect(error.message).toBe('Invalid browser service address');
     }
 
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -218,8 +215,7 @@ it.effect('reports a forty second browser timeout', () =>
     yield* Effect.yieldNow;
     yield* TestClock.adjust('40 seconds');
     const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-    expect(error.error).toBe('Browser extraction timed out');
-    expect(error.code).toBe('fetch_failed');
+    expect(error.message).toBe('Browser extraction timed out');
   }).pipe(
     Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals())),
     Effect.provide(browserLayer('http://127.0.0.1:9222'))
@@ -240,8 +236,7 @@ it.effect('reports a forty second Jina timeout', () =>
     yield* Effect.yieldNow;
     yield* TestClock.adjust('40 seconds');
     const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-    expect(error.error).toBe('Jina request timed out');
-    expect(error.code).toBe('fetch_failed');
+    expect(error.message).toBe('Jina request timed out');
   }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
 );
 

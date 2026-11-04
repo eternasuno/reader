@@ -15,11 +15,14 @@ import {
 import { DocumentSantize } from '../../src/port/document-santize';
 import {
   FeedParser,
+  FeedParserError,
   type ParsedArticle,
   type ParsedFeed,
-  ParseSubscriptionError,
 } from '../../src/port/feed-parser';
-import { FeedRepository } from '../../src/port/feed-repository';
+import {
+  FeedRepository,
+  type FeedUpdate,
+} from '../../src/port/feed-repository';
 import { HtmlParser } from '../../src/port/html-parser';
 import { SettingsRepository } from '../../src/port/settings-repository';
 import { articleId, feedId, normalizeUrl } from '../../src/usecase/identity';
@@ -55,7 +58,7 @@ const entry = (overrides: Partial<ParsedArticle> = {}): ParsedArticle => ({
 const feed = (
   articles: readonly ParsedArticle[],
   title = 'News'
-): ParsedFeed => ({ title, description: Option.none(), articles });
+): ParsedFeed => ({ title, url, description: Option.none(), articles });
 
 const subscription = (): Feed => ({
   id,
@@ -85,7 +88,7 @@ const httpClient = (
 const settingsValue = (retention: number) => ({
   retention,
   provider: 'jina' as const,
-  jinaConfigured: false,
+  jinaKey: Option.none(),
   browserEndpoint: Option.none<string>(),
 });
 
@@ -260,7 +263,7 @@ it.effect('reports a feed parse failure', () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(refreshSubscription(alice, id));
       expect(error).toMatchObject({
-        _tag: 'ParseSubscriptionError',
+        _tag: 'FeedParserError',
         message: 'Failed to parse the subscription feed',
       });
     }),
@@ -271,7 +274,7 @@ it.effect('reports a feed parse failure', () =>
       feedParser: {
         parse: () =>
           Effect.fail(
-            new ParseSubscriptionError({
+            new FeedParserError({
               message: 'Failed to parse the subscription feed',
             })
           ),
@@ -364,8 +367,9 @@ it.effect(
         },
         subscriptions: {
           find: () => Effect.succeed(Option.none()),
-          create: (items) => {
+          create: (owner, items) => {
             events.push('subscription');
+            expect(owner).toBe(alice);
             stored = items[0];
 
             return Effect.succeed(items.map((item) => item.id));
@@ -610,7 +614,8 @@ it.effect(
       },
       { id: knownId, publishedAt: '2026-01-01T00:00:00.000Z' },
     ];
-    let updated: Feed | undefined;
+    const patches: FeedUpdate[] = [];
+    let patchedOwner: string | undefined;
 
     return provide(
       Effect.gen(function* () {
@@ -630,11 +635,20 @@ it.effect(
           knownId,
         ]);
         expect(processed).toEqual(['<p>Tied body</p>']);
-        expect(updated).toMatchObject({ id, url, title: 'Updated' });
+        expect(patchedOwner).toBe(alice);
+        expect(patches).toEqual([
+          {
+            id,
+            feedPatch: {
+              title: 'Updated',
+              updatedAt: at('2026-01-01T12:00:00.000Z'),
+            },
+          },
+        ]);
+        expect(result.item).toMatchObject({ id, url, title: 'Updated' });
         expect(
-          encoded(updated?.updatedAt ?? at('1970-01-01T00:00:00.000Z'))
+          encoded(result.item.updatedAt ?? at('1970-01-01T00:00:00.000Z'))
         ).toBe('2026-01-01T12:00:00.000Z');
-        expect(result.item).toEqual(updated);
       }),
       {
         settings: {
@@ -642,10 +656,11 @@ it.effect(
         },
         subscriptions: {
           find: () => Effect.succeed(Option.some(subscription())),
-          update: (items) =>
+          update: (owner, items) =>
             Effect.sync(() => {
               events.push('update');
-              updated = items[0];
+              patchedOwner = owner;
+              patches.push(...items);
             }),
         },
         feedParser: {

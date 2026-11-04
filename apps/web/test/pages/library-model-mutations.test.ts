@@ -17,8 +17,7 @@ const withRows = async (
 ) => {
   const client = createStubClient();
   client.list.mockResolvedValue(page(rows, null, 'top'));
-  client.laterUnread.mockResolvedValue(0);
-  client.feedUnread.mockResolvedValue({ total: 1, feeds: { f1: 1 } });
+  client.unreadCounts.mockResolvedValue(counts(0, { f1: 1 }));
   const model = createLibraryModel(client);
   await model.refresh();
 

@@ -3,7 +3,6 @@ import type {
   FeedId,
   OwnerId,
 } from '../../../../packages/business/src/entity/object-value.ts';
-import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
 import { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
 import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
 import {
@@ -16,7 +15,6 @@ import { subscribe } from '../../../../packages/business/src/usecase/subscriptio
 import { type HandlerRequest, withSession } from './library-contract';
 import { subscriptionNotFound } from './library-errors';
 import {
-  articleFailure,
   feedPageFailure,
   feedRepositoryFailure,
   previewFailure,
@@ -108,15 +106,6 @@ const unsubscribe = ({ payload }: HandlerRequest<'unsubscribe'>) =>
     Effect.catchTags(feedRepositoryFailure)
   );
 
-const feedsUnread = () =>
-  withSession((owner) =>
-    Effect.gen(function* () {
-      const articles = yield* ArticleRepository;
-
-      return yield* articles.unreadFeeds(owner);
-    })
-  ).pipe(Effect.catchTags(articleFailure));
-
 export const feedHandlers = {
   feedArticles,
   feedRefresh,
@@ -124,5 +113,4 @@ export const feedHandlers = {
   preview: previewHandler,
   subscribe: subscribeHandler,
   unsubscribe,
-  feedsUnread,
 };

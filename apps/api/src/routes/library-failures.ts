@@ -49,8 +49,8 @@ export const addFailure = {
   InvalidArticleUrl: invalidArticleUrl,
   ArticleEmptyContent: articleEmptyContent,
   ...settingsRepositoryFailure,
-  WebpageFetchError: webpageFetchError,
-  ArticleExtractError: articleExtractError,
+  WebpageFetcherError: webpageFetchError,
+  ArticleExtractorError: articleExtractError,
   DuplicateArticle: duplicateArticle,
   ...articleFailure,
 };
@@ -67,8 +67,8 @@ export const extractFailure = {
   ArticleMissingUrl: articleMissingUrl,
   ArticleEmptyContent: articleEmptyContent,
   ...settingsRepositoryFailure,
-  WebpageFetchError: webpageFetchError,
-  ArticleExtractError: articleExtractError,
+  WebpageFetcherError: webpageFetchError,
+  ArticleExtractorError: articleExtractError,
   ...articleFailure,
 };
 
@@ -84,7 +84,7 @@ export const feedRepositoryFailure = {
 export const previewFailure = {
   SubscriptionUrlInvalid: subscriptionUrlInvalid,
   FetchSubscriptionError: fetchSubscriptionError,
-  ParseSubscriptionError: parseSubscriptionError,
+  FeedParserError: parseSubscriptionError,
 };
 
 export const subscribeFailure = {
@@ -92,7 +92,7 @@ export const subscribeFailure = {
   SubscriptionExists: subscriptionExists,
   SubscriptionImportFailed: subscriptionImportFailed,
   FetchSubscriptionError: fetchSubscriptionError,
-  ParseSubscriptionError: parseSubscriptionError,
+  FeedParserError: parseSubscriptionError,
   ...feedRepositoryFailure,
 };
 

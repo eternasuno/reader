@@ -9,6 +9,7 @@ import {
   type OwnerId,
 } from '../../../../packages/business/src/entity/object-value.ts';
 import {
+  type ArticlePatch,
   type ArticleQuery,
   ArticleRepository,
   type ArticleRepositoryError,
@@ -28,6 +29,30 @@ const ARTICLE_COLUMNS =
 
 const encodeArticle = Schema.encodeSync(Article);
 
+type PatchScope = {
+  readonly clause: string;
+  readonly bindings: Bindings;
+};
+
+const LATER_SCOPE: PatchScope = { clause: 'feedId = NONE', bindings: {} };
+const ALL_FEEDS_SCOPE: PatchScope = { clause: 'feedId != NONE', bindings: {} };
+
+const articleScope = (ids: readonly ArticleId[]): PatchScope | undefined =>
+  ids.length === 0
+    ? undefined
+    : { clause: 'articleId IN $ids', bindings: { ids } };
+
+const feedsScope = (
+  feedIds: Option.Option<readonly FeedId[]>
+): PatchScope | undefined =>
+  Option.match(feedIds, {
+    onNone: () => ALL_FEEDS_SCOPE,
+    onSome: (ids) =>
+      ids.length === 0
+        ? undefined
+        : { clause: 'feedId IN $feedIds', bindings: { feedIds: [...ids] } },
+  });
+
 const createArticles = (
   db: Surreal,
   owner: OwnerId,
@@ -36,6 +61,7 @@ const createArticles = (
   if (items.length === 0) {
     return Effect.succeed([] as readonly ArticleId[]);
   }
+
   const feedIds = [
     ...new Set(items.flatMap((item) => Option.toArray(item.feedId))),
   ];
@@ -71,36 +97,63 @@ const createArticles = (
   );
 };
 
-const setArticlesRead = (
+const articlePatchSet = (articlePatch: ArticlePatch) => {
+  const fields: string[] = [];
+  const bindings: { read?: boolean; extractedContent?: string } = {};
+
+  if (articlePatch.read !== undefined) {
+    fields.push('read = $read');
+    bindings.read = articlePatch.read;
+  }
+
+  if (articlePatch.extractedContent !== undefined) {
+    if (Option.isNone(articlePatch.extractedContent)) {
+      fields.push('extractedContent = NONE');
+    } else {
+      fields.push('extractedContent = $extractedContent');
+      bindings.extractedContent = articlePatch.extractedContent.value;
+    }
+  }
+
+  return fields.length === 0
+    ? undefined
+    : { clause: fields.join(', '), bindings };
+};
+
+const updateArticles = (
   db: Surreal,
   owner: OwnerId,
-  ids: readonly ArticleId[],
-  readValue: boolean
+  scope: PatchScope | undefined,
+  articlePatch: ArticlePatch
+) => {
+  const set = articlePatchSet(articlePatch);
+
+  return set === undefined || scope === undefined
+    ? Effect.succeed([] as readonly ArticleId[])
+    : one<{ articleId: ArticleId }[], ArticleRepositoryError>(
+        db,
+        `UPDATE article SET ${set.clause} WHERE owner = $owner AND ${scope.clause} RETURN AFTER;`,
+        { owner, ...scope.bindings, ...set.bindings },
+        articleRepositoryError
+      ).pipe(Effect.map((rows) => rows.map((row) => row.articleId)));
+};
+
+const removeLaterArticles = (
+  db: Surreal,
+  owner: OwnerId,
+  ids: readonly ArticleId[]
 ) =>
   ids.length === 0
     ? Effect.void
     : write(
         db,
-        'UPDATE article SET read = $read WHERE owner = $owner AND articleId IN $ids;',
-        { owner, ids, read: readValue },
+        'DELETE article WHERE owner = $owner AND articleId IN $ids AND feedId = NONE;',
+        { owner, ids },
         articleRepositoryError
       );
 
-const saveExtractedContent = (
-  db: Surreal,
-  owner: OwnerId,
-  id: ArticleId,
-  content: string
-) =>
-  one<unknown[], ArticleRepositoryError>(
-    db,
-    'UPDATE type::record("article", $id) SET extractedContent = $content WHERE owner = $owner RETURN AFTER;',
-    { owner, id, content },
-    articleRepositoryError
-  ).pipe(Effect.map((rows) => rows.length > 0));
-
-const UnreadFeedRow = Schema.Struct({
-  id: FeedId,
+const UnreadCountRow = Schema.Struct({
+  id: Schema.optionalKey(FeedId),
   total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 
@@ -109,18 +162,26 @@ const BoundaryRow = Schema.Struct({
   id: ArticleId,
 });
 
-const countUnreadFeeds = (db: Surreal, owner: OwnerId) =>
+const readUnreadCounts = (db: Surreal, owner: OwnerId) =>
   read(
     db,
-    'SELECT feedId AS id, count() AS total FROM article WHERE owner = $owner AND feedId != NONE AND read = false GROUP BY feedId;',
+    'SELECT feedId AS id, count() AS total FROM article WHERE owner = $owner AND read = false GROUP BY feedId;',
     { owner },
-    Schema.Array(UnreadFeedRow),
+    Schema.Array(UnreadCountRow),
     articleRepositoryError
   ).pipe(
-    Effect.map((rows) => ({
-      total: rows.reduce((sum, row) => sum + row.total, 0),
-      feeds: rows.map((row) => ({ id: row.id, count: row.total })),
-    }))
+    Effect.map((rows) => {
+      const later = rows.find((row) => row.id === undefined)?.total ?? 0;
+      const feeds = rows.flatMap((row) =>
+        row.id === undefined ? [] : [{ id: row.id, count: row.total }]
+      );
+
+      return {
+        later,
+        feedsTotal: feeds.reduce((sum, feed) => sum + feed.count, 0),
+        feeds,
+      };
+    })
   );
 
 const filterClause = (filter: ArticleQuery['filter']) =>
@@ -162,23 +223,19 @@ const pageBindings = (
 const pageSql = (query: ArticleQuery, scopeClause: string) =>
   `SELECT ${ARTICLE_COLUMNS} FROM article WHERE owner = $owner AND ${scopeClause}${filterClause(query.filter)}${boundaryClauses(query)} ORDER BY publishedAt DESC, articleId ASC LIMIT $limit;`;
 
-const listLaterArticles = (db: Surreal, owner: OwnerId, query: ArticleQuery) =>
-  articles(db, pageSql(query, 'feedId = NONE'), pageBindings(owner, query));
-
-const listFeedArticles = (
+const listArticles = (
   db: Surreal,
   owner: OwnerId,
-  feedId: FeedId | undefined,
-  query: ArticleQuery
+  query: ArticleQuery,
+  scope: PatchScope | undefined
 ) =>
-  articles(
-    db,
-    pageSql(
-      query,
-      feedId === undefined ? 'feedId != NONE' : 'feedId = $feedId'
-    ),
-    pageBindings(owner, query, feedId === undefined ? {} : { feedId })
-  );
+  scope === undefined
+    ? Effect.succeed([] as readonly Article[])
+    : articles(
+        db,
+        pageSql(query, scope.clause),
+        pageBindings(owner, query, scope.bindings)
+      );
 
 const findArticle = (db: Surreal, owner: OwnerId, id: ArticleId) =>
   articles(
@@ -190,20 +247,13 @@ const findArticle = (db: Surreal, owner: OwnerId, id: ArticleId) =>
 const makeArticleQueries = (db: Surreal) => ({
   find: (owner: OwnerId, id: ArticleId) => findArticle(db, owner, id),
   listLater: (owner: OwnerId, query: ArticleQuery) =>
-    listLaterArticles(db, owner, query),
+    listArticles(db, owner, query, LATER_SCOPE),
   listFeeds: (
     owner: OwnerId,
-    feedId: FeedId | undefined,
+    feedIds: Option.Option<readonly FeedId[]>,
     query: ArticleQuery
-  ) => listFeedArticles(db, owner, feedId, query),
-  unreadLater: (owner: OwnerId) =>
-    one<{ total: number }[], ArticleRepositoryError>(
-      db,
-      'SELECT count() AS total FROM article WHERE owner = $owner AND feedId = NONE AND read = false GROUP ALL;',
-      { owner },
-      articleRepositoryError
-    ).pipe(Effect.map((rows) => rows[0]?.total ?? 0)),
-  unreadFeeds: (owner: OwnerId) => countUnreadFeeds(db, owner),
+  ) => listArticles(db, owner, query, feedsScope(feedIds)),
+  unreadCounts: (owner: OwnerId) => readUnreadCounts(db, owner),
   inventory: (owner: OwnerId, feedId: FeedId) =>
     read(
       db,
@@ -224,33 +274,26 @@ const makeArticleQueries = (db: Surreal) => ({
 const makeArticleWrites = (db: Surreal, lock: Semaphore.Semaphore) => ({
   create: (owner: OwnerId, items: readonly Article[]) =>
     createArticles(db, owner, items).pipe(lock.withPermit),
-  setRead: (owner: OwnerId, ids: readonly ArticleId[], readValue: boolean) =>
-    setArticlesRead(db, owner, ids, readValue).pipe(lock.withPermit),
-  markLater: (owner: OwnerId) =>
-    write(
-      db,
-      'UPDATE article SET read = true WHERE owner = $owner AND feedId = NONE AND read = false;',
-      { owner },
-      articleRepositoryError
-    ).pipe(lock.withPermit),
-  markFeeds: (owner: OwnerId, ids: readonly FeedId[]) =>
-    ids.length === 0
-      ? Effect.void
-      : write(
-          db,
-          'UPDATE article SET read = true WHERE owner = $owner AND feedId IN $ids AND read = false;',
-          { owner, ids },
-          articleRepositoryError
-        ).pipe(lock.withPermit),
-  removeLater: (owner: OwnerId, id: ArticleId) =>
-    write(
-      db,
-      'DELETE article WHERE owner = $owner AND articleId = $id AND feedId = NONE;',
-      { owner, id },
-      articleRepositoryError
-    ).pipe(lock.withPermit),
-  saveExtracted: (owner: OwnerId, id: ArticleId, content: string) =>
-    saveExtractedContent(db, owner, id, content).pipe(lock.withPermit),
+  updateByArticleIds: (
+    owner: OwnerId,
+    ids: readonly ArticleId[],
+    articlePatch: ArticlePatch
+  ) =>
+    updateArticles(db, owner, articleScope(ids), articlePatch).pipe(
+      lock.withPermit
+    ),
+  updateLater: (owner: OwnerId, articlePatch: ArticlePatch) =>
+    updateArticles(db, owner, LATER_SCOPE, articlePatch).pipe(lock.withPermit),
+  updateFeeds: (
+    owner: OwnerId,
+    feedIds: Option.Option<readonly FeedId[]>,
+    articlePatch: ArticlePatch
+  ) =>
+    updateArticles(db, owner, feedsScope(feedIds), articlePatch).pipe(
+      lock.withPermit
+    ),
+  removeLater: (owner: OwnerId, ids: readonly ArticleId[]) =>
+    removeLaterArticles(db, owner, ids).pipe(lock.withPermit),
 });
 
 const makeArticleRetention = (db: Surreal, lock: Semaphore.Semaphore) => ({

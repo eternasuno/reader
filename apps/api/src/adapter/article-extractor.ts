@@ -1,7 +1,7 @@
 import { Readability } from '@mozilla/readability';
 import {
-  ArticleExtractError,
   ArticleExtractor,
+  ArticleExtractorError,
   type ExtractedArticle,
 } from '@reader/business';
 import { DateTime, Effect, Layer, Option, Schema } from 'effect';
@@ -68,8 +68,9 @@ export const ArticleExtractorLive = Layer.succeed(ArticleExtractor, {
       Effect.try({
         try: () => readArticle(document, now),
         catch: () =>
-          new ArticleExtractError({
-            error: 'Unable to extract article content; open the original page',
+          new ArticleExtractorError({
+            message:
+              'Unable to extract article content; open the original page',
           }),
       })
     ),

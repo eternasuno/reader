@@ -1,10 +1,10 @@
 import { Context, Data, type Effect, Struct } from 'effect';
 import { Article } from '../entity/article';
 
-export class ArticleExtractError extends Data.TaggedError(
-  'ArticleExtractError'
+export class ArticleExtractorError extends Data.TaggedError(
+  'ArticleExtractorError'
 )<{
-  readonly error: string;
+  readonly message: string;
 }> {}
 
 export const ExtractedArticle = Article.mapFields(
@@ -16,7 +16,7 @@ export type ExtractedArticle = typeof ExtractedArticle.Type;
 export type IArticleExtractor = {
   readonly extract: (
     document: Document
-  ) => Effect.Effect<ExtractedArticle, ArticleExtractError>;
+  ) => Effect.Effect<ExtractedArticle, ArticleExtractorError>;
 };
 
 export class ArticleExtractor extends Context.Service<

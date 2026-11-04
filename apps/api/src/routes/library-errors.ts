@@ -5,7 +5,6 @@ const failure = <Tag extends string>(tag: Tag, message: string) =>
     _tag: tag,
     message,
     id: Option.none(),
-    code: Option.none(),
   } as const);
 
 const identifiedFailure = <Tag extends string>(
@@ -17,7 +16,6 @@ const identifiedFailure = <Tag extends string>(
     _tag: tag,
     message,
     id: Option.some(id),
-    code: Option.none(),
   } as const);
 
 export const invalidCursor = () =>
@@ -53,16 +51,11 @@ export const duplicateArticle = (error: { readonly id: string }) =>
 export const settingsRepositoryError = () =>
   failure('SettingsRepositoryError', 'Unable to access extraction settings');
 
-export const webpageFetchError = (error?: { readonly code?: string }) =>
-  Effect.fail({
-    _tag: 'WebpageFetchError',
-    message: 'Unable to fetch the article page',
-    id: Option.none(),
-    code: Option.fromUndefinedOr(error?.code),
-  } as const);
+export const webpageFetchError = () =>
+  failure('WebpageFetcherError', 'Unable to fetch the article page');
 
 export const articleExtractError = () =>
-  failure('ArticleExtractError', 'Unable to extract article content');
+  failure('ArticleExtractorError', 'Unable to extract article content');
 
 export const subscriptionUrlInvalid = () =>
   failure('SubscriptionUrlInvalid', 'Subscription URL must use HTTP or HTTPS');
@@ -88,7 +81,7 @@ export const fetchSubscriptionError = () =>
   failure('FetchSubscriptionError', 'Unable to fetch the subscription feed');
 
 export const parseSubscriptionError = () =>
-  failure('ParseSubscriptionError', 'Unable to parse the subscription feed');
+  failure('FeedParserError', 'Unable to parse the subscription feed');
 
 export const feedRepositoryError = () =>
   failure('FeedRepositoryError', 'Unable to access feeds');

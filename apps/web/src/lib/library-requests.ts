@@ -6,12 +6,11 @@ import {
   ArticlePageSchema,
   FeedItemSchema,
   FeedItemsSchema,
-  FeedsUnreadSchema,
-  LaterUnreadSchema,
   PreviewItemSchema,
+  UnreadCountsSchema,
 } from './library-schema';
 import { decodeBody, type Send, sendGet, sendJson } from './library-transport';
-import type { ArticlePage, FeedUnread, Filter, Scope } from './library-types';
+import type { ArticlePage, Counts, Filter, Scope } from './library-types';
 
 const scopeQuery = (
   scope: Scope
@@ -60,22 +59,15 @@ export const readFeeds = async (send: Send): Promise<readonly Feed[]> =>
   (await decodeBody(FeedItemsSchema, await sendGet(send, '/api/library/feeds')))
     .items;
 
-export const readLaterUnread = async (send: Send): Promise<number> =>
-  (
-    await decodeBody(
-      LaterUnreadSchema,
-      await sendGet(send, '/api/library/later/unread')
-    )
-  ).count;
-
-export const readFeedUnread = async (send: Send): Promise<FeedUnread> => {
+export const readUnreadCounts = async (send: Send): Promise<Counts> => {
   const counts = await decodeBody(
-    FeedsUnreadSchema,
-    await sendGet(send, '/api/library/feeds/unread')
+    UnreadCountsSchema,
+    await sendGet(send, '/api/library/unread')
   );
 
   return {
-    total: counts.total,
+    later: counts.later,
+    feedsTotal: counts.feedsTotal,
     feeds: Object.fromEntries(
       counts.feeds.map((feed) => [feed.id, feed.count])
     ),

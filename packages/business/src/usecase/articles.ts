@@ -2,12 +2,12 @@ import { Effect, Option } from 'effect';
 import type { Article, ArticleId } from '../entity/article';
 import type { FeedId, OwnerId } from '../entity/object-value';
 import {
-  ArticleExtractError,
   ArticleExtractor,
+  ArticleExtractorError,
 } from '../port/article-extractor';
 import { ArticleRepository } from '../port/article-repository';
 import { HtmlParser } from '../port/html-parser';
-import { WebpageFetcher, WebpageFetcherFactory } from '../port/webpage-fetcher';
+import { WebpageFetcher, WebpageFetcherLayer } from '../port/webpage-fetcher';
 import {
   ArticleEmptyContent,
   ArticleMissingUrl,
@@ -38,10 +38,9 @@ export {
 
 const UNTITLED = 'Untitled';
 
-const fetchAndExtract = (owner: OwnerId, sourceUrl: URL) =>
+const fetchAndExtract = (sourceUrl: URL) =>
   Effect.gen(function* () {
-    const factory = yield* WebpageFetcherFactory;
-    const fetcherLayer = yield* factory.forOwner(owner);
+    const fetcherLayer = yield* WebpageFetcherLayer;
     const html = yield* Effect.gen(function* () {
       const fetcher = yield* WebpageFetcher;
 
@@ -51,8 +50,9 @@ const fetchAndExtract = (owner: OwnerId, sourceUrl: URL) =>
     const document = yield* parser.parse(html, sourceUrl).pipe(
       Effect.mapError(
         () =>
-          new ArticleExtractError({
-            error: 'Unable to extract article content; open the original page',
+          new ArticleExtractorError({
+            message:
+              'Unable to extract article content; open the original page',
           })
       )
     );
@@ -90,7 +90,7 @@ export const addArticle = Effect.fn('articles.add')(function* (
     catch: () =>
       new InvalidArticleUrl({ message: 'Article URL must use HTTP or HTTPS' }),
   });
-  const extracted = yield* fetchAndExtract(owner, url);
+  const extracted = yield* fetchAndExtract(url);
   const article: Article = {
     id: articleId(
       owner,
@@ -188,9 +188,11 @@ export const extractArticle = Effect.fn('articles.extract')(function* (
     });
   }
 
-  const extracted = yield* fetchAndExtract(owner, article.url.value);
-  const saved = yield* articles.saveExtracted(owner, id, extracted.content);
-  if (!saved) {
+  const extracted = yield* fetchAndExtract(article.url.value);
+  const updated = yield* articles.updateByArticleIds(owner, [id], {
+    extractedContent: Option.some(extracted.content),
+  });
+  if (updated.length === 0) {
     return yield* new ArticleNotFound({ message: 'Article not found' });
   }
 
@@ -205,7 +207,7 @@ export const markArticle = Effect.fn('articles.mark')(function* (
   read: boolean
 ) {
   const articles = yield* ArticleRepository;
-  yield* articles.setRead(owner, [id], read);
+  yield* articles.updateByArticleIds(owner, [id], { read });
 
   return { ok: true as const };
 });
@@ -214,7 +216,7 @@ export const markLaterRead = Effect.fn('articles.markLater')(function* (
   owner: OwnerId
 ) {
   const articles = yield* ArticleRepository;
-  yield* articles.markLater(owner);
+  yield* articles.updateLater(owner, { read: true });
 
   return { ok: true as const };
 });
@@ -224,7 +226,7 @@ export const markFeedsRead = Effect.fn('articles.markFeeds')(function* (
   ids: readonly FeedId[]
 ) {
   const articles = yield* ArticleRepository;
-  yield* articles.markFeeds(owner, ids);
+  yield* articles.updateFeeds(owner, Option.some(ids), { read: true });
 
   return { ok: true as const };
 });
@@ -234,7 +236,7 @@ export const markArticlesRead = Effect.fn('articles.markArticles')(function* (
   ids: readonly ArticleId[]
 ) {
   const articles = yield* ArticleRepository;
-  yield* articles.setRead(owner, ids, true);
+  yield* articles.updateByArticleIds(owner, ids, { read: true });
 
   return { ok: true as const };
 });
@@ -252,7 +254,7 @@ export const removeArticle = Effect.fn('articles.remove')(function* (
   }
 
   if (Option.isSome(found)) {
-    yield* articles.removeLater(owner, id);
+    yield* articles.removeLater(owner, [id]);
   }
 
   return { ok: true as const };

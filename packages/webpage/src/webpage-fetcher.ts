@@ -1,4 +1,4 @@
-import { WebpageFetchError, WebpageFetcher } from '@reader/business';
+import { WebpageFetcher, WebpageFetcherError } from '@reader/business';
 import { Context, Effect, Layer, Redacted, Semaphore } from 'effect';
 import { fetchBrowser } from './browser';
 import { fetchJina } from './jina';
@@ -19,7 +19,7 @@ export const BrowserConcurrencyLive = Layer.effect(
 
 const parseBrowserEndpoint = (
   endpoint: string
-): Effect.Effect<Redacted.Redacted<string>, WebpageFetchError> =>
+): Effect.Effect<Redacted.Redacted<string>, WebpageFetcherError> =>
   Effect.try({
     try: () => {
       const url = new URL(endpoint);
@@ -35,17 +35,17 @@ const parseBrowserEndpoint = (
       return Redacted.make(endpoint);
     },
     catch: () =>
-      new WebpageFetchError({ error: 'Invalid browser service address' }),
+      new WebpageFetcherError({ message: 'Invalid browser service address' }),
   });
 
 const browserTarget = (
   endpoint: string | undefined
-): Effect.Effect<Redacted.Redacted<string>, WebpageFetchError> =>
+): Effect.Effect<Redacted.Redacted<string>, WebpageFetcherError> =>
   endpoint
     ? parseBrowserEndpoint(endpoint)
     : Effect.fail(
-        new WebpageFetchError({
-          error: 'Browser service address is required',
+        new WebpageFetcherError({
+          message: 'Browser service address is required',
         })
       );
 
@@ -56,11 +56,7 @@ export const JinaWebpageFetcherLive = (
     fetch: (url) =>
       fetchJina(url, key).pipe(
         Effect.mapError(
-          (failure) =>
-            new WebpageFetchError({
-              error: failure.message,
-              code: failure.code ?? 'fetch_failed',
-            })
+          (failure) => new WebpageFetcherError({ message: failure.message })
         )
       ),
   });
@@ -82,17 +78,15 @@ export const BrowserWebpageFetcherLive = (
               duration: '40 seconds',
               orElse: () =>
                 Effect.fail(
-                  new WebpageFetchError({
-                    error: 'Browser extraction timed out',
-                    code: 'fetch_failed',
+                  new WebpageFetcherError({
+                    message: 'Browser extraction timed out',
                   })
                 ),
             }),
             Effect.catchTag('FetchFailure', () =>
               Effect.fail(
-                new WebpageFetchError({
-                  error: 'Browser extraction failed',
-                  code: 'fetch_failed',
+                new WebpageFetcherError({
+                  message: 'Browser extraction failed',
                 })
               )
             )

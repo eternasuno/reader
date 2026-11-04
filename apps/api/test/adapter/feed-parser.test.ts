@@ -76,6 +76,7 @@ const rss = `<?xml version="1.0"?>
 it('retains RSS items with missing or invalid URLs and resolves relative links', () => {
   const feed = parseFeed(rss, base, now);
   expect(feed.title).toBe('News');
+  expect(feed.url).toEqual(base);
   expect(feed.description).toEqual(Option.some('Daily'));
   expect(feed.articles).toHaveLength(4);
   const [first, second, third, linkless] = feed.articles;
@@ -463,12 +464,12 @@ it.effect('parses feed content through the FeedParser service', () =>
   }).pipe(Effect.provide(FeedParserLive))
 );
 
-it.effect('reports unparseable content as a ParseSubscriptionError', () =>
+it.effect('reports unparseable content as a FeedParserError', () =>
   Effect.gen(function* () {
     const parser = yield* FeedParser;
     const error = yield* Effect.flip(parser.parse('<html></html>', base));
     expect(error).toMatchObject({
-      _tag: 'ParseSubscriptionError',
+      _tag: 'FeedParserError',
       message: 'Failed to parse the subscription feed',
     });
   }).pipe(Effect.provide(FeedParserLive))

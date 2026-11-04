@@ -12,6 +12,7 @@ import { AppLive, LibraryServicesLive } from './app';
 import { AuthLive } from './infrastructure/auth';
 import { DatabaseLive } from './infrastructure/db';
 import { SubscriptionSchedulerLive } from './infrastructure/subscription-scheduler';
+import { SubscriptionSchedulesLive } from './infrastructure/subscription-schedules';
 import { staticRoutes } from './routes/static';
 
 const DEFAULT_PORT = 3001;
@@ -22,9 +23,15 @@ const server = NodeHttpServer.layerConfig(createServer, {
 
 const library = LibraryServicesLive.pipe(Layer.provide(DatabaseLive));
 
+const schedules = SubscriptionSchedulesLive.pipe(Layer.provide(DatabaseLive));
+
+const scheduler = SubscriptionSchedulerLive.pipe(
+  Layer.provide(Layer.merge(library, schedules))
+);
+
 const dependencies = Layer.mergeAll(
   library,
-  SubscriptionSchedulerLive.pipe(Layer.provide(library)),
+  scheduler,
   AuthLive.pipe(Layer.provide(DatabaseLive)),
   NodeFileSystem.layer,
   NodePath.layer,

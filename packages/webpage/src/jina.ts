@@ -25,22 +25,15 @@ const parseTarget = (url: string): Effect.Effect<URL, FetchFailure> =>
 
 const failureForStatus = (status: number): FetchFailure => {
   if (status === 429) {
-    return new FetchFailure({
-      message: 'Jina rate limit exceeded',
-      code: 'rate_limited',
-    });
+    return new FetchFailure({ message: 'Jina rate limit exceeded' });
   }
 
   if (status === 401 || status === 403) {
-    return new FetchFailure({
-      message: 'Jina API key rejected',
-      code: 'key_rejected',
-    });
+    return new FetchFailure({ message: 'Jina API key rejected' });
   }
 
   return new FetchFailure({
     message: `Jina request failed with status ${status}`,
-    code: 'fetch_failed',
   });
 };
 
@@ -67,15 +60,6 @@ const requestPage = (
         : Effect.fail(failureForStatus(page.status))
   );
 
-const classifyFailure = (failure: FetchFailure): FetchFailure =>
-  failure.code
-    ? failure
-    : new FetchFailure({
-        message: failure.message,
-        cause: failure.cause,
-        code: 'fetch_failed',
-      });
-
 export const fetchJina = (
   url: string,
   key: Redacted.Redacted<string> | undefined
@@ -84,12 +68,6 @@ export const fetchJina = (
     Effect.timeoutOrElse({
       duration: '40 seconds',
       orElse: () =>
-        Effect.fail(
-          new FetchFailure({
-            message: 'Jina request timed out',
-            code: 'fetch_failed',
-          })
-        ),
-    }),
-    Effect.mapError(classifyFailure)
+        Effect.fail(new FetchFailure({ message: 'Jina request timed out' })),
+    })
   );

@@ -13,6 +13,7 @@ import {
   removeArticle,
   saveArticle,
 } from '../../../../packages/business/src/usecase/articles.ts';
+import { webpageFetcherForOwner } from '../adapter/webpage-fetcher';
 import {
   type HandlerRequest,
   optionToNull,
@@ -49,12 +50,12 @@ const laterRefresh = ({ query }: HandlerRequest<'laterRefresh'>) =>
     )
   ).pipe(Effect.catchTags(articlePageFailure));
 
-const laterUnread = () =>
+const unreadCounts = () =>
   withSession((owner) =>
     Effect.gen(function* () {
       const articles = yield* ArticleRepository;
 
-      return { count: yield* articles.unreadLater(owner) };
+      return yield* articles.unreadCounts(owner);
     })
   ).pipe(Effect.catchTags(articleFailure));
 
@@ -66,9 +67,13 @@ const article = ({ query }: HandlerRequest<'article'>) =>
   ).pipe(Effect.catchTags(articleFailure));
 
 const add = ({ payload }: HandlerRequest<'addArticle'>) =>
-  withSession((owner) => addArticle(owner, payload.url)).pipe(
-    Effect.catchTags(addFailure)
-  );
+  withSession((owner) =>
+    Effect.gen(function* () {
+      const layer = yield* webpageFetcherForOwner(owner);
+
+      return yield* addArticle(owner, payload.url).pipe(Effect.provide(layer));
+    })
+  ).pipe(Effect.catchTags(addFailure));
 
 const save = ({ payload }: HandlerRequest<'saveArticle'>) =>
   withSession((owner) => saveArticle(owner, payload.id)).pipe(
@@ -76,9 +81,15 @@ const save = ({ payload }: HandlerRequest<'saveArticle'>) =>
   );
 
 const extract = ({ payload }: HandlerRequest<'extractArticle'>) =>
-  withSession((owner) => extractArticle(owner, payload.id)).pipe(
-    Effect.catchTags(extractFailure)
-  );
+  withSession((owner) =>
+    Effect.gen(function* () {
+      const layer = yield* webpageFetcherForOwner(owner);
+
+      return yield* extractArticle(owner, payload.id).pipe(
+        Effect.provide(layer)
+      );
+    })
+  ).pipe(Effect.catchTags(extractFailure));
 
 const markRead = ({ payload }: HandlerRequest<'markRead'>) =>
   withSession((owner) => markArticle(owner, payload.id, payload.read)).pipe(
@@ -106,7 +117,7 @@ const remove = ({ payload }: HandlerRequest<'removeArticle'>) =>
 export const articleHandlers = {
   laterList,
   laterRefresh,
-  laterUnread,
+  unreadCounts,
   article,
   addArticle: add,
   saveArticle: save,

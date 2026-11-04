@@ -52,8 +52,8 @@ export const FeedItemsSchema = Schema.Struct({
   items: Schema.Array(FeedSchema),
 });
 export const PreviewItemSchema = Schema.Struct({ preview: PreviewSchema });
-export const LaterUnreadSchema = Schema.Struct({ count: Schema.Int });
-export const FeedsUnreadSchema = Schema.Struct({
-  total: Schema.Int,
+export const UnreadCountsSchema = Schema.Struct({
+  later: Schema.Int,
+  feedsTotal: Schema.Int,
   feeds: Schema.Array(Schema.Struct({ id: Schema.String, count: Schema.Int })),
 });

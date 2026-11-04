@@ -11,15 +11,15 @@ export type LibraryErrorTag =
   | 'ArticleEmptyContent'
   | 'DuplicateArticle'
   | 'SettingsRepositoryError'
-  | 'WebpageFetchError'
-  | 'ArticleExtractError'
+  | 'WebpageFetcherError'
+  | 'ArticleExtractorError'
   | 'SubscriptionUrlInvalid'
   | 'SubscriptionExists'
   | 'SubscriptionNotFound'
   | 'SubscriptionImportFailed'
   | 'SubscriptionRefreshFailed'
   | 'FetchSubscriptionError'
-  | 'ParseSubscriptionError'
+  | 'FeedParserError'
   | 'FeedRepositoryError'
   | 'RequestFailed'
   | 'NetworkError'
@@ -38,15 +38,15 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   ArticleEmptyContent: '未能提取到文章内容',
   DuplicateArticle: '该文章已在稍后阅读中',
   SettingsRepositoryError: '正文提取设置暂时不可用，请稍后重试',
-  WebpageFetchError: '网页抓取失败，请稍后重试',
-  ArticleExtractError: '正文提取失败，请稍后重试',
+  WebpageFetcherError: '网页抓取失败，请稍后重试',
+  ArticleExtractorError: '正文提取失败，请稍后重试',
   SubscriptionUrlInvalid: '请输入有效的订阅地址',
   SubscriptionExists: '该订阅已存在',
   SubscriptionNotFound: '订阅不存在，可能已被删除',
   SubscriptionImportFailed: '订阅文章导入失败，请稍后重试',
   SubscriptionRefreshFailed: '订阅刷新失败，请稍后重试',
   FetchSubscriptionError: '无法获取订阅内容，请稍后重试',
-  ParseSubscriptionError: '无法解析订阅源，请确认地址正确',
+  FeedParserError: '无法解析订阅源，请确认地址正确',
   FeedRepositoryError: '暂时无法访问订阅，请稍后重试',
   RequestFailed: '请求失败，请稍后重试',
   NetworkError: '网络连接失败，请检查网络后重试',
@@ -56,20 +56,17 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
 export class LibraryError extends Error {
   readonly tag: LibraryErrorTag;
   readonly id: string | undefined;
-  readonly code: string | undefined;
 
   constructor(
     tag: LibraryErrorTag,
     detail: {
       readonly id?: string | undefined;
-      readonly code?: string | undefined;
     } = {}
   ) {
     super(libraryErrorMessages[tag]);
     this.name = 'LibraryError';
     this.tag = tag;
     this.id = detail.id;
-    this.code = detail.code;
   }
 }
 

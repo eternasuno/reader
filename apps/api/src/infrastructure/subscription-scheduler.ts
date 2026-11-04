@@ -1,7 +1,8 @@
 import {
   type Context,
-  type Duration,
+  Duration,
   Effect,
+  Fiber,
   Layer,
   Option,
   Queue,
@@ -18,17 +19,27 @@ import { FeedRepository } from '../../../../packages/business/src/port/feed-repo
 import type { HtmlParser } from '../../../../packages/business/src/port/html-parser.ts';
 import type { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
 import { refreshSubscription } from '../../../../packages/business/src/usecase/subscriptions.ts';
+import {
+  type SubscriptionSchedule,
+  SubscriptionSchedules,
+} from './subscription-schedules.ts';
 
 const WORKER_COUNT = 3;
 
-const REFRESH_INTERVAL: Duration.Input = '30 minutes';
+/**
+ * How often discovered owner schedules are reconciled. New owners refresh
+ * immediately; removed owners stop within one reconciliation.
+ */
+const RECONCILE_INTERVAL: Duration.Input = '1 minute';
 
-type SubscriptionJob = {
+type OwnerJob = {
   readonly ownerId: OwnerId;
-  readonly id: FeedId;
 };
 
-type Registration = Set<FeedId>;
+type OwnerTimers = Map<
+  OwnerId,
+  { readonly fiber: Fiber.Fiber<void>; readonly interval: number }
+>;
 
 type RefreshRequirements =
   | FeedRepository
@@ -39,21 +50,20 @@ type RefreshRequirements =
   | DocumentSantize
   | HtmlParser;
 
-const register = (registered: Registration, id: FeedId) =>
+const register = (registered: Set<OwnerId>, ownerId: OwnerId) =>
   Effect.sync(() => {
-    if (registered.has(id)) {
+    if (registered.has(ownerId)) {
       return false;
     }
 
-    registered.add(id);
+    registered.add(ownerId);
 
     return true;
   });
 
 const enqueue =
-  (queue: Queue.Queue<SubscriptionJob>, registered: Registration) =>
-  (job: SubscriptionJob) =>
-    register(registered, job.id).pipe(
+  (queue: Queue.Queue<OwnerJob>, registered: Set<OwnerId>) => (job: OwnerJob) =>
+    register(registered, job.ownerId).pipe(
       Effect.flatMap((accepted) =>
         accepted ? Queue.offer(queue, job) : Effect.succeed(true)
       ),
@@ -61,40 +71,58 @@ const enqueue =
         offered
           ? Effect.void
           : Effect.sync(() => {
-              registered.delete(job.id);
+              registered.delete(job.ownerId);
             })
       ),
       Effect.asVoid
     );
 
-const release = (registered: Registration, id: FeedId) =>
+const release = (registered: Set<OwnerId>, ownerId: OwnerId) =>
   Effect.sync(() => {
-    registered.delete(id);
+    registered.delete(ownerId);
   });
 
-const refresh =
+const refreshFeed = (
+  subscriptions: Context.Service.Shape<typeof FeedRepository>,
+  ownerId: OwnerId,
+  id: FeedId
+) =>
+  Effect.gen(function* () {
+    const subscription = yield* subscriptions.find(ownerId, id);
+    if (Option.isNone(subscription)) {
+      return;
+    }
+
+    yield* refreshSubscription(ownerId, id);
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning('Subscription refresh failed', error)
+    )
+  );
+
+const refreshOwner =
   (
     subscriptions: Context.Service.Shape<typeof FeedRepository>,
-    registered: Registration
+    registered: Set<OwnerId>
   ) =>
-  (job: SubscriptionJob) =>
+  (job: OwnerJob) =>
     Effect.gen(function* () {
-      const subscription = yield* subscriptions.find(job.ownerId, job.id);
-      if (Option.isNone(subscription)) {
-        return;
-      }
-
-      yield* refreshSubscription(job.ownerId, job.id);
+      const items = yield* subscriptions.list(job.ownerId);
+      yield* Effect.forEach(
+        items,
+        (item) => refreshFeed(subscriptions, job.ownerId, item.id),
+        { discard: true }
+      );
     }).pipe(
       Effect.catch((error) =>
-        Effect.logWarning('Subscription refresh failed', error)
+        Effect.logWarning('Owner subscription refresh failed', error)
       ),
-      Effect.ensuring(release(registered, job.id))
+      Effect.ensuring(release(registered, job.ownerId))
     );
 
 const worker = <R>(
-  queue: Queue.Queue<SubscriptionJob>,
-  process: (job: SubscriptionJob) => Effect.Effect<void, never, R>
+  queue: Queue.Queue<OwnerJob>,
+  process: (job: OwnerJob) => Effect.Effect<void, never, R>
 ) =>
   Queue.take(queue).pipe(
     Effect.flatMap(process),
@@ -102,49 +130,129 @@ const worker = <R>(
     Effect.forkScoped
   );
 
-const scan = (
-  subscriptions: Context.Service.Shape<typeof FeedRepository>,
-  enqueueJob: (job: SubscriptionJob) => Effect.Effect<void>
+const scheduleOwner =
+  (enqueueOwner: (job: OwnerJob) => Effect.Effect<void>) =>
+  (schedule: SubscriptionSchedule) =>
+    Effect.gen(function* () {
+      yield* enqueueOwner({ ownerId: schedule.ownerId });
+
+      return yield* Effect.forever(
+        Effect.andThen(
+          Effect.sleep(schedule.interval),
+          enqueueOwner({ ownerId: schedule.ownerId })
+        )
+      );
+    }).pipe(Effect.forkScoped);
+
+const intervalMillis = (interval: Duration.Input) =>
+  Option.map(Duration.fromInput(interval), Duration.toMillis);
+
+const startOwner =
+  (timers: OwnerTimers, enqueueOwner: (job: OwnerJob) => Effect.Effect<void>) =>
+  (schedule: SubscriptionSchedule) =>
+    Effect.gen(function* () {
+      const interval = intervalMillis(schedule.interval);
+      if (Option.isNone(interval)) {
+        return yield* Effect.logWarning(
+          'Ignoring subscription schedule with an invalid interval',
+          schedule
+        );
+      }
+
+      const current = timers.get(schedule.ownerId);
+      if (current !== undefined && current.interval === interval.value) {
+        return;
+      }
+
+      if (current !== undefined) {
+        yield* Fiber.interrupt(current.fiber);
+      }
+
+      const fiber = yield* scheduleOwner(enqueueOwner)(schedule);
+      timers.set(schedule.ownerId, { fiber, interval: interval.value });
+    });
+
+const stopOwner = (timers: OwnerTimers) => (ownerId: OwnerId) =>
+  Effect.gen(function* () {
+    const timer = timers.get(ownerId);
+    if (timer === undefined) {
+      return;
+    }
+
+    timers.delete(ownerId);
+    yield* Fiber.interrupt(timer.fiber);
+  });
+
+const reconcile = (
+  schedules: Context.Service.Shape<typeof SubscriptionSchedules>,
+  timers: OwnerTimers,
+  enqueueOwner: (job: OwnerJob) => Effect.Effect<void>
 ) =>
-  subscriptions.list().pipe(
-    Effect.flatMap((items) =>
-      Effect.forEach(
-        items,
-        (item) => enqueueJob({ ownerId: item.ownerId, id: item.id }),
-        { discard: true }
-      )
-    ),
+  Effect.gen(function* () {
+    const found = yield* schedules.list();
+    const discovered = new Set<OwnerId>();
+
+    yield* Effect.forEach(
+      found,
+      (schedule) =>
+        Effect.sync(() => {
+          discovered.add(schedule.ownerId);
+        }),
+      { discard: true }
+    );
+    yield* Effect.forEach(found, startOwner(timers, enqueueOwner), {
+      discard: true,
+    });
+
+    const removed = [...timers.keys()].filter(
+      (ownerId) => !discovered.has(ownerId)
+    );
+    yield* Effect.forEach(removed, stopOwner(timers), { discard: true });
+  }).pipe(
     Effect.catch((error) =>
-      Effect.logWarning('Subscription scan failed', error)
+      Effect.logWarning('Subscription schedule reconciliation failed', error)
     )
   );
 
 export const SubscriptionSchedulerLive: Layer.Layer<
   never,
   never,
-  RefreshRequirements
+  RefreshRequirements | SubscriptionSchedules
 > = Layer.effectDiscard(
   Effect.gen(function* () {
     const subscriptions = yield* FeedRepository;
-    const queue = yield* Queue.unbounded<SubscriptionJob>();
-    const registered = new Set<FeedId>();
+    const schedules = yield* SubscriptionSchedules;
+    const queue = yield* Queue.unbounded<OwnerJob>();
+    const registered = new Set<OwnerId>();
+    const timers: OwnerTimers = new Map();
 
-    yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        yield* Effect.forEach(
+          [...timers.values()],
+          (timer) => Fiber.interrupt(timer.fiber),
+          { discard: true }
+        );
+        timers.clear();
+        registered.clear();
+        yield* Queue.shutdown(queue);
+      })
+    );
 
-    const enqueueJob = enqueue(queue, registered);
-    const processJob = refresh(subscriptions, registered);
+    const enqueueOwner = enqueue(queue, registered);
+    const processOwner = refreshOwner(subscriptions, registered);
 
     yield* Effect.forEach(
       Array.from({ length: WORKER_COUNT }),
-      () => worker(queue, processJob),
+      () => worker(queue, processOwner),
       { discard: true }
     );
 
-    const refreshAll = scan(subscriptions, enqueueJob);
+    const reconcileOwners = reconcile(schedules, timers, enqueueOwner);
 
-    yield* refreshAll;
+    yield* reconcileOwners;
     yield* Effect.forever(
-      Effect.andThen(Effect.sleep(REFRESH_INTERVAL), refreshAll)
+      Effect.andThen(Effect.sleep(RECONCILE_INTERVAL), reconcileOwners)
     ).pipe(Effect.forkScoped);
   })
 );

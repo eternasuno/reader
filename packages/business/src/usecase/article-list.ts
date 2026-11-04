@@ -191,6 +191,11 @@ const continuationOf = (
     : undefined;
 };
 
+const feedSelection = (
+  feedId: FeedId | undefined
+): Option.Option<readonly FeedId[]> =>
+  feedId === undefined ? Option.none() : Option.some([feedId]);
+
 export const listLaterArticles = Effect.fn('articles.listLater')(function* (
   owner: OwnerId,
   filter: ArticleFilter,
@@ -248,7 +253,7 @@ export const listFeedArticles = Effect.fn('articles.listFeeds')(function* (
   const boundary = yield* decodeOptionalCursor(owner, scope, filter, through);
   const rows = yield* articles.listFeeds(
     owner,
-    feedId,
+    feedSelection(feedId),
     pageQuery(filter, after, boundary)
   );
 
@@ -298,7 +303,7 @@ export const refreshFeedArticles = Effect.fn('articles.refreshFeeds')(
     while (true) {
       const rows = yield* articles.listFeeds(
         owner,
-        feedId,
+        feedSelection(feedId),
         pageQuery(filter, after, boundary)
       );
       items.push(...rows);

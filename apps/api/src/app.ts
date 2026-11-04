@@ -8,7 +8,6 @@ import { FeedParserLive } from './adapter/feed-parser';
 import { HtmlParserLive } from './adapter/html-parser';
 import { ReaderStoreLive } from './adapter/reader-store';
 import { SettingsRepositoryLive } from './adapter/settings-repository';
-import { WebpageFetcherFactoryLive } from './adapter/webpage-fetcher';
 import type { Auth } from './infrastructure/auth';
 import { FeedHttpClientLive } from './infrastructure/feed-http-client';
 import { authRoutes } from './routes/auth';
@@ -18,9 +17,7 @@ export const LibraryServicesLive = Layer.mergeAll(
   ReaderStoreLive,
   SettingsRepositoryLive,
   ArticleExtractorLive,
-  WebpageFetcherFactoryLive.pipe(
-    Layer.provide(Layer.merge(SettingsRepositoryLive, BrowserConcurrencyLive))
-  ),
+  BrowserConcurrencyLive,
   HtmlParserLive,
   FeedHttpClientLive,
   FeedParserLive,

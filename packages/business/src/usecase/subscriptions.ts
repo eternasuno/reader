@@ -1,6 +1,6 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Data, DateTime, Effect, Option } from 'effect';
 import type { Feed } from '../entity/feed';
-import { FeedId, type OwnerId } from '../entity/object-value';
+import type { FeedId, OwnerId } from '../entity/object-value';
 import { ArticleRepository } from '../port/article-repository';
 import { FeedParser } from '../port/feed-parser';
 import { FeedRepository } from '../port/feed-repository';
@@ -15,30 +15,37 @@ import {
 
 export { SUBSCRIPTION_INITIAL_IMPORT } from './subscription-selection';
 
-export class SubscriptionUrlInvalid extends Schema.TaggedError<SubscriptionUrlInvalid>()(
-  'SubscriptionUrlInvalid',
-  { message: Schema.String }
-) {}
+export class SubscriptionUrlInvalid extends Data.TaggedError(
+  'SubscriptionUrlInvalid'
+)<{
+  readonly message: string;
+}> {}
 
-export class SubscriptionExists extends Schema.TaggedError<SubscriptionExists>()(
-  'SubscriptionExists',
-  { message: Schema.String, id: FeedId }
-) {}
+export class SubscriptionExists extends Data.TaggedError('SubscriptionExists')<{
+  readonly message: string;
+  readonly id: FeedId;
+}> {}
 
-export class SubscriptionNotFound extends Schema.TaggedError<SubscriptionNotFound>()(
-  'SubscriptionNotFound',
-  { message: Schema.String, id: FeedId }
-) {}
+export class SubscriptionNotFound extends Data.TaggedError(
+  'SubscriptionNotFound'
+)<{
+  readonly message: string;
+  readonly id: FeedId;
+}> {}
 
-export class SubscriptionImportFailed extends Schema.TaggedError<SubscriptionImportFailed>()(
-  'SubscriptionImportFailed',
-  { message: Schema.String, id: FeedId }
-) {}
+export class SubscriptionImportFailed extends Data.TaggedError(
+  'SubscriptionImportFailed'
+)<{
+  readonly message: string;
+  readonly id: FeedId;
+}> {}
 
-export class SubscriptionRefreshFailed extends Schema.TaggedError<SubscriptionRefreshFailed>()(
-  'SubscriptionRefreshFailed',
-  { message: Schema.String, id: FeedId }
-) {}
+export class SubscriptionRefreshFailed extends Data.TaggedError(
+  'SubscriptionRefreshFailed'
+)<{
+  readonly message: string;
+  readonly id: FeedId;
+}> {}
 
 const existsError = (id: FeedId) =>
   new SubscriptionExists({ message: 'Subscription already exists', id });
@@ -63,7 +70,7 @@ const importErrors = (id: FeedId) => {
 
   return {
     DocumentSantizeError: fail,
-    HtmlParseError: fail,
+    HtmlParserError: fail,
     ArticleRepositoryError: fail,
   };
 };
@@ -79,7 +86,7 @@ const refreshErrors = (id: FeedId) => {
 
   return {
     DocumentSantizeError: fail,
-    HtmlParseError: fail,
+    HtmlParserError: fail,
     ArticleRepositoryError: fail,
     FeedRepositoryError: fail,
   };
@@ -107,7 +114,7 @@ export const subscribe = Effect.fn('subscriptions.subscribe')(function* (
     title: feed.title,
     updatedAt: now,
   };
-  if (!(yield* subscriptions.create([subscription])).includes(id)) {
+  if (!(yield* subscriptions.create(ownerId, [subscription])).includes(id)) {
     return yield* existsError(id);
   }
 
@@ -165,6 +172,7 @@ export const refreshSubscription = Effect.fn('subscriptions.refresh')(
       title: feed.title,
       updatedAt: now,
     };
+    const feedPatch = { title: feed.title, updatedAt: now };
 
     yield* importArticles(ownerId, id, retained).pipe(
       Effect.andThen(
@@ -174,7 +182,7 @@ export const refreshSubscription = Effect.fn('subscriptions.refresh')(
           retained.map((candidate) => candidate.id)
         )
       ),
-      Effect.andThen(subscriptions.update([updated])),
+      Effect.andThen(subscriptions.update(ownerId, [{ id, feedPatch }])),
       Effect.catchTags(refreshErrors(id))
     );
 

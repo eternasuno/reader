@@ -1,4 +1,4 @@
-import { HtmlParseError, HtmlParser } from '@reader/business';
+import { HtmlParser, HtmlParserError } from '@reader/business';
 import { Effect, Layer } from 'effect';
 import { JSDOM } from 'jsdom';
 
@@ -7,7 +7,7 @@ const acquireDocument = (html: string, url?: URL) =>
     Effect.try({
       try: () => new JSDOM(html, url === undefined ? {} : { url: url.href }),
       catch: () =>
-        new HtmlParseError({ error: 'Unable to parse HTML content' }),
+        new HtmlParserError({ message: 'Unable to parse HTML content' }),
     }),
     (dom) => Effect.sync(() => dom.window.close())
   );

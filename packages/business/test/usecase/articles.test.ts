@@ -8,15 +8,16 @@ import { FeedId, OwnerId } from '../../src/entity/object-value';
 import { ArticleExtractor } from '../../src/port/article-extractor';
 import {
   type ArticleBoundary,
+  type ArticlePatch,
   type ArticleQuery,
   ArticleRepository,
 } from '../../src/port/article-repository';
 import { FeedRepository } from '../../src/port/feed-repository';
-import { HtmlParseError, HtmlParser } from '../../src/port/html-parser';
+import { HtmlParser, HtmlParserError } from '../../src/port/html-parser';
 import {
-  WebpageFetchError,
   WebpageFetcher,
-  WebpageFetcherFactory,
+  WebpageFetcherError,
+  WebpageFetcherLayer,
 } from '../../src/port/webpage-fetcher';
 import {
   addArticle,
@@ -100,10 +101,11 @@ const pagedStore =
   };
 
 const pagedArticles = (items: readonly Article[]) => ({
-  listLater: pagedStore(items),
+  listLater: (owner: OwnerId, query: ArticleQuery) =>
+    pagedStore(items)(owner, query),
   listFeeds: (
     owner: OwnerId,
-    _feedId: FeedId | undefined,
+    _feedIds: Option.Option<readonly FeedId[]>,
     query: ArticleQuery
   ) => pagedStore(items)(owner, query),
 });
@@ -135,24 +137,16 @@ const provide = <A, E, R>(
       Context.Service.Shape<typeof FeedRepository>
     >;
   },
-  owner: OwnerId = alice
+  _owner: OwnerId = alice
 ) =>
   effect.pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(ArticleRepository, layers.articles ?? {}),
-        Layer.mock(WebpageFetcherFactory, {
-          forOwner: (requested) => {
-            expect(requested).toBe(owner);
-
-            return Effect.succeed(
-              Layer.succeed(WebpageFetcher, {
-                fetch:
-                  layers.fetcher?.fetch ?? (() => Effect.die('must not fetch')),
-              })
-            );
-          },
-        }),
+        Layer.succeed(
+          WebpageFetcherLayer,
+          Layer.mock(WebpageFetcher, layers.fetcher ?? {})
+        ),
         Layer.mock(HtmlParser, {
           parse: () => Effect.succeed(parsedDocument()),
           ...layers.parser,
@@ -404,24 +398,22 @@ it.effect('rejects malformed article URLs before contacting providers', () =>
   )
 );
 
-it.effect('preserves fetch failure codes while adding', () =>
+it.effect('preserves fetch failure messages while adding', () =>
   provide(
     Effect.gen(function* () {
       const error = yield* Effect.flip(
         addArticle(alice, 'https://example.com/post')
       );
-      expect(error._tag).toBe('WebpageFetchError');
-      expect(error._tag === 'WebpageFetchError' && error.code).toBe(
-        'rate_limited'
+      expect(error._tag).toBe('WebpageFetcherError');
+      expect(error._tag === 'WebpageFetcherError' && error.message).toBe(
+        'limited'
       );
     }),
     {
       articles: {},
       fetcher: {
         fetch: () =>
-          Effect.fail(
-            new WebpageFetchError({ error: 'limited', code: 'rate_limited' })
-          ),
+          Effect.fail(new WebpageFetcherError({ message: 'limited' })),
       },
       extractor: {},
     }
@@ -434,8 +426,8 @@ it.effect('maps parser failures to extraction errors while adding', () =>
       const error = yield* Effect.flip(
         addArticle(alice, 'https://example.com/post')
       );
-      expect(error._tag).toBe('ArticleExtractError');
-      expect(error._tag === 'ArticleExtractError' && error.error).toBe(
+      expect(error._tag).toBe('ArticleExtractorError');
+      expect(error._tag === 'ArticleExtractorError' && error.message).toBe(
         'Unable to extract article content; open the original page'
       );
     }),
@@ -444,7 +436,7 @@ it.effect('maps parser failures to extraction errors while adding', () =>
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       parser: {
         parse: () =>
-          Effect.fail(new HtmlParseError({ error: 'malformed markup' })),
+          Effect.fail(new HtmlParserError({ message: 'malformed markup' })),
       },
       extractor: { extract: () => Effect.die('must not extract') },
     }
@@ -617,22 +609,28 @@ it.effect('rejects extraction when the article has no URL', () =>
 
 it.effect('extracts, persists, and returns an article body', () => {
   const article = makeArticle({ url: 'https://example.com/a' });
-  const saved: (readonly [OwnerId, ArticleId, string])[] = [];
+  const saved: (readonly [OwnerId, readonly ArticleId[], ArticlePatch])[] = [];
 
   return provide(
     Effect.gen(function* () {
       expect(yield* extractArticle(alice, article.id)).toEqual({
         item: { ...article, extractedContent: Option.some('<p>Fresh</p>') },
       });
-      expect(saved).toEqual([[alice, article.id, '<p>Fresh</p>']]);
+      expect(saved).toEqual([
+        [
+          alice,
+          [article.id],
+          { extractedContent: Option.some('<p>Fresh</p>') },
+        ],
+      ]);
     }),
     {
       articles: {
         find: () => Effect.succeed(Option.some(article)),
-        saveExtracted: (owner, id, content) => {
-          saved.push([owner, id, content]);
+        updateByArticleIds: (owner, ids, articlePatch) => {
+          saved.push([owner, ids, articlePatch]);
 
-          return Effect.succeed(true);
+          return Effect.succeed(ids);
         },
       },
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
@@ -661,7 +659,7 @@ it.effect('treats a deleted article as missing after extraction', () =>
           Effect.succeed(
             Option.some(makeArticle({ url: 'https://example.com/a' }))
           ),
-        saveExtracted: () => Effect.succeed(false),
+        updateByArticleIds: () => Effect.succeed([]),
       },
       fetcher: { fetch: () => Effect.succeed('<html>raw</html>') },
       extractor: {
@@ -677,13 +675,13 @@ it.effect('treats a deleted article as missing after extraction', () =>
   )
 );
 
-it.effect('preserves fetch failure codes while extracting', () =>
+it.effect('preserves fetch failure messages while extracting', () =>
   provide(
     Effect.gen(function* () {
       const error = yield* Effect.flip(extractArticle(alice, firstId));
-      expect(error._tag).toBe('WebpageFetchError');
-      expect(error._tag === 'WebpageFetchError' && error.code).toBe(
-        'key_rejected'
+      expect(error._tag).toBe('WebpageFetcherError');
+      expect(error._tag === 'WebpageFetcherError' && error.message).toBe(
+        'rejected'
       );
     }),
     {
@@ -695,16 +693,14 @@ it.effect('preserves fetch failure codes while extracting', () =>
       },
       fetcher: {
         fetch: () =>
-          Effect.fail(
-            new WebpageFetchError({ error: 'rejected', code: 'key_rejected' })
-          ),
+          Effect.fail(new WebpageFetcherError({ message: 'rejected' })),
       },
       extractor: {},
     }
   )
 );
 
-it.effect('marks articles through the owner-scoped store operations', () => {
+it.effect('patches articles through owner-scoped repository operations', () => {
   const calls: unknown[] = [];
 
   return provide(
@@ -718,28 +714,50 @@ it.effect('marks articles through the owner-scoped store operations', () => {
         ok: true,
       });
       expect(calls).toEqual([
-        ['setRead', alice, [firstId], false],
-        ['markLater', alice],
-        ['markFeeds', alice, [feed, otherFeed]],
-        ['setRead', alice, [firstId, secondId], true],
+        ['updateByArticleIds', alice, [firstId], { read: false }],
+        ['updateLater', alice, { read: true }],
+        ['updateFeeds', alice, Option.some([feed, otherFeed]), { read: true }],
+        ['updateByArticleIds', alice, [firstId, secondId], { read: true }],
       ]);
     }),
     {
       articles: {
-        setRead: (owner, ids, read) => {
-          calls.push(['setRead', owner, ids, read]);
+        updateByArticleIds: (owner, ids, articlePatch) => {
+          calls.push(['updateByArticleIds', owner, ids, articlePatch]);
 
-          return Effect.void;
+          return Effect.succeed(ids);
         },
-        markLater: (owner) => {
-          calls.push(['markLater', owner]);
+        updateLater: (owner, articlePatch) => {
+          calls.push(['updateLater', owner, articlePatch]);
 
-          return Effect.void;
+          return Effect.succeed([]);
         },
-        markFeeds: (owner, ids) => {
-          calls.push(['markFeeds', owner, ids]);
+        updateFeeds: (owner, feedIds, articlePatch) => {
+          calls.push(['updateFeeds', owner, feedIds, articlePatch]);
 
-          return Effect.void;
+          return Effect.succeed([]);
+        },
+      },
+    }
+  );
+});
+
+it.effect('forwards an empty feed selection when marking feeds read', () => {
+  const calls: unknown[] = [];
+
+  return provide(
+    Effect.gen(function* () {
+      expect(yield* markFeedsRead(alice, [])).toEqual({ ok: true });
+      expect(calls).toEqual([
+        ['updateFeeds', alice, Option.some([]), { read: true }],
+      ]);
+    }),
+    {
+      articles: {
+        updateFeeds: (owner, feedIds, articlePatch) => {
+          calls.push(['updateFeeds', owner, feedIds, articlePatch]);
+
+          return Effect.succeed([]);
         },
       },
     }
@@ -774,8 +792,8 @@ it.effect(
 
             return Effect.succeed(Option.some(makeArticle({ feedId: feed })));
           },
-          removeLater: (_owner, id) => {
-            removed.push(id);
+          removeLater: (_owner, ids) => {
+            removed.push(...ids);
 
             return Effect.void;
           },
@@ -788,6 +806,7 @@ it.effect(
 it.effect('pages thirty later articles and continues from the cursor', () => {
   const items = series(31);
   const calls: ArticleQuery[] = [];
+  const owners: OwnerId[] = [];
 
   return provide(
     Effect.gen(function* () {
@@ -797,10 +816,7 @@ it.effect('pages thirty later articles and continues from the cursor', () => {
       );
       expect(first.cursor).not.toBeNull();
       expect(first.boundary).toBe(first.cursor);
-      expect(calls[0]).toEqual({
-        filter: 'all',
-        limit: 31,
-      });
+      expect(calls[0]).toEqual({ filter: 'all', limit: 31 });
       const second = yield* listLaterArticles(
         alice,
         'all',
@@ -818,11 +834,13 @@ it.effect('pages thirty later articles and continues from the cursor', () => {
           publishedAt: encodedTime(items[29] as Article),
         },
       });
+      expect(owners).toEqual([alice, alice]);
     }),
     {
       articles: {
         listLater: (owner, query) => {
           calls.push(query);
+          owners.push(owner);
 
           return pagedStore(items)(owner, query);
         },
@@ -855,24 +873,30 @@ it.effect('binds cursors to owner, scope, and filter', () => {
   );
 });
 
-it.effect('lists feed articles in feed or all-feed scope', () => {
-  const calls: (readonly [OwnerId, FeedId | undefined, ArticleQuery])[] = [];
+it.effect('lists a scoped feed or every subscription feed', () => {
+  const calls: (readonly [
+    OwnerId,
+    Option.Option<readonly FeedId[]>,
+    ArticleQuery,
+  ])[] = [];
   const checks: (readonly [OwnerId, FeedId])[] = [];
 
   return provide(
     Effect.gen(function* () {
       yield* listFeedArticles(alice, feed, 'unread');
       yield* listFeedArticles(alice, undefined, 'read');
-      expect(calls.map(([, feedId, query]) => [feedId, query.filter])).toEqual([
-        [feed, 'unread'],
-        [undefined, 'read'],
+      expect(
+        calls.map(([owner, feedIds, query]) => [owner, feedIds, query.filter])
+      ).toEqual([
+        [alice, Option.some([feed]), 'unread'],
+        [alice, Option.none(), 'read'],
       ]);
       expect(checks).toEqual([[alice, feed]]);
     }),
     {
       articles: {
-        listFeeds: (owner, feedId, query) => {
-          calls.push([owner, feedId, query]);
+        listFeeds: (owner, feedIds, query) => {
+          calls.push([owner, feedIds, query]);
 
           return Effect.succeed([]);
         },

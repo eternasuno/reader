@@ -6,12 +6,11 @@ import {
   readArticle,
   readArticleById,
   readFeeds,
-  readFeedUnread,
-  readLaterUnread,
   readPage,
   readPreview,
   readRefresh,
   readSubscription,
+  readUnreadCounts,
   removeArticle,
   removeSubscription,
 } from './library-requests';
@@ -34,8 +33,7 @@ export const createLibraryClient = (options: LibraryClientOptions = {}) => {
     refresh: (scope: Scope, filter: Filter, through: string) =>
       readRefresh(send, scope, filter, through),
     feeds: () => readFeeds(send),
-    laterUnread: () => readLaterUnread(send),
-    feedUnread: () => readFeedUnread(send),
+    unreadCounts: () => readUnreadCounts(send),
     article: (id: string) => readArticleById(send, id),
     markRead: (id: string, read: boolean) => markRead(send, id, read),
     markLater: () => markLater(send),

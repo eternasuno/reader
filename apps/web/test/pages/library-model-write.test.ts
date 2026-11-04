@@ -4,6 +4,7 @@ import { type Article, LibraryError } from '../../src/lib/library';
 import { createLibraryModel } from '../../src/pages/library-model';
 import {
   article,
+  counts,
   createStubClient,
   deferred,
   feed,
@@ -15,8 +16,7 @@ const withRows = async (
 ) => {
   const client = createStubClient();
   client.list.mockResolvedValue(page(rows, null, 'top'));
-  client.laterUnread.mockResolvedValue(0);
-  client.feedUnread.mockResolvedValue({ total: 1, feeds: { f1: 1 } });
+  client.unreadCounts.mockResolvedValue(counts(0, { f1: 1 }));
   const model = createLibraryModel(client);
   await model.refresh();
 
@@ -53,7 +53,7 @@ describe('library bulk read marks', () => {
     client.markArticles.mockRejectedValue(
       new LibraryError('ArticleRepositoryError')
     );
-    client.laterUnread.mockResolvedValue(3);
+    client.unreadCounts.mockResolvedValue(counts(3, { f1: 1 }));
 
     await model.markLoaded();
 
@@ -90,8 +90,7 @@ describe('library read reconciliation', () => {
     client.article.mockResolvedValue(
       article('a', { feedId: 'f1', read: true })
     );
-    client.laterUnread.mockResolvedValue(0);
-    client.feedUnread.mockResolvedValue({ total: 0, feeds: { f1: 0 } });
+    client.unreadCounts.mockResolvedValue(counts(0, { f1: 0 }));
     const row = model.state().items[0] ?? article('a');
 
     const one = model.toggleRead(row);
