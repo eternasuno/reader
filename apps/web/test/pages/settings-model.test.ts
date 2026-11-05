@@ -18,8 +18,6 @@ const baseline = {
   browserEndpoint: '',
 };
 
-let formValues: Record<string, string> = {};
-
 const form = {
   classList: { add: () => undefined },
   checkValidity: () => true,
@@ -53,15 +51,6 @@ const flush = async () => {
 
 beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
-  vi.stubGlobal(
-    'FormData',
-    class {
-      get(name: string) {
-        return formValues[name] ?? null;
-      }
-    }
-  );
-  formValues = { retention: '200' };
 });
 
 afterEach(() => {
@@ -83,6 +72,7 @@ describe('settings busy guard', () => {
     try {
       expect(isSettingsBusy(status)).toBe(false);
 
+      drafts.setRetention('200');
       submitRetention(drafts, status, form);
       await flush();
 
@@ -111,6 +101,7 @@ describe('settings busy guard', () => {
 
     const { drafts, status, dispose } = setup();
     try {
+      drafts.setRetention('200');
       submitRetention(drafts, status, form);
       await flush();
       submitRetention(drafts, status, form);
@@ -188,6 +179,7 @@ describe('settings error text', () => {
 
     const { drafts, status, dispose } = setup();
     try {
+      drafts.setRetention('200');
       submitRetention(drafts, status, form);
       await flush();
 

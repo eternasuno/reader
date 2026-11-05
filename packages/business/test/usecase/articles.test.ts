@@ -37,11 +37,17 @@ import {
 import { articleId } from '../../src/usecase/identity';
 
 const alice = OwnerId.make('alice');
+
 const bob = OwnerId.make('bob');
+
 const feed = FeedId.make('f'.repeat(64));
+
 const otherFeed = FeedId.make('e'.repeat(64));
+
 const firstId = ArticleId.make('a'.repeat(64));
+
 const secondId = ArticleId.make('b'.repeat(64));
+
 const now = Date.UTC(2026, 0, 1, 12);
 
 const extractedPublishedAt = Schema.decodeSync(Schema.DateTimeUtcFromString)(

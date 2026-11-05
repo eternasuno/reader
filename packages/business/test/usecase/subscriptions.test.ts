@@ -32,8 +32,11 @@ import {
 } from '../../src/usecase/subscriptions';
 
 const alice = OwnerId.make('alice');
+
 const url = normalizeUrl('https://example.com/feed.xml');
+
 const id = feedId(alice, url);
+
 const nowMillis = Date.UTC(2026, 0, 1, 12);
 
 const at = (iso: string) => DateTime.fromDateUnsafe(new Date(iso));

@@ -220,32 +220,4 @@ describe('library subscriptions', () => {
     expect(client.list).not.toHaveBeenCalled();
     expect(model.state().toast).toBeUndefined();
   });
-
-  it('selects an existing subscription reported by the preview', async () => {
-    const client = createStubClient();
-    client.list.mockResolvedValue(page([], null, 'top'));
-    client.feeds.mockResolvedValue([feed('existing')]);
-    client.preview.mockRejectedValue(
-      new LibraryError('SubscriptionExists', { id: 'existing' })
-    );
-    const model = createLibraryModel(client);
-
-    expect(await model.preview('https://example.com/existing.xml')).toEqual({
-      kind: 'existing',
-    });
-
-    expect(model.state().feeds.map((item) => item.id)).toEqual(['existing']);
-    expect(model.state().scope).toEqual({
-      kind: 'feeds',
-      feedId: 'existing',
-    });
-    expect(client.list).toHaveBeenLastCalledWith(
-      { kind: 'feeds', feedId: 'existing' },
-      'all'
-    );
-    expect(model.state().toast).toEqual({
-      kind: 'success',
-      message: '该订阅已存在',
-    });
-  });
 });

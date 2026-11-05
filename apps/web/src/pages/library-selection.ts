@@ -32,6 +32,7 @@ const loadOpened = async (
     if (version !== store.flags.openVersion()) {
       return { kind: 'stale' };
     }
+
     store.notify('error', libraryErrorMessage(error));
 
     return { kind: 'failed' };
@@ -47,6 +48,7 @@ const finishOpen = async (
   if (version !== store.flags.openVersion()) {
     return store.lookup(id);
   }
+
   if (item !== undefined && !item.read) {
     await writeRead(store, id, true);
   }
@@ -67,6 +69,7 @@ export const openArticle = async (
   if (result.kind === 'stale') {
     return store.lookup(id);
   }
+
   if (result.kind === 'article' && result.item !== null) {
     item = result.item;
     applyOpened(store, result.item);
@@ -83,6 +86,7 @@ export const openDuplicate = async (
   if (id === undefined) {
     return false;
   }
+
   await openArticle(store, id);
 
   return true;

@@ -227,6 +227,7 @@ it.effect('accepts browser endpoints and requires one for browser', () => {
     for (const browserEndpoint of endpoints) {
       yield* updateExtraction(owner, { provider: 'browser', browserEndpoint });
     }
+
     expect(
       saved.map((settingsPatch) =>
         Option.getOrUndefined(settingsPatch.browserEndpoint ?? Option.none())
@@ -242,6 +243,7 @@ it.effect('accepts browser endpoints and requires one for browser', () => {
       );
       expect(error._tag).toBe('InvalidEndpoint');
     }
+
     expect(saved).toHaveLength(endpoints.length);
   }).pipe(
     Effect.provide(

@@ -1,11 +1,9 @@
 import { WebpageFetcher, WebpageFetcherError } from '@reader/business';
 import { Context, Effect, Layer, Redacted, Semaphore } from 'effect';
-import { fetchBrowser } from './browser';
+import { endpointTarget, fetchBrowser } from './browser';
 import { fetchJina } from './jina';
 
 const BROWSER_CONCURRENCY = 2;
-
-const browserEndpointProtocols = new Set(['http:', 'https:', 'ws:', 'wss:']);
 
 export class BrowserConcurrency extends Context.Service<
   BrowserConcurrency,
@@ -22,15 +20,7 @@ const parseBrowserEndpoint = (
 ): Effect.Effect<Redacted.Redacted<string>, WebpageFetcherError> =>
   Effect.try({
     try: () => {
-      const url = new URL(endpoint);
-      if (
-        !browserEndpointProtocols.has(url.protocol) ||
-        url.username ||
-        url.password ||
-        endpoint.includes('#')
-      ) {
-        throw new Error('Unsupported browser endpoint');
-      }
+      endpointTarget(endpoint);
 
       return Redacted.make(endpoint);
     },

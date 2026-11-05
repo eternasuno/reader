@@ -1,12 +1,12 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: grouped refresh cases stay together with their shared page fixture.
 import { describe, expect, it } from 'vitest';
+import { setItemsRead } from '../../src/pages/library-articles';
+import { applyPage } from '../../src/pages/library-pages';
 import {
-  applyPage,
   applyRefresh,
   applyRefreshPage,
-  initialLibraryState,
-  setItemsRead,
-} from '../../src/pages/library-model';
+} from '../../src/pages/library-refresh';
+import { initialLibraryState } from '../../src/pages/library-state';
 import { article, counts, page } from './library-fixtures';
 
 const loaded = () =>

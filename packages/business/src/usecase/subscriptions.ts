@@ -13,8 +13,6 @@ import {
   refreshSelection,
 } from './subscription-selection';
 
-export { SUBSCRIPTION_INITIAL_IMPORT } from './subscription-selection';
-
 export class SubscriptionUrlInvalid extends Data.TaggedError(
   'SubscriptionUrlInvalid'
 )<{

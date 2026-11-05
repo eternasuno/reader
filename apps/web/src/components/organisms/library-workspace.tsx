@@ -8,7 +8,6 @@ import {
 } from '../../pages/library-feed-menu';
 import {
   type LibraryModel,
-  type PreviewResult,
   sameScope,
   useLibraryModel,
 } from '../../pages/library-model';
@@ -47,6 +46,7 @@ const useLibraryRoute = (model: LibraryModel) => {
     const scope: Scope =
       kind === 'feed' ? { kind: 'feeds' } : { kind: 'later' };
     if (!sameScope(model.state().scope, scope)) void model.setScope(scope);
+
     void model.openArticle(key);
   };
 
@@ -74,10 +74,13 @@ const useLibraryRoute = (model: LibraryModel) => {
     const path = location.pathname;
     if (!path.startsWith('/read/')) {
       opened = undefined;
+
       return;
     }
+
     const key = params.key;
     if (key === undefined || key === '' || key === opened) return;
+
     opened = key;
     openKey(key, params.kind);
   });
@@ -99,6 +102,7 @@ const addArticle = async (
   url: string
 ): Promise<boolean> => {
   if (!(await model.add(url))) return false;
+
   const added = model.state().selected;
   if (added === undefined) route.back();
   else route.open(added);
@@ -112,20 +116,10 @@ const subscribeFeed = async (
   url: string
 ): Promise<boolean> => {
   if (!(await model.subscribe(url))) return false;
+
   route.back();
 
   return true;
-};
-
-const previewFeed = async (
-  model: LibraryModel,
-  route: RouteState,
-  url: string
-): Promise<PreviewResult> => {
-  const result = await model.preview(url);
-  if (result.kind === 'existing') route.back();
-
-  return result;
 };
 
 const removeArticle = async (
@@ -135,6 +129,7 @@ const removeArticle = async (
 ) => {
   const selected = model.state().selected?.id === article.id;
   if (!(await model.remove(article))) return;
+
   if (selected) route.back();
 };
 
@@ -249,8 +244,10 @@ const useLibraryView = (model: LibraryModel, route: RouteState) => {
   const article = createMemo(() => {
     const key = route.key();
     if (key === undefined || key === '') return undefined;
+
     const selected = model.state().selected;
     if (selected !== undefined && selected.id === key) return selected;
+
     const remembered = snapshot();
 
     return remembered?.id === key ? remembered : undefined;
@@ -288,7 +285,7 @@ const AddDialog = (props: {
     mode={props.mode ?? 'article'}
     onClose={props.onClose}
     onAdd={(url) => addArticle(props.model, props.route, url)}
-    onPreview={(url) => previewFeed(props.model, props.route, url)}
+    onPreview={props.model.preview}
     onSubscribe={(url) => subscribeFeed(props.model, props.route, url)}
   />
 );

@@ -1,6 +1,5 @@
-import { Effect, Option } from 'effect';
-import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
 import {
+  ArticleRepository,
   addArticle,
   extractArticle,
   getArticle,
@@ -12,7 +11,8 @@ import {
   refreshLaterArticles,
   removeArticle,
   saveArticle,
-} from '../../../../packages/business/src/usecase/articles.ts';
+} from '@reader/business';
+import { Effect, Option } from 'effect';
 import { webpageFetcherForOwner } from '../adapter/webpage-fetcher';
 import {
   type HandlerRequest,

@@ -9,11 +9,19 @@ import {
 import { BrowserConcurrency, BrowserConcurrencyLive } from '@reader/webpage';
 import { Effect, Layer, Option, Redacted, Semaphore } from 'effect';
 import { FetchHttpClient } from 'effect/http';
+import { vi } from 'vitest';
 import { webpageFetcherForOwner } from '../../src/adapter/webpage-fetcher';
 
+vi.mock('node:dns/promises', () => ({
+  lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+}));
+
 const article = 'https://example.com/article';
+
 const html = '<html><body><p>Body</p></body></html>';
+
 const alice = OwnerId.make('alice');
+
 const bob = OwnerId.make('bob');
 
 it.effect('selects each owner key when building a Jina layer', () => {

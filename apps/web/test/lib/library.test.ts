@@ -259,6 +259,7 @@ describe('library subscription writes', () => {
       if (current.path === '/api/library/feeds/preview') {
         return Response.json({ preview: previewJson(preview) });
       }
+
       if (current.method === 'POST') {
         return Response.json({ item: feed('f1') });
       }

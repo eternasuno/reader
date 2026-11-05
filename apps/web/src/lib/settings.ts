@@ -1,3 +1,5 @@
+import { Option, Schema } from 'effect';
+
 export type ReaderProvider = 'jina' | 'browser';
 
 export type LibrarySettings = {
@@ -14,6 +16,7 @@ export type ExtractionUpdate = {
 };
 
 const settingsPath = '/api/library/settings';
+
 const fallbackMessage = '操作失败，请稍后重试';
 
 const messages: Record<string, string> = {
@@ -26,22 +29,18 @@ const messages: Record<string, string> = {
   SettingsReadError: '暂时无法读取设置，请稍后重试',
   SettingsSaveError: '暂时无法保存设置，请稍后重试',
   SettingsRepositoryError: '暂时无法更新提取设置，请稍后重试',
-  NotFound: '要修改的设置不存在，请刷新页面后重试',
-  Conflict: '设置已在别处修改，请刷新页面后重试',
   RequestFailed: '请求失败，请稍后重试',
   ServerError: '服务器暂时不可用，请稍后重试',
   InvalidResponse: '设置数据格式不正确，请稍后重试',
   NetworkError: '网络连接失败，请检查网络后重试',
 };
 
-export const settingsErrorText = (code: string | undefined): string =>
+const settingsErrorText = (code: string | undefined): string =>
   code === undefined ? fallbackMessage : (messages[code] ?? fallbackMessage);
 
 const statusCode = (status: number): string => {
   if (status === 401) return 'Unauthorized';
   if (status === 403) return 'Forbidden';
-  if (status === 404) return 'NotFound';
-  if (status === 409) return 'Conflict';
   if (status >= 500) return 'ServerError';
 
   return 'RequestFailed';
@@ -70,10 +69,6 @@ const errorCode = async (response: Response): Promise<string | undefined> => {
 
   if ('_tag' in body && typeof body._tag === 'string') {
     return body._tag;
-  }
-
-  if ('code' in body && typeof body.code === 'string') {
-    return body.code;
   }
 
   return undefined;
@@ -130,37 +125,15 @@ const request = async (
   return readJson(response);
 };
 
-const parseProvider = (value: unknown): ReaderProvider | undefined =>
-  value === 'jina' || value === 'browser' ? value : undefined;
+const SettingsSchema = Schema.Struct({
+  retention: Schema.Int,
+  provider: Schema.Literals(['jina', 'browser']),
+  jinaConfigured: Schema.Boolean,
+  browserEndpoint: Schema.optionalKey(Schema.String),
+});
 
-const parseSettings = (value: unknown): LibrarySettings | undefined => {
-  if (typeof value !== 'object' || value === null) {
-    return undefined;
-  }
-
-  const provider =
-    'provider' in value ? parseProvider(value.provider) : undefined;
-  const browserEndpoint =
-    'browserEndpoint' in value ? value.browserEndpoint : undefined;
-  if (
-    !('retention' in value) ||
-    typeof value.retention !== 'number' ||
-    !Number.isInteger(value.retention) ||
-    provider === undefined ||
-    !('jinaConfigured' in value) ||
-    typeof value.jinaConfigured !== 'boolean' ||
-    (browserEndpoint !== undefined && typeof browserEndpoint !== 'string')
-  ) {
-    return undefined;
-  }
-
-  return {
-    retention: value.retention,
-    provider,
-    jinaConfigured: value.jinaConfigured,
-    ...(browserEndpoint === undefined ? {} : { browserEndpoint }),
-  };
-};
+const parseSettings = (value: unknown): LibrarySettings | undefined =>
+  Option.getOrUndefined(Schema.decodeUnknownOption(SettingsSchema)(value));
 
 export const getSettings = async (): Promise<LibrarySettings> => {
   const body = await request(settingsPath, {

@@ -10,10 +10,13 @@ vi.mock('node:dns/promises', () => ({
 }));
 
 type FetchInput = Parameters<typeof globalThis.fetch>[0];
+
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
 
 const key = Redacted.make('secret');
+
 const article = 'https://example.com/article';
+
 const html = '<html><body><p>Body</p></body></html>';
 
 const provideFetch = (impl: typeof globalThis.fetch) =>

@@ -27,9 +27,9 @@ const requestPreview = async (
 ): Promise<
   { readonly result: PreviewResult; readonly url: string } | undefined
 > => {
-  if (form === undefined || !form.reportValidity()) return undefined;
+  if (form === undefined) return undefined;
+
   const url = submittedUrl(form);
-  if (url === '') return undefined;
   const result = await props.onPreview(url);
 
   return result.kind === 'failed' ? undefined : { result, url };
@@ -54,11 +54,7 @@ const useAddPreview = (props: AddFlowProps) => {
     const requested = await request;
     setBusy(false);
     if (requested === undefined) return;
-    if (requested.result.kind === 'existing') {
-      props.onClose();
 
-      return;
-    }
     if (requested.result.kind !== 'preview') return;
 
     setPreview(requested.result.preview);
@@ -91,13 +87,9 @@ const useAddSubmit = (
     if (ok) close();
   };
   const add = async (value: string) => {
-    if (value === '') return;
-
     await run('add', () => props.onAdd(value));
   };
   const subscribe = async (value: string) => {
-    if (value === '') return;
-
     await run('subscribe', () => props.onSubscribe(value));
   };
   const edit = () => {

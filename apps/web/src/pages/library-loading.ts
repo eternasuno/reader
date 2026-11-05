@@ -68,6 +68,7 @@ export const refresh = async (store: LibraryStore): Promise<void> => {
     } else {
       await loadNew(store);
     }
+
     await loadReference(store);
   } finally {
     store.flags.setRefreshing(false);
@@ -79,6 +80,7 @@ export const loadMore = async (store: LibraryStore): Promise<void> => {
   if (before.loading) {
     return;
   }
+
   if (before.cursorInvalid) {
     await startLoad(store, before.scope, before.filter);
 

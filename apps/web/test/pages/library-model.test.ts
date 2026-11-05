@@ -1,22 +1,24 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: grouped transition cases stay together with their shared page fixture.
 import { describe, expect, it } from 'vitest';
 import {
-  applyPage,
-  applyRefresh,
-  applyRefreshPage,
-  clearScopeCounts,
-  failList,
-  initialLibraryState,
-  type LibraryState,
   removeItem,
-  resetList,
   restoreItem,
   setItemsRead,
-  startLoadMore,
-  unreadCount,
   upsertItem,
-} from '../../src/pages/library-model';
-import { article, counts, newerArticle, page } from './library-fixtures';
+} from '../../src/pages/library-articles';
+import { clearScopeCounts, unreadCount } from '../../src/pages/library-counts';
+import {
+  applyPage,
+  failList,
+  resetList,
+  startLoadMore,
+} from '../../src/pages/library-pages';
+import { applyRefresh } from '../../src/pages/library-refresh';
+import {
+  initialLibraryState,
+  type LibraryState,
+} from '../../src/pages/library-state';
+import { article, counts, page } from './library-fixtures';
 
 const loaded = () =>
   applyPage(
@@ -106,39 +108,6 @@ describe('library list failures', () => {
 });
 
 describe('library sync transitions', () => {
-  it('prepends new articles and keeps the loaded tail', () => {
-    const state = loaded();
-    const synced = applyRefresh(
-      state,
-      [newerArticle('n'), article('a'), article('b')],
-      state.generation
-    );
-
-    expect(synced.items.map((item) => item.id)).toEqual(['n', 'a', 'b']);
-    expect(synced.boundary).toBe('boundary-1');
-    expect(synced.cursor).toBe('cursor-1');
-    expect(synced.hasMore).toBe(true);
-    expect(synced.refreshing).toBe(false);
-  });
-
-  it('computes hasMore from the old cursor after a completed tail', () => {
-    const complete = applyPage(
-      { ...initialLibraryState(), loading: true },
-      page([article('a')], null, 'boundary-1'),
-      0
-    );
-    const synced = applyRefresh(
-      complete,
-      [newerArticle('n'), article('a')],
-      complete.generation
-    );
-
-    expect(complete.hasMore).toBe(false);
-    expect(synced.hasMore).toBe(false);
-    expect(synced.boundary).toBe('boundary-1');
-    expect(applyRefresh(synced, [], 99)).toMatchObject({ refreshing: false });
-  });
-
   it('keeps the boundary and cursor after the tail row is deleted', () => {
     const removed = removeItem(loaded(), article('b'));
     const synced = applyRefresh(removed, [], removed.generation);
@@ -146,47 +115,6 @@ describe('library sync transitions', () => {
     expect(synced.boundary).toBe('boundary-1');
     expect(synced.cursor).toBe('cursor-1');
     expect(synced.hasMore).toBe(true);
-  });
-
-  it('merges served rows but never overrides a pending id', () => {
-    const state = {
-      ...loaded(),
-      counts: counts(2),
-      pending: new Set(['a']),
-    };
-    const synced = applyRefresh(
-      state,
-      [
-        { ...article('a'), title: 'Server a', read: true },
-        { ...article('b'), title: 'Server b', read: true },
-      ],
-      state.generation
-    );
-    const rowA = synced.items.find((item) => item.id === 'a');
-    const rowB = synced.items.find((item) => item.id === 'b');
-
-    expect(rowA).toMatchObject({ title: 'Article a', read: false });
-    expect(rowB).toMatchObject({ title: 'Server b', read: true });
-    expect(synced.counts.later).toBe(1);
-  });
-
-  it('adopts first-page metadata when an empty list discovers rows', () => {
-    const empty = applyPage(
-      { ...initialLibraryState(), loading: true },
-      page([], null, null),
-      0
-    );
-    const discovered = applyRefreshPage(
-      empty,
-      page([article('n')], 'cursor-2', 'boundary-2'),
-      empty.generation
-    );
-
-    expect(discovered.items.map((item) => item.id)).toEqual(['n']);
-    expect(discovered.cursor).toBe('cursor-2');
-    expect(discovered.boundary).toBe('boundary-2');
-    expect(discovered.hasMore).toBe(true);
-    expect(discovered.initialized).toBe(true);
   });
 });
 

@@ -57,7 +57,7 @@ export const sameScope = (left: Scope, right: Scope): boolean => {
   return right.kind === 'feeds' && left.feedId === right.feedId;
 };
 
-export const withPending = (
+const withPending = (
   pending: ReadonlySet<string>,
   id: string
 ): ReadonlySet<string> => {
@@ -71,7 +71,7 @@ export const withPending = (
   return next;
 };
 
-export const withoutPending = (
+const withoutPending = (
   pending: ReadonlySet<string>,
   id: string
 ): ReadonlySet<string> => {

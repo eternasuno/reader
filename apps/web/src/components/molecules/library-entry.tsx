@@ -16,6 +16,7 @@ const plainText = (html: string): string => {
 
 const hostOf = (value: string | undefined): string | undefined => {
   if (value === undefined || value === '') return undefined;
+
   try {
     return new URL(value).hostname;
   } catch {

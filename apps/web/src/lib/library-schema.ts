@@ -41,17 +41,23 @@ export const ArticlePageSchema = Schema.Struct({
 });
 
 export const ArticleItemSchema = Schema.Struct({ item: ArticleSchema });
+
 export const ArticleItemsSchema = Schema.Struct({
   items: Schema.Array(ArticleSchema),
 });
+
 export const ArticleOrNullItemSchema = Schema.Struct({
   item: Schema.NullOr(ArticleSchema),
 });
+
 export const FeedItemSchema = Schema.Struct({ item: FeedSchema });
+
 export const FeedItemsSchema = Schema.Struct({
   items: Schema.Array(FeedSchema),
 });
+
 export const PreviewItemSchema = Schema.Struct({ preview: PreviewSchema });
+
 export const UnreadCountsSchema = Schema.Struct({
   later: Schema.Int,
   feedsTotal: Schema.Int,

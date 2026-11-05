@@ -1,3 +1,13 @@
+import {
+  Article,
+  ArticleFilter,
+  ArticleId,
+  ArticlePage,
+  ArticleUnreadCounts,
+  Feed,
+  FeedId,
+  Setting,
+} from '@reader/business';
 import { Schema } from 'effect';
 import {
   HttpApi,
@@ -5,15 +15,6 @@ import {
   HttpApiGroup,
   HttpApiSchema,
 } from 'effect/http-api';
-import { Article, ArticleId } from '../../business/src/entity/article.ts';
-import { Feed } from '../../business/src/entity/feed.ts';
-import { FeedId } from '../../business/src/entity/object-value.ts';
-import { Setting } from '../../business/src/entity/setting.ts';
-import {
-  ArticleFilter,
-  ArticleUnreadCounts,
-} from '../../business/src/port/article-repository.ts';
-import { ArticlePage } from '../../business/src/usecase/article-list.ts';
 
 const failure = <Tag extends string>(tag: Tag, status: number) =>
   Schema.Struct({
@@ -22,63 +23,63 @@ const failure = <Tag extends string>(tag: Tag, status: number) =>
     id: Schema.OptionFromOptional(Schema.String),
   }).pipe(HttpApiSchema.status(status));
 
-export const UnauthorizedSchema = Schema.Struct({
+const UnauthorizedSchema = Schema.Struct({
   error: Schema.Literal('Unauthorized'),
 }).pipe(HttpApiSchema.status(401));
 
-export const ForbiddenSchema = Schema.Struct({
+const ForbiddenSchema = Schema.Struct({
   error: Schema.Literal('Cross-site modification is not allowed'),
 }).pipe(HttpApiSchema.status(403));
 
-export const InvalidArticleUrlSchema = failure('InvalidArticleUrl', 400);
-export const ArticleNotFoundSchema = failure('ArticleNotFound', 404);
-export const ArticleNotInFeedSchema = failure('ArticleNotInFeed', 409);
-export const ArticleNotLaterSchema = failure('ArticleNotLater', 409);
-export const ArticleMissingUrlSchema = failure('ArticleMissingUrl', 422);
-export const ArticleEmptyContentSchema = failure('ArticleEmptyContent', 422);
-export const DuplicateArticleSchema = failure('DuplicateArticle', 409);
-export const InvalidCursorSchema = failure('InvalidCursor', 400);
-export const ArticleRepositoryErrorSchema = failure(
-  'ArticleRepositoryError',
-  500
-);
-export const WebpageFetcherErrorSchema = failure('WebpageFetcherError', 422);
-export const ArticleExtractorErrorSchema = failure(
-  'ArticleExtractorError',
-  422
-);
+const InvalidArticleUrlSchema = failure('InvalidArticleUrl', 400);
 
-export const SubscriptionUrlInvalidSchema = failure(
-  'SubscriptionUrlInvalid',
-  400
-);
-export const SubscriptionExistsSchema = failure('SubscriptionExists', 409);
-export const SubscriptionNotFoundSchema = failure('SubscriptionNotFound', 404);
-export const SubscriptionImportFailedSchema = failure(
-  'SubscriptionImportFailed',
-  422
-);
-export const SubscriptionRefreshFailedSchema = failure(
-  'SubscriptionRefreshFailed',
-  422
-);
-export const FetchSubscriptionErrorSchema = failure(
-  'FetchSubscriptionError',
-  422
-);
-export const FeedParserErrorSchema = failure('FeedParserError', 422);
-export const FeedRepositoryErrorSchema = failure('FeedRepositoryError', 500);
+const ArticleNotFoundSchema = failure('ArticleNotFound', 404);
 
-export const SettingsReadErrorSchema = failure('SettingsReadError', 500);
-export const SettingsSaveErrorSchema = failure('SettingsSaveError', 500);
-export const InvalidRetentionSchema = failure('InvalidRetention', 400);
-export const InvalidKeySchema = failure('InvalidKey', 400);
-export const InvalidEndpointSchema = failure('InvalidEndpoint', 400);
-export const InvalidProviderSchema = failure('InvalidProvider', 400);
-export const SettingsRepositoryErrorSchema = failure(
-  'SettingsRepositoryError',
-  500
-);
+const ArticleNotInFeedSchema = failure('ArticleNotInFeed', 409);
+
+const ArticleNotLaterSchema = failure('ArticleNotLater', 409);
+
+const ArticleMissingUrlSchema = failure('ArticleMissingUrl', 422);
+
+const ArticleEmptyContentSchema = failure('ArticleEmptyContent', 422);
+
+const DuplicateArticleSchema = failure('DuplicateArticle', 409);
+
+const InvalidCursorSchema = failure('InvalidCursor', 400);
+
+const ArticleRepositoryErrorSchema = failure('ArticleRepositoryError', 500);
+
+const WebpageFetcherErrorSchema = failure('WebpageFetcherError', 422);
+
+const ArticleExtractorErrorSchema = failure('ArticleExtractorError', 422);
+
+const SubscriptionUrlInvalidSchema = failure('SubscriptionUrlInvalid', 400);
+
+const SubscriptionExistsSchema = failure('SubscriptionExists', 409);
+
+const SubscriptionNotFoundSchema = failure('SubscriptionNotFound', 404);
+
+const SubscriptionImportFailedSchema = failure('SubscriptionImportFailed', 422);
+
+const FetchSubscriptionErrorSchema = failure('FetchSubscriptionError', 422);
+
+const FeedParserErrorSchema = failure('FeedParserError', 422);
+
+const FeedRepositoryErrorSchema = failure('FeedRepositoryError', 500);
+
+const SettingsReadErrorSchema = failure('SettingsReadError', 500);
+
+const SettingsSaveErrorSchema = failure('SettingsSaveError', 500);
+
+const InvalidRetentionSchema = failure('InvalidRetention', 400);
+
+const InvalidKeySchema = failure('InvalidKey', 400);
+
+const InvalidEndpointSchema = failure('InvalidEndpoint', 400);
+
+const InvalidProviderSchema = failure('InvalidProvider', 400);
+
+const SettingsRepositoryErrorSchema = failure('SettingsRepositoryError', 500);
 
 const authErrors = [UnauthorizedSchema, ForbiddenSchema];
 
@@ -186,12 +187,12 @@ const library = HttpApiGroup.make('library').add(
   }),
   HttpApiEndpoint.get('unreadCounts', '/api/library/unread', {
     success: ArticleUnreadCounts,
-    error: [ArticleRepositoryErrorSchema, ...authErrors],
+    error: articleErrors,
   }),
   HttpApiEndpoint.get('article', '/api/library/articles', {
     query: articleId,
     success: Schema.Struct({ item: Schema.NullOr(Article) }),
-    error: [ArticleRepositoryErrorSchema, ...authErrors],
+    error: articleErrors,
   }),
   HttpApiEndpoint.post('addArticle', '/api/library/articles', {
     payload: urlPayload,
@@ -213,7 +214,6 @@ const library = HttpApiGroup.make('library').add(
       ArticleNotFoundSchema,
       ArticleNotInFeedSchema,
       DuplicateArticleSchema,
-      ArticleRepositoryErrorSchema,
       ...articleErrors,
     ],
   }),
@@ -224,7 +224,6 @@ const library = HttpApiGroup.make('library').add(
       ArticleNotFoundSchema,
       ArticleMissingUrlSchema,
       ArticleEmptyContentSchema,
-      ArticleRepositoryErrorSchema,
       SettingsRepositoryErrorSchema,
       WebpageFetcherErrorSchema,
       ArticleExtractorErrorSchema,
@@ -258,11 +257,7 @@ const library = HttpApiGroup.make('library').add(
   HttpApiEndpoint.delete('removeArticle', '/api/library/articles', {
     payload: Schema.Struct(articleId),
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [
-      ArticleNotLaterSchema,
-      ArticleRepositoryErrorSchema,
-      ...articleErrors,
-    ],
+    error: [ArticleNotLaterSchema, ...articleErrors],
   }),
   HttpApiEndpoint.get('settings', '/api/library/settings', {
     success: SettingsResponse,

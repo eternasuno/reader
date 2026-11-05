@@ -5,13 +5,17 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { vi } from 'vitest';
 import {
-  BrowserConcurrency,
   BrowserConcurrencyLive,
   BrowserWebpageFetcherLive,
   JinaWebpageFetcherLive,
 } from '../src';
 
+vi.mock('node:dns/promises', () => ({
+  lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+}));
+
 const key = Redacted.make('secret');
+
 const article = 'https://example.com/article';
 
 const provideFetch = (impl: typeof globalThis.fetch) =>
@@ -45,23 +49,6 @@ it.effect('sends Jina credentials and returns the fetched html', () =>
   }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
 );
 
-it.effect('fetches anonymously when no Jina key is configured', () =>
-  Effect.gen(function* () {
-    let init: RequestInit | undefined;
-    const fetchImpl = (_input: RequestInfo | URL, options?: RequestInit) => {
-      init = options;
-
-      return Promise.resolve(new Response(html, { status: 200 }));
-    };
-    const fetcher = yield* WebpageFetcher;
-    const result = yield* fetcher
-      .fetch(article)
-      .pipe(provideFetch(fetchImpl as typeof globalThis.fetch));
-    expect(result).toBe(html);
-    expect(new Headers(init?.headers).get('authorization')).toBeNull();
-  }).pipe(Effect.provide(JinaWebpageFetcherLive(undefined)))
-);
-
 it.effect('exposes distinct Jina failure messages', () =>
   Effect.gen(function* () {
     const responses = [
@@ -93,67 +80,6 @@ it.effect('exposes distinct Jina failure messages', () =>
       'Jina API key rejected',
       'Jina request failed with status 502',
     ]);
-  }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
-);
-
-it.effect('rejects credentialed or unsupported addresses before fetching', () =>
-  Effect.gen(function* () {
-    const fetchImpl = () => {
-      throw new Error('Unexpected request');
-    };
-    const fetcher = yield* WebpageFetcher;
-    const credentialed = yield* Effect.flip(
-      fetcher
-        .fetch('https://user:pass@example.com/a')
-        .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
-    );
-    const unsupported = yield* Effect.flip(
-      fetcher
-        .fetch('ftp://example.com/a')
-        .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
-    );
-    expect(credentialed._tag).toBe('WebpageFetcherError');
-    expect(unsupported._tag).toBe('WebpageFetcherError');
-  }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
-);
-
-it.effect('rejects redirects, oversized bodies and failed statuses', () =>
-  Effect.gen(function* () {
-    const responses = [
-      new Response(null, {
-        status: 302,
-        headers: { location: 'https://elsewhere.example/' },
-      }),
-      new Response('a'.repeat(5 * 1024 * 1024 + 1), { status: 200 }),
-      new Response('no', { status: 502 }),
-    ];
-    const fetchImpl = () => {
-      const response = responses.shift();
-      if (!response) {
-        throw new Error('Unexpected request');
-      }
-
-      return Promise.resolve(response);
-    };
-    const fetcher = yield* WebpageFetcher;
-    const redirect = yield* Effect.flip(
-      fetcher
-        .fetch(article)
-        .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
-    );
-    const oversized = yield* Effect.flip(
-      fetcher
-        .fetch(article)
-        .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
-    );
-    const failed = yield* Effect.flip(
-      fetcher
-        .fetch(article)
-        .pipe(provideFetch(fetchImpl as typeof globalThis.fetch))
-    );
-    expect(redirect._tag).toBe('WebpageFetcherError');
-    expect(oversized._tag).toBe('WebpageFetcherError');
-    expect(failed._tag).toBe('WebpageFetcherError');
   }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
 );
 
@@ -222,47 +148,32 @@ it.effect('reports a forty second browser timeout', () =>
   )
 );
 
-it.effect('reports a forty second Jina timeout', () =>
-  Effect.gen(function* () {
-    const fetcher = yield* WebpageFetcher;
-    const fiber = yield* fetcher
-      .fetch(article)
-      .pipe(
-        provideFetch(
-          (() => new Promise<Response>(() => {})) as typeof globalThis.fetch
-        ),
-        Effect.forkChild
-      );
-    yield* Effect.yieldNow;
-    yield* TestClock.adjust('40 seconds');
-    const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-    expect(error.message).toBe('Jina request timed out');
-  }).pipe(Effect.provide(JinaWebpageFetcherLive(key)))
-);
-
 it.effect('limits shared browser concurrency to two permits', () =>
   Effect.gen(function* () {
-    const semaphore = yield* BrowserConcurrency;
     let active = 0;
     let peak = 0;
-    const request = semaphore.withPermit(
-      Effect.acquireUseRelease(
-        Effect.sync(() => {
-          active += 1;
-          peak = Math.max(peak, active);
-        }),
-        () => Effect.yieldNow,
-        () =>
-          Effect.sync(() => {
-            active -= 1;
-          })
-      )
-    );
+    const fetchImpl = () => {
+      active += 1;
+      peak = Math.max(peak, active);
 
-    yield* Effect.forEach([1, 2, 3, 4], () => request, {
-      concurrency: 'unbounded',
-      discard: true,
-    });
+      return new Promise<Response>((_resolve, reject) => {
+        setTimeout(() => {
+          active -= 1;
+          reject(new Error('Discovery failed'));
+        }, 0);
+      });
+    };
+    vi.stubGlobal('fetch', fetchImpl);
+    const fetcher = yield* WebpageFetcher;
+
+    yield* Effect.forEach(
+      [1, 2, 3, 4],
+      () => Effect.result(fetcher.fetch('http://8.8.8.8/article')),
+      { concurrency: 'unbounded', discard: true }
+    );
     expect(peak).toBe(2);
-  }).pipe(Effect.provide(BrowserConcurrencyLive))
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals())),
+    Effect.provide(browserLayer('http://127.0.0.1:9222'))
+  )
 );

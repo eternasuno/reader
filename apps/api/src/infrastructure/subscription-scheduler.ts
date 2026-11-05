@@ -1,4 +1,15 @@
 import {
+  type ArticleRepository,
+  type DocumentSantize,
+  type FeedId,
+  type FeedParser,
+  FeedRepository,
+  type HtmlParser,
+  type OwnerId,
+  refreshSubscription,
+  type SettingsRepository,
+} from '@reader/business';
+import {
   type Context,
   Duration,
   Effect,
@@ -8,17 +19,6 @@ import {
   Queue,
 } from 'effect';
 import type { HttpClient } from 'effect/http';
-import type {
-  FeedId,
-  OwnerId,
-} from '../../../../packages/business/src/entity/object-value.ts';
-import type { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
-import type { DocumentSantize } from '../../../../packages/business/src/port/document-santize.ts';
-import type { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
-import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
-import type { HtmlParser } from '../../../../packages/business/src/port/html-parser.ts';
-import type { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
-import { refreshSubscription } from '../../../../packages/business/src/usecase/subscriptions.ts';
 import {
   type SubscriptionSchedule,
   SubscriptionSchedules,
@@ -82,19 +82,9 @@ const release = (registered: Set<OwnerId>, ownerId: OwnerId) =>
     registered.delete(ownerId);
   });
 
-const refreshFeed = (
-  subscriptions: Context.Service.Shape<typeof FeedRepository>,
-  ownerId: OwnerId,
-  id: FeedId
-) =>
-  Effect.gen(function* () {
-    const subscription = yield* subscriptions.find(ownerId, id);
-    if (Option.isNone(subscription)) {
-      return;
-    }
-
-    yield* refreshSubscription(ownerId, id);
-  }).pipe(
+const refreshFeed = (ownerId: OwnerId, id: FeedId) =>
+  refreshSubscription(ownerId, id).pipe(
+    Effect.catchTag('SubscriptionNotFound', () => Effect.void),
     Effect.catch((error) =>
       Effect.logWarning('Subscription refresh failed', error)
     )
@@ -110,7 +100,7 @@ const refreshOwner =
       const items = yield* subscriptions.list(job.ownerId);
       yield* Effect.forEach(
         items,
-        (item) => refreshFeed(subscriptions, job.ownerId, item.id),
+        (item) => refreshFeed(job.ownerId, item.id),
         { discard: true }
       );
     }).pipe(

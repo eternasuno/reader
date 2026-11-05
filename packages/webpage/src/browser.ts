@@ -10,7 +10,9 @@ import WebSocket from 'ws';
 import { FetchFailure, validatePublicTarget } from './http';
 
 const CONNECT_TIMEOUT = '15 seconds';
+
 const NAVIGATION_TIMEOUT_MS = 20_000;
+
 const NETWORK_IDLE_TIME_MS = 500;
 
 const createTransport = (socket: WebSocket): ConnectionTransport => {
@@ -77,29 +79,35 @@ const openSocket = (
     socket.once('error', fail);
     signal.addEventListener('abort', abort, { once: true });
 
-    if (signal.aborted) {
-      abort();
-    }
+    if (signal.aborted) abort();
   });
 
-const endpointTarget = (endpoint: string) => {
+const DISCOVERY_PROTOCOLS: Readonly<Record<string, string>> = {
+  'http:': 'http:',
+  'https:': 'https:',
+  'ws:': 'http:',
+  'wss:': 'https:',
+};
+
+export const endpointTarget = (endpoint: string) => {
   const url = new URL(endpoint);
+  const protocol = DISCOVERY_PROTOCOLS[url.protocol];
 
-  if (url.protocol === 'ws:' || url.protocol === 'wss:') {
-    if (url.pathname !== '/' || url.search || url.hash) {
-      return { kind: 'websocket', url: url.href };
-    }
-
-    const protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
-
-    return { kind: 'discovery', url: `${protocol}//${url.host}` };
-  }
-
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+  if (!protocol || url.username || url.password || endpoint.includes('#')) {
     throw new Error('Unsupported browser endpoint');
   }
 
-  return { kind: 'discovery', url: url.href };
+  if (
+    (url.protocol === 'ws:' || url.protocol === 'wss:') &&
+    (url.pathname !== '/' || url.search)
+  ) {
+    return { kind: 'websocket' as const, url: url.href };
+  }
+
+  return {
+    kind: 'discovery' as const,
+    url: protocol === url.protocol ? url.href : `${protocol}//${url.host}`,
+  };
 };
 
 const readWebSocketUrl = (payload: unknown): string => {
@@ -126,7 +134,6 @@ const discoverWebSocketUrl = (
     try: async (signal) => {
       const url = new URL(browserURL);
       url.pathname = `${url.pathname.replace(/\/?$/, '')}/json/version`;
-      url.hash = '';
       const response = await fetch(url, {
         method: 'GET',
         signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
@@ -136,9 +143,7 @@ const discoverWebSocketUrl = (
         throw new Error(`Browser discovery returned HTTP ${response.status}`);
       }
 
-      const payload: unknown = await response.json();
-
-      return readWebSocketUrl(payload);
+      return readWebSocketUrl(await response.json());
     },
     catch: (cause) =>
       new FetchFailure({ message: 'Browser discovery failed', cause }),
@@ -153,11 +158,10 @@ const openTransport = (
       catch: (cause) =>
         new FetchFailure({ message: 'Invalid browser endpoint', cause }),
     });
-    let url = target.url;
-
-    if (target.kind === 'discovery') {
-      url = yield* discoverWebSocketUrl(target.url);
-    }
+    const url =
+      target.kind === 'discovery'
+        ? yield* discoverWebSocketUrl(target.url)
+        : target.url;
 
     return yield* connectionTimeout(
       Effect.tryPromise({
@@ -166,6 +170,15 @@ const openTransport = (
           new FetchFailure({ message: 'Browser connection failed', cause }),
       })
     );
+  });
+
+const protocolRequest = <A>(
+  operation: () => Promise<A>,
+  message: string
+): Effect.Effect<A, FetchFailure> =>
+  Effect.tryPromise({
+    try: operation,
+    catch: (cause) => new FetchFailure({ message, cause }),
   });
 
 const acquireBrowser = (endpoint: Redacted.Redacted<string>) =>
@@ -178,30 +191,19 @@ const acquireBrowser = (endpoint: Redacted.Redacted<string>) =>
     (transport) =>
       Effect.acquireRelease(
         connectionTimeout(
-          Effect.tryPromise({
-            try: () => connect({ transport, protocolTimeout: 15_000 }),
-            catch: (cause) =>
-              new FetchFailure({ message: 'Browser connection failed', cause }),
-          })
+          protocolRequest(
+            () => connect({ transport, protocolTimeout: 15_000 }),
+            'Browser connection failed'
+          )
         ),
         (browser: Browser) =>
-          Effect.tryPromise({
-            try: () => browser.disconnect(),
-            catch: (cause) =>
-              new FetchFailure({ message: 'Browser disconnect failed', cause }),
-          }).pipe(Effect.ignore),
+          protocolRequest(
+            () => browser.disconnect(),
+            'Browser disconnect failed'
+          ).pipe(Effect.ignore),
         { interruptible: true }
       )
   );
-
-const protocolRequest = <A>(
-  operation: () => Promise<A>,
-  message: string
-): Effect.Effect<A, FetchFailure> =>
-  Effect.tryPromise({
-    try: operation,
-    catch: (cause) => new FetchFailure({ message, cause }),
-  });
 
 const acquireContext = (browser: Browser) =>
   Effect.acquireRelease(
@@ -268,9 +270,7 @@ const acquireRequestGuard = (page: Page) =>
     }),
     ({ listener }) =>
       Effect.sync(() => {
-        if (listener) {
-          page.off('request', listener);
-        }
+        if (listener) page.off('request', listener);
       })
   );
 

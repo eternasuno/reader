@@ -15,11 +15,9 @@ const reconcileRead = async (
     if (version !== store.version(id)) {
       return;
     }
+
     if (fetched !== null) {
-      store.setState((current) => ({
-        ...upsertItem(current, fetched),
-        selected: current.selected?.id === id ? fetched : current.selected,
-      }));
+      store.setState((current) => upsertItem(current, fetched));
     }
   } catch {}
 
@@ -43,9 +41,7 @@ export const writeRead = async (
   store.setState((current) => setItemsRead(current, new Set([id]), read));
   try {
     await store.client.markRead(id, read);
-    if (store.end(id, token)) {
-      store.setState((current) => setItemsRead(current, new Set([id]), read));
-    }
+    store.end(id, token);
 
     await settleRead(store, id);
 
@@ -87,6 +83,7 @@ export const markLoaded = async (store: LibraryStore): Promise<void> => {
   if (ids.length === 0) {
     return;
   }
+
   const entries = ids.map((id) => [id, store.begin(id)] as const);
   store.setState((value) => setItemsRead(value, new Set(ids), true));
   try {
@@ -111,6 +108,7 @@ export const markAll = async (store: LibraryStore): Promise<void> => {
   if (ids.length === 0 && unreadCount(current.counts, scope) === 0) {
     return;
   }
+
   const counts = current.counts;
   const entries = ids.map((id) => [id, store.begin(id)] as const);
   store.setState((value) => ({

@@ -1,6 +1,5 @@
+import { ArticleRepository, FeedRepository } from '@reader/business';
 import { Context, Effect, Layer, Semaphore } from 'effect';
-import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
-import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
 import { Database } from '../infrastructure/db';
 import { makeArticles } from './article-store';
 import { makeSubscriptions } from './subscription-store';

@@ -24,7 +24,9 @@ import {
 } from './settings-model';
 
 const discardMessage = '当前分区有未保存的修改，切换后将被丢弃。确定继续吗？';
+
 const leaveMessage = '有未保存的修改，确定离开设置页吗？';
+
 const busyMessage = '正在保存设置，完成前无法切换分区或离开本页。';
 
 const sectionId = (section: SettingsSection) => `settings-${section}`;
@@ -48,6 +50,7 @@ const useSettingsSection = (drafts: DraftStore, status: StatusStore) => {
 
   const sidebarLayout = () => {
     if (navigation === undefined || content === undefined) return false;
+
     const nav = navigation.getBoundingClientRect();
     const body = content.getBoundingClientRect();
 
@@ -56,7 +59,9 @@ const useSettingsSection = (drafts: DraftStore, status: StatusStore) => {
 
   const pick = (target: SettingsSection) => {
     if (target === active()) return;
+
     if (isSettingsBusy(status)) return;
+
     if (!sidebarLayout()) {
       setActive(target);
       document
@@ -90,6 +95,7 @@ const useSettingsSection = (drafts: DraftStore, status: StatusStore) => {
 const useUnsavedChangesGuard = (drafts: DraftStore, status: StatusStore) => {
   createEffect(() => {
     if (!anySettingsDirty(drafts)) return;
+
     const handler = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener('beforeunload', handler);
     onCleanup(() => window.removeEventListener('beforeunload', handler));
@@ -108,6 +114,7 @@ const useUnsavedChangesGuard = (drafts: DraftStore, status: StatusStore) => {
     }
 
     if (!anySettingsDirty(drafts)) return;
+
     event.preventDefault();
     setTimeout(() => {
       if (window.confirm(leaveMessage)) event.retry(true);

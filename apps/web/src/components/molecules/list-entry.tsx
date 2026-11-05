@@ -39,7 +39,7 @@ export const EntryTitle = (props: {
   </a>
 );
 
-export const EntryTime = (props: { readonly value: string }) => {
+const EntryTime = (props: { readonly value: string }) => {
   const label = () => {
     const seconds = Math.max(0, (Date.now() - Date.parse(props.value)) / 1000);
     if (seconds < 60) return '刚刚';
@@ -92,9 +92,7 @@ export const EntryReadToggle = (props: {
     aria-pressed={props.read}
     title={props.read ? '已读，点击标为未读' : '未读，点击标为已读'}
     disabled={props.pending}
-    onClick={() => {
-      if (!props.pending) props.onToggle();
-    }}
+    onClick={props.onToggle}
   >
     <ReadStatusIcon read={props.read} />
   </Button>

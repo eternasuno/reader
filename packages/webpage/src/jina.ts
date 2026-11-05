@@ -2,6 +2,7 @@ import { Effect, Redacted } from 'effect';
 import { FetchFailure, fetchPublicText } from './http';
 
 const JINA_ENDPOINT = 'https://r.jina.ai/';
+
 const MAX_BYTES = 5 * 1024 * 1024;
 
 const parseTarget = (url: string): Effect.Effect<URL, FetchFailure> =>

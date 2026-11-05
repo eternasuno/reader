@@ -2,6 +2,16 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each test declares its mocks alongside the asserted scenario.
 import { expect, it } from '@effect/vitest';
 import {
+  ArticleRepository,
+  DocumentSantize,
+  type Feed,
+  FeedId,
+  FeedParser,
+  FeedRepository,
+  OwnerId,
+  SettingsRepository,
+} from '@reader/business';
+import {
   type Context,
   DateTime,
   Deferred,
@@ -12,16 +22,6 @@ import {
 } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import type { Feed } from '../../../../packages/business/src/entity/feed.ts';
-import {
-  FeedId,
-  OwnerId,
-} from '../../../../packages/business/src/entity/object-value.ts';
-import { ArticleRepository } from '../../../../packages/business/src/port/article-repository.ts';
-import { DocumentSantize } from '../../../../packages/business/src/port/document-santize.ts';
-import { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
-import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
-import { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 import { SubscriptionSchedulerLive } from '../../src/infrastructure/subscription-scheduler';
 import {
@@ -229,6 +229,7 @@ it.effect('runs independent owner schedules at their own intervals', () => {
             if (fetchCount() === 2) {
               yield* Deferred.succeed(started, undefined);
             }
+
             const repeat = url.href === alice.url.href ? aliceAgain : bobAgain;
             if (count === 2) {
               yield* Deferred.succeed(repeat, undefined);
@@ -485,6 +486,7 @@ it.effect('reconciles owners that are added or removed', () => {
             if (url.href === alice.url.href) {
               yield* Deferred.succeed(aliceFirst, undefined);
             }
+
             if (url.href === bob.url.href) {
               yield* Deferred.succeed(bobFirst, undefined);
             }
@@ -537,6 +539,7 @@ it.effect(
               if (started === items.length) {
                 yield* Deferred.succeed(barrier, undefined);
               }
+
               yield* Deferred.await(barrier);
 
               return document();

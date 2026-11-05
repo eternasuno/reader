@@ -1,6 +1,13 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: one integration scenario exercises the library API boundary.
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: the scenario follows the user journey in order.
 import { expect, it } from '@effect/vitest';
+import {
+  ArticleExtractor,
+  ArticleRepository,
+  ArticleRepositoryError,
+  DocumentSantize,
+  FeedParser,
+} from '@reader/business';
 import { BrowserConcurrencyLive } from '@reader/webpage';
 import { surrealAdapter } from '@surrealdb/better-auth';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
@@ -12,14 +19,7 @@ import {
   HttpRouter,
 } from 'effect/http';
 import type { Surreal } from 'surrealdb';
-import { ArticleExtractor } from '../../../../packages/business/src/port/article-extractor.ts';
-import {
-  ArticleRepository,
-  ArticleRepositoryError,
-} from '../../../../packages/business/src/port/article-repository.ts';
-import { DocumentSantize } from '../../../../packages/business/src/port/document-santize.ts';
-import { FeedParser } from '../../../../packages/business/src/port/feed-parser.ts';
-import { HttpFetchLive } from '../../../../packages/webpage/src/http.ts';
+import { vi } from 'vitest';
 import {
   ArticleItemSchema,
   ArticlePageSchema,
@@ -38,6 +38,10 @@ import { SettingsRepositoryLive } from '../../src/adapter/settings-repository';
 import { AppLive } from '../../src/app';
 import { Auth } from '../../src/infrastructure/auth';
 import { createSurreal, Database } from '../../src/infrastructure/db';
+
+vi.mock('node:dns/promises', () => ({
+  lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+}));
 
 const origin = 'http://localhost:3000';
 
@@ -101,12 +105,14 @@ const readCounts = async (handler: Handler, cookie?: string) => {
 };
 
 type FeedItem = { readonly id: string; readonly title: string };
+
 type ArticleItem = {
   readonly id: string;
   readonly title: string;
   readonly read: boolean;
   readonly extractedContent?: string;
 };
+
 type Page = {
   readonly items: ReadonlyArray<ArticleItem>;
   readonly cursor: string | null;
@@ -236,10 +242,12 @@ const verifyArticles = async (
   if (first === undefined) {
     throw new Error('Missing seeded article');
   }
+
   const rawFirst = pagePayload.items[0];
   if (rawFirst === undefined) {
     throw new Error('Missing seeded article payload');
   }
+
   expect(Object.hasOwn(rawFirst, 'content')).toBe(false);
   expect(Object.hasOwn(rawFirst, 'extractedContent')).toBe(false);
 
@@ -609,8 +617,7 @@ const makeHandler = (
       Promise.resolve(new Response('<html><body><p>Body</p></body></html>'))
     ),
     articleExtractor,
-    HtmlParserLive,
-    HttpFetchLive
+    HtmlParserLive
   ).pipe(
     Layer.provide(
       Layer.mergeAll(Layer.succeed(Database, db), ReaderStoreConcurrencyLive)

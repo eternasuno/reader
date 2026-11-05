@@ -6,6 +6,7 @@ import type { ClientOptions } from 'ws';
 import { fetchBrowser } from '../src/browser';
 
 type SocketMode = 'open' | 'hang' | 'error';
+
 type Listener = (...args: Array<unknown>) => void;
 
 type SocketStub = {
@@ -143,6 +144,7 @@ const browserFixture = (html?: string, status?: number) => {
 type Fixture = ReturnType<typeof browserFixture>;
 
 const endpoint = Redacted.make('ws://127.0.0.1:9222');
+
 const websocketUrl = 'ws://127.0.0.1:9222/devtools/browser/test';
 
 const discoveryResponse = (payload: unknown, status = 200): Response =>
@@ -218,6 +220,7 @@ it.effect('rejects invalid targets before connecting', () =>
     ]) {
       expect((yield* failFetch(url))._tag).toBe('FetchFailure');
     }
+
     expect(fetchMock).not.toHaveBeenCalled();
     expect(connectMock).not.toHaveBeenCalled();
   })

@@ -24,7 +24,7 @@ export const webpageFetcherForOwner = (owner: OwnerId) =>
     }
 
     const layer = BrowserWebpageFetcherLive(
-      Option.getOrUndefined(config.browserEndpoint)?.trim() || undefined
+      Option.getOrUndefined(config.browserEndpoint)
     ).pipe(Layer.provide(Layer.succeed(BrowserConcurrency, concurrency)));
 
     return Layer.succeed(WebpageFetcherLayer, layer);

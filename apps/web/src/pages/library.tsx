@@ -3,7 +3,7 @@ import { createEffect, Show } from 'solid-js';
 import { LibraryWorkspace } from '../components/organisms/library-workspace';
 import { authClient } from '../lib/auth';
 
-export const LibraryPage = () => {
+const LibraryPage = () => {
   const navigate = useNavigate();
   const session = authClient.useSession();
   createEffect(() => {

@@ -83,6 +83,7 @@ export const useLibraryModel = (
     if (timer !== undefined) {
       clearInterval(timer);
     }
+
     timer = undefined;
   };
 
@@ -99,6 +100,7 @@ export const useLibraryModel = (
 
       return;
     }
+
     start();
     void model.refresh();
   };
@@ -117,15 +119,10 @@ export const useLibraryModel = (
   return model;
 };
 
-export {
-  removeItem,
-  restoreItem,
-  setItemsRead,
-  upsertItem,
-} from './library-articles';
-export { clearScopeCounts, unreadCount } from './library-counts';
+export { unreadCount } from './library-counts';
+
 export type { PreviewResult } from './library-mutations';
-export { applyPage, failList, resetList, startLoadMore } from './library-pages';
-export { applyRefresh, applyRefreshPage } from './library-refresh';
-export type { LibraryState, LibraryToast } from './library-state';
-export { initialLibraryState, sameScope } from './library-state';
+
+export type { LibraryToast } from './library-state';
+
+export { sameScope } from './library-state';

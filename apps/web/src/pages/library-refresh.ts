@@ -6,6 +6,7 @@ const compareArticles = (left: Article, right: Article): number => {
   if (left.publishedAt !== right.publishedAt) {
     return left.publishedAt > right.publishedAt ? -1 : 1;
   }
+
   if (left.id === right.id) {
     return 0;
   }
@@ -33,14 +34,17 @@ const mergeServerRefresh = (
     if (seen.has(item.id)) {
       continue;
     }
+
     seen.add(item.id);
     if (state.pending.has(item.id)) {
       const local = previous.get(item.id);
       if (local !== undefined) {
         next.push(local);
       }
+
       continue;
     }
+
     next.push(item);
   }
 
@@ -57,6 +61,7 @@ const retainRefreshRows = (
     if (merged.seen.has(item.id)) {
       continue;
     }
+
     merged.seen.add(item.id);
     if (state.pending.has(item.id)) {
       insertByOrder(merged.items, item);
@@ -64,6 +69,7 @@ const retainRefreshRows = (
       retained.push(item);
     }
   }
+
   merged.items.push(...retained);
 };
 

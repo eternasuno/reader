@@ -1,9 +1,11 @@
+import {
+  Article,
+  ArticleRepositoryError,
+  Feed,
+  FeedRepositoryError,
+} from '@reader/business';
 import { Effect, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
-import { Article } from '../../../../packages/business/src/entity/article.ts';
-import { Feed } from '../../../../packages/business/src/entity/feed.ts';
-import { ArticleRepositoryError } from '../../../../packages/business/src/port/article-repository.ts';
-import { FeedRepositoryError } from '../../../../packages/business/src/port/feed-repository.ts';
 
 export type Bindings = Record<string, unknown>;
 

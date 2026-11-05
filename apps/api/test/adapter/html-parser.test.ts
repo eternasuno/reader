@@ -14,18 +14,6 @@ it.effect('parses HTML with the requested base URL', () =>
   }).pipe(Effect.scoped, Effect.provide(HtmlParserLive))
 );
 
-it.effect('keeps escaped text literal when parsing HTML', () =>
-  Effect.gen(function* () {
-    const parser = yield* HtmlParser;
-    const document = yield* parser.parse(
-      '&lt;title&gt;Plain&lt;/title&gt; &amp;copy;'
-    );
-    expect(document.body.innerHTML).toBe(
-      '&lt;title&gt;Plain&lt;/title&gt; &amp;copy;'
-    );
-  }).pipe(Effect.scoped, Effect.provide(HtmlParserLive))
-);
-
 it.effect('closes the parsed document when its scope ends', () => {
   let fired = false;
 

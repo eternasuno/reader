@@ -18,6 +18,7 @@ export const setItemsRead = (
     if (!ids.has(item.id) || item.read === read) {
       return item;
     }
+
     changed = true;
     counts = withReadCount(counts, item, read);
 

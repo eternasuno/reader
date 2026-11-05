@@ -1,6 +1,6 @@
+import { OwnerId } from '@reader/business';
 import { Context, Data, type Duration, Effect, Layer, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
-import { OwnerId } from '../../../../packages/business/src/entity/object-value.ts';
 import { Database } from './db/index.ts';
 
 export const OWNER_REFRESH_INTERVAL: Duration.Input = '30 minutes';

@@ -6,8 +6,6 @@ export const authClient = createAuthClient({
   },
 });
 
-export type SessionState = ReturnType<ReturnType<typeof authClient.useSession>>;
-
 export type LoginParams = {
   email: string;
   password: string;
@@ -59,7 +57,7 @@ export const logout = async () => {
   }
 };
 
-export type ChangePasswordParams = {
+type ChangePasswordParams = {
   currentPassword: string;
   newPassword: string;
 };
@@ -78,7 +76,7 @@ const passwordMessages: Record<string, string> = {
   INVALID_ORIGIN: '请求来源无效，请刷新页面后重试',
 };
 
-export const passwordErrorText = (code: string | undefined): string =>
+const passwordErrorText = (code: string | undefined): string =>
   code === undefined
     ? '修改密码失败，请稍后重试'
     : (passwordMessages[code] ?? '修改密码失败，请稍后重试');

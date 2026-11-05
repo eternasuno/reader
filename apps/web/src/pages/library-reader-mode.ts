@@ -29,6 +29,7 @@ export const useReaderMode = (
   const hasExtracted = () => hasText(article().extractedContent);
   const pick = async (next: LibraryReaderMode) => {
     if (next === mode() || !hasUrl()) return;
+
     if (next !== 'extracted' || hasExtracted()) {
       setMode(next);
 

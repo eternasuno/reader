@@ -15,7 +15,6 @@ import { openDuplicate } from './library-selection';
 
 export type PreviewResult =
   | { readonly kind: 'preview'; readonly preview: Preview }
-  | { readonly kind: 'existing' }
   | { readonly kind: 'failed' };
 
 const reloadAfterRemoval = async (store: LibraryStore, id: string) => {
@@ -155,15 +154,6 @@ export const previewUrl = async (
   try {
     return { kind: 'preview', preview: await store.client.preview(url) };
   } catch (error) {
-    if (error instanceof LibraryError && error.tag === 'SubscriptionExists') {
-      store.notify('success', '该订阅已存在');
-      if (error.id !== undefined) {
-        await reloadFeed(store, error.id);
-      }
-
-      return { kind: 'existing' };
-    }
-
     store.notify('error', libraryErrorMessage(error));
 
     return { kind: 'failed' };

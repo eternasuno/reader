@@ -15,7 +15,6 @@ export const PasswordConfirmation = () => {
         minlength={8}
         required
         onInput={(event) => setPassword(event.currentTarget.value)}
-        onChange={(event) => setPassword(event.currentTarget.value)}
         hint="密码至少 8 位。"
       />
       <FormInput

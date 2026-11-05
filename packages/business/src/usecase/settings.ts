@@ -34,8 +34,11 @@ export type ExtractionUpdate = {
 };
 
 const MIN_RETENTION = 30;
+
 const MAX_RETENTION = 300;
+
 const MAX_SETTING_LENGTH = 2048;
+
 const BROWSER_PROTOCOLS = new Set(['http:', 'https:', 'ws:', 'wss:']);
 
 const isValidRetention = (value: number) =>

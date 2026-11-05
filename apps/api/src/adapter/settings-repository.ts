@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
-import { Effect, Layer, Option, Redacted, Schema } from 'effect';
-import type { Surreal } from 'surrealdb';
-import type { OwnerId } from '../../../../packages/business/src/entity/object-value.ts';
 import {
   DEFAULT_RETENTION,
+  type OwnerId,
   ReaderProvider,
   Setting,
-} from '../../../../packages/business/src/entity/setting.ts';
-import * as Port from '../../../../packages/business/src/port/settings-repository.ts';
+  type SettingsPatch,
+  SettingsRepository,
+  SettingsRepositoryError,
+  type SettingsRepositoryValue,
+} from '@reader/business';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import type { Surreal } from 'surrealdb';
 import { Database } from '../infrastructure/db';
 
 type Bindings = Record<string, unknown>;
@@ -23,7 +26,7 @@ const ownerHash = (owner: OwnerId) =>
   createHash('sha256').update(owner).digest('hex');
 
 const repositoryError = () =>
-  new Port.SettingsRepositoryError({
+  new SettingsRepositoryError({
     message: 'Failed to access extraction settings',
   });
 
@@ -51,7 +54,7 @@ const toJinaKey = (stored: Option.Option<string>) =>
   );
 
 const load = (db: Surreal, owner: OwnerId) =>
-  query<unknown, Port.SettingsRepositoryError>(
+  query<unknown, SettingsRepositoryError>(
     db,
     'SELECT jinaKey, provider, browserEndpoint, retention FROM setting WHERE owner = $owner;',
     owner,
@@ -59,7 +62,7 @@ const load = (db: Surreal, owner: OwnerId) =>
     repositoryError
   ).pipe(
     Effect.flatMap(decodeRows),
-    Effect.map((rows): Port.SettingsRepositoryValue => {
+    Effect.map((rows): SettingsRepositoryValue => {
       const row = Option.fromUndefinedOr(rows[0]);
       const storedKey = Option.flatMap(row, (value) => value.jinaKey);
       const endpoint = Option.map(
@@ -89,7 +92,7 @@ type SaveBindings = {
   retention?: number;
 };
 
-const saveSql = (settingsPatch: Port.SettingsPatch) => {
+const saveSql = (settingsPatch: SettingsPatch) => {
   const clauses = ['owner = $owner'];
   const bindings: SaveBindings = {};
 
@@ -112,16 +115,11 @@ const saveSql = (settingsPatch: Port.SettingsPatch) => {
   }
 
   if (settingsPatch.browserEndpoint !== undefined) {
-    const endpoint = Option.filter(
-      Option.map(settingsPatch.browserEndpoint, (value) => value.trim()),
-      (value) => value !== ''
-    );
-
-    Option.match(endpoint, {
+    Option.match(settingsPatch.browserEndpoint, {
       onNone: () => clauses.push('browserEndpoint = NONE'),
       onSome: (value) => {
         clauses.push('browserEndpoint = $browserEndpoint');
-        bindings.browserEndpoint = value;
+        bindings.browserEndpoint = value.trim();
       },
     });
   }
@@ -137,11 +135,7 @@ const saveSql = (settingsPatch: Port.SettingsPatch) => {
   };
 };
 
-const update = (
-  db: Surreal,
-  owner: OwnerId,
-  settingsPatch: Port.SettingsPatch
-) => {
+const update = (db: Surreal, owner: OwnerId, settingsPatch: SettingsPatch) => {
   if (
     settingsPatch.provider === undefined &&
     settingsPatch.jinaKey === undefined &&
@@ -153,7 +147,7 @@ const update = (
 
   const statement = saveSql(settingsPatch);
 
-  return query<unknown, Port.SettingsRepositoryError>(
+  return query<unknown, SettingsRepositoryError>(
     db,
     statement.sql,
     owner,
@@ -163,13 +157,13 @@ const update = (
 };
 
 const makeSettings = (db: Surreal) =>
-  Port.SettingsRepository.of({
+  SettingsRepository.of({
     get: (owner) => load(db, owner),
     update: (owner, settingsPatch) => update(db, owner, settingsPatch),
   });
 
 export const SettingsRepositoryLive = Layer.effect(
-  Port.SettingsRepository,
+  SettingsRepository,
   Effect.gen(function* () {
     const db = yield* Database;
 

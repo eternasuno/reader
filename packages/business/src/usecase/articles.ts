@@ -30,6 +30,7 @@ export {
   InvalidCursor,
 } from './article-errors';
 export {
+  ArticlePage,
   listFeedArticles,
   listLaterArticles,
   refreshFeedArticles,

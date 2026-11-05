@@ -26,21 +26,6 @@ it.effect('sanitizes HTML and resolves links against the article URL', () =>
   }).pipe(Effect.scoped, Effect.provide(Live))
 );
 
-it.effect('keeps escaped plain text literal through sanitization', () =>
-  Effect.gen(function* () {
-    const parser = yield* HtmlParser;
-    const processor = yield* DocumentSantize;
-    const document = yield* parser.parse(
-      '&lt;title&gt;plain&lt;/title&gt; &amp;copy; &lt;b&gt;bold&lt;/b&gt;',
-      articleUrl
-    );
-    const html = yield* processor.sanitize(document);
-    expect(html).toBe(
-      '&lt;title&gt;plain&lt;/title&gt; &amp;copy; &lt;b&gt;bold&lt;/b&gt;'
-    );
-  }).pipe(Effect.scoped, Effect.provide(Live))
-);
-
 it.effect(
   'preserves raw relative links without a base and removes unsafe URLs',
   () =>

@@ -1,16 +1,14 @@
-import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
-import { RecordId, type Surreal } from 'surrealdb';
-import type { Feed } from '../../../../packages/business/src/entity/feed.ts';
-import type {
-  FeedId,
-  OwnerId,
-} from '../../../../packages/business/src/entity/object-value.ts';
 import {
+  type Feed,
+  type FeedId,
   type FeedPatch,
   FeedRepository,
   type FeedRepositoryError,
   type FeedUpdate,
-} from '../../../../packages/business/src/port/feed-repository.ts';
+  type OwnerId,
+} from '@reader/business';
+import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
+import { RecordId, type Surreal } from 'surrealdb';
 import {
   type Bindings,
   feedRepositoryError,

@@ -4,6 +4,7 @@ import solid from 'vite-plugin-solid';
 import { defineConfig } from 'vitest/config';
 
 const DEFAULT_PORT = 3000;
+
 const ENV_DIR = '.';
 
 export default defineConfig(({ mode }) => {

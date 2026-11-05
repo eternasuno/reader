@@ -3,6 +3,7 @@ import { RecordId, StringRecordId } from 'surrealdb';
 import { codecOptions } from '../../../src/infrastructure/db/codec';
 
 const encode = codecOptions.valueEncodeVisitor;
+
 const decode = codecOptions.valueDecodeVisitor;
 
 class ForeignRecord {

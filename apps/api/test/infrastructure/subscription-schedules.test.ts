@@ -1,11 +1,9 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: real database scenarios share one store fixture.
 import { createHash, randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
+import { Feed, FeedRepository, OwnerId } from '@reader/business';
 import { Duration, Effect, Layer, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
-import { Feed } from '../../../../packages/business/src/entity/feed.ts';
-import { OwnerId } from '../../../../packages/business/src/entity/object-value.ts';
-import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
 import {
   ReaderStoreLive,
   readerStoreSchema,

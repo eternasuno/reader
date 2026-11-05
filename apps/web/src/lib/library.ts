@@ -18,8 +18,11 @@ import { createSend, type LibraryClientOptions } from './library-transport';
 import type { Filter, Scope } from './library-types';
 
 export * from './library-error';
+
 export * from './library-schema';
+
 export type { FetchLike, LibraryClientOptions } from './library-transport';
+
 export * from './library-types';
 
 export const createLibraryClient = (options: LibraryClientOptions = {}) => {

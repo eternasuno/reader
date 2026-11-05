@@ -2,22 +2,18 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each block is one cohesive integration scenario.
 import { createHash, randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
-import { Effect, Layer, Option, Schema } from 'effect';
-import type { Surreal } from 'surrealdb';
 import {
   Article,
   ArticleId,
-} from '../../../../packages/business/src/entity/article.ts';
-import { Feed } from '../../../../packages/business/src/entity/feed.ts';
-import {
-  FeedId,
-  OwnerId,
-} from '../../../../packages/business/src/entity/object-value.ts';
-import {
   type ArticleQuery,
   ArticleRepository,
-} from '../../../../packages/business/src/port/article-repository.ts';
-import { FeedRepository } from '../../../../packages/business/src/port/feed-repository.ts';
+  Feed,
+  FeedId,
+  FeedRepository,
+  OwnerId,
+} from '@reader/business';
+import { Effect, Layer, Option, Schema } from 'effect';
+import type { Surreal } from 'surrealdb';
 import {
   ReaderStoreLive,
   readerStoreSchema,
@@ -64,10 +60,15 @@ const article = (
   });
 
 const hashA = hash('tie-a');
+
 const hashB = hash('tie-b');
+
 const tieFirstId = Schema.decodeSync(ArticleId)(hashA < hashB ? hashA : hashB);
+
 const tieSecondId = Schema.decodeSync(ArticleId)(hashA < hashB ? hashB : hashA);
+
 const missingFeedId = Schema.decodeSync(FeedId)(hash('missing'));
+
 const missingArticleId = Schema.decodeSync(ArticleId)(hash('missing'));
 
 const pageQuery = (limit = 100): ArticleQuery => ({

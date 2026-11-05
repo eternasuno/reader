@@ -9,7 +9,9 @@ const rss = `<?xml version="1.0"?>
 </rss>`;
 
 type Fetch = typeof globalThis.fetch;
+
 type FetchInit = Parameters<Fetch>[1];
+
 type FetchInput = Parameters<Fetch>[0];
 
 const withFetch =

@@ -67,6 +67,7 @@ const createStatusStore = () => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const notify = (kind: SettingsToast['kind'], message: string) => {
     if (timer !== undefined) clearTimeout(timer);
+
     setToast({ kind, message });
     timer = setTimeout(() => {
       timer = undefined;
@@ -102,6 +103,7 @@ const runAction = async (
   success: string
 ) => {
   if (isSettingsBusy(status)) return;
+
   status.setPending(action);
 
   try {
@@ -124,6 +126,7 @@ const confirmAction = (
 ) => {
   const base = drafts.settings();
   if (base === undefined || isSettingsBusy(status)) return;
+
   if (!window.confirm(prompt)) return;
 
   void runAction(status, action, () => task(base), success);
@@ -197,6 +200,7 @@ export const isSectionDirty = (
   section: SettingsSection
 ) => {
   if (section === 'account') return accountDirty(drafts);
+
   if (section === 'articles') return articlesDirty(drafts);
 
   return extractionDirty(drafts);
@@ -243,9 +247,11 @@ export const submitRetention: SubmitForm = (drafts, status, form) => {
   const base = drafts.settings();
   form.classList.add('submitted');
   if (base === undefined || isSettingsBusy(status)) return;
+
   if (!form.checkValidity()) return;
 
-  const value = Number(new FormData(form).get('retention'));
+  const value = Number(drafts.retention());
+
   if (!Number.isInteger(value)) return;
 
   void runAction(
@@ -264,13 +270,12 @@ export const submitExtraction: SubmitForm = (drafts, status, form) => {
   const base = drafts.settings();
   form.classList.add('submitted');
   if (base === undefined || isSettingsBusy(status)) return;
+
   if (!form.checkValidity()) return;
 
-  const data = new FormData(form);
-  const provider: ReaderProvider =
-    data.get('provider') === 'browser' ? 'browser' : 'jina';
-  const jinaKey = String(data.get('jinaKey') ?? '');
-  const endpoint = String(data.get('browserEndpoint') ?? '').trim();
+  const provider = drafts.provider();
+  const jinaKey = drafts.jinaKey();
+  const endpoint = drafts.browserEndpoint().trim();
   const browserEndpoint = endpoint || (base.browserEndpoint ?? '');
 
   void runAction(

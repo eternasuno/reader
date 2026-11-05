@@ -1,9 +1,6 @@
 import { expect, it } from '@effect/vitest';
+import { FeedParser, type ParsedArticle } from '@reader/business';
 import { DateTime, Effect, Option } from 'effect';
-import {
-  FeedParser,
-  type ParsedArticle,
-} from '../../../../packages/business/src/port/feed-parser.ts';
 import { FeedParserLive, parseFeed } from '../../src/adapter/feed-parser';
 
 const base = new URL('https://example.com/feed.xml');

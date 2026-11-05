@@ -47,6 +47,7 @@ const mergeNewItems = (
     if (known.has(item.id) || state.pending.has(item.id)) {
       continue;
     }
+
     known.add(item.id);
     added.push(item);
   }

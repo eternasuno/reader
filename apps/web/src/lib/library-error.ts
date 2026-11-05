@@ -17,7 +17,6 @@ export type LibraryErrorTag =
   | 'SubscriptionExists'
   | 'SubscriptionNotFound'
   | 'SubscriptionImportFailed'
-  | 'SubscriptionRefreshFailed'
   | 'FetchSubscriptionError'
   | 'FeedParserError'
   | 'FeedRepositoryError'
@@ -44,7 +43,6 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   SubscriptionExists: '该订阅已存在',
   SubscriptionNotFound: '订阅不存在，可能已被删除',
   SubscriptionImportFailed: '订阅文章导入失败，请稍后重试',
-  SubscriptionRefreshFailed: '订阅刷新失败，请稍后重试',
   FetchSubscriptionError: '无法获取订阅内容，请稍后重试',
   FeedParserError: '无法解析订阅源，请确认地址正确',
   FeedRepositoryError: '暂时无法访问订阅，请稍后重试',

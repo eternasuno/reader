@@ -28,6 +28,7 @@ export const unreadCount = (counts: Counts, scope: Scope): number => {
   if (scope.kind === 'later') {
     return counts.later;
   }
+
   if (scope.feedId === undefined) {
     return counts.feedsTotal;
   }
@@ -39,6 +40,7 @@ export const clearScopeCounts = (counts: Counts, scope: Scope): Counts => {
   if (scope.kind === 'later') {
     return { ...counts, later: 0 };
   }
+
   if (scope.feedId === undefined) {
     return { ...counts, feeds: {}, feedsTotal: 0 };
   }

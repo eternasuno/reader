@@ -1,10 +1,10 @@
-import { Effect, Option } from 'effect';
-import { SettingsRepository } from '../../../../packages/business/src/port/settings-repository.ts';
 import {
   getSettings,
+  SettingsRepository,
   updateExtraction,
   updateRetention,
-} from '../../../../packages/business/src/usecase/settings.ts';
+} from '@reader/business';
+import { Effect, Option } from 'effect';
 import { type HandlerRequest, withSession } from './library-contract';
 import {
   extractionFailure,

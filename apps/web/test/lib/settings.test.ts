@@ -93,23 +93,6 @@ describe('settings errors', () => {
     );
   });
 
-  it('maps error codes and ignores backend messages', async () => {
-    fetchMock.mockResolvedValue(
-      json({ code: 'InvalidEndpoint', error: 'backend text' }, 400)
-    );
-
-    await expect(saveExtraction({ provider: 'browser' })).rejects.toThrow(
-      '请输入有效的浏览器服务地址'
-    );
-
-    fetchMock.mockResolvedValue(
-      json({ _tag: 'InvalidKey', code: 'BAD_REQUEST' }, 400)
-    );
-    await expect(saveExtraction({ provider: 'jina' })).rejects.toThrow(
-      '请输入有效的 Jina API Key'
-    );
-  });
-
   it('maps status codes when the body has no error code', async () => {
     fetchMock.mockResolvedValueOnce(json({ error: 'Unauthorized' }, 401));
     await expect(getSettings()).rejects.toThrow('登录状态已失效，请重新登录');

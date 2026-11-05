@@ -23,6 +23,7 @@ export const feedScopeIds = (
   if (scope.kind === 'later') {
     return undefined;
   }
+
   if (scope.feedId !== undefined) {
     return [scope.feedId];
   }
@@ -41,6 +42,7 @@ export const markScope = async (
 
     return;
   }
+
   if (feedIds !== undefined && feedIds.length > 0) {
     await client.markFeeds(feedIds);
 

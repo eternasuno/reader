@@ -46,6 +46,7 @@ const createNotifier = (setState: Setter<LibraryState>) => {
     if (notified.has(category)) {
       return;
     }
+
     notified.add(category);
     notify('error', libraryErrorMessage(error));
   };

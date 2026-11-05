@@ -1,19 +1,15 @@
-import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
-import { RecordId, type Surreal } from 'surrealdb';
 import {
   Article,
   ArticleId,
-} from '../../../../packages/business/src/entity/article.ts';
-import {
-  FeedId,
-  type OwnerId,
-} from '../../../../packages/business/src/entity/object-value.ts';
-import {
   type ArticlePatch,
   type ArticleQuery,
   ArticleRepository,
   type ArticleRepositoryError,
-} from '../../../../packages/business/src/port/article-repository.ts';
+  FeedId,
+  type OwnerId,
+} from '@reader/business';
+import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
+import { RecordId, type Surreal } from 'surrealdb';
 import {
   articleRepositoryError,
   articles,
@@ -35,7 +31,11 @@ type PatchScope = {
 };
 
 const LATER_SCOPE: PatchScope = { clause: 'feedId = NONE', bindings: {} };
-const ALL_FEEDS_SCOPE: PatchScope = { clause: 'feedId != NONE', bindings: {} };
+
+const ALL_FEEDS_SCOPE: PatchScope = {
+  clause: 'feedId != NONE',
+  bindings: {},
+};
 
 const articleScope = (ids: ReadonlyArray<ArticleId>): PatchScope | undefined =>
   ids.length === 0
