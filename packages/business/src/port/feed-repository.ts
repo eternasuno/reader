@@ -6,8 +6,8 @@ import {
   Schema,
   Struct,
 } from 'effect';
-import { Feed } from '../entity/feed';
-import type { FeedId, OwnerId } from '../entity/object-value';
+import { Feed, type FeedId } from '../entity/feed/feed';
+import type { OwnerId } from '../entity/object-value/owner-id';
 
 export class FeedRepositoryError extends Data.TaggedError(
   'FeedRepositoryError'

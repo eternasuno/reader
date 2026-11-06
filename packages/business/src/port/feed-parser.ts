@@ -1,21 +1,21 @@
 import { Context, Data, type Effect, Schema, Struct } from 'effect';
-import { Article } from '../entity/article';
-import { Feed } from '../entity/feed';
+import { Feed } from '../entity/feed/feed';
+import { FeedItem } from '../entity/feed/feed-item';
 
 export class FeedParserError extends Data.TaggedError('FeedParserError')<{
   readonly message: string;
 }> {}
 
-export const ParsedArticle = Article.mapFields(
+export const ParsedFeedItem = FeedItem.mapFields(
   Struct.pick(['title', 'description', 'content', 'url', 'publishedAt'])
 );
 
-export type ParsedArticle = typeof ParsedArticle.Type;
+export type ParsedFeedItem = typeof ParsedFeedItem.Type;
 
 export const ParsedFeed = Schema.Struct({
   ...Struct.pick(Feed.fields, ['title', 'url']),
   description: Schema.OptionFromOptional(Schema.String),
-  articles: Schema.Array(ParsedArticle),
+  items: Schema.Array(ParsedFeedItem),
 });
 
 export type ParsedFeed = typeof ParsedFeed.Type;

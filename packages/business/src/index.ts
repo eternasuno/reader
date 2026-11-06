@@ -10,14 +10,14 @@ export * from './entity/setting/fetcher';
 export * from './entity/setting/setting';
 
 export * from './port/article-extractor';
-export * from './port/article-pagination';
-export * from './port/article-repository';
-export * from './port/document-santize';
+export * from './port/document-sanitizer';
 export * from './port/feed-fetcher';
+export * from './port/feed-item-repository';
 export * from './port/feed-parser';
 export * from './port/feed-repository';
 export * from './port/html-parser';
-export * from './port/setting-input';
+export * from './port/read-filter';
+export * from './port/saved-page-repository';
 export * from './port/settings-repository';
 export * from './port/webpage-fetcher';
 

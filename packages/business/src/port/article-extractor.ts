@@ -1,5 +1,5 @@
 import { Context, Data, type Effect, Struct } from 'effect';
-import { Article } from '../entity/article';
+import { FeedItem } from '../entity/feed/feed-item';
 
 export class ArticleExtractorError extends Data.TaggedError(
   'ArticleExtractorError'
@@ -7,7 +7,7 @@ export class ArticleExtractorError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
-export const ExtractedArticle = Article.mapFields(
+export const ExtractedArticle = FeedItem.mapFields(
   Struct.pick(['title', 'description', 'content', 'publishedAt'])
 );
 
