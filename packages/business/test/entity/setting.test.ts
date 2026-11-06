@@ -1,48 +1,39 @@
 import { Option, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'vitest';
+import { OwnerId } from '../../src/entity/object-value';
 import {
   BrowserEndpoint,
-  BrowserEndpointInput,
-  BrowserEndpointUpdate,
-  browserEndpointUpdate,
-  DEFAULT_RETENTION,
-  JinaKeyInput,
-  RequiredBrowserEndpointUpdate,
+  FetcherProvider,
+  type FetcherSetting,
+  fetcherEndpoint,
+  JinaKey,
   Retention,
+  Setting,
 } from '../../src/entity/setting';
+import { JinaKeyInput } from '../../src/port/setting-input';
 
 const decodeRetention = Schema.decodeUnknownResult(Retention);
 
+const decodeProvider = Schema.decodeUnknownResult(FetcherProvider);
+
 const decodeKey = Schema.decodeUnknownResult(JinaKeyInput);
 
-const decodeEndpoint = Schema.decodeUnknownResult(BrowserEndpointInput);
+const decodeJinaKey = Schema.decodeUnknownResult(JinaKey);
 
-const decodeEndpointValue = Schema.decodeUnknownResult(BrowserEndpoint);
+const decodeEndpoint = Schema.decodeUnknownResult(BrowserEndpoint);
 
-const decodeEndpointUpdate = Schema.decodeUnknownResult(BrowserEndpointUpdate);
-
-const decodeRequiredEndpointUpdate = Schema.decodeUnknownResult(
-  RequiredBrowserEndpointUpdate
-);
-
-const decodeBrowserEndpoint = Schema.decodeUnknownResult(
-  browserEndpointUpdate('browser')
-);
-
-const decodeJinaEndpoint = Schema.decodeUnknownResult(
-  browserEndpointUpdate('jina')
-);
+const encodeEndpoint = Schema.encodeSync(BrowserEndpoint);
 
 const isInvalid = (result: Result.Result<unknown, unknown>) =>
   Result.isFailure(result);
 
-it('accepts retention choices between 30 and 300', () => {
+it('accepts retention choices between 30 and 300, defaulting to 100', () => {
   for (const value of [30, 100, 300]) {
     expect(Result.getOrThrow(decodeRetention(value))).toBe(value);
   }
 
   expect(Retention.make(100)).toBe(100);
-  expect(DEFAULT_RETENTION).toBe(100);
+  expect(Result.getOrThrow(decodeRetention(undefined))).toBe(100);
 });
 
 it('rejects retention outside the supported integer range', () => {
@@ -69,32 +60,36 @@ it('rejects blank, multiline, and oversized keys', () => {
   }
 });
 
-it('trims browser endpoints', () => {
-  expect(Result.getOrThrow(decodeEndpoint('  http://127.0.0.1:9222  '))).toBe(
-    'http://127.0.0.1:9222'
-  );
+it('trims and redacts jina keys', () => {
+  const key = Result.getOrThrow(decodeJinaKey('  secret  '));
+
+  expect(Redacted.value(key)).toBe('secret');
 });
 
-it('brands nonempty browser endpoints after trimming', () => {
-  expect(isInvalid(decodeEndpointValue(''))).toBe(true);
-  expect(isInvalid(decodeEndpointValue('   '))).toBe(true);
-  expect(
-    Result.getOrThrow(decodeEndpointValue('  http://127.0.0.1:9222  '))
-  ).toBe('http://127.0.0.1:9222');
+it('rejects blank jina keys', () => {
+  for (const value of ['', '   ']) {
+    expect(isInvalid(decodeJinaKey(value))).toBe(true);
+  }
+});
+
+it('trims browser endpoints', () => {
+  const endpoint = Result.getOrThrow(
+    decodeEndpoint('  http://127.0.0.1:9222  ')
+  );
+
+  expect(endpoint).toBeInstanceOf(URL);
+  expect(endpoint.href).toBe('http://127.0.0.1:9222/');
 });
 
 it('rejects invalid browser endpoints', () => {
   for (const value of [
+    '',
+    '   ',
     'not-a-url',
     'ftp://127.0.0.1:9222',
     'file:///tmp/browser',
-    'http://user:secret@127.0.0.1:9222',
-    'https://browser.example.com/#devtools',
-    'https://browser.example.com/#',
-    `https://browser.example.com/${'a'.repeat(2048)}`,
   ]) {
     expect(isInvalid(decodeEndpoint(value))).toBe(true);
-    expect(isInvalid(decodeEndpointUpdate(value))).toBe(true);
   }
 });
 
@@ -105,36 +100,137 @@ it('accepts browser endpoints with supported protocols', () => {
     'ws://10.0.0.5:9222',
     'wss://browser.internal:9222',
   ]) {
-    expect(Result.getOrThrow(decodeEndpointUpdate(endpoint))).toEqual(
-      Option.some(endpoint)
+    const decoded = Result.getOrThrow(decodeEndpoint(endpoint));
+
+    expect(decoded).toBeInstanceOf(URL);
+    expect(decoded.href).toBe(new URL(endpoint).href);
+  }
+});
+
+it('accepts browser endpoints with basic auth credentials', () => {
+  const decoded = Result.getOrThrow(
+    decodeEndpoint('http://user:secret@127.0.0.1:9222')
+  );
+
+  expect(decoded.username).toBe('user');
+  expect(decoded.password).toBe('secret');
+  expect(decoded.href).toBe('http://user:secret@127.0.0.1:9222/');
+});
+
+it('encodes browser endpoints back to strings', () => {
+  expect(
+    encodeEndpoint(Result.getOrThrow(decodeEndpoint('ws://10.0.0.5:9222')))
+  ).toBe('ws://10.0.0.5:9222/');
+});
+
+it('decodes a jina fetcher setting without a key', () => {
+  const decodeSetting = Schema.decodeUnknownResult(Setting);
+  const ownerId = OwnerId.make('alice');
+  const setting = Result.getOrThrow(
+    decodeSetting({
+      ownerId,
+      retention: 100,
+      fetcher: { provider: 'jina' },
+    })
+  );
+
+  expect(setting.ownerId).toBe(ownerId);
+  expect(setting.retention).toBe(100);
+  expect(setting.fetcher.provider).toBe('jina');
+  expect(setting.fetcher).toMatchObject({
+    key: Option.none(),
+    endpoint: Option.none(),
+  });
+});
+
+it('decodes a browser fetcher setting with an endpoint', () => {
+  const decodeSetting = Schema.decodeUnknownResult(Setting);
+  const ownerId = OwnerId.make('alice');
+  const setting = Result.getOrThrow(
+    decodeSetting({
+      ownerId,
+      retention: 100,
+      fetcher: {
+        provider: 'browser',
+        endpoint: 'http://127.0.0.1:9222',
+      },
+    })
+  );
+
+  expect(setting.fetcher.provider).toBe('browser');
+  expect(Option.getOrThrow(fetcherEndpoint(setting.fetcher)).href).toBe(
+    'http://127.0.0.1:9222/'
+  );
+});
+
+it('keeps an optional endpoint for the jina fetcher provider', () => {
+  const decodeFetcher = Schema.decodeUnknownResult(Setting);
+  const ownerId = OwnerId.make('alice');
+  const decodeFetcherSetting = (fetcher: object): FetcherSetting =>
+    Result.getOrThrow(decodeFetcher({ ownerId, retention: 100, fetcher }))
+      .fetcher;
+
+  expect(fetcherEndpoint(decodeFetcherSetting({ provider: 'jina' }))).toEqual(
+    Option.none()
+  );
+  expect(
+    Option.getOrThrow(
+      fetcherEndpoint(
+        decodeFetcherSetting({
+          provider: 'jina',
+          endpoint: 'ws://10.0.0.5:9222',
+        })
+      )
+    ).href
+  ).toBe('ws://10.0.0.5:9222/');
+  expect(
+    isInvalid(
+      decodeFetcher({
+        ownerId,
+        retention: 100,
+        fetcher: { provider: 'jina', endpoint: 'not-a-url' },
+      })
+    )
+  ).toBe(true);
+});
+
+it('requires an endpoint for the browser fetcher provider', () => {
+  const decodeSetting = Schema.decodeUnknownResult(Setting);
+  const ownerId = OwnerId.make('alice');
+
+  for (const fetcher of [
+    { provider: 'browser' },
+    { provider: 'browser', endpoint: '' },
+    { provider: 'browser', endpoint: '   ' },
+    { provider: 'browser', endpoint: 'not-a-url' },
+  ]) {
+    expect(isInvalid(decodeSetting({ ownerId, retention: 100, fetcher }))).toBe(
+      true
     );
   }
 });
 
-it('turns an empty endpoint into a clear request', () => {
-  for (const value of ['', '   ']) {
-    expect(Result.getOrThrow(decodeEndpoint(value))).toBe('');
-    expect(Result.getOrThrow(decodeEndpointUpdate(value))).toEqual(
-      Option.none()
-    );
-  }
+it('defaults the fetcher provider to jina', () => {
+  expect(Result.getOrThrow(decodeProvider(undefined))).toBe('jina');
+  expect(Result.getOrThrow(decodeProvider('browser'))).toBe('browser');
+  expect(isInvalid(decodeProvider('other'))).toBe(true);
 });
 
-it('requires an endpoint for browser extraction', () => {
-  expect(isInvalid(decodeRequiredEndpointUpdate(undefined))).toBe(true);
-  expect(isInvalid(decodeRequiredEndpointUpdate(''))).toBe(true);
-  expect(isInvalid(decodeBrowserEndpoint(undefined))).toBe(true);
-  expect(isInvalid(decodeBrowserEndpoint(''))).toBe(true);
-  expect(
-    Result.getOrThrow(decodeBrowserEndpoint('ws://10.0.0.5:9222'))
-  ).toEqual(Option.some('ws://10.0.0.5:9222'));
-});
+it('maps blank optional fetcher fields to none', () => {
+  const decodeSetting = Schema.decodeUnknownResult(Setting);
+  const ownerId = OwnerId.make('alice');
+  const decodeFetcherOf = (fetcher: object) =>
+    Result.getOrThrow(decodeSetting({ ownerId, retention: 100, fetcher }))
+      .fetcher;
 
-it('keeps or clears the endpoint for other providers', () => {
-  expect(Result.getOrThrow(decodeJinaEndpoint(undefined))).toBeUndefined();
-  expect(Result.getOrThrow(decodeJinaEndpoint('  '))).toEqual(Option.none());
   expect(
-    Result.getOrThrow(decodeJinaEndpoint('  http://127.0.0.1:9222  '))
-  ).toEqual(Option.some('http://127.0.0.1:9222'));
-  expect(isInvalid(decodeJinaEndpoint('not-a-url'))).toBe(true);
+    decodeFetcherOf({ provider: 'jina', key: '  ', endpoint: '' })
+  ).toEqual({ provider: 'jina', key: Option.none(), endpoint: Option.none() });
+  expect(
+    decodeFetcherOf({
+      provider: 'browser',
+      key: '',
+      endpoint: 'ws://10.0.0.5:9222',
+    })
+  ).toMatchObject({ provider: 'browser', key: Option.none() });
 });

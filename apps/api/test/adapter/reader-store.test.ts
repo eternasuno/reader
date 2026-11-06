@@ -13,6 +13,7 @@ import {
   FeedId,
   FeedRepository,
   NormalizedUrl,
+  OptionFromOptionalNonEmpty,
   OwnerId,
 } from '@reader/business';
 import { Effect, Layer, Option, Schema } from 'effect';
@@ -37,9 +38,13 @@ const normalizedUrl = Schema.decodeSync(NormalizedUrl);
 
 const changedTitle = Schema.decodeSync(ArticleTitle)('Changed');
 
-const bodyContent = Schema.decodeSync(ArticleContent)('<p>Body</p>');
+const decodeContent = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleContent)
+);
 
-const emptyContent = Schema.decodeSync(ArticleContent)(undefined);
+const bodyContent = decodeContent('<p>Body</p>');
+
+const emptyContent = decodeContent(undefined);
 
 const feed = (ownerId: string, url: string, updatedAt: string, id?: string) =>
   Schema.decodeSync(Feed)({
@@ -550,7 +555,7 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
           articles.listFeeds(alice, Option.none(), {
             ...pageQuery(),
             after: {
-              publishedAt: '2026-01-03T00:00:00.000Z',
+              publishedAt: tieFirst.publishedAt,
               id: tieFirstId,
             },
           })
@@ -561,7 +566,7 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
           articles.listFeeds(alice, Option.none(), {
             ...pageQuery(),
             through: {
-              publishedAt: '2026-01-03T00:00:00.000Z',
+              publishedAt: tieSecond.publishedAt,
               id: tieSecondId,
             },
           })
@@ -572,7 +577,7 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
           articles.listFeeds(alice, Option.none(), {
             ...pageQuery(),
             after: {
-              publishedAt: '2026-01-02T00:00:00.000Z',
+              publishedAt: oldest.publishedAt,
               id: oldest.id,
             },
           })
@@ -790,9 +795,9 @@ it.effect('inventories, retains, and extracts articles', () =>
       yield* articles.create(alice, [first, second, third, later]);
 
       expect(yield* articles.inventory(alice, subscribed.id)).toEqual([
-        { publishedAt: '2026-01-03T00:00:00.000Z', id: third.id },
-        { publishedAt: '2026-01-02T00:00:00.000Z', id: second.id },
-        { publishedAt: '2026-01-01T00:00:00.000Z', id: first.id },
+        { publishedAt: third.publishedAt, id: third.id },
+        { publishedAt: second.publishedAt, id: second.id },
+        { publishedAt: first.publishedAt, id: first.id },
       ]);
       yield* articles.retain(alice, subscribed.id, [third.id, second.id]);
       expect(

@@ -1,12 +1,14 @@
 import {
   DocumentSantize,
   DocumentSantizeError,
-  OptionalTrimmedString,
+  OptionFromOptionalNonEmpty,
 } from '@reader/business';
 import { Effect, Layer, Schema } from 'effect';
 import { cleanArticle } from '../infrastructure/article-sanitizer';
 
-const decodeContent = Schema.decodeSync(OptionalTrimmedString);
+const decodeContent = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(Schema.Trim)
+);
 
 const sanitizeContent = (document: Document) => {
   cleanArticle(document, document.body.innerHTML);

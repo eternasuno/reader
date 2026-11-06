@@ -1,16 +1,16 @@
 import { Option, Schema } from 'effect';
 
-export type ReaderProvider = 'jina' | 'browser';
+export type FetcherProvider = 'jina' | 'browser';
 
 export type LibrarySettings = {
   readonly retention: number;
-  readonly provider: ReaderProvider;
+  readonly provider: FetcherProvider;
   readonly jinaConfigured: boolean;
   readonly browserEndpoint?: string;
 };
 
 export type ExtractionUpdate = {
-  readonly provider: ReaderProvider;
+  readonly provider: FetcherProvider;
   readonly jinaKey?: string;
   readonly browserEndpoint?: string;
 };

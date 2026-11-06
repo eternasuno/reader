@@ -1,12 +1,12 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema, Stream } from 'effect';
+import { Article } from '../entity/article';
+import type { FeedId, OwnerId } from '../entity/object-value';
 import {
-  Article,
   type ArticleCursor,
   type ArticleCursorScope,
   type ArticleFilter,
   encodeArticleCursor,
-} from '../entity/article';
-import type { FeedId, OwnerId } from '../entity/object-value';
+} from '../port/article-pagination';
 import {
   type ArticleBoundary,
   type ArticleQuery,
@@ -42,12 +42,12 @@ const feedScope = (feedId: FeedId | undefined): ArticleCursorScope => ({
 });
 
 const boundaryOf = (article: Article): ArticleBoundary => ({
-  publishedAt: DateTime.formatIso(article.publishedAt),
+  publishedAt: article.publishedAt,
   id: article.id,
 });
 
 const boundaryOfCursor = (cursor: ArticleCursor): ArticleBoundary => ({
-  publishedAt: DateTime.formatIso(cursor.after.publishedAt),
+  publishedAt: cursor.after.publishedAt,
   id: cursor.after.id,
 });
 
@@ -236,22 +236,16 @@ export const refreshLaterArticles = (
   Effect.gen(function* () {
     const boundary = yield* cursorBoundary(owner, laterScope, filter, through);
     const articles = yield* ArticleRepository;
-    const items: Array<Article> = [];
-    let after: ArticleBoundary | undefined;
 
-    while (true) {
-      const rows = yield* articles.listLater(
-        owner,
-        pageQuery(filter, after, boundary)
-      );
-      items.push(...rows);
-      const next = continuationOf(rows);
-      if (next === undefined) {
-        return items;
-      }
-
-      after = next;
-    }
+    return yield* Stream.paginate(
+      undefined as ArticleBoundary | undefined,
+      (after) =>
+        Effect.map(
+          articles.listLater(owner, pageQuery(filter, after, boundary)),
+          (rows) =>
+            [rows, Option.fromUndefinedOr(continuationOf(rows))] as const
+        )
+    ).pipe(Stream.runCollect);
   });
 
 export const refreshFeedArticles = (
@@ -268,21 +262,18 @@ export const refreshFeedArticles = (
     const scope = feedScope(feedId);
     const boundary = yield* cursorBoundary(owner, scope, filter, through);
     const articles = yield* ArticleRepository;
-    const items: Array<Article> = [];
-    let after: ArticleBoundary | undefined;
 
-    while (true) {
-      const rows = yield* articles.listFeeds(
-        owner,
-        feedSelection(feedId),
-        pageQuery(filter, after, boundary)
-      );
-      items.push(...rows);
-      const next = continuationOf(rows);
-      if (next === undefined) {
-        return items;
-      }
-
-      after = next;
-    }
+    return yield* Stream.paginate(
+      undefined as ArticleBoundary | undefined,
+      (after) =>
+        Effect.map(
+          articles.listFeeds(
+            owner,
+            feedSelection(feedId),
+            pageQuery(filter, after, boundary)
+          ),
+          (rows) =>
+            [rows, Option.fromUndefinedOr(continuationOf(rows))] as const
+        )
+    ).pipe(Stream.runCollect);
   });

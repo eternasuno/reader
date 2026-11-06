@@ -13,7 +13,7 @@ import {
 import type { Feed } from '../../src/entity/feed';
 import {
   NormalizedUrl,
-  OptionalTrimmedString,
+  OptionFromOptionalNonEmpty,
   OwnerId,
 } from '../../src/entity/object-value';
 import { Retention, type Setting } from '../../src/entity/setting';
@@ -39,13 +39,15 @@ import { SettingsRepository } from '../../src/port/settings-repository';
 import { addFeed, refreshFeed } from '../../src/usecase/feeds';
 import { articleId, feedId } from '../../src/usecase/identity';
 
-const decodeContent = Schema.decodeSync(ArticleContent);
+const decodeContent = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleContent)
+);
 
-const decodeDescription = Schema.decodeSync(ArticleDescription);
+const decodeDescription = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleDescription)
+);
 
 const decodeTitle = Schema.decodeSync(ArticleTitle);
-
-const decodeSanitized = Schema.decodeSync(OptionalTrimmedString);
 
 const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
@@ -98,9 +100,7 @@ const feedDocument = (url: URL) => ({ content: feedBody, url });
 const settingsValue = (retention: Setting['retention']): Setting => ({
   ownerId: alice,
   retention,
-  provider: 'jina',
-  jinaKey: Option.none(),
-  browserEndpoint: Option.none(),
+  fetcher: { provider: 'jina', key: Option.none(), endpoint: Option.none() },
 });
 
 const provide = <A, E, R>(
@@ -136,7 +136,7 @@ const provide = <A, E, R>(
         }),
         Layer.mock(DocumentSantize, {
           sanitize: (document) =>
-            Effect.succeed(decodeSanitized(document.body.innerHTML)),
+            Effect.succeed(decodeContent(document.body.innerHTML)),
           ...layers.processor,
         }),
         Layer.mock(ArticleRepository, layers.articles ?? {}),
@@ -591,9 +591,9 @@ it.effect(
     const inventory: Array<ArticleBoundary> = [
       {
         id: ArticleId.make('b'.repeat(64)),
-        publishedAt: '2026-01-02T00:00:00.000Z',
+        publishedAt: at('2026-01-02T00:00:00.000Z'),
       },
-      { id: knownId, publishedAt: '2026-01-01T00:00:00.000Z' },
+      { id: knownId, publishedAt: at('2026-01-01T00:00:00.000Z') },
     ];
     const patches: Array<FeedUpdate> = [];
     let patchedOwner: string | undefined;
@@ -662,7 +662,7 @@ it.effect(
           sanitize: (document) => {
             processed.push(document.body.innerHTML);
 
-            return Effect.succeed(decodeSanitized(document.body.innerHTML));
+            return Effect.succeed(decodeContent(document.body.innerHTML));
           },
         },
         articles: {
@@ -691,7 +691,7 @@ it.effect('keeps the configured retention and drops older new articles', () => {
     { length: 100 },
     (_, index) => ({
       id: ArticleId.make(hex(index)),
-      publishedAt: new Date(nowMillis + index * 60_000).toISOString(),
+      publishedAt: at(new Date(nowMillis + index * 60_000).toISOString()),
     })
   );
   const created: Array<ReadonlyArray<Article>> = [];
@@ -725,7 +725,7 @@ it.effect('keeps the configured retention and drops older new articles', () => {
         sanitize: () => {
           processed = true;
 
-          return Effect.succeed(decodeSanitized(undefined));
+          return Effect.succeed(decodeContent(undefined));
         },
       },
       articles: {
@@ -846,11 +846,11 @@ it.effect(
     const inventory: Array<ArticleBoundary> = [
       {
         id: ArticleId.make('c'.repeat(64)),
-        publishedAt: '2026-01-10T00:00:00.000Z',
+        publishedAt: at('2026-01-10T00:00:00.000Z'),
       },
       {
         id: ArticleId.make('d'.repeat(64)),
-        publishedAt: '2026-01-09T00:00:00.000Z',
+        publishedAt: at('2026-01-09T00:00:00.000Z'),
       },
     ];
 

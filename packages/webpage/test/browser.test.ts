@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: browser tests share mocked socket infrastructure.
 import { EventEmitter } from 'node:events';
 import { expect, it } from '@effect/vitest';
 import { Effect, Fiber, Redacted } from 'effect';
@@ -207,6 +208,47 @@ it.effect('extracts through an isolated context and disconnects', () =>
       idleTime: 500,
       concurrency: 0,
     });
+    expectTeardown(fixture);
+  })
+);
+
+it.effect('sends basic auth credentials to discovery and the socket', () =>
+  Effect.gen(function* () {
+    const fixture = browserFixture();
+    connectMock.mockResolvedValue(fixture.browser);
+    const credentials = Redacted.make('http://user:secret@127.0.0.1:9222');
+    expect(yield* fetchBrowser('http://8.8.8.8/article', credentials)).toBe(
+      '<html>ok</html>'
+    );
+    const [target, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(target)).toBe('http://127.0.0.1:9222/json/version');
+    expect(new Headers(init?.headers).get('authorization')).toBe(
+      `Basic ${Buffer.from('user:secret').toString('base64')}`
+    );
+    expect(sockets[0]?.url).toBe(
+      'ws://user:secret@127.0.0.1:9222/devtools/browser/test'
+    );
+    expectTeardown(fixture);
+  })
+);
+
+it.effect('resolves a relative discovery answer against the endpoint', () =>
+  Effect.gen(function* () {
+    const fixture = browserFixture();
+    connectMock.mockResolvedValue(fixture.browser);
+    fetchMock.mockResolvedValue(
+      discoveryResponse({ webSocketDebuggerUrl: '/devtools/browser/relative' })
+    );
+    yield* fetchBrowser(
+      'http://8.8.8.8/article',
+      Redacted.make('ws://user:secret@127.0.0.1:9222')
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'http://127.0.0.1:9222/json/version'
+    );
+    expect(sockets[0]?.url).toBe(
+      'ws://user:secret@127.0.0.1:9222/devtools/browser/relative'
+    );
     expectTeardown(fixture);
   })
 );

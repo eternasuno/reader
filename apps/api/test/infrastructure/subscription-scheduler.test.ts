@@ -2,6 +2,7 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each test declares its mocks alongside the asserted scenario.
 import { expect, it } from '@effect/vitest';
 import {
+  ArticleContent,
   ArticleRepository,
   DocumentSantize,
   type Feed,
@@ -9,7 +10,7 @@ import {
   FeedParser,
   FeedRepository,
   NormalizedUrl,
-  OptionalTrimmedString,
+  OptionFromOptionalNonEmpty,
   OwnerId,
   Retention,
   SettingsRepository,
@@ -55,7 +56,9 @@ const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
 const decodeRetention = Schema.decodeSync(Retention);
 
-const decodeSanitized = Schema.decodeSync(OptionalTrimmedString);
+const decodeSanitized = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleContent)
+);
 
 const schedule = (ownerId: string, interval: Duration.Input) => ({
   ownerId: owner(ownerId),
@@ -115,9 +118,11 @@ const scheduler = (mocks: Mocks) =>
             Effect.succeed({
               ownerId: owner,
               retention: decodeRetention(100),
-              provider: 'jina',
-              jinaKey: Option.none(),
-              browserEndpoint: Option.none(),
+              fetcher: {
+                provider: 'jina' as const,
+                key: Option.none(),
+                endpoint: Option.none(),
+              },
             }),
         }),
         FeedFetcherLive.pipe(

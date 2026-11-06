@@ -1,18 +1,22 @@
 import { expect, it } from '@effect/vitest';
 import {
-  BrowserEndpoint,
+  type BrowserEndpoint,
+  BrowserEndpoint as BrowserEndpointSchema,
   OwnerId,
   Retention,
+  type Setting,
   SettingsRepository,
   SettingsRepositoryError,
   WebpageFetcher,
-  WebpageFetcherLayer,
 } from '@reader/business';
 import { BrowserConcurrency, BrowserConcurrencyLive } from '@reader/webpage';
 import { Effect, Layer, Option, Redacted, Schema, Semaphore } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { vi } from 'vitest';
-import { webpageFetcherForOwner } from '../../src/adapter/webpage-fetcher';
+import {
+  browserWebpageFetcherLive,
+  jinaWebpageFetcherLive,
+} from '../../src/adapter/webpage-fetcher';
 
 vi.mock('node:dns/promises', () => ({
   lookup: async () => [{ address: '93.184.216.34', family: 4 }],
@@ -28,10 +32,38 @@ const bob = OwnerId.make('bob');
 
 const retention = Schema.decodeSync(Retention);
 
-const browserEndpoint = Schema.decodeSync(BrowserEndpoint);
+const browserEndpoint = Schema.decodeSync(BrowserEndpointSchema);
+
+const browserEndpointOf = (config: Setting): BrowserEndpoint => {
+  if (config.fetcher.provider !== 'browser') {
+    throw new Error('Expected a browser fetcher setting');
+  }
+
+  return config.fetcher.endpoint;
+};
 
 const discoveryFailure = () =>
   Promise.resolve(new Response(null, { status: 500 }));
+
+const browserConcurrencyMock = (permits: Array<number>) => {
+  const semaphore = Semaphore.makeUnsafe(2);
+
+  return Layer.mock(BrowserConcurrency, {
+    withPermit: <A, E, R>(self: Effect.Effect<A, E, R>) => {
+      permits.push(1);
+
+      return semaphore.withPermit(self);
+    },
+    withPermits:
+      (count: number) =>
+      <A, E, R>(self: Effect.Effect<A, E, R>) =>
+        semaphore.withPermits(count)(self),
+    withPermitsIfAvailable:
+      (count: number) =>
+      <A, E, R>(self: Effect.Effect<A, E, R>) =>
+        semaphore.withPermitsIfAvailable(count)(self),
+  });
+};
 
 it.effect('selects each owner key when building a Jina layer', () => {
   const headers: Array<string> = [];
@@ -42,10 +74,12 @@ it.effect('selects each owner key when building a Jina layer', () => {
 
       return Effect.succeed({
         ownerId: owner,
-        provider: 'jina',
         retention: retention(100),
-        jinaKey: Option.some(Redacted.make(`${owner}-secret`)),
-        browserEndpoint: Option.none(),
+        fetcher: {
+          provider: 'jina' as const,
+          key: Option.some(Redacted.make(`${owner}-secret`)),
+          endpoint: Option.none(),
+        },
       });
     },
   });
@@ -57,15 +91,15 @@ it.effect('selects each owner key when building a Jina layer', () => {
 
   return Effect.gen(function* () {
     for (const owner of [alice, bob]) {
-      const configured = yield* webpageFetcherForOwner(owner);
+      const settingsRepository = yield* SettingsRepository;
+      const config = yield* settingsRepository.get(owner);
+      const configured = jinaWebpageFetcherLive(
+        Option.getOrUndefined(config.fetcher.key)
+      );
       const result = yield* Effect.gen(function* () {
-        const layer = yield* WebpageFetcherLayer;
+        const fetcher = yield* WebpageFetcher;
 
-        return yield* Effect.gen(function* () {
-          const fetcher = yield* WebpageFetcher;
-
-          return yield* fetcher.fetch(article);
-        }).pipe(Effect.provide(layer));
+        return yield* fetcher.fetch(article);
       }).pipe(Effect.provide(configured));
       expect(result).toBe(html);
     }
@@ -88,30 +122,17 @@ it.effect('selects each owner key when building a Jina layer', () => {
 
 it.effect('shares browser concurrency across owners', () => {
   const permits: Array<number> = [];
-  const semaphore = Semaphore.makeUnsafe(2);
-  const concurrency = Layer.mock(BrowserConcurrency, {
-    withPermit: <A, E, R>(self: Effect.Effect<A, E, R>) => {
-      permits.push(1);
-
-      return semaphore.withPermit(self);
-    },
-    withPermits:
-      (count: number) =>
-      <A, E, R>(self: Effect.Effect<A, E, R>) =>
-        semaphore.withPermits(count)(self),
-    withPermitsIfAvailable:
-      (count: number) =>
-      <A, E, R>(self: Effect.Effect<A, E, R>) =>
-        semaphore.withPermitsIfAvailable(count)(self),
-  });
+  const concurrency = browserConcurrencyMock(permits);
   const settings = Layer.mock(SettingsRepository, {
     get: (owner) =>
       Effect.succeed({
         ownerId: owner,
-        provider: 'browser',
         retention: retention(100),
-        jinaKey: Option.none(),
-        browserEndpoint: Option.some(browserEndpoint('http://127.0.0.1:9222')),
+        fetcher: {
+          provider: 'browser' as const,
+          key: Option.none(),
+          endpoint: browserEndpoint('http://127.0.0.1:9222'),
+        },
       }),
   });
 
@@ -119,16 +140,14 @@ it.effect('shares browser concurrency across owners', () => {
 
   return Effect.gen(function* () {
     for (const owner of [alice, bob]) {
-      const configured = yield* webpageFetcherForOwner(owner);
+      const settingsRepository = yield* SettingsRepository;
+      const config = yield* settingsRepository.get(owner);
+      const configured = browserWebpageFetcherLive(browserEndpointOf(config));
       const error = yield* Effect.flip(
         Effect.gen(function* () {
-          const layer = yield* WebpageFetcherLayer;
+          const fetcher = yield* WebpageFetcher;
 
-          return yield* Effect.gen(function* () {
-            const fetcher = yield* WebpageFetcher;
-
-            return yield* fetcher.fetch(article);
-          }).pipe(Effect.provide(layer));
+          return yield* fetcher.fetch(article);
         }).pipe(Effect.provide(configured))
       );
       expect(error.message).toBe('Browser extraction failed');
@@ -152,8 +171,9 @@ it.effect(
     });
 
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(webpageFetcherForOwner(alice));
+      const settingsRepository = yield* SettingsRepository;
+      const error = yield* Effect.flip(settingsRepository.get(alice));
       expect(error.message).toBe('settings unavailable');
-    }).pipe(Effect.provide(Layer.merge(settings, BrowserConcurrencyLive)));
+    }).pipe(Effect.provide(settings));
   }
 );

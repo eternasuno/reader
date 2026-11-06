@@ -1,5 +1,4 @@
-import { Context, Data, type Effect } from 'effect';
-import type { OptionalTrimmedString } from '../entity/object-value';
+import { Context, Data, type Effect, type Option } from 'effect';
 
 export class DocumentSantizeError extends Data.TaggedError(
   'DocumentSantizeError'
@@ -10,7 +9,7 @@ export class DocumentSantizeError extends Data.TaggedError(
 export interface IDocumentSantize {
   readonly sanitize: (
     document: Document
-  ) => Effect.Effect<OptionalTrimmedString, DocumentSantizeError>;
+  ) => Effect.Effect<Option.Option<string>, DocumentSantizeError>;
 }
 
 export class DocumentSantize extends Context.Service<

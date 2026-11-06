@@ -211,11 +211,14 @@ const pageBindings = (
   ...(query.filter === 'all' ? {} : { read: query.filter === 'read' }),
   ...(query.after === undefined
     ? {}
-    : { afterAt: new Date(query.after.publishedAt), afterId: query.after.id }),
+    : {
+        afterAt: DateTime.toDate(query.after.publishedAt),
+        afterId: query.after.id,
+      }),
   ...(query.through === undefined
     ? {}
     : {
-        throughAt: new Date(query.through.publishedAt),
+        throughAt: DateTime.toDate(query.through.publishedAt),
         throughId: query.through.id,
       }),
 });
@@ -261,13 +264,6 @@ const makeArticleQueries = (db: Surreal) => ({
       { owner, feedId },
       Schema.Array(BoundaryRow),
       articleRepositoryError
-    ).pipe(
-      Effect.map((rows) =>
-        rows.map((row) => ({
-          ...row,
-          publishedAt: DateTime.formatIso(row.publishedAt),
-        }))
-      )
     ),
 });
 

@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import {
-  type BrowserEndpoint,
-  DEFAULT_RETENTION,
-  type OwnerId,
-  type ReaderProvider,
-  type Retention,
-  Setting,
+  BrowserEndpoint,
+  FetcherProvider,
+  type FetcherSetting,
+  fetcherEndpoint,
+  JinaKey,
+  OwnerId,
+  Retention,
+  type Setting,
   type SettingsPatch,
   SettingsRepository,
   SettingsRepositoryError,
@@ -16,18 +18,32 @@ import { Database } from '../infrastructure/db';
 
 type Bindings = Record<string, unknown>;
 
-const StoredSetting = Setting.mapFields((fields) => ({
-  ...fields,
-  jinaKey: Schema.OptionFromOptional(
-    Schema.String.pipe(Schema.decodeTo(Schema.RedactedFromValue(Schema.String)))
-  ),
-  provider: fields.provider.pipe(
-    Schema.withDecodingDefaultType(Effect.succeed<ReaderProvider>('jina'))
-  ),
-  retention: fields.retention.pipe(
-    Schema.withDecodingDefaultType(Effect.succeed(DEFAULT_RETENTION))
-  ),
-}));
+const StoredSetting = Schema.Struct({
+  ownerId: OwnerId,
+  retention: Retention,
+  provider: FetcherProvider,
+  jinaKey: Schema.OptionFromOptional(JinaKey),
+  browserEndpoint: Schema.OptionFromOptional(BrowserEndpoint),
+});
+
+const fetcherOf = (stored: typeof StoredSetting.Type): FetcherSetting =>
+  stored.provider === 'browser' && Option.isSome(stored.browserEndpoint)
+    ? {
+        provider: 'browser',
+        key: stored.jinaKey,
+        endpoint: stored.browserEndpoint.value,
+      }
+    : {
+        provider: 'jina',
+        key: stored.jinaKey,
+        endpoint: stored.browserEndpoint,
+      };
+
+const settingOf = (stored: typeof StoredSetting.Type): Setting => ({
+  ownerId: stored.ownerId,
+  retention: stored.retention,
+  fetcher: fetcherOf(stored),
+});
 
 const ownerHash = (owner: OwnerId) =>
   createHash('sha256').update(owner).digest('hex');
@@ -51,6 +67,7 @@ const query = <A, E>(
 
 const decodeRow = (row: unknown) =>
   Schema.decodeUnknownEffect(StoredSetting)(row).pipe(
+    Effect.map(settingOf),
     Effect.mapError(repositoryError)
   );
 
@@ -64,40 +81,34 @@ const load = (db: Surreal, owner: OwnerId) =>
   ).pipe(Effect.flatMap((rows) => decodeRow(rows[0] ?? { ownerId: owner })));
 
 type SaveBindings = {
-  provider?: ReaderProvider;
+  provider?: FetcherProvider;
   jinaKey?: string;
-  browserEndpoint?: BrowserEndpoint;
+  browserEndpoint?: string;
   retention?: Retention;
 };
 
 const saveSql = (settingsPatch: SettingsPatch) => {
   const clauses = ['owner = $owner'];
   const bindings: SaveBindings = {};
+  const fetcher = settingsPatch.fetcher;
 
-  if (settingsPatch.provider !== undefined) {
+  if (fetcher !== undefined) {
     clauses.push('provider = $provider');
-    bindings.provider = settingsPatch.provider;
-  }
+    bindings.provider = fetcher.provider;
 
-  if (settingsPatch.jinaKey !== undefined) {
-    Option.match(
-      Option.map(settingsPatch.jinaKey, (key) => Redacted.value(key)),
-      {
-        onNone: () => clauses.push('jinaKey = NONE'),
-        onSome: (key) => {
-          clauses.push('jinaKey = $jinaKey');
-          bindings.jinaKey = key;
-        },
-      }
-    );
-  }
-
-  if (settingsPatch.browserEndpoint !== undefined) {
-    Option.match(settingsPatch.browserEndpoint, {
+    Option.match(fetcherEndpoint(fetcher), {
       onNone: () => clauses.push('browserEndpoint = NONE'),
       onSome: (value) => {
         clauses.push('browserEndpoint = $browserEndpoint');
-        bindings.browserEndpoint = value;
+        bindings.browserEndpoint = value.href;
+      },
+    });
+
+    Option.match(fetcher.key, {
+      onNone: () => clauses.push('jinaKey = NONE'),
+      onSome: (key) => {
+        clauses.push('jinaKey = $jinaKey');
+        bindings.jinaKey = Redacted.value(key);
       },
     });
   }
@@ -115,9 +126,7 @@ const saveSql = (settingsPatch: SettingsPatch) => {
 
 const update = (db: Surreal, owner: OwnerId, settingsPatch: SettingsPatch) => {
   if (
-    settingsPatch.provider === undefined &&
-    settingsPatch.jinaKey === undefined &&
-    settingsPatch.browserEndpoint === undefined &&
+    settingsPatch.fetcher === undefined &&
     settingsPatch.retention === undefined
   ) {
     return Effect.void;

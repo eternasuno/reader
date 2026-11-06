@@ -6,7 +6,8 @@ import {
   ArticleUnreadCounts,
   Feed,
   FeedId,
-  Setting,
+  FetcherProvider,
+  Retention,
 } from '@reader/business';
 import { Schema } from 'effect';
 import {
@@ -114,9 +115,9 @@ const FeedPreview = Schema.Struct({
 });
 
 const SettingsResponse = Schema.Struct({
-  retention: Setting.fields.retention,
-  provider: Setting.fields.provider,
-  browserEndpoint: Setting.fields.browserEndpoint,
+  retention: Retention,
+  provider: FetcherProvider,
+  browserEndpoint: Schema.OptionFromOptional(Schema.String),
   jinaConfigured: Schema.Boolean,
 });
 

@@ -1,12 +1,12 @@
 import { expect, it } from '@effect/vitest';
 import { Option, Schema } from 'effect';
+import { ArticleId } from '../../src/entity/article';
+import { FeedId, OwnerId } from '../../src/entity/object-value';
 import {
   type ArticleCursor,
   ArticleCursorFromString,
-  ArticleId,
   encodeArticleCursor,
-} from '../../src/entity/article';
-import { FeedId, OwnerId } from '../../src/entity/object-value';
+} from '../../src/port/article-pagination';
 
 const publishedAt = Schema.decodeSync(Schema.DateTimeUtcFromString)(
   '2026-01-01T00:00:00.000Z'
@@ -30,7 +30,7 @@ it('keeps the emitted cursor an opaque base64 JSON payload', () => {
     owner: OwnerId.make('alice'),
     scope: { kind: 'later' },
     filter: 'all',
-    publishedAt: '2026-01-01T00:00:00.000Z',
+    publishedAt,
     id: ArticleId.make('a'.repeat(64)),
   });
 
@@ -49,7 +49,7 @@ it('keeps the emitted cursor an opaque base64 JSON payload', () => {
       feedId: Option.some(FeedId.make('f'.repeat(64))),
     },
     filter: 'unread',
-    publishedAt: '2026-01-01T00:00:00.000Z',
+    publishedAt,
     id: ArticleId.make('a'.repeat(64)),
   });
 
@@ -89,7 +89,6 @@ it('rejects malformed or incomplete opaquely encoded cursors', () => {
     'not-a-cursor',
     btoa('{"version":1}'),
     btoa(JSON.stringify({ ...payload, version: 2 })),
-    btoa(JSON.stringify({ ...payload, owner: '' })),
     btoa(JSON.stringify({ ...payload, filter: 'recent' })),
     btoa(
       JSON.stringify({

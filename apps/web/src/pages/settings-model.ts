@@ -3,9 +3,9 @@ import { changePassword } from '../lib/auth';
 import {
   clearBrowserEndpoint,
   clearJinaKey,
+  type FetcherProvider,
   getSettings,
   type LibrarySettings,
-  type ReaderProvider,
   saveExtraction,
   saveRetention,
 } from '../lib/settings';
@@ -30,7 +30,7 @@ const failureMessage = (error: unknown): string =>
 const createDraftStore = () => {
   const [settings, setSettings] = createSignal<LibrarySettings>();
   const [retention, setRetention] = createSignal('');
-  const [provider, setProvider] = createSignal<ReaderProvider>('jina');
+  const [provider, setProvider] = createSignal<FetcherProvider>('jina');
   const [jinaKey, setJinaKey] = createSignal('');
   const [browserEndpoint, setBrowserEndpoint] = createSignal('');
   const [currentPassword, setCurrentPassword] = createSignal('');

@@ -1,4 +1,4 @@
-import { Context, Data, type Effect, type Layer } from 'effect';
+import { Context, Data, type Effect } from 'effect';
 
 export class WebpageFetcherError extends Data.TaggedError(
   'WebpageFetcherError'
@@ -14,8 +14,3 @@ export class WebpageFetcher extends Context.Service<
   WebpageFetcher,
   IWebpageFetcher
 >()('WebpageFetcher') {}
-
-export class WebpageFetcherLayer extends Context.Service<
-  WebpageFetcherLayer,
-  Layer.Layer<WebpageFetcher>
->()('WebpageFetcherLayer') {}

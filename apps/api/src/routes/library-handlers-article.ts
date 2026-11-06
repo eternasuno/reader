@@ -4,21 +4,21 @@ import {
   ArticleRepository,
   addArticle,
   extractArticle,
-  getArticle,
   InvalidArticleUrl,
   InvalidCursor,
   listLaterArticles,
-  markArticle,
-  markArticlesRead,
-  markFeedsRead,
-  markLaterRead,
   NormalizedUrl,
   refreshLaterArticles,
   removeArticle,
+  type Setting,
+  SettingsRepository,
   saveArticle,
 } from '@reader/business';
 import { Effect, Option, Schema } from 'effect';
-import { webpageFetcherForOwner } from '../adapter/webpage-fetcher';
+import {
+  browserWebpageFetcherLive,
+  jinaWebpageFetcherLive,
+} from '../adapter/webpage-fetcher';
 import {
   type HandlerRequest,
   optionToNull,
@@ -91,10 +91,18 @@ const unreadCounts = () =>
 
 const article = ({ query }: HandlerRequest<'article'>) =>
   withSession((owner) =>
-    Effect.map(getArticle(owner, query.id), (found) => ({
-      item: optionToNull(found),
-    }))
+    Effect.gen(function* () {
+      const articles = yield* ArticleRepository;
+      const found = yield* articles.find(owner, query.id);
+
+      return { item: optionToNull(found) };
+    })
   ).pipe(Effect.catchTags(articleFailure));
+
+const webpageFetcherLayerFor = (config: Setting) =>
+  config.fetcher.provider === 'jina'
+    ? jinaWebpageFetcherLive(Option.getOrUndefined(config.fetcher.key))
+    : browserWebpageFetcherLive(config.fetcher.endpoint);
 
 const add = ({ payload }: HandlerRequest<'addArticle'>) =>
   withSession((owner) =>
@@ -107,9 +115,13 @@ const add = ({ payload }: HandlerRequest<'addArticle'>) =>
             })
         )
       );
-      const layer = yield* webpageFetcherForOwner(owner);
+      const settings = yield* SettingsRepository;
+      const config = yield* settings.get(owner);
+      const fetcherLayer = webpageFetcherLayerFor(config);
 
-      const item = yield* addArticle(owner, url).pipe(Effect.provide(layer));
+      const item = yield* addArticle(owner, url).pipe(
+        Effect.provide(fetcherLayer)
+      );
 
       return { item };
     })
@@ -123,10 +135,12 @@ const save = ({ payload }: HandlerRequest<'saveArticle'>) =>
 const extract = ({ payload }: HandlerRequest<'extractArticle'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const layer = yield* webpageFetcherForOwner(owner);
+      const settings = yield* SettingsRepository;
+      const config = yield* settings.get(owner);
+      const fetcherLayer = webpageFetcherLayerFor(config);
 
       const item = yield* extractArticle(owner, payload.id).pipe(
-        Effect.provide(layer)
+        Effect.provide(fetcherLayer)
       );
 
       return { item };
@@ -135,24 +149,46 @@ const extract = ({ payload }: HandlerRequest<'extractArticle'>) =>
 
 const markRead = ({ payload }: HandlerRequest<'markRead'>) =>
   withSession((owner) =>
-    markArticle(owner, payload.id, payload.read).pipe(
-      Effect.as({ ok: true as const })
-    )
+    Effect.gen(function* () {
+      const articles = yield* ArticleRepository;
+      yield* articles.updateByArticleIds(owner, [payload.id], {
+        read: payload.read,
+      });
+
+      return { ok: true as const };
+    })
   ).pipe(Effect.catchTags(articleFailure));
 
 const markLater = () =>
   withSession((owner) =>
-    markLaterRead(owner).pipe(Effect.as({ ok: true as const }))
+    Effect.gen(function* () {
+      const articles = yield* ArticleRepository;
+      yield* articles.updateLater(owner, { read: true });
+
+      return { ok: true as const };
+    })
   ).pipe(Effect.catchTags(articleFailure));
 
 const markFeeds = ({ payload }: HandlerRequest<'markFeeds'>) =>
   withSession((owner) =>
-    markFeedsRead(owner, payload.feedIds).pipe(Effect.as({ ok: true as const }))
+    Effect.gen(function* () {
+      const articles = yield* ArticleRepository;
+      yield* articles.updateFeeds(owner, Option.some(payload.feedIds), {
+        read: true,
+      });
+
+      return { ok: true as const };
+    })
   ).pipe(Effect.catchTags(articleFailure));
 
 const markArticles = ({ payload }: HandlerRequest<'markArticles'>) =>
   withSession((owner) =>
-    markArticlesRead(owner, payload.ids).pipe(Effect.as({ ok: true as const }))
+    Effect.gen(function* () {
+      const articles = yield* ArticleRepository;
+      yield* articles.updateByArticleIds(owner, payload.ids, { read: true });
+
+      return { ok: true as const };
+    })
   ).pipe(Effect.catchTags(articleFailure));
 
 const remove = ({ payload }: HandlerRequest<'removeArticle'>) =>

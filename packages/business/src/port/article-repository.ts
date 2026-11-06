@@ -1,22 +1,24 @@
 import {
   Context,
   Data,
+  type DateTime,
   type Effect,
   type Option,
   Schema,
   Struct,
 } from 'effect';
-import { Article, type ArticleFilter, type ArticleId } from '../entity/article';
+import { Article, type ArticleId } from '../entity/article';
 import { FeedId, type OwnerId } from '../entity/object-value';
+import type { ArticleFilter } from './article-pagination';
 
-export { ArticleFilter } from '../entity/article';
+export { ArticleFilter } from './article-pagination';
 
 export class ArticleRepositoryError extends Data.TaggedError(
   'ArticleRepositoryError'
 )<{ readonly message: string }> {}
 
 export type ArticleBoundary = {
-  readonly publishedAt: string;
+  readonly publishedAt: DateTime.Utc;
   readonly id: ArticleId;
 };
 

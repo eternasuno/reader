@@ -1,8 +1,6 @@
-import { Brand, Option, Schema, SchemaTransformation } from 'effect';
+import { Function as Fn, Option, Schema, SchemaTransformation } from 'effect';
 
-export const OwnerId = Schema.String.check(Schema.isMinLength(1)).pipe(
-  Schema.brand('OwnerId')
-);
+export const OwnerId = Schema.String.pipe(Schema.brand('OwnerId'));
 
 export type OwnerId = typeof OwnerId.Type;
 
@@ -10,21 +8,19 @@ export const FeedId = Schema.String.pipe(Schema.brand('FeedId'));
 
 export type FeedId = typeof FeedId.Type;
 
-export const OptionalTrimmedString = Schema.OptionFromOptional(
-  Schema.Trim
-).pipe(
+const NonBlankText = Schema.optional(Schema.Trim).pipe(
   Schema.decode(
-    SchemaTransformation.transform({
-      decode: (value) => Option.filter(value, (text) => text !== ''),
+    SchemaTransformation.transformOptional({
+      decode: Option.filter((text) => text !== ''),
       encode: (value) => value,
     })
-  ),
-  Schema.brand('OptionalTrimmedString')
+  )
 );
 
-export type OptionalTrimmedString = typeof OptionalTrimmedString.Type;
-
-export const optionalTrimmedString = Brand.nominal<OptionalTrimmedString>();
+export const OptionFromOptionalNonEmpty = Fn.flow(
+  Schema.OptionFromOptional,
+  (to) => NonBlankText.pipe(Schema.decodeTo(to))
+);
 
 const TRACKING_PARAMS = new Set([
   'utm_source',
@@ -40,13 +36,10 @@ const TRACKING_PARAMS = new Set([
 ]);
 
 const normalizeUrl = (url: URL): URL => {
-  const tracking = new Set(
-    [...url.searchParams.keys()].filter((name) =>
-      TRACKING_PARAMS.has(name.toLowerCase())
-    )
-  );
-  for (const name of tracking) {
-    url.searchParams.delete(name);
+  for (const name of [...url.searchParams.keys()]) {
+    if (TRACKING_PARAMS.has(name.toLowerCase())) {
+      url.searchParams.delete(name);
+    }
   }
 
   return url;

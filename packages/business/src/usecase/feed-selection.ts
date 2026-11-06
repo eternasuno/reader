@@ -1,15 +1,10 @@
-import { DateTime, Effect, Option } from 'effect';
+import { Array as Arr, DateTime, Effect, Option, Order, pipe } from 'effect';
 import {
+  ArticleContent,
+  ArticleDescription,
   type ArticleId,
-  articleContent,
-  articleDescription,
 } from '../entity/article';
-import {
-  type FeedId,
-  type OptionalTrimmedString,
-  type OwnerId,
-  optionalTrimmedString,
-} from '../entity/object-value';
+import type { FeedId, OwnerId } from '../entity/object-value';
 import {
   type ArticleBoundary,
   ArticleRepository,
@@ -25,16 +20,14 @@ const MAX_CONTENT_LENGTH = 100_000;
 
 type Candidate = {
   readonly id: ArticleId;
-  readonly publishedAtIso: string;
+  readonly publishedAt: DateTime.Utc;
   readonly existing: boolean;
   readonly order: number;
   readonly entry?: ParsedArticle;
-  readonly publishedAt?: DateTime.Utc;
 };
 
 type RetainedArticle = Candidate & {
   readonly entry: ParsedArticle;
-  readonly publishedAt: DateTime.Utc;
 };
 
 const newCandidate = (
@@ -50,58 +43,67 @@ const newCandidate = (
     title: entry.title,
     description: entry.description,
   }),
-  publishedAtIso: DateTime.formatIso(entry.publishedAt),
+  publishedAt: entry.publishedAt,
   existing: false,
   order,
   entry,
-  publishedAt: entry.publishedAt,
 });
 
 const existingCandidate = (boundary: ArticleBoundary): Candidate => ({
   id: boundary.id,
-  publishedAtIso: boundary.publishedAt,
+  publishedAt: boundary.publishedAt,
   existing: true,
   order: 0,
 });
 
-const compareText = (left: string, right: string) =>
-  left === right ? 0 : Number(left > right) - Number(left < right);
+const descendingPublishedAt = Order.flip(
+  Order.mapInput(Order.Number, (candidate: Candidate) =>
+    DateTime.toEpochMillis(candidate.publishedAt)
+  )
+);
 
-const tieBreak = (left: Candidate, right: Candidate) => {
+const tieBreak = (left: Candidate, right: Candidate): -1 | 0 | 1 => {
   if (left.existing !== right.existing) {
     return left.existing ? -1 : 1;
   }
 
   return left.existing
-    ? compareText(left.id, right.id)
-    : left.order - right.order;
+    ? Order.String(left.id, right.id)
+    : Order.Number(left.order, right.order);
 };
 
-const compareCandidates = (left: Candidate, right: Candidate) =>
-  compareText(right.publishedAtIso, left.publishedAtIso) ||
-  tieBreak(left, right);
+const compareCandidates = (left: Candidate, right: Candidate): -1 | 0 | 1 =>
+  descendingPublishedAt(left, right) || tieBreak(left, right);
+
+const candidateOrder = Order.make(compareCandidates);
+
+const dedupeCandidates = (
+  candidates: ReadonlyArray<Candidate>
+): ReadonlyArray<Candidate> => {
+  const seen = new Set<ArticleId>();
+
+  return Arr.filter(candidates, (candidate) => {
+    if (seen.has(candidate.id)) {
+      return false;
+    }
+    seen.add(candidate.id);
+
+    return true;
+  });
+};
 
 export const initialSelection = (
   ownerId: OwnerId,
   id: FeedId,
   entries: ReadonlyArray<ParsedArticle>
-) => {
-  const seen = new Set<ArticleId>();
-
-  return entries
-    .map((entry, order) => newCandidate(ownerId, id, entry, order))
-    .toSorted(compareCandidates)
-    .filter((candidate) => {
-      if (seen.has(candidate.id)) {
-        return false;
-      }
-
-      seen.add(candidate.id);
-
-      return true;
-    })
-    .slice(0, FEED_INITIAL_IMPORT);
-};
+) =>
+  pipe(
+    entries,
+    Arr.map((entry, order) => newCandidate(ownerId, id, entry, order)),
+    Arr.sort(candidateOrder),
+    dedupeCandidates,
+    Arr.take(FEED_INITIAL_IMPORT)
+  );
 
 export const refreshSelection = (
   ownerId: OwnerId,
@@ -110,28 +112,22 @@ export const refreshSelection = (
   entries: ReadonlyArray<ParsedArticle>
 ) => {
   const known = new Set(inventory.map((boundary) => boundary.id));
-  const fresh = entries
-    .map((entry, order) => newCandidate(ownerId, id, entry, order))
-    .toSorted(compareCandidates)
-    .filter((candidate) => {
-      if (known.has(candidate.id)) {
-        return false;
-      }
+  const fresh = pipe(
+    entries,
+    Arr.map((entry, order) => newCandidate(ownerId, id, entry, order)),
+    Arr.sort(candidateOrder),
+    dedupeCandidates,
+    Arr.filter((candidate) => !known.has(candidate.id))
+  );
 
-      known.add(candidate.id);
-
-      return true;
-    });
-
-  return [...inventory.map(existingCandidate), ...fresh].toSorted(
-    compareCandidates
+  return pipe(
+    [...inventory.map(existingCandidate), ...fresh],
+    Arr.sort(candidateOrder)
   );
 };
 
 const isRetained = (candidate: Candidate): candidate is RetainedArticle =>
-  !candidate.existing &&
-  candidate.entry !== undefined &&
-  candidate.publishedAt !== undefined;
+  !candidate.existing && candidate.entry !== undefined;
 
 const sanitizeDocument = (document: Document) =>
   Effect.gen(function* () {
@@ -140,9 +136,9 @@ const sanitizeDocument = (document: Document) =>
     return yield* processor.sanitize(document);
   });
 
-const processHtml = (value: OptionalTrimmedString, url: Option.Option<URL>) =>
+const processHtml = (value: Option.Option<string>, url: Option.Option<URL>) =>
   Option.match(value, {
-    onNone: () => Effect.succeed(optionalTrimmedString(Option.none())),
+    onNone: () => Effect.succeed(Option.none()),
     onSome: (html) =>
       Effect.gen(function* () {
         const parser = yield* HtmlParser;
@@ -162,8 +158,14 @@ const buildArticle = (
 ) =>
   Effect.gen(function* () {
     const { entry } = candidate;
-    const description = yield* processHtml(entry.description, entry.url);
-    const content = yield* processHtml(entry.content, entry.url);
+    const description = Option.map(
+      yield* processHtml(entry.description, entry.url),
+      (html) => ArticleDescription.make(html)
+    );
+    const content = Option.map(
+      yield* processHtml(entry.content, entry.url),
+      (html) => ArticleContent.make(html)
+    );
 
     return {
       id: candidate.id,
@@ -173,9 +175,9 @@ const buildArticle = (
       publishedAt: candidate.publishedAt,
       read: false,
       url: entry.url,
-      description: articleDescription(description),
-      content: articleContent(content),
-      extractedContent: articleContent(optionalTrimmedString(Option.none())),
+      description,
+      content,
+      extractedContent: Option.none(),
     };
   });
 

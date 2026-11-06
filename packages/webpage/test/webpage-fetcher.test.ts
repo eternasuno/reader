@@ -111,7 +111,7 @@ it.effect('rejects unsupported browser endpoint input before connecting', () =>
     vi.stubGlobal('fetch', fetchImpl);
     const endpoints = [
       'ftp://127.0.0.1:9222',
-      'http://user:secret@127.0.0.1:9222',
+      'ftp://user:secret@127.0.0.1:9222',
       'http://127.0.0.1:9222/#devtools',
     ];
 

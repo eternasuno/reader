@@ -1,31 +1,16 @@
+import type { BrowserEndpoint, WebpageFetcher } from '@reader/business';
 import {
-  type OwnerId,
-  SettingsRepository,
-  WebpageFetcherLayer,
-} from '@reader/business';
-import {
-  BrowserConcurrency,
+  type BrowserConcurrency,
   BrowserWebpageFetcherLive,
   JinaWebpageFetcherLive,
 } from '@reader/webpage';
-import { Effect, Layer, Option } from 'effect';
+import type { Layer, Redacted } from 'effect';
 
-export const webpageFetcherForOwner = (owner: OwnerId) =>
-  Effect.gen(function* () {
-    const settings = yield* SettingsRepository;
-    const config = yield* settings.get(owner);
-    const concurrency = yield* BrowserConcurrency;
+export const jinaWebpageFetcherLive = (
+  key?: Redacted.Redacted<string> | undefined
+): Layer.Layer<WebpageFetcher> => JinaWebpageFetcherLive(key);
 
-    if (config.provider === 'jina') {
-      return Layer.succeed(
-        WebpageFetcherLayer,
-        JinaWebpageFetcherLive(Option.getOrUndefined(config.jinaKey))
-      );
-    }
-
-    const layer = BrowserWebpageFetcherLive(
-      Option.getOrUndefined(config.browserEndpoint)
-    ).pipe(Layer.provide(Layer.succeed(BrowserConcurrency, concurrency)));
-
-    return Layer.succeed(WebpageFetcherLayer, layer);
-  });
+export const browserWebpageFetcherLive = (
+  endpoint: BrowserEndpoint
+): Layer.Layer<WebpageFetcher, never, BrowserConcurrency> =>
+  BrowserWebpageFetcherLive(endpoint);

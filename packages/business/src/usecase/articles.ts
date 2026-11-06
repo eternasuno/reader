@@ -1,10 +1,10 @@
 import { Effect, Option } from 'effect';
 import type { Article, ArticleId } from '../entity/article';
-import type { FeedId, NormalizedUrl, OwnerId } from '../entity/object-value';
+import type { NormalizedUrl, OwnerId } from '../entity/object-value';
 import { ArticleExtractor } from '../port/article-extractor';
 import { ArticleRepository } from '../port/article-repository';
 import { HtmlParser } from '../port/html-parser';
-import { WebpageFetcher, WebpageFetcherLayer } from '../port/webpage-fetcher';
+import { WebpageFetcher } from '../port/webpage-fetcher';
 import {
   ArticleEmptyContent,
   ArticleMissingUrl,
@@ -36,12 +36,8 @@ export {
 
 const fetchAndExtract = (sourceUrl: URL) =>
   Effect.gen(function* () {
-    const fetcherLayer = yield* WebpageFetcherLayer;
-    const html = yield* Effect.gen(function* () {
-      const fetcher = yield* WebpageFetcher;
-
-      return yield* fetcher.fetch(sourceUrl.href);
-    }).pipe(Effect.provide(fetcherLayer));
+    const fetcher = yield* WebpageFetcher;
+    const html = yield* fetcher.fetch(sourceUrl.href);
     const parser = yield* HtmlParser;
     const document = yield* parser.parse(html, sourceUrl);
     const extractor = yield* ArticleExtractor;
@@ -54,13 +50,6 @@ const fetchAndExtract = (sourceUrl: URL) =>
 
     return extracted;
   }).pipe(Effect.scoped);
-
-export const getArticle = (owner: OwnerId, id: ArticleId) =>
-  Effect.gen(function* () {
-    const articles = yield* ArticleRepository;
-
-    return yield* articles.find(owner, id);
-  });
 
 export const addArticle = (owner: OwnerId, url: NormalizedUrl) =>
   Effect.gen(function* () {
@@ -167,33 +156,6 @@ export const extractArticle = (owner: OwnerId, id: ArticleId) =>
     }
 
     return { ...article, extractedContent: extracted.content };
-  });
-
-export const markArticle = (owner: OwnerId, id: ArticleId, read: boolean) =>
-  Effect.gen(function* () {
-    const articles = yield* ArticleRepository;
-    yield* articles.updateByArticleIds(owner, [id], { read });
-  });
-
-export const markLaterRead = (owner: OwnerId) =>
-  Effect.gen(function* () {
-    const articles = yield* ArticleRepository;
-    yield* articles.updateLater(owner, { read: true });
-  });
-
-export const markFeedsRead = (owner: OwnerId, ids: ReadonlyArray<FeedId>) =>
-  Effect.gen(function* () {
-    const articles = yield* ArticleRepository;
-    yield* articles.updateFeeds(owner, Option.some(ids), { read: true });
-  });
-
-export const markArticlesRead = (
-  owner: OwnerId,
-  ids: ReadonlyArray<ArticleId>
-) =>
-  Effect.gen(function* () {
-    const articles = yield* ArticleRepository;
-    yield* articles.updateByArticleIds(owner, ids, { read: true });
   });
 
 export const removeArticle = (owner: OwnerId, id: ArticleId) =>

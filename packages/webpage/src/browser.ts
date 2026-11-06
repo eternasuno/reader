@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: browser client transport and discovery handling requires cohesive lifecycle management.
 import { Effect, Redacted } from 'effect';
 import {
   type Browser,
@@ -89,33 +90,59 @@ const DISCOVERY_PROTOCOLS: Readonly<Record<string, string>> = {
   'wss:': 'https:',
 };
 
-export const endpointTarget = (endpoint: string) => {
-  const url = new URL(endpoint);
+const isWebSocketTarget = (url: URL): boolean =>
+  (url.protocol === 'ws:' || url.protocol === 'wss:') &&
+  (url.pathname !== '/' || Boolean(url.search));
+
+export const endpointTarget = (endpoint: string | URL) => {
+  const url =
+    typeof endpoint === 'string' ? new URL(endpoint) : new URL(endpoint.href);
   const protocol = DISCOVERY_PROTOCOLS[url.protocol];
 
-  if (!protocol || url.username || url.password || endpoint.includes('#')) {
+  if (!protocol || url.hash) {
     throw new Error('Unsupported browser endpoint');
   }
 
-  if (
-    (url.protocol === 'ws:' || url.protocol === 'wss:') &&
-    (url.pathname !== '/' || url.search)
-  ) {
+  if (isWebSocketTarget(url)) {
     return { kind: 'websocket' as const, url: url.href };
   }
 
+  const auth = url.username
+    ? `${url.username}${url.password ? `:${url.password}` : ''}@`
+    : '';
+
   return {
     kind: 'discovery' as const,
-    url: protocol === url.protocol ? url.href : `${protocol}//${url.host}`,
+    url:
+      protocol === url.protocol ? url.href : `${protocol}//${auth}${url.host}`,
   };
 };
 
-const readWebSocketUrl = (payload: unknown): string => {
+const WEBSOCKET_PROTOCOLS: Readonly<Record<string, string>> = {
+  'http:': 'ws:',
+  'https:': 'wss:',
+};
+
+const URL_SCHEME = /^[a-z][a-z\d+.-]*:/i;
+
+const resolveWebSocketUrl = (value: string, discovery: URL): URL => {
+  const url = new URL(value, discovery.href);
+
+  // A relative discovery answer inherits the discovery HTTP scheme.
+  if (!URL_SCHEME.test(value)) {
+    url.protocol = WEBSOCKET_PROTOCOLS[discovery.protocol] ?? url.protocol;
+  }
+
+  return url;
+};
+
+const readWebSocketUrl = (payload: unknown, discovery: URL): string => {
   const value: unknown =
     typeof payload === 'object' && payload !== null
       ? Reflect.get(payload, 'webSocketDebuggerUrl')
       : undefined;
-  const endpoint = typeof value === 'string' ? new URL(value) : null;
+  const endpoint =
+    typeof value === 'string' ? resolveWebSocketUrl(value, discovery) : null;
 
   if (
     !endpoint ||
@@ -124,18 +151,34 @@ const readWebSocketUrl = (payload: unknown): string => {
     throw new Error('Invalid browser discovery WebSocket URL');
   }
 
+  if (!endpoint.username && !endpoint.password) {
+    endpoint.username = discovery.username;
+    endpoint.password = discovery.password;
+  }
+
   return endpoint.href;
 };
+
+const basicAuthorization = (url: URL): string | undefined =>
+  url.username
+    ? `Basic ${Buffer.from(`${url.username}:${url.password}`).toString('base64')}`
+    : undefined;
 
 const discoverWebSocketUrl = (
   browserURL: string
 ): Effect.Effect<string, FetchFailure> =>
   Effect.tryPromise({
     try: async (signal) => {
-      const url = new URL(browserURL);
-      url.pathname = `${url.pathname.replace(/\/?$/, '')}/json/version`;
-      const response = await fetch(url, {
+      const discovery = new URL(browserURL);
+      discovery.pathname = `${discovery.pathname.replace(/\/?$/, '')}/json/version`;
+      const authorization = basicAuthorization(discovery);
+      // `fetch` refuses request URLs that embed credentials.
+      const request = new URL(discovery.href);
+      request.username = '';
+      request.password = '';
+      const response = await fetch(request, {
         method: 'GET',
+        ...(authorization ? { headers: { authorization } } : {}),
         signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
       });
 
@@ -143,7 +186,7 @@ const discoverWebSocketUrl = (
         throw new Error(`Browser discovery returned HTTP ${response.status}`);
       }
 
-      return readWebSocketUrl(await response.json());
+      return readWebSocketUrl(await response.json(), discovery);
     },
     catch: (cause) =>
       new FetchFailure({ message: 'Browser discovery failed', cause }),

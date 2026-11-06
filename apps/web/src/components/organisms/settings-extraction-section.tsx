@@ -1,5 +1,5 @@
 import { Show } from 'solid-js';
-import type { ReaderProvider } from '../../lib/settings';
+import type { FetcherProvider } from '../../lib/settings';
 import { Button } from '../atoms/button';
 import { SubmitButton } from '../atoms/submit-button';
 import { FormInput } from '../molecules/form-input';
@@ -8,12 +8,12 @@ type ExtractionSectionProps = {
   readonly class?: string;
   readonly busy: boolean;
   readonly pending: boolean;
-  readonly provider: ReaderProvider;
+  readonly provider: FetcherProvider;
   readonly jinaConfigured: boolean;
   readonly jinaKey: string;
   readonly browserEndpoint: string;
   readonly browserConfigured: boolean;
-  readonly onProviderChange: (provider: ReaderProvider) => void;
+  readonly onProviderChange: (provider: FetcherProvider) => void;
   readonly onJinaKeyChange: (value: string) => void;
   readonly onBrowserEndpointChange: (value: string) => void;
   readonly onSubmit: (form: HTMLFormElement) => void;
@@ -22,9 +22,9 @@ type ExtractionSectionProps = {
 };
 
 const ExtractionProvider = (props: {
-  readonly provider: ReaderProvider;
+  readonly provider: FetcherProvider;
   readonly busy: boolean;
-  readonly onChange: (provider: ReaderProvider) => void;
+  readonly onChange: (provider: FetcherProvider) => void;
 }) => (
   <div class="flex items-center gap-2">
     <label class="text-sm whitespace-nowrap" for="settings-provider">
@@ -49,7 +49,7 @@ const ExtractionProvider = (props: {
 );
 
 const ExtractionStatus = (props: {
-  readonly provider: ReaderProvider;
+  readonly provider: FetcherProvider;
   readonly jinaConfigured: boolean;
   readonly browserEndpoint: string;
 }) => (
@@ -68,7 +68,7 @@ const ExtractionStatus = (props: {
 );
 
 const ExtractionFields = (props: {
-  readonly provider: ReaderProvider;
+  readonly provider: FetcherProvider;
   readonly busy: boolean;
   readonly jinaConfigured: boolean;
   readonly jinaKey: string;
@@ -118,7 +118,7 @@ const ExtractionFields = (props: {
 );
 
 const ExtractionClearActions = (props: {
-  readonly provider: ReaderProvider;
+  readonly provider: FetcherProvider;
   readonly busy: boolean;
   readonly jinaConfigured: boolean;
   readonly browserConfigured: boolean;

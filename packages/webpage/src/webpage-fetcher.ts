@@ -16,20 +16,22 @@ export const BrowserConcurrencyLive = Layer.effect(
 );
 
 const parseBrowserEndpoint = (
-  endpoint: string
+  endpoint: string | URL
 ): Effect.Effect<Redacted.Redacted<string>, WebpageFetcherError> =>
   Effect.try({
     try: () => {
       endpointTarget(endpoint);
 
-      return Redacted.make(endpoint);
+      return Redacted.make(
+        typeof endpoint === 'string' ? endpoint : endpoint.href
+      );
     },
     catch: () =>
       new WebpageFetcherError({ message: 'Invalid browser service address' }),
   });
 
 const browserTarget = (
-  endpoint: string | undefined
+  endpoint: string | URL | undefined
 ): Effect.Effect<Redacted.Redacted<string>, WebpageFetcherError> =>
   endpoint
     ? parseBrowserEndpoint(endpoint)
@@ -52,7 +54,7 @@ export const JinaWebpageFetcherLive = (
   });
 
 export const BrowserWebpageFetcherLive = (
-  endpoint: string | undefined
+  endpoint: string | URL | undefined
 ): Layer.Layer<WebpageFetcher, never, BrowserConcurrency> =>
   Layer.effect(
     WebpageFetcher,

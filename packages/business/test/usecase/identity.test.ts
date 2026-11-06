@@ -2,11 +2,14 @@ import { expect, it } from '@effect/vitest';
 import { Option, Schema } from 'effect';
 import {
   Article,
-  ArticleContent,
   ArticleDescription,
   ArticleTitle,
 } from '../../src/entity/article';
-import { NormalizedUrl, OwnerId } from '../../src/entity/object-value';
+import {
+  NormalizedUrl,
+  OptionFromOptionalNonEmpty,
+  OwnerId,
+} from '../../src/entity/object-value';
 import { articleId, feedId } from '../../src/usecase/identity';
 
 const owner = OwnerId.make('alice');
@@ -17,7 +20,9 @@ const normalizeUrl = Schema.decodeUnknownSync(NormalizedUrl);
 
 const decodeTitle = Schema.decodeUnknownSync(ArticleTitle);
 
-const decodeDescription = Schema.decodeUnknownSync(ArticleDescription);
+const decodeDescription = Schema.decodeUnknownSync(
+  OptionFromOptionalNonEmpty(ArticleDescription)
+);
 
 it('rejects malformed and non-HTTP(S) URLs while preserving credentials', () => {
   expect(() => normalizeUrl('not a url')).toThrow(Schema.SchemaError);
@@ -49,7 +54,7 @@ it('defaults blank titles and trims surrounding space when decoding', () => {
   expect(decodeTitle('  Title  ')).toBe('Title');
 });
 
-it('trims descriptions when decoding', () => {
+it('trims descriptions and maps blank ones to none when decoding', () => {
   expect(decodeDescription('  Description  ')).toEqual(
     Option.some('Description')
   );
@@ -211,7 +216,9 @@ it('distinguishes linkless feed articles by title', () => {
 });
 
 it('encodes absent descriptions as omitted fields and present descriptions as strings', () => {
-  const schema = Schema.Struct({ description: ArticleDescription });
+  const schema = Schema.Struct({
+    description: OptionFromOptionalNonEmpty(ArticleDescription),
+  });
   const decode = Schema.decodeSync(schema);
   const encode = Schema.encodeSync(schema);
   expect(decode({})).toEqual({ description: Option.none() });
@@ -228,8 +235,11 @@ it('normalizes both article content fields and preserves their encoding', () => 
   }));
   const decode = Schema.decodeSync(schema);
   const encode = Schema.encodeSync(schema);
-  expect(Schema.decodeSync(ArticleContent)('  ')).toEqual(Option.none());
   expect(decode({})).toEqual({
+    content: Option.none(),
+    extractedContent: Option.none(),
+  });
+  expect(decode({ content: '  ', extractedContent: '' })).toEqual({
     content: Option.none(),
     extractedContent: Option.none(),
   });

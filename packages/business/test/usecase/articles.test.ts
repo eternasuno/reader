@@ -1,19 +1,33 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: usecase tests share one set of article fixtures and layers.
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each test declares its dependency mocks alongside the scenario.
 import { expect, it } from '@effect/vitest';
-import { type Context, Effect, Layer, Option, Schema } from 'effect';
+import {
+  type Context,
+  type DateTime,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+} from 'effect';
 import {
   Article,
   ArticleContent,
-  type ArticleCursor,
-  ArticleCursorFromString,
   ArticleDescription,
   ArticleId,
   ArticleTitle,
 } from '../../src/entity/article';
 import { Feed } from '../../src/entity/feed';
-import { FeedId, NormalizedUrl, OwnerId } from '../../src/entity/object-value';
+import {
+  FeedId,
+  NormalizedUrl,
+  OptionFromOptionalNonEmpty,
+  OwnerId,
+} from '../../src/entity/object-value';
 import { ArticleExtractor } from '../../src/port/article-extractor';
+import {
+  type ArticleCursor,
+  ArticleCursorFromString,
+} from '../../src/port/article-pagination';
 import {
   type ArticleBoundary,
   type ArticlePatch,
@@ -25,18 +39,12 @@ import { HtmlParser, HtmlParserError } from '../../src/port/html-parser';
 import {
   WebpageFetcher,
   WebpageFetcherError,
-  WebpageFetcherLayer,
 } from '../../src/port/webpage-fetcher';
 import {
   addArticle,
   extractArticle,
-  getArticle,
   listFeedArticles,
   listLaterArticles,
-  markArticle,
-  markArticlesRead,
-  markFeedsRead,
-  markLaterRead,
   refreshFeedArticles,
   refreshLaterArticles,
   removeArticle,
@@ -44,9 +52,13 @@ import {
 } from '../../src/usecase/articles';
 import { articleId } from '../../src/usecase/identity';
 
-const decodeContent = Schema.decodeSync(ArticleContent);
+const decodeContent = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleContent)
+);
 
-const decodeDescription = Schema.decodeSync(ArticleDescription);
+const decodeDescription = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleDescription)
+);
 
 const decodeTitle = Schema.decodeSync(ArticleTitle);
 
@@ -57,8 +69,6 @@ const alice = OwnerId.make('alice');
 const bob = OwnerId.make('bob');
 
 const feed = FeedId.make('f'.repeat(64));
-
-const otherFeed = FeedId.make('e'.repeat(64));
 
 const firstId = ArticleId.make('a'.repeat(64));
 
@@ -80,8 +90,10 @@ const makeArticle = (overrides: Record<string, unknown> = {}): Article =>
     ...overrides,
   });
 
-const encodedTime = (article: Article): string =>
-  Schema.encodeSync(Schema.DateTimeUtcFromString)(article.publishedAt);
+const timeOf = (publishedAt: DateTime.Utc): string =>
+  Schema.encodeSync(Schema.DateTimeUtcFromString)(publishedAt);
+
+const encodedTime = (article: Article): string => timeOf(article.publishedAt);
 
 const decodeCursor = (wire: string): ArticleCursor =>
   Schema.decodeSync(ArticleCursorFromString)(wire);
@@ -107,10 +119,11 @@ const pagedStore =
   (items: ReadonlyArray<Article>) => (_owner: OwnerId, query: ArticleQuery) => {
     const isLaterThan = (item: Article, boundary: ArticleBoundary): boolean => {
       const publishedAt = encodedTime(item);
+      const boundaryAt = timeOf(boundary.publishedAt);
 
       return (
-        publishedAt > boundary.publishedAt ||
-        (publishedAt === boundary.publishedAt && item.id > boundary.id)
+        publishedAt > boundaryAt ||
+        (publishedAt === boundaryAt && item.id > boundary.id)
       );
     };
 
@@ -166,10 +179,7 @@ const provide = <A, E, R>(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(ArticleRepository, layers.articles ?? {}),
-        Layer.succeed(
-          WebpageFetcherLayer,
-          Layer.mock(WebpageFetcher, layers.fetcher ?? {})
-        ),
+        Layer.mock(WebpageFetcher, layers.fetcher ?? {}),
         Layer.mock(HtmlParser, {
           parse: () => Effect.succeed(parsedDocument()),
           ...layers.parser,
@@ -179,33 +189,6 @@ const provide = <A, E, R>(
       )
     )
   );
-
-it.effect('gets an article scoped to the requesting owner', () => {
-  const item = makeArticle();
-  const calls: Array<readonly [OwnerId, ArticleId]> = [];
-
-  return provide(
-    Effect.gen(function* () {
-      expect(yield* getArticle(alice, item.id)).toEqual(Option.some(item));
-      expect(yield* getArticle(bob, item.id)).toEqual(Option.none());
-      expect(calls).toEqual([
-        [alice, item.id],
-        [bob, item.id],
-      ]);
-    }),
-    {
-      articles: {
-        find: (owner, id) => {
-          calls.push([owner, id]);
-
-          return Effect.succeed(
-            owner === alice ? Option.some(item) : Option.none()
-          );
-        },
-      },
-    }
-  );
-});
 
 it.effect('adds an anonymous Jina article with its URL and body', () => {
   const document = parsedDocument('<p>Body</p>');
@@ -260,7 +243,7 @@ it.effect('adds an anonymous Jina article with its URL and body', () => {
 
           return Effect.succeed({
             title: decodeTitle('Untitled'),
-            description: decodeDescription(''),
+            description: decodeDescription(undefined),
             content: decodeContent('<p>Body</p>'),
             publishedAt: extractedPublishedAt,
           });
@@ -393,7 +376,7 @@ it.effect('reports duplicate additions with the derived article id', () => {
           Effect.succeed({
             title: decodeTitle('Post'),
             content: decodeContent('<p>Body</p>'),
-            description: decodeDescription(''),
+            description: decodeDescription(undefined),
             publishedAt: extractedPublishedAt,
           }),
       },
@@ -416,7 +399,7 @@ it.effect('rejects an empty extracted body without saving', () =>
         extract: () =>
           Effect.succeed({
             title: decodeTitle('Post'),
-            description: decodeDescription(''),
+            description: decodeDescription(undefined),
             content: decodeContent('   '),
             publishedAt: extractedPublishedAt,
           }),
@@ -662,7 +645,7 @@ it.effect('extracts, persists, and returns an article body', () => {
         extract: () =>
           Effect.succeed({
             title: decodeTitle('Fresh'),
-            description: decodeDescription(''),
+            description: decodeDescription(undefined),
             content: decodeContent('<p>Fresh</p>'),
             publishedAt: extractedPublishedAt,
           }),
@@ -690,7 +673,7 @@ it.effect('treats a deleted article as missing after extraction', () =>
         extract: () =>
           Effect.succeed({
             title: decodeTitle('Fresh'),
-            description: decodeDescription(''),
+            description: decodeDescription(undefined),
             content: decodeContent('<p>Fresh</p>'),
             publishedAt: extractedPublishedAt,
           }),
@@ -723,66 +706,6 @@ it.effect('preserves fetch failure messages while extracting', () =>
     }
   )
 );
-
-it.effect('patches articles through owner-scoped repository operations', () => {
-  const calls: Array<unknown> = [];
-
-  return provide(
-    Effect.gen(function* () {
-      yield* markArticle(alice, firstId, false);
-      yield* markLaterRead(alice);
-      yield* markFeedsRead(alice, [feed, otherFeed]);
-      yield* markArticlesRead(alice, [firstId, secondId]);
-      expect(calls).toEqual([
-        ['updateByArticleIds', alice, [firstId], { read: false }],
-        ['updateLater', alice, { read: true }],
-        ['updateFeeds', alice, Option.some([feed, otherFeed]), { read: true }],
-        ['updateByArticleIds', alice, [firstId, secondId], { read: true }],
-      ]);
-    }),
-    {
-      articles: {
-        updateByArticleIds: (owner, ids, articlePatch) => {
-          calls.push(['updateByArticleIds', owner, ids, articlePatch]);
-
-          return Effect.succeed(ids);
-        },
-        updateLater: (owner, articlePatch) => {
-          calls.push(['updateLater', owner, articlePatch]);
-
-          return Effect.succeed([]);
-        },
-        updateFeeds: (owner, feedIds, articlePatch) => {
-          calls.push(['updateFeeds', owner, feedIds, articlePatch]);
-
-          return Effect.succeed([]);
-        },
-      },
-    }
-  );
-});
-
-it.effect('forwards an empty feed selection when marking feeds read', () => {
-  const calls: Array<unknown> = [];
-
-  return provide(
-    Effect.gen(function* () {
-      yield* markFeedsRead(alice, []);
-      expect(calls).toEqual([
-        ['updateFeeds', alice, Option.some([]), { read: true }],
-      ]);
-    }),
-    {
-      articles: {
-        updateFeeds: (owner, feedIds, articlePatch) => {
-          calls.push(['updateFeeds', owner, feedIds, articlePatch]);
-
-          return Effect.succeed([]);
-        },
-      },
-    }
-  );
-});
 
 it.effect(
   'removes only later articles and treats unknown ids as success',
@@ -851,7 +774,7 @@ it.effect('pages thirty later articles and continues from the cursor', () => {
         limit: 31,
         after: {
           id: items[29]?.id,
-          publishedAt: encodedTime(items[29] as Article),
+          publishedAt: items[29]?.publishedAt,
         },
       });
       expect(owners).toEqual([alice, alice]);
@@ -951,7 +874,7 @@ it.effect('refreshes through the original boundary article inclusively', () => {
           limit: 31,
           through: {
             id: items[59]?.id,
-            publishedAt: encodedTime(items[59] as Article),
+            publishedAt: items[59]?.publishedAt,
           },
         },
         {
@@ -959,11 +882,11 @@ it.effect('refreshes through the original boundary article inclusively', () => {
           limit: 31,
           through: {
             id: items[59]?.id,
-            publishedAt: encodedTime(items[59] as Article),
+            publishedAt: items[59]?.publishedAt,
           },
           after: {
             id: items[30]?.id,
-            publishedAt: encodedTime(items[30] as Article),
+            publishedAt: items[30]?.publishedAt,
           },
         },
       ]);
@@ -1040,7 +963,7 @@ it.effect('refreshes from a boundary whose article was removed', () => {
       );
       expect(calls.at(-1)?.through).toEqual({
         id: items[39]?.id,
-        publishedAt: encodedTime(items[39] as Article),
+        publishedAt: items[39]?.publishedAt,
       });
     }),
     {

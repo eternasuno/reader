@@ -14,7 +14,7 @@ import {
   HtmlParser,
   HtmlParserError,
   NormalizedUrl,
-  OptionalTrimmedString,
+  OptionFromOptionalNonEmpty,
   SettingsRepository,
   SettingsRepositoryError,
 } from '@reader/business';
@@ -62,7 +62,13 @@ const publishedAt = DateTime.fromDateUnsafe(
 
 const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
-const decodeSanitized = Schema.decodeSync(OptionalTrimmedString);
+const decodeContent = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleContent)
+);
+
+const decodeDescription = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleDescription)
+);
 
 type Handler = (request: Request) => Promise<Response>;
 
@@ -479,7 +485,7 @@ const verifySettings = async (handler: Handler, alice: string) => {
     retention: 120,
     provider: 'browser',
     jinaConfigured: false,
-    browserEndpoint: 'http://127.0.0.1:9222',
+    browserEndpoint: 'http://127.0.0.1:9222/',
   });
 
   expect(
@@ -562,29 +568,29 @@ const feedSource = Layer.mergeAll(
           {
             title: Schema.decodeSync(ArticleTitle)('One'),
             url: Option.some(decodeUrl('https://example.com/one')),
-            description: Schema.decodeSync(ArticleDescription)(undefined),
-            content: Schema.decodeSync(ArticleContent)('<p>One</p>'),
+            description: decodeDescription(undefined),
+            content: decodeContent('<p>One</p>'),
             publishedAt,
           },
           {
             title: Schema.decodeSync(ArticleTitle)('Two'),
             url: Option.some(decodeUrl('https://example.com/two')),
-            description: Schema.decodeSync(ArticleDescription)(undefined),
-            content: Schema.decodeSync(ArticleContent)(undefined),
+            description: decodeDescription(undefined),
+            content: decodeContent(undefined),
             publishedAt,
           },
           {
             title: Schema.decodeSync(ArticleTitle)('Three'),
             url: Option.some(decodeUrl('https://example.com/three')),
-            description: Schema.decodeSync(ArticleDescription)(undefined),
-            content: Schema.decodeSync(ArticleContent)(undefined),
+            description: decodeDescription(undefined),
+            content: decodeContent(undefined),
             publishedAt,
           },
           {
             title: Schema.decodeSync(ArticleTitle)('Four'),
             url: Option.none(),
-            description: Schema.decodeSync(ArticleDescription)(undefined),
-            content: Schema.decodeSync(ArticleContent)(undefined),
+            description: decodeDescription(undefined),
+            content: decodeContent(undefined),
             publishedAt,
           },
         ],
@@ -596,8 +602,8 @@ const articleExtractor = Layer.succeed(ArticleExtractor, {
   extract: () =>
     Effect.succeed({
       title: Schema.decodeSync(ArticleTitle)('Example article'),
-      description: Schema.decodeSync(ArticleDescription)(undefined),
-      content: Schema.decodeSync(ArticleContent)('<p>Body</p>'),
+      description: decodeDescription(undefined),
+      content: decodeContent('<p>Body</p>'),
       publishedAt,
     }),
 });
@@ -668,7 +674,7 @@ const makeHandler = (
     feedSource,
     overrides.sanitizer ??
       Layer.succeed(DocumentSantize, {
-        sanitize: () => Effect.succeed(decodeSanitized('<p>Body</p>')),
+        sanitize: () => Effect.succeed(decodeContent('<p>Body</p>')),
       }),
     BrowserConcurrencyLive,
     Layer.succeed(FetchHttpClient.Fetch, () =>

@@ -1,6 +1,6 @@
-import { Context, Data, type Effect, Schema, Struct } from 'effect';
+import { Context, Data, type Effect, Schema } from 'effect';
 import type { OwnerId } from '../entity/object-value';
-import { Setting } from '../entity/setting';
+import { FetcherSetting, Retention, type Setting } from '../entity/setting';
 
 export class SettingsRepositoryError extends Data.TaggedError(
   'SettingsRepositoryError'
@@ -8,17 +8,10 @@ export class SettingsRepositoryError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
-export const SettingsPatch = Setting.mapFields((fields) =>
-  Struct.map(
-    Struct.pick(fields, [
-      'retention',
-      'provider',
-      'jinaKey',
-      'browserEndpoint',
-    ]),
-    Schema.optionalKey
-  )
-);
+export const SettingsPatch = Schema.Struct({
+  retention: Schema.optionalKey(Retention),
+  fetcher: Schema.optionalKey(FetcherSetting),
+});
 
 export type SettingsPatch = typeof SettingsPatch.Type;
 
