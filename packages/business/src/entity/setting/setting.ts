@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from 'effect';
-import { OptionFromOptionalNonEmpty, OwnerId } from './object-value';
+import { OptionFromOptionalNonEmpty } from '../object-value/option-from-optional-non-empty';
+import { OwnerId } from '../object-value/owner-id';
 
 export const Retention = Schema.Int.pipe(
   Schema.check(Schema.isBetween({ minimum: 30, maximum: 300 })),

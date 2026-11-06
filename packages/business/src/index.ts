@@ -1,10 +1,11 @@
-export * from './entity/article';
-
-export * from './entity/feed';
-
-export * from './entity/object-value';
-
-export * from './entity/setting';
+export * from './entity/feed/feed';
+export * from './entity/feed/feed-item';
+export * from './entity/object-value/article';
+export * from './entity/object-value/normalized-url';
+export * from './entity/object-value/option-from-optional-non-empty';
+export * from './entity/object-value/owner-id';
+export * from './entity/saved-page/saved-page';
+export * from './entity/setting/setting';
 
 export * from './port/article-extractor';
 export * from './port/article-pagination';
