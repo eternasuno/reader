@@ -8,7 +8,7 @@ import {
   JinaKey,
 } from '../../src/entity/setting/fetcher';
 import { Setting } from '../../src/entity/setting/setting';
-import { JinaKeyInput } from '../../src/port/setting-input';
+import { JinaKeyInput } from '../../src/usecase/setting-input';
 
 const decodeRetention = Schema.decodeUnknownResult(Retention);
 
@@ -165,9 +165,7 @@ it('keeps jina and browser configuration side by side', () => {
 
 it('maps blank optional fetcher fields to none', () => {
   const { fetcher } = Result.getOrThrow(
-    decodeSetting(
-      settingOf({ jina: { key: '  ' }, browser: { endpoint: '' } })
-    )
+    decodeSetting(settingOf({ jina: { key: '  ' }, browser: { endpoint: '' } }))
   );
 
   expect(fetcher.jina.key).toEqual(Option.none());
@@ -177,9 +175,7 @@ it('maps blank optional fetcher fields to none', () => {
 it('rejects an invalid browser endpoint', () => {
   expect(
     isInvalid(
-      decodeSetting(
-        settingOf({ jina: {}, browser: { endpoint: 'not-a-url' } })
-      )
+      decodeSetting(settingOf({ jina: {}, browser: { endpoint: 'not-a-url' } }))
     )
   ).toBe(true);
 });

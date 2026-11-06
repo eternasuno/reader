@@ -68,7 +68,10 @@ export type IFeedItemRepository = {
   ) => Effect.Effect<ReadonlyArray<FeedItemId>, FeedItemRepositoryError>;
   readonly unreadCounts: (
     feedIds: ReadonlyArray<FeedId>
-  ) => Effect.Effect<ReadonlyArray<FeedItemUnreadCount>, FeedItemRepositoryError>;
+  ) => Effect.Effect<
+    ReadonlyArray<FeedItemUnreadCount>,
+    FeedItemRepositoryError
+  >;
   readonly inventory: (
     feedId: FeedId
   ) => Effect.Effect<ReadonlyArray<FeedItemBoundary>, FeedItemRepositoryError>;

@@ -1,16 +1,15 @@
 import { expect, it } from '@effect/vitest';
 import { Option, Schema } from 'effect';
+import { FeedItem } from '../../src/entity/feed/feed-item';
 import {
-  Article,
   ArticleDescription,
   ArticleTitle,
-} from '../../src/entity/article';
-import {
-  NormalizedUrl,
-  OptionFromOptionalNonEmpty,
-  OwnerId,
-} from '../../src/entity/object-value';
-import { articleId, feedId } from '../../src/usecase/identity';
+} from '../../src/entity/object-value/article';
+import { NormalizedUrl } from '../../src/entity/object-value/normalized-url';
+import { OptionFromOptionalNonEmpty } from '../../src/entity/object-value/option-from-optional-non-empty';
+import { OwnerId } from '../../src/entity/object-value/owner-id';
+import { SavedPage } from '../../src/entity/saved-page/saved-page';
+import { feedId, feedItemId, savedPageId } from '../../src/usecase/identity';
 
 const owner = OwnerId.make('alice');
 
@@ -73,146 +72,78 @@ it('derives a stable feed identity from the owner and normalized URL', () => {
   );
 });
 
-it('derives article identity from URL, text, and owner', () => {
+const feed = feedId(owner, normalizeUrl('https://example.com/feed'));
+
+const otherFeed = feedId(owner, normalizeUrl('https://example.com/other'));
+
+const feedItem = (overrides: Partial<Parameters<typeof feedItemId>[0]> = {}) =>
+  feedItemId({
+    feedId: feed,
+    url: Option.some(normalizeUrl('https://example.com/post')),
+    title: decodeTitle('Title'),
+    description: decodeDescription(undefined),
+    ...overrides,
+  });
+
+const savedPage = (
+  overrides: Partial<Parameters<typeof savedPageId>[0]> = {}
+) =>
+  savedPageId({
+    ownerId: owner,
+    url: Option.some(normalizeUrl('https://example.com/post')),
+    title: decodeTitle('Title'),
+    description: decodeDescription(undefined),
+    ...overrides,
+  });
+
+it('derives feed item identity from URL, text, and feed', () => {
   const url = normalizeUrl('https://Example.com:443/post?UTM_Source=x');
+
   expect(
-    articleId({
-      ownerId: owner,
-      feedId: Option.none(),
+    feedItem({
       url: Option.some(url),
-      title: decodeTitle('Title'),
       description: decodeDescription('Description'),
     })
   ).toBe(
-    articleId({
-      ownerId: owner,
-      feedId: Option.none(),
+    feedItem({
       url: Option.some(normalizeUrl('https://example.com/post')),
-      title: decodeTitle('Title'),
       description: decodeDescription('Description'),
     })
   );
 });
 
-it('preserves title case in article identities', () => {
-  expect(
-    articleId({
-      ownerId: owner,
-      feedId: Option.none(),
-      url: Option.none(),
-      title: decodeTitle('New  Post'),
-      description: decodeDescription(undefined),
-    })
-  ).not.toBe(
-    articleId({
-      ownerId: owner,
-      feedId: Option.none(),
-      url: Option.none(),
-      title: decodeTitle('new post'),
-      description: decodeDescription(undefined),
-    })
+it('scopes feed item identity by feed, url, and text', () => {
+  expect(feedItem()).not.toBe(feedItem({ feedId: otherFeed }));
+  expect(feedItem()).not.toBe(feedItem({ url: Option.none() }));
+  expect(feedItem()).not.toBe(feedItem({ title: decodeTitle('Other') }));
+  expect(feedItem()).not.toBe(
+    feedItem({ description: decodeDescription('Other') })
   );
 });
 
-it('scopes article identity by owner', () => {
-  expect(
-    articleId({
-      ownerId: owner,
-      feedId: Option.none(),
-      url: Option.none(),
-      title: decodeTitle('Title'),
-      description: decodeDescription(undefined),
-    })
-  ).not.toBe(
-    articleId({
-      ownerId: otherOwner,
-      feedId: Option.none(),
-      url: Option.none(),
-      title: decodeTitle('Title'),
-      description: decodeDescription(undefined),
-    })
+it('preserves title case in feed item identities', () => {
+  expect(feedItem({ title: decodeTitle('New  Post') })).not.toBe(
+    feedItem({ title: decodeTitle('new post') })
   );
 });
 
-it('scopes article identity by url', () => {
-  expect(
-    articleId({
-      ownerId: owner,
-      feedId: Option.none(),
-      url: Option.none(),
-      title: decodeTitle('Title'),
-      description: decodeDescription(undefined),
-    })
-  ).not.toBe(
-    articleId({
-      ownerId: owner,
-      feedId: Option.none(),
-      url: Option.some(normalizeUrl('https://example.com/a')),
-      title: decodeTitle('Title'),
-      description: decodeDescription(undefined),
-    })
+it('distinguishes linkless feed items by title', () => {
+  expect(feedItem({ url: Option.none(), title: decodeTitle('One') })).not.toBe(
+    feedItem({ url: Option.none(), title: decodeTitle('Two') })
   );
 });
 
-it('uses the feed identity for feed articles and the owner otherwise', () => {
-  const feed = feedId(owner, normalizeUrl('https://example.com/feed'));
-  const otherFeed = feedId(owner, normalizeUrl('https://example.com/other'));
-  const url = normalizeUrl('https://example.com/post');
-  expect(
-    articleId({
-      ownerId: owner,
-      feedId: Option.some(feed),
-      url: Option.some(url),
-      title: decodeTitle('Title'),
-      description: decodeDescription(undefined),
-    })
-  ).not.toBe(
-    articleId({
-      ownerId: owner,
-      feedId: Option.none(),
-      url: Option.some(url),
-      title: decodeTitle('Title'),
-      description: decodeDescription(undefined),
-    })
-  );
-  expect(
-    articleId({
-      ownerId: owner,
-      feedId: Option.some(feed),
-      url: Option.some(url),
-      title: decodeTitle('Title'),
-      description: decodeDescription(undefined),
-    })
-  ).not.toBe(
-    articleId({
-      ownerId: owner,
-      feedId: Option.some(otherFeed),
-      url: Option.some(url),
-      title: decodeTitle('Title'),
-      description: decodeDescription(undefined),
-    })
-  );
+it('derives saved page identity from URL, text, and owner', () => {
+  const url = normalizeUrl('https://Example.com:443/post?UTM_Source=x');
+
+  expect(savedPage({ url: Option.some(url) })).toBe(savedPage());
+  expect(savedPage()).not.toBe(savedPage({ ownerId: otherOwner }));
+  expect(savedPage()).not.toBe(savedPage({ url: Option.none() }));
+  expect(savedPage()).not.toBe(savedPage({ title: decodeTitle('Other') }));
 });
 
-it('distinguishes linkless feed articles by title', () => {
-  const feed = feedId(owner, normalizeUrl('https://example.com/feed'));
-  expect(
-    articleId({
-      ownerId: owner,
-      feedId: Option.some(feed),
-      url: Option.none(),
-      title: decodeTitle('One'),
-      description: decodeDescription(undefined),
-    })
-  ).not.toBe(
-    articleId({
-      ownerId: owner,
-      feedId: Option.some(feed),
-      url: Option.none(),
-      title: decodeTitle('Two'),
-      description: decodeDescription(undefined),
-    })
-  );
+it('keeps saved pages and feed items in separate identity spaces', () => {
+  expect(savedPage()).not.toBe(feedItem());
 });
 
 it('encodes absent descriptions as omitted fields and present descriptions as strings', () => {
@@ -228,8 +159,8 @@ it('encodes absent descriptions as omitted fields and present descriptions as st
   });
 });
 
-it('normalizes both article content fields and preserves their encoding', () => {
-  const schema = Article.mapFields((fields) => ({
+it('normalizes both feed item content fields and preserves their encoding', () => {
+  const schema = FeedItem.mapFields((fields) => ({
     content: fields.content,
     extractedContent: fields.extractedContent,
   }));
@@ -252,4 +183,16 @@ it('normalizes both article content fields and preserves their encoding', () => 
       })
     )
   ).toEqual({ content: '<p>Body</p>', extractedContent: '<p>Extracted</p>' });
+});
+
+it('requires saved page content and trims it', () => {
+  const schema = SavedPage.mapFields((fields) => ({
+    content: fields.content,
+  }));
+  const decode = Schema.decodeUnknownSync(schema);
+
+  expect(decode({ content: '  <p>Body</p>  ' })).toEqual({
+    content: '<p>Body</p>',
+  });
+  expect(() => decode({})).toThrow();
 });

@@ -1,44 +1,42 @@
 import { Array as Arr, DateTime, Effect, Option, Order, pipe } from 'effect';
+import type { FeedId } from '../entity/feed/feed';
+import type { FeedItemId } from '../entity/feed/feed-item';
 import {
   ArticleContent,
   ArticleDescription,
-  type ArticleId,
-} from '../entity/article';
-import type { FeedId, OwnerId } from '../entity/object-value';
+} from '../entity/object-value/article';
+import { DocumentSanitizer } from '../port/document-sanitizer';
 import {
-  type ArticleBoundary,
-  ArticleRepository,
-} from '../port/article-repository';
-import { DocumentSantize } from '../port/document-santize';
-import type { ParsedArticle } from '../port/feed-parser';
+  type FeedItemBoundary,
+  FeedItemRepository,
+} from '../port/feed-item-repository';
+import type { ParsedFeedItem } from '../port/feed-parser';
 import { HtmlParser } from '../port/html-parser';
-import { articleId } from './identity';
+import { feedItemId } from './identity';
 
 const FEED_INITIAL_IMPORT = 30;
 
 const MAX_CONTENT_LENGTH = 100_000;
 
 type Candidate = {
-  readonly id: ArticleId;
+  readonly id: FeedItemId;
   readonly publishedAt: DateTime.Utc;
   readonly existing: boolean;
   readonly order: number;
-  readonly entry?: ParsedArticle;
+  readonly entry?: ParsedFeedItem;
 };
 
-type RetainedArticle = Candidate & {
-  readonly entry: ParsedArticle;
+type RetainedCandidate = Candidate & {
+  readonly entry: ParsedFeedItem;
 };
 
 const newCandidate = (
-  ownerId: OwnerId,
-  id: FeedId,
-  entry: ParsedArticle,
+  feedId: FeedId,
+  entry: ParsedFeedItem,
   order: number
 ): Candidate => ({
-  id: articleId({
-    ownerId,
-    feedId: Option.some(id),
+  id: feedItemId({
+    feedId,
     url: entry.url,
     title: entry.title,
     description: entry.description,
@@ -49,7 +47,7 @@ const newCandidate = (
   entry,
 });
 
-const existingCandidate = (boundary: ArticleBoundary): Candidate => ({
+const existingCandidate = (boundary: FeedItemBoundary): Candidate => ({
   id: boundary.id,
   publishedAt: boundary.publishedAt,
   existing: true,
@@ -80,7 +78,7 @@ const candidateOrder = Order.make(compareCandidates);
 const dedupeCandidates = (
   candidates: ReadonlyArray<Candidate>
 ): ReadonlyArray<Candidate> => {
-  const seen = new Set<ArticleId>();
+  const seen = new Set<FeedItemId>();
 
   return Arr.filter(candidates, (candidate) => {
     if (seen.has(candidate.id)) {
@@ -93,28 +91,26 @@ const dedupeCandidates = (
 };
 
 export const initialSelection = (
-  ownerId: OwnerId,
-  id: FeedId,
-  entries: ReadonlyArray<ParsedArticle>
+  feedId: FeedId,
+  entries: ReadonlyArray<ParsedFeedItem>
 ) =>
   pipe(
     entries,
-    Arr.map((entry, order) => newCandidate(ownerId, id, entry, order)),
+    Arr.map((entry, order) => newCandidate(feedId, entry, order)),
     Arr.sort(candidateOrder),
     dedupeCandidates,
     Arr.take(FEED_INITIAL_IMPORT)
   );
 
 export const refreshSelection = (
-  ownerId: OwnerId,
-  id: FeedId,
-  inventory: ReadonlyArray<ArticleBoundary>,
-  entries: ReadonlyArray<ParsedArticle>
+  feedId: FeedId,
+  inventory: ReadonlyArray<FeedItemBoundary>,
+  entries: ReadonlyArray<ParsedFeedItem>
 ) => {
   const known = new Set(inventory.map((boundary) => boundary.id));
   const fresh = pipe(
     entries,
-    Arr.map((entry, order) => newCandidate(ownerId, id, entry, order)),
+    Arr.map((entry, order) => newCandidate(feedId, entry, order)),
     Arr.sort(candidateOrder),
     dedupeCandidates,
     Arr.filter((candidate) => !known.has(candidate.id))
@@ -126,12 +122,12 @@ export const refreshSelection = (
   );
 };
 
-const isRetained = (candidate: Candidate): candidate is RetainedArticle =>
+const isRetained = (candidate: Candidate): candidate is RetainedCandidate =>
   !candidate.existing && candidate.entry !== undefined;
 
 const sanitizeDocument = (document: Document) =>
   Effect.gen(function* () {
-    const processor = yield* DocumentSantize;
+    const processor = yield* DocumentSanitizer;
 
     return yield* processor.sanitize(document);
   });
@@ -151,11 +147,7 @@ const processHtml = (value: Option.Option<string>, url: Option.Option<URL>) =>
       }).pipe(Effect.scoped),
   });
 
-const buildArticle = (
-  ownerId: OwnerId,
-  id: FeedId,
-  candidate: RetainedArticle
-) =>
+const buildFeedItem = (feedId: FeedId, candidate: RetainedCandidate) =>
   Effect.gen(function* () {
     const { entry } = candidate;
     const description = Option.map(
@@ -169,8 +161,7 @@ const buildArticle = (
 
     return {
       id: candidate.id,
-      ownerId,
-      feedId: Option.some(id),
+      feedId,
       title: entry.title,
       publishedAt: candidate.publishedAt,
       read: false,
@@ -181,9 +172,8 @@ const buildArticle = (
     };
   });
 
-export const importArticles = (
-  ownerId: OwnerId,
-  id: FeedId,
+export const importFeedItems = (
+  feedId: FeedId,
   candidates: ReadonlyArray<Candidate>
 ) =>
   Effect.gen(function* () {
@@ -193,9 +183,9 @@ export const importArticles = (
     }
 
     const items = yield* Effect.forEach(retained, (candidate) =>
-      buildArticle(ownerId, id, candidate)
+      buildFeedItem(feedId, candidate)
     );
-    const articles = yield* ArticleRepository;
+    const feedItems = yield* FeedItemRepository;
 
-    yield* articles.create(ownerId, items);
+    yield* feedItems.create(items);
   });

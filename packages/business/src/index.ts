@@ -21,8 +21,13 @@ export * from './port/saved-page-repository';
 export * from './port/settings-repository';
 export * from './port/webpage-fetcher';
 
-export * from './usecase/articles';
-
+export * from './usecase/extract-page';
+export * from './usecase/feed-errors';
+export * from './usecase/feed-items';
 export * from './usecase/feeds';
-
 export * from './usecase/identity';
+export * from './usecase/list-cursor';
+export * from './usecase/saved-page-errors';
+export * from './usecase/saved-pages';
+export * from './usecase/setting-input';
+export * from './usecase/settings';

@@ -15,9 +15,7 @@ export const SettingsPatch = Schema.Struct({
     FeedSetting.mapFields((fields) => Struct.map(fields, Schema.optionalKey))
   ),
   fetcher: Schema.optionalKey(
-    FetcherSetting.mapFields((fields) =>
-      Struct.map(fields, Schema.optionalKey)
-    )
+    FetcherSetting.mapFields((fields) => Struct.map(fields, Schema.optionalKey))
   ),
 });
 
