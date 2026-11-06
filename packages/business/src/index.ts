@@ -5,6 +5,8 @@ export * from './entity/object-value/normalized-url';
 export * from './entity/object-value/option-from-optional-non-empty';
 export * from './entity/object-value/owner-id';
 export * from './entity/saved-page/saved-page';
+export * from './entity/setting/feed';
+export * from './entity/setting/fetcher';
 export * from './entity/setting/setting';
 
 export * from './port/article-extractor';
