@@ -1,9 +1,14 @@
-import { Effect, Option, Schema } from 'effect';
-import { Article, ArticleId } from '../entity/article';
-import { FeedId, OwnerId } from '../entity/object-value';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import {
+  Article,
+  type ArticleCursor,
+  type ArticleCursorScope,
+  type ArticleFilter,
+  encodeArticleCursor,
+} from '../entity/article';
+import type { FeedId, OwnerId } from '../entity/object-value';
 import {
   type ArticleBoundary,
-  ArticleFilter,
   type ArticleQuery,
   ArticleRepository,
 } from '../port/article-repository';
@@ -12,7 +17,7 @@ import {
   type FeedRepositoryError,
 } from '../port/feed-repository';
 import { InvalidCursor } from './article-errors';
-import { SubscriptionNotFound } from './subscriptions';
+import { FeedNotFound } from './feeds';
 
 const PAGE_SIZE = 30;
 
@@ -24,122 +29,77 @@ export const ArticlePage = Schema.Struct({
 
 export type ArticlePage = typeof ArticlePage.Type;
 
-const CursorPayload = Schema.Struct({
-  version: Schema.Literals([1]),
-  owner: OwnerId,
-  scope: Schema.Union([
-    Schema.Struct({ kind: Schema.Literals(['later']) }),
-    Schema.Struct({
-      kind: Schema.Literals(['feeds']),
-      feedId: Schema.OptionFromOptional(FeedId),
-    }),
-  ]),
-  filter: ArticleFilter,
-  after: Schema.Struct({
-    publishedAt: Schema.DateTimeUtcFromString,
-    id: ArticleId,
-  }),
-});
-
-type CursorScope = (typeof CursorPayload.Type)['scope'];
-
-const encodeBase64 = (value: string): string => {
-  let binary = '';
-  for (const byte of new TextEncoder().encode(value)) {
-    binary += String.fromCharCode(byte);
-  }
-
-  return btoa(binary);
-};
-
-const decodeBase64 = (value: string): string => {
-  const binary = atob(value);
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-
-  return new TextDecoder().decode(bytes);
-};
-
-const scopeKey = (scope: CursorScope): string =>
+const scopeKey = (scope: ArticleCursorScope): string =>
   scope.kind === 'later'
     ? 'later'
     : `feeds:${Option.getOrElse(scope.feedId, () => '')}`;
 
-const laterScope: CursorScope = { kind: 'later' };
+const laterScope: ArticleCursorScope = { kind: 'later' };
 
-const feedScope = (feedId: FeedId | undefined): CursorScope => ({
+const feedScope = (feedId: FeedId | undefined): ArticleCursorScope => ({
   kind: 'feeds',
   feedId: Option.fromUndefinedOr(feedId),
 });
 
 const boundaryOf = (article: Article): ArticleBoundary => ({
-  publishedAt: Schema.encodeSync(Schema.DateTimeUtcFromString)(
-    article.publishedAt
-  ),
+  publishedAt: DateTime.formatIso(article.publishedAt),
   id: article.id,
+});
+
+const boundaryOfCursor = (cursor: ArticleCursor): ArticleBoundary => ({
+  publishedAt: DateTime.formatIso(cursor.after.publishedAt),
+  id: cursor.after.id,
 });
 
 const encodeCursor = (
   owner: OwnerId,
-  scope: CursorScope,
+  scope: ArticleCursorScope,
   filter: ArticleFilter,
   after: ArticleBoundary
-): string => {
-  const payload = {
-    version: 1 as const,
+): string =>
+  encodeArticleCursor({
     owner,
     scope,
     filter,
-    after: {
-      publishedAt: Schema.decodeSync(Schema.DateTimeUtcFromString)(
-        after.publishedAt
-      ),
-      id: after.id,
-    },
-  };
-
-  return encodeBase64(
-    JSON.stringify(Schema.encodeSync(CursorPayload)(payload))
-  );
-};
-
-const decodeCursor = (
-  owner: OwnerId,
-  scope: CursorScope,
-  filter: ArticleFilter,
-  value: string
-): Effect.Effect<ArticleBoundary, InvalidCursor> =>
-  Effect.try({
-    try: () => {
-      const payload = Schema.decodeUnknownSync(CursorPayload)(
-        JSON.parse(decodeBase64(value))
-      );
-      if (
-        payload.owner !== owner ||
-        payload.filter !== filter ||
-        scopeKey(payload.scope) !== scopeKey(scope)
-      ) {
-        throw new Error('cursor does not match the requested page');
-      }
-
-      return {
-        publishedAt: Schema.encodeSync(Schema.DateTimeUtcFromString)(
-          payload.after.publishedAt
-        ),
-        id: payload.after.id,
-      };
-    },
-    catch: () => new InvalidCursor({ message: 'Invalid pagination cursor' }),
+    publishedAt: after.publishedAt,
+    id: after.id,
   });
 
-const decodeOptionalCursor = (
+const invalidCursor = () =>
+  new InvalidCursor({ message: 'Invalid pagination cursor' });
+
+const authorizedCursor = (
   owner: OwnerId,
-  scope: CursorScope,
+  scope: ArticleCursorScope,
   filter: ArticleFilter,
-  value: string | undefined
+  cursor: ArticleCursor
+): Option.Option<ArticleBoundary> =>
+  cursor.owner === owner &&
+  cursor.filter === filter &&
+  scopeKey(cursor.scope) === scopeKey(scope)
+    ? Option.some(boundaryOfCursor(cursor))
+    : Option.none();
+
+const cursorBoundary = (
+  owner: OwnerId,
+  scope: ArticleCursorScope,
+  filter: ArticleFilter,
+  cursor: ArticleCursor
+): Effect.Effect<ArticleBoundary, InvalidCursor> =>
+  Effect.fromOption(
+    authorizedCursor(owner, scope, filter, cursor),
+    invalidCursor
+  );
+
+const optionalCursorBoundary = (
+  owner: OwnerId,
+  scope: ArticleCursorScope,
+  filter: ArticleFilter,
+  cursor: ArticleCursor | undefined
 ): Effect.Effect<ArticleBoundary | undefined, InvalidCursor> =>
-  value === undefined
+  cursor === undefined
     ? Effect.succeed(undefined)
-    : decodeCursor(owner, scope, filter, value);
+    : cursorBoundary(owner, scope, filter, cursor);
 
 const pageQuery = (
   filter: ArticleFilter,
@@ -154,7 +114,7 @@ const pageQuery = (
 
 const tailToken = (
   owner: OwnerId,
-  scope: CursorScope,
+  scope: ArticleCursorScope,
   filter: ArticleFilter,
   items: ReadonlyArray<Article>
 ): string | null => {
@@ -167,7 +127,7 @@ const tailToken = (
 
 const pageOf = (
   owner: OwnerId,
-  scope: CursorScope,
+  scope: ArticleCursorScope,
   filter: ArticleFilter,
   rows: ReadonlyArray<Article>
 ): ArticlePage => {
@@ -196,73 +156,85 @@ const feedSelection = (
 ): Option.Option<ReadonlyArray<FeedId>> =>
   feedId === undefined ? Option.none() : Option.some([feedId]);
 
-export const listLaterArticles = Effect.fn('articles.listLater')(function* (
+export const listLaterArticles = (
   owner: OwnerId,
   filter: ArticleFilter,
-  cursor?: string,
-  through?: string
-) {
-  const articles = yield* ArticleRepository;
-  const after = yield* decodeOptionalCursor(owner, laterScope, filter, cursor);
-  const boundary = yield* decodeOptionalCursor(
-    owner,
-    laterScope,
-    filter,
-    through
-  );
-  const rows = yield* articles.listLater(
-    owner,
-    pageQuery(filter, after, boundary)
-  );
+  cursor?: ArticleCursor,
+  through?: ArticleCursor
+) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
+    const after = yield* optionalCursorBoundary(
+      owner,
+      laterScope,
+      filter,
+      cursor
+    );
+    const boundary = yield* optionalCursorBoundary(
+      owner,
+      laterScope,
+      filter,
+      through
+    );
+    const rows = yield* articles.listLater(
+      owner,
+      pageQuery(filter, after, boundary)
+    );
 
-  return pageOf(owner, laterScope, filter, rows);
-});
+    return pageOf(owner, laterScope, filter, rows);
+  });
 
 const requireFeed = (
   owner: OwnerId,
   feedId: FeedId
-): Effect.Effect<
-  void,
-  SubscriptionNotFound | FeedRepositoryError,
-  FeedRepository
-> =>
+): Effect.Effect<void, FeedNotFound | FeedRepositoryError, FeedRepository> =>
   Effect.gen(function* () {
-    const subscriptions = yield* FeedRepository;
-    if (Option.isNone(yield* subscriptions.find(owner, feedId))) {
-      return yield* new SubscriptionNotFound({
-        message: 'Subscription not found',
+    const feeds = yield* FeedRepository;
+    if (Option.isNone(yield* feeds.find(owner, feedId))) {
+      return yield* new FeedNotFound({
+        message: 'Feed not found',
         id: feedId,
       });
     }
   });
 
-export const listFeedArticles = Effect.fn('articles.listFeeds')(function* (
+export const listFeedArticles = (
   owner: OwnerId,
   feedId: FeedId | undefined,
   filter: ArticleFilter,
-  cursor?: string,
-  through?: string
-) {
-  if (feedId !== undefined) {
-    yield* requireFeed(owner, feedId);
-  }
+  cursor?: ArticleCursor,
+  through?: ArticleCursor
+) =>
+  Effect.gen(function* () {
+    if (feedId !== undefined) {
+      yield* requireFeed(owner, feedId);
+    }
 
-  const articles = yield* ArticleRepository;
-  const scope = feedScope(feedId);
-  const after = yield* decodeOptionalCursor(owner, scope, filter, cursor);
-  const boundary = yield* decodeOptionalCursor(owner, scope, filter, through);
-  const rows = yield* articles.listFeeds(
-    owner,
-    feedSelection(feedId),
-    pageQuery(filter, after, boundary)
-  );
+    const articles = yield* ArticleRepository;
+    const scope = feedScope(feedId);
+    const after = yield* optionalCursorBoundary(owner, scope, filter, cursor);
+    const boundary = yield* optionalCursorBoundary(
+      owner,
+      scope,
+      filter,
+      through
+    );
+    const rows = yield* articles.listFeeds(
+      owner,
+      feedSelection(feedId),
+      pageQuery(filter, after, boundary)
+    );
 
-  return pageOf(owner, scope, filter, rows);
-});
+    return pageOf(owner, scope, filter, rows);
+  });
 
-export const refreshLaterArticles = Effect.fn('articles.refreshLater')(
-  function* (owner: OwnerId, filter: ArticleFilter, through: string) {
-    const boundary = yield* decodeCursor(owner, laterScope, filter, through);
+export const refreshLaterArticles = (
+  owner: OwnerId,
+  filter: ArticleFilter,
+  through: ArticleCursor
+) =>
+  Effect.gen(function* () {
+    const boundary = yield* cursorBoundary(owner, laterScope, filter, through);
     const articles = yield* ArticleRepository;
     const items: Array<Article> = [];
     let after: ArticleBoundary | undefined;
@@ -280,22 +252,21 @@ export const refreshLaterArticles = Effect.fn('articles.refreshLater')(
 
       after = next;
     }
-  }
-);
+  });
 
-export const refreshFeedArticles = Effect.fn('articles.refreshFeeds')(
-  function* (
-    owner: OwnerId,
-    feedId: FeedId | undefined,
-    filter: ArticleFilter,
-    through: string
-  ) {
+export const refreshFeedArticles = (
+  owner: OwnerId,
+  feedId: FeedId | undefined,
+  filter: ArticleFilter,
+  through: ArticleCursor
+) =>
+  Effect.gen(function* () {
     if (feedId !== undefined) {
       yield* requireFeed(owner, feedId);
     }
 
     const scope = feedScope(feedId);
-    const boundary = yield* decodeCursor(owner, scope, filter, through);
+    const boundary = yield* cursorBoundary(owner, scope, filter, through);
     const articles = yield* ArticleRepository;
     const items: Array<Article> = [];
     let after: ArticleBoundary | undefined;
@@ -314,5 +285,4 @@ export const refreshFeedArticles = Effect.fn('articles.refreshFeeds')(
 
       after = next;
     }
-  }
-);
+  });

@@ -8,7 +8,10 @@ import {
   FeedId,
   FeedParser,
   FeedRepository,
+  NormalizedUrl,
+  OptionalTrimmedString,
   OwnerId,
+  Retention,
   SettingsRepository,
 } from '@reader/business';
 import {
@@ -19,9 +22,11 @@ import {
   Effect,
   Layer,
   Option,
+  Schema,
 } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { TestClock } from 'effect/testing';
+import { FeedFetcherLive } from '../../src/adapter/feed-fetcher';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 import { SubscriptionSchedulerLive } from '../../src/infrastructure/subscription-scheduler';
 import {
@@ -46,6 +51,12 @@ const feedId = (seed: string) => FeedId.make(seed.repeat(64).slice(0, 64));
 
 const owner = (value: string) => OwnerId.make(value);
 
+const decodeUrl = Schema.decodeSync(NormalizedUrl);
+
+const decodeRetention = Schema.decodeSync(Retention);
+
+const decodeSanitized = Schema.decodeSync(OptionalTrimmedString);
+
 const schedule = (ownerId: string, interval: Duration.Input) => ({
   ownerId: owner(ownerId),
   interval,
@@ -54,14 +65,14 @@ const schedule = (ownerId: string, interval: Duration.Input) => ({
 const subscription = (ownerId: string, id: FeedId, url: string): Feed => ({
   id,
   ownerId: owner(ownerId),
-  url: new URL(url),
+  url: decodeUrl(url),
   title: url,
   updatedAt: DateTime.fromDateUnsafe(new Date('2026-01-01T00:00:00.000Z')),
 });
 
 const feed = {
   title: 'Feed',
-  url: new URL('https://example.com/feed'),
+  url: decodeUrl('https://example.com/feed'),
   description: Option.none(),
   articles: [],
 };
@@ -100,22 +111,27 @@ const scheduler = (mocks: Mocks) =>
         schedulesLayer(mocks),
         Layer.mock(FeedRepository, mocks.subscriptions ?? {}),
         Layer.mock(SettingsRepository, {
-          get: () =>
+          get: (owner) =>
             Effect.succeed({
-              retention: 100,
+              ownerId: owner,
+              retention: decodeRetention(100),
               provider: 'jina',
               jinaKey: Option.none(),
               browserEndpoint: Option.none(),
             }),
         }),
-        httpClient(mocks.http ?? (() => Effect.succeed(document()))),
+        FeedFetcherLive.pipe(
+          Layer.provide(
+            httpClient(mocks.http ?? (() => Effect.succeed(document())))
+          )
+        ),
         Layer.mock(FeedParser, {
           parse: () => Effect.succeed(feed),
           ...mocks.parser,
         }),
         Layer.mock(ArticleRepository, mocks.articles ?? {}),
         Layer.mock(DocumentSantize, {
-          sanitize: () => Effect.succeed(''),
+          sanitize: () => Effect.succeed(decodeSanitized(undefined)),
           ...mocks.processor,
         }),
         HtmlParserLive

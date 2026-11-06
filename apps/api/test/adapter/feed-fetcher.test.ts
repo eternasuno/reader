@@ -1,7 +1,8 @@
 import { expect, it } from '@effect/vitest';
-import { Effect } from 'effect';
-import { FetchHttpClient, type HttpClient } from 'effect/http';
-import { fetchFeed } from '../../src/usecase/feed-fetch';
+import { FeedFetcher } from '@reader/business';
+import { Effect, Layer } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { FeedFetcherLive } from '../../src/adapter/feed-fetcher';
 
 const rss = `<?xml version="1.0"?>
 <rss version="2.0">
@@ -14,12 +15,19 @@ type FetchInit = Parameters<Fetch>[1];
 
 type FetchInput = Parameters<Fetch>[0];
 
+const fetchFeed = (url: URL) =>
+  Effect.flatMap(FeedFetcher, (feedFetcher) => feedFetcher.fetch(url));
+
 const withFetch =
   (fetchImpl: Fetch) =>
-  <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>) =>
+  <A, E>(effect: Effect.Effect<A, E, FeedFetcher>) =>
     effect.pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, fetchImpl)
+      Effect.provide(
+        Layer.mergeAll(
+          FeedFetcherLive.pipe(Layer.provide(FetchHttpClient.layer)),
+          Layer.succeed(FetchHttpClient.Fetch, fetchImpl)
+        )
+      )
     );
 
 const feedUrl = new URL('http://8.8.8.8/rss');
@@ -114,9 +122,31 @@ it.effect('rejects other redirect statuses without another request', () =>
       const error = yield* Effect.flip(
         fetchFeed(feedUrl).pipe(withFetch(fetchImpl as Fetch))
       );
-      expect(error._tag).toBe('FetchSubscriptionError');
+      expect(error._tag).toBe('FetchFeedError');
       expect(requests).toEqual(['http://8.8.8.8/rss']);
     }
+  })
+);
+
+it.effect('reports an invalid redirect location as a fetch failure', () =>
+  Effect.gen(function* () {
+    const requests: Array<string> = [];
+    const fetchImpl = (input: FetchInput) => {
+      const url = String(input);
+      requests.push(url);
+
+      return Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'http://[invalid' },
+        })
+      );
+    };
+    const error = yield* Effect.flip(
+      fetchFeed(feedUrl).pipe(withFetch(fetchImpl as Fetch))
+    );
+    expect(error._tag).toBe('FetchFeedError');
+    expect(requests).toEqual(['http://8.8.8.8/rss']);
   })
 );
 
@@ -136,7 +166,7 @@ it.effect('stops after three redirects without a fourth request', () =>
     const error = yield* Effect.flip(
       fetchFeed(feedUrl).pipe(withFetch(fetchImpl as Fetch))
     );
-    expect(error._tag).toBe('FetchSubscriptionError');
+    expect(error._tag).toBe('FetchFeedError');
     expect(requests).toHaveLength(4);
   })
 );
@@ -183,7 +213,7 @@ it.effect('releases a failing response body and aborts its request', () =>
     const error = yield* Effect.flip(
       fetchFeed(feedUrl).pipe(withFetch(fetchImpl as Fetch))
     );
-    expect(error._tag).toBe('FetchSubscriptionError');
+    expect(error._tag).toBe('FetchFeedError');
     expect(events).toEqual(['cancel:error']);
     expect(aborted).toBe(true);
   })
@@ -215,7 +245,7 @@ it.effect('releases an endless body once the byte limit is exceeded', () =>
     const error = yield* Effect.flip(
       fetchFeed(feedUrl).pipe(withFetch(fetchImpl as Fetch))
     );
-    expect(error._tag).toBe('FetchSubscriptionError');
+    expect(error._tag).toBe('FetchFeedError');
     expect(events).toEqual(['cancel:endless']);
     expect(pulls).toBeLessThan(64);
     expect(aborted).toBe(true);

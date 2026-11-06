@@ -59,6 +59,6 @@ export const duplicateId = (error: unknown): string | undefined =>
 
 export const errorFeedId = (
   error: unknown,
-  tag: 'SubscriptionExists' | 'SubscriptionImportFailed'
+  tag: 'FeedExists' | 'FeedImportFailed'
 ): string | undefined =>
   error instanceof LibraryError && error.tag === tag ? error.id : undefined;

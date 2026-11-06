@@ -1,12 +1,13 @@
 import {
   type ArticleRepository,
   type DocumentSantize,
+  type FeedFetcher,
   type FeedId,
   type FeedParser,
   FeedRepository,
   type HtmlParser,
   type OwnerId,
-  refreshSubscription,
+  refreshFeed,
   type SettingsRepository,
 } from '@reader/business';
 import {
@@ -18,7 +19,6 @@ import {
   Option,
   Queue,
 } from 'effect';
-import type { HttpClient } from 'effect/http';
 import {
   type SubscriptionSchedule,
   SubscriptionSchedules,
@@ -45,7 +45,7 @@ type RefreshRequirements =
   | FeedRepository
   | ArticleRepository
   | SettingsRepository
-  | HttpClient.HttpClient
+  | FeedFetcher
   | FeedParser
   | DocumentSantize
   | HtmlParser;
@@ -82,9 +82,9 @@ const release = (registered: Set<OwnerId>, ownerId: OwnerId) =>
     registered.delete(ownerId);
   });
 
-const refreshFeed = (ownerId: OwnerId, id: FeedId) =>
-  refreshSubscription(ownerId, id).pipe(
-    Effect.catchTag('SubscriptionNotFound', () => Effect.void),
+const refreshOwnerFeed = (ownerId: OwnerId, id: FeedId) =>
+  refreshFeed(ownerId, id).pipe(
+    Effect.catchTag('FeedNotFound', () => Effect.void),
     Effect.catch((error) =>
       Effect.logWarning('Subscription refresh failed', error)
     )
@@ -100,7 +100,7 @@ const refreshOwner =
       const items = yield* subscriptions.list(job.ownerId);
       yield* Effect.forEach(
         items,
-        (item) => refreshFeed(job.ownerId, item.id),
+        (item) => refreshOwnerFeed(job.ownerId, item.id),
         { discard: true }
       );
     }).pipe(

@@ -7,22 +7,21 @@ import {
   articleNotLater,
   articleRepositoryError,
   duplicateArticle,
+  feedExists,
+  feedNotFound,
   feedRepositoryError,
-  fetchSubscriptionError,
+  feedUrlInvalid,
+  fetchFeedError,
   invalidArticleUrl,
   invalidCursor,
   invalidEndpoint,
   invalidKey,
   invalidProvider,
   invalidRetention,
-  parseSubscriptionError,
+  parseFeedError,
   settingsReadError,
   settingsRepositoryError,
   settingsSaveError,
-  subscriptionExists,
-  subscriptionImportFailed,
-  subscriptionNotFound,
-  subscriptionUrlInvalid,
   webpageFetchError,
 } from './library-errors';
 
@@ -37,7 +36,7 @@ export const articlePageFailure = {
 
 export const feedPageFailure = {
   ...articlePageFailure,
-  SubscriptionNotFound: subscriptionNotFound,
+  FeedNotFound: feedNotFound,
   FeedRepositoryError: feedRepositoryError,
 };
 
@@ -51,6 +50,7 @@ export const addFailure = {
   ...settingsRepositoryFailure,
   WebpageFetcherError: webpageFetchError,
   ArticleExtractorError: articleExtractError,
+  HtmlParserError: articleExtractError,
   DuplicateArticle: duplicateArticle,
   ...articleFailure,
 };
@@ -69,6 +69,7 @@ export const extractFailure = {
   ...settingsRepositoryFailure,
   WebpageFetcherError: webpageFetchError,
   ArticleExtractorError: articleExtractError,
+  HtmlParserError: articleExtractError,
   ...articleFailure,
 };
 
@@ -82,32 +83,31 @@ export const feedRepositoryFailure = {
 };
 
 export const previewFailure = {
-  SubscriptionUrlInvalid: subscriptionUrlInvalid,
-  FetchSubscriptionError: fetchSubscriptionError,
-  FeedParserError: parseSubscriptionError,
+  FeedUrlInvalid: feedUrlInvalid,
+  FetchFeedError: fetchFeedError,
+  FeedParserError: parseFeedError,
 };
 
 export const subscribeFailure = {
-  SubscriptionUrlInvalid: subscriptionUrlInvalid,
-  SubscriptionExists: subscriptionExists,
-  SubscriptionImportFailed: subscriptionImportFailed,
-  FetchSubscriptionError: fetchSubscriptionError,
-  FeedParserError: parseSubscriptionError,
+  FeedUrlInvalid: feedUrlInvalid,
+  FeedExists: feedExists,
+  FetchFeedError: fetchFeedError,
+  FeedParserError: parseFeedError,
   ...feedRepositoryFailure,
 };
 
 export const settingsReadFailure = {
-  SettingsReadError: settingsReadError,
+  SettingsRepositoryError: settingsReadError,
 };
 
 export const retentionFailure = {
   InvalidRetention: invalidRetention,
-  SettingsSaveError: settingsSaveError,
+  SettingsRepositoryError: settingsSaveError,
 };
 
 export const extractionFailure = {
   InvalidProvider: invalidProvider,
   InvalidKey: invalidKey,
   InvalidEndpoint: invalidEndpoint,
-  SettingsSaveError: settingsSaveError,
+  SettingsRepositoryError: settingsSaveError,
 };

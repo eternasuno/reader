@@ -1,11 +1,18 @@
-import { Effect, Stream } from 'effect';
+import {
+  type FeedDocument,
+  FeedFetcher,
+  FetchFeedError,
+  type IFeedFetcher,
+} from '@reader/business';
+import {
+  Effect,
+  Layer,
+  Schema,
+  SchemaGetter,
+  SchemaIssue,
+  Stream,
+} from 'effect';
 import { HttpClient, type HttpClientResponse } from 'effect/http';
-import { FetchSubscriptionError } from './subscription-errors';
-
-export type FeedDocument = {
-  readonly content: string;
-  readonly url: URL;
-};
 
 const MAX_REDIRECTS = 3;
 
@@ -21,13 +28,34 @@ const FEED_HEADERS = {
 };
 
 const fetchFailure = () =>
-  new FetchSubscriptionError({
-    message: 'Failed to fetch the subscription feed',
+  new FetchFeedError({
+    message: 'Failed to fetch the feed',
   });
+
+const RedirectTarget = Schema.Struct({
+  location: Schema.String,
+  current: Schema.URL,
+}).pipe(
+  Schema.decodeTo(Schema.URL, {
+    decode: SchemaGetter.transformEffect(({ location, current }) =>
+      Effect.try({
+        try: () => new URL(location, current),
+        catch: () =>
+          new SchemaIssue.InvalidValue({
+            message: 'Invalid redirect location',
+          }),
+      })
+    ),
+    encode: SchemaGetter.transform((url) => ({
+      location: url.href,
+      current: url,
+    })),
+  })
+);
 
 const readBody = (
   response: HttpClientResponse.HttpClientResponse
-): Effect.Effect<string, FetchSubscriptionError> =>
+): Effect.Effect<string, FetchFeedError> =>
   Stream.runFoldEffect(
     response.stream,
     () => ({ chunks: [] as Array<Uint8Array>, size: 0 }),
@@ -50,17 +78,16 @@ const readBody = (
 const redirectTarget = (
   response: HttpClientResponse.HttpClientResponse,
   current: URL
-): Effect.Effect<URL, FetchSubscriptionError> => {
+): Effect.Effect<URL, FetchFeedError> => {
   const { location } = response.headers;
 
   if (!location) {
     return Effect.fail(fetchFailure());
   }
 
-  return Effect.try({
-    try: () => new URL(location, current),
-    catch: () => fetchFailure(),
-  });
+  return Schema.decodeEffect(RedirectTarget)({ location, current }).pipe(
+    Effect.mapError(() => fetchFailure())
+  );
 };
 
 type Hop =
@@ -71,7 +98,7 @@ const hopFrom = (
   response: HttpClientResponse.HttpClientResponse,
   url: URL,
   redirects: number
-): Effect.Effect<Hop, FetchSubscriptionError> => {
+): Effect.Effect<Hop, FetchFeedError> => {
   if (REDIRECT_STATUSES.has(response.status)) {
     if (redirects >= MAX_REDIRECTS) {
       return Effect.fail(fetchFailure());
@@ -98,7 +125,7 @@ const sendHop = (
   client: HttpClient.HttpClient,
   url: URL,
   redirects: number
-): Effect.Effect<Hop, FetchSubscriptionError> =>
+): Effect.Effect<Hop, FetchFeedError> =>
   Effect.scoped(
     Effect.gen(function* () {
       const response = yield* HttpClient.withScope(client)
@@ -113,14 +140,22 @@ const follow = (
   client: HttpClient.HttpClient,
   url: URL,
   redirects: number
-): Effect.Effect<FeedDocument, FetchSubscriptionError> =>
+): Effect.Effect<FeedDocument, FetchFeedError> =>
   Effect.flatMap(sendHop(client, url, redirects), (hop) =>
     hop._tag === 'redirect'
       ? follow(client, hop.url, redirects + 1)
       : Effect.succeed(hop.document)
   );
 
-export const fetchFeed = (
-  url: URL
-): Effect.Effect<FeedDocument, FetchSubscriptionError, HttpClient.HttpClient> =>
-  Effect.flatMap(HttpClient.HttpClient, (client) => follow(client, url, 0));
+const makeFeedFetcher = (client: HttpClient.HttpClient): IFeedFetcher => ({
+  fetch: (url) => follow(client, url, 0),
+});
+
+export const FeedFetcherLive: Layer.Layer<
+  FeedFetcher,
+  never,
+  HttpClient.HttpClient
+> = Layer.effect(
+  FeedFetcher,
+  Effect.map(HttpClient.HttpClient, makeFeedFetcher)
+);

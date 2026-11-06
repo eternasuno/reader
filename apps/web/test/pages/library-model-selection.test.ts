@@ -125,7 +125,7 @@ describe('library subscriptions', () => {
     client.feeds.mockResolvedValue([feed('f-other')]);
     client.list.mockResolvedValue(page([], null, 'top'));
     client.subscribe.mockRejectedValue(
-      new LibraryError('SubscriptionExists', { id: 'f-existing' })
+      new LibraryError('FeedExists', { id: 'f-existing' })
     );
     const model = createLibraryModel(client);
 
@@ -172,7 +172,7 @@ describe('library subscriptions', () => {
     client.list.mockResolvedValue(page([], null, 'top'));
     client.feeds.mockResolvedValue([feed('kept')]);
     client.subscribe.mockRejectedValue(
-      new LibraryError('SubscriptionImportFailed', { id: 'kept' })
+      new LibraryError('FeedImportFailed', { id: 'kept' })
     );
     const model = createLibraryModel(client);
 
@@ -192,9 +192,7 @@ describe('library subscriptions', () => {
 
   it('keeps the current scope when the subscription fails', async () => {
     const client = createStubClient();
-    client.subscribe.mockRejectedValue(
-      new LibraryError('FetchSubscriptionError')
-    );
+    client.subscribe.mockRejectedValue(new LibraryError('FetchFeedError'));
     const model = createLibraryModel(client);
 
     expect(await model.subscribe('https://example.com/x.xml')).toBe(false);

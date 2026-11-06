@@ -1,17 +1,21 @@
 import {
+  type ArticleCursor,
+  ArticleCursorFromString,
+  addFeed,
+  FeedFetcher,
   type FeedId,
   FeedParser,
   FeedRepository,
-  fetchFeed,
+  feedId,
+  InvalidCursor,
   listFeedArticles,
-  normalizeUrl,
+  NormalizedUrl,
   type OwnerId,
   refreshFeedArticles,
-  subscribe,
 } from '@reader/business';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { type HandlerRequest, withSession } from './library-contract';
-import { subscriptionNotFound } from './library-errors';
+import { feedImportFailed, feedNotFound } from './library-errors';
 import {
   feedPageFailure,
   feedRepositoryFailure,
@@ -19,18 +23,22 @@ import {
   subscribeFailure,
 } from './library-failures';
 
-const preview = (address: string) =>
-  Effect.gen(function* () {
-    const url = yield* Effect.try({
-      try: () => normalizeUrl(address.trim()),
-      catch: () =>
+const decodeFeedUrl = (address: string) =>
+  Schema.decodeEffect(NormalizedUrl)(address).pipe(
+    Effect.mapError(
+      () =>
         ({
-          _tag: 'SubscriptionUrlInvalid',
-          message: 'Subscription URL must use HTTP or HTTPS',
-        }) as const,
-    });
+          _tag: 'FeedUrlInvalid',
+          message: 'Feed URL must use HTTP or HTTPS',
+        }) as const
+    )
+  );
+
+const preview = (url: NormalizedUrl) =>
+  Effect.gen(function* () {
+    const feedFetcher = yield* FeedFetcher;
     const feedParser = yield* FeedParser;
-    const document = yield* fetchFeed(url);
+    const document = yield* feedFetcher.fetch(url);
     const feed = yield* feedParser.parse(document.content, document.url);
 
     return {
@@ -48,7 +56,7 @@ const removeSubscription = (owner: OwnerId, id: FeedId) =>
     const subscriptions = yield* FeedRepository;
     const found = yield* subscriptions.find(owner, id);
     if (Option.isNone(found)) {
-      return yield* subscriptionNotFound();
+      return yield* feedNotFound();
     }
 
     yield* subscriptions.remove(owner, [id]);
@@ -56,28 +64,53 @@ const removeSubscription = (owner: OwnerId, id: FeedId) =>
     return { ok: true as const };
   });
 
+const invalidCursor = () =>
+  new InvalidCursor({ message: 'Invalid pagination cursor' });
+
+const cursor = (value: string): Effect.Effect<ArticleCursor, InvalidCursor> =>
+  Schema.decodeEffect(ArticleCursorFromString)(value).pipe(
+    Effect.mapError(invalidCursor)
+  );
+
+const optionalCursor = (
+  value: Option.Option<string>
+): Effect.Effect<ArticleCursor | undefined, InvalidCursor> =>
+  Option.match(value, {
+    onNone: () => Effect.succeed(undefined),
+    onSome: cursor,
+  });
+
 const feedArticles = ({ query }: HandlerRequest<'feedArticles'>) =>
   withSession((owner) =>
-    listFeedArticles(
-      owner,
-      Option.getOrUndefined(query.feedId),
-      Option.getOrElse(query.filter, () => 'all'),
-      Option.getOrUndefined(query.cursor),
-      Option.getOrUndefined(query.through)
-    )
+    Effect.gen(function* () {
+      const after = yield* optionalCursor(query.cursor);
+      const through = yield* optionalCursor(query.through);
+
+      return yield* listFeedArticles(
+        owner,
+        Option.getOrUndefined(query.feedId),
+        Option.getOrElse(query.filter, () => 'all'),
+        after,
+        through
+      );
+    })
   ).pipe(Effect.catchTags(feedPageFailure));
 
 const feedRefresh = ({ query }: HandlerRequest<'feedRefresh'>) =>
   withSession((owner) =>
-    Effect.map(
-      refreshFeedArticles(
-        owner,
-        Option.getOrUndefined(query.feedId),
-        Option.getOrElse(query.filter, () => 'all'),
-        query.through
-      ),
-      (items) => ({ items })
-    )
+    Effect.gen(function* () {
+      const through = yield* cursor(query.through);
+
+      return yield* Effect.map(
+        refreshFeedArticles(
+          owner,
+          Option.getOrUndefined(query.feedId),
+          Option.getOrElse(query.filter, () => 'all'),
+          through
+        ),
+        (items) => ({ items })
+      );
+    })
   ).pipe(Effect.catchTags(feedPageFailure));
 
 const feeds = () =>
@@ -90,14 +123,25 @@ const feeds = () =>
   ).pipe(Effect.catchTags(feedRepositoryFailure));
 
 const previewHandler = ({ payload }: HandlerRequest<'preview'>) =>
-  withSession(() => preview(payload.url)).pipe(
+  withSession(() => Effect.flatMap(decodeFeedUrl(payload.url), preview)).pipe(
     Effect.catchTags(previewFailure)
   );
 
 const subscribeHandler = ({ payload }: HandlerRequest<'subscribe'>) =>
-  withSession((owner) => subscribe(owner, payload.url)).pipe(
-    Effect.catchTags(subscribeFailure)
-  );
+  withSession((owner) =>
+    Effect.flatMap(decodeFeedUrl(payload.url), (url) =>
+      addFeed(owner, url).pipe(
+        Effect.map((item) => ({ item })),
+        Effect.catchTags({
+          ArticleRepositoryError: () =>
+            feedImportFailed({ id: feedId(owner, url) }),
+          DocumentSantizeError: () =>
+            feedImportFailed({ id: feedId(owner, url) }),
+          HtmlParserError: () => feedImportFailed({ id: feedId(owner, url) }),
+        })
+      )
+    )
+  ).pipe(Effect.catchTags(subscribeFailure));
 
 const unsubscribe = ({ payload }: HandlerRequest<'unsubscribe'>) =>
   withSession((owner) => removeSubscription(owner, payload.id)).pipe(

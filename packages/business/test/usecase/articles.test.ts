@@ -2,9 +2,17 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each test declares its dependency mocks alongside the scenario.
 import { expect, it } from '@effect/vitest';
 import { type Context, Effect, Layer, Option, Schema } from 'effect';
-import { Article, ArticleId } from '../../src/entity/article';
+import {
+  Article,
+  ArticleContent,
+  type ArticleCursor,
+  ArticleCursorFromString,
+  ArticleDescription,
+  ArticleId,
+  ArticleTitle,
+} from '../../src/entity/article';
 import { Feed } from '../../src/entity/feed';
-import { FeedId, OwnerId } from '../../src/entity/object-value';
+import { FeedId, NormalizedUrl, OwnerId } from '../../src/entity/object-value';
 import { ArticleExtractor } from '../../src/port/article-extractor';
 import {
   type ArticleBoundary,
@@ -36,6 +44,14 @@ import {
 } from '../../src/usecase/articles';
 import { articleId } from '../../src/usecase/identity';
 
+const decodeContent = Schema.decodeSync(ArticleContent);
+
+const decodeDescription = Schema.decodeSync(ArticleDescription);
+
+const decodeTitle = Schema.decodeSync(ArticleTitle);
+
+const decodeUrl = Schema.decodeSync(NormalizedUrl);
+
 const alice = OwnerId.make('alice');
 
 const bob = OwnerId.make('bob');
@@ -58,7 +74,7 @@ const makeArticle = (overrides: Record<string, unknown> = {}): Article =>
   Schema.decodeUnknownSync(Article)({
     id: firstId,
     ownerId: alice,
-    title: 'Title',
+    title: decodeTitle('Title'),
     publishedAt: new Date('2026-01-01T00:00:00.000Z'),
     read: false,
     ...overrides,
@@ -67,13 +83,16 @@ const makeArticle = (overrides: Record<string, unknown> = {}): Article =>
 const encodedTime = (article: Article): string =>
   Schema.encodeSync(Schema.DateTimeUtcFromString)(article.publishedAt);
 
+const decodeCursor = (wire: string): ArticleCursor =>
+  Schema.decodeSync(ArticleCursorFromString)(wire);
+
 const hex = (value: number): string => value.toString(16).padStart(64, '0');
 
 const series = (count: number): Array<Article> =>
   Array.from({ length: count }, (_, index) =>
     makeArticle({
       id: hex(index),
-      title: `Article ${index}`,
+      title: decodeTitle(`Article ${index}`),
       publishedAt: new Date(now + index * 60_000),
     })
   );
@@ -116,12 +135,12 @@ const pagedArticles = (items: ReadonlyArray<Article>) => ({
   ) => pagedStore(items)(owner, query),
 });
 
-const subscription = (id: FeedId): Feed =>
+const storedFeed = (id: FeedId): Feed =>
   Schema.decodeUnknownSync(Feed)({
     id,
     ownerId: alice,
     url: 'https://example.com/feed.xml',
-    title: 'Feed',
+    title: decodeTitle('Feed'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
   });
 
@@ -139,9 +158,7 @@ const provide = <A, E, R>(
     readonly extractor?: Partial<
       Context.Service.Shape<typeof ArticleExtractor>
     >;
-    readonly subscriptions?: Partial<
-      Context.Service.Shape<typeof FeedRepository>
-    >;
+    readonly feeds?: Partial<Context.Service.Shape<typeof FeedRepository>>;
   },
   _owner: OwnerId = alice
 ) =>
@@ -158,7 +175,7 @@ const provide = <A, E, R>(
           ...layers.parser,
         }),
         Layer.mock(ArticleExtractor, layers.extractor ?? {}),
-        Layer.mock(FeedRepository, layers.subscriptions ?? {})
+        Layer.mock(FeedRepository, layers.feeds ?? {})
       )
     )
   );
@@ -190,7 +207,7 @@ it.effect('gets an article scoped to the requesting owner', () => {
   );
 });
 
-it.effect('adds an anonymous Jina article with normalized URL and body', () => {
+it.effect('adds an anonymous Jina article with its URL and body', () => {
   const document = parsedDocument('<p>Body</p>');
   let saved: Article | undefined;
 
@@ -198,20 +215,20 @@ it.effect('adds an anonymous Jina article with normalized URL and body', () => {
     Effect.gen(function* () {
       const result = yield* addArticle(
         alice,
-        'https://Example.com/post?utm_source=x'
+        decodeUrl('https://example.com/post')
       );
-      expect(result.item.title).toBe('Untitled');
-      expect(result.item.url).toEqual(
+      expect(result.title).toBe('Untitled');
+      expect(result.url).toEqual(
         Option.some(new URL('https://example.com/post'))
       );
-      expect(result.item.description).toEqual(Option.some(''));
-      expect(result.item.content).toEqual(Option.some('<p>Body</p>'));
-      expect(result.item.extractedContent).toEqual(Option.some('<p>Body</p>'));
-      expect(result.item.ownerId).toBe(alice);
-      expect(result.item.feedId).toEqual(Option.none());
-      expect(result.item.read).toBe(false);
-      expect(encodedTime(result.item)).toBe('2024-05-06T07:08:09.000Z');
-      expect(saved).toEqual(result.item);
+      expect(result.description).toEqual(Option.none());
+      expect(result.content).toEqual(Option.some('<p>Body</p>'));
+      expect(result.extractedContent).toEqual(Option.some('<p>Body</p>'));
+      expect(result.ownerId).toBe(alice);
+      expect(result.feedId).toEqual(Option.none());
+      expect(result.read).toBe(false);
+      expect(encodedTime(result)).toBe('2024-05-06T07:08:09.000Z');
+      expect(saved).toEqual(result);
     }),
     {
       articles: {
@@ -242,9 +259,9 @@ it.effect('adds an anonymous Jina article with normalized URL and body', () => {
           expect(received).toBe(document);
 
           return Effect.succeed({
-            title: '  ',
-            description: Option.some(''),
-            content: Option.some('<p>Body</p>'),
+            title: decodeTitle('Untitled'),
+            description: decodeDescription(''),
+            content: decodeContent('<p>Body</p>'),
             publishedAt: extractedPublishedAt,
           });
         },
@@ -254,19 +271,25 @@ it.effect('adds an anonymous Jina article with normalized URL and body', () => {
 });
 
 it.effect('keeps extracted description and published date when adding', () => {
-  const url = new URL('https://example.com/post');
+  const url = decodeUrl('https://example.com/post');
   let saved: Article | undefined;
 
   return provide(
     Effect.gen(function* () {
-      const result = yield* addArticle(alice, url.href);
-      expect(result.item.title).toBe('Post');
-      expect(result.item.description).toEqual(Option.some('Summary'));
-      expect(encodedTime(result.item)).toBe('2024-05-06T07:08:09.000Z');
-      expect(result.item.id).toBe(
-        articleId(alice, undefined, url, 'Post', 'Summary')
+      const result = yield* addArticle(alice, url);
+      expect(result.title).toBe('Post');
+      expect(result.description).toEqual(decodeDescription('Summary'));
+      expect(encodedTime(result)).toBe('2024-05-06T07:08:09.000Z');
+      expect(result.id).toBe(
+        articleId({
+          ownerId: alice,
+          feedId: Option.none(),
+          url: Option.some(url),
+          title: decodeTitle('Post'),
+          description: decodeDescription('Summary'),
+        })
       );
-      expect(saved).toEqual(result.item);
+      expect(saved).toEqual(result);
     }),
     {
       articles: {
@@ -280,9 +303,9 @@ it.effect('keeps extracted description and published date when adding', () => {
       extractor: {
         extract: () =>
           Effect.succeed({
-            title: 'Post',
-            content: Option.some('<p>Body</p>'),
-            description: Option.some('Summary'),
+            title: decodeTitle('Post'),
+            content: decodeContent('<p>Body</p>'),
+            description: decodeDescription('Summary'),
             publishedAt: extractedPublishedAt,
           }),
       },
@@ -293,17 +316,29 @@ it.effect('keeps extracted description and published date when adding', () => {
 it.effect(
   'derives distinct identities for one url when metadata differs',
   () => {
-    const url = new URL('https://example.com/post');
+    const url = decodeUrl('https://example.com/post');
     const ids: Array<ArticleId> = [];
     let attempt = 0;
 
     return provide(
       Effect.gen(function* () {
-        yield* addArticle(alice, url.href);
-        yield* addArticle(alice, url.href);
+        yield* addArticle(alice, url);
+        yield* addArticle(alice, url);
         expect(ids).toEqual([
-          articleId(alice, undefined, url, 'Post', 'Summary 1'),
-          articleId(alice, undefined, url, 'Post', 'Summary 2'),
+          articleId({
+            ownerId: alice,
+            feedId: Option.none(),
+            url: Option.some(url),
+            title: decodeTitle('Post'),
+            description: decodeDescription('Summary 1'),
+          }),
+          articleId({
+            ownerId: alice,
+            feedId: Option.none(),
+            url: Option.some(url),
+            title: decodeTitle('Post'),
+            description: decodeDescription('Summary 2'),
+          }),
         ]);
         expect(ids[0]).not.toBe(ids[1]);
       }),
@@ -321,9 +356,9 @@ it.effect(
             attempt += 1;
 
             return Effect.succeed({
-              title: 'Post',
-              content: Option.some('<p>Body</p>'),
-              description: Option.some(`Summary ${attempt}`),
+              title: decodeTitle('Post'),
+              content: decodeContent('<p>Body</p>'),
+              description: decodeDescription(`Summary ${attempt}`),
               publishedAt: extractedPublishedAt,
             });
           },
@@ -339,7 +374,7 @@ it.effect('reports duplicate additions with the derived article id', () => {
   return provide(
     Effect.gen(function* () {
       const error = yield* Effect.flip(
-        addArticle(alice, 'https://example.com/post')
+        addArticle(alice, decodeUrl('https://example.com/post'))
       );
       expect(error._tag).toBe('DuplicateArticle');
       expect(error._tag === 'DuplicateArticle' && error.id).toBe(attempted?.id);
@@ -356,9 +391,9 @@ it.effect('reports duplicate additions with the derived article id', () => {
       extractor: {
         extract: () =>
           Effect.succeed({
-            title: 'Post',
-            content: Option.some('<p>Body</p>'),
-            description: Option.some(''),
+            title: decodeTitle('Post'),
+            content: decodeContent('<p>Body</p>'),
+            description: decodeDescription(''),
             publishedAt: extractedPublishedAt,
           }),
       },
@@ -370,7 +405,7 @@ it.effect('rejects an empty extracted body without saving', () =>
   provide(
     Effect.gen(function* () {
       const error = yield* Effect.flip(
-        addArticle(alice, 'https://example.com/post')
+        addArticle(alice, decodeUrl('https://example.com/post'))
       );
       expect(error._tag).toBe('ArticleEmptyContent');
     }),
@@ -380,26 +415,12 @@ it.effect('rejects an empty extracted body without saving', () =>
       extractor: {
         extract: () =>
           Effect.succeed({
-            title: 'Post',
-            description: Option.some(''),
-            content: Option.some('   '),
+            title: decodeTitle('Post'),
+            description: decodeDescription(''),
+            content: decodeContent('   '),
             publishedAt: extractedPublishedAt,
           }),
       },
-    }
-  )
-);
-
-it.effect('rejects malformed article URLs before contacting providers', () =>
-  provide(
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(addArticle(alice, 'not a url'));
-      expect(error._tag).toBe('InvalidArticleUrl');
-    }),
-    {
-      articles: {},
-      fetcher: { fetch: () => Effect.die('must not fetch') },
-      extractor: { extract: () => Effect.die('must not extract') },
     }
   )
 );
@@ -408,7 +429,7 @@ it.effect('preserves fetch failure messages while adding', () =>
   provide(
     Effect.gen(function* () {
       const error = yield* Effect.flip(
-        addArticle(alice, 'https://example.com/post')
+        addArticle(alice, decodeUrl('https://example.com/post'))
       );
       expect(error._tag).toBe('WebpageFetcherError');
       expect(error._tag === 'WebpageFetcherError' && error.message).toBe(
@@ -426,15 +447,15 @@ it.effect('preserves fetch failure messages while adding', () =>
   )
 );
 
-it.effect('maps parser failures to extraction errors while adding', () =>
+it.effect('propagates parser failures while adding', () =>
   provide(
     Effect.gen(function* () {
       const error = yield* Effect.flip(
-        addArticle(alice, 'https://example.com/post')
+        addArticle(alice, decodeUrl('https://example.com/post'))
       );
-      expect(error._tag).toBe('ArticleExtractorError');
-      expect(error._tag === 'ArticleExtractorError' && error.message).toBe(
-        'Unable to extract article content; open the original page'
+      expect(error._tag).toBe('HtmlParserError');
+      expect(error._tag === 'HtmlParserError' && error.message).toBe(
+        'malformed markup'
       );
     }),
     {
@@ -462,18 +483,16 @@ it.effect('saves a feed article copy without fetching or extracting', () => {
   return provide(
     Effect.gen(function* () {
       const result = yield* saveArticle(alice, source.id);
-      expect(result.item.id).not.toBe(source.id);
-      expect(result.item.feedId).toEqual(Option.none());
-      expect(result.item.url).toEqual(
-        Option.some(new URL('https://example.com/a'))
-      );
-      expect(result.item.title).toBe(source.title);
-      expect(result.item.description).toEqual(Option.some('Summary'));
-      expect(result.item.content).toEqual(Option.some('<p>Feed</p>'));
-      expect(result.item.publishedAt).toEqual(source.publishedAt);
-      expect(result.item.read).toBe(false);
+      expect(result.id).not.toBe(source.id);
+      expect(result.feedId).toEqual(Option.none());
+      expect(result.url).toEqual(Option.some(new URL('https://example.com/a')));
+      expect(result.title).toBe(source.title);
+      expect(result.description).toEqual(decodeDescription('Summary'));
+      expect(result.content).toEqual(Option.some('<p>Feed</p>'));
+      expect(result.publishedAt).toEqual(source.publishedAt);
+      expect(result.read).toBe(false);
       expect(source.read).toBe(true);
-      expect(created).toEqual(result.item);
+      expect(created).toEqual(result);
     }),
     {
       articles: {
@@ -504,10 +523,8 @@ it.effect('keeps extracted content on the saved copy and the source', () => {
   return provide(
     Effect.gen(function* () {
       const result = yield* saveArticle(alice, source.id);
-      expect(result.item.extractedContent).toEqual(
-        Option.some('<p>Extracted</p>')
-      );
-      expect(result.item.read).toBe(false);
+      expect(result.extractedContent).toEqual(Option.some('<p>Extracted</p>'));
+      expect(result.read).toBe(false);
       expect(created?.extractedContent).toEqual(
         Option.some('<p>Extracted</p>')
       );
@@ -585,9 +602,7 @@ it.effect(
 
     return provide(
       Effect.gen(function* () {
-        expect(yield* extractArticle(alice, article.id)).toEqual({
-          item: article,
-        });
+        expect(yield* extractArticle(alice, article.id)).toBe(article);
       }),
       {
         articles: { find: () => Effect.succeed(Option.some(article)) },
@@ -615,28 +630,29 @@ it.effect('rejects extraction when the article has no URL', () =>
 
 it.effect('extracts, persists, and returns an article body', () => {
   const article = makeArticle({ url: 'https://example.com/a' });
+  let stored = article;
   const saved: Array<
     readonly [OwnerId, ReadonlyArray<ArticleId>, ArticlePatch]
   > = [];
 
   return provide(
     Effect.gen(function* () {
-      expect(yield* extractArticle(alice, article.id)).toEqual({
-        item: { ...article, extractedContent: Option.some('<p>Fresh</p>') },
-      });
+      expect(yield* extractArticle(alice, article.id)).toEqual(stored);
+      expect(stored.extractedContent).toEqual(decodeContent('<p>Fresh</p>'));
       expect(saved).toEqual([
         [
           alice,
           [article.id],
-          { extractedContent: Option.some('<p>Fresh</p>') },
+          { extractedContent: decodeContent('<p>Fresh</p>') },
         ],
       ]);
     }),
     {
       articles: {
-        find: () => Effect.succeed(Option.some(article)),
+        find: () => Effect.succeed(Option.some(stored)),
         updateByArticleIds: (owner, ids, articlePatch) => {
           saved.push([owner, ids, articlePatch]);
+          stored = { ...stored, ...articlePatch };
 
           return Effect.succeed(ids);
         },
@@ -645,9 +661,9 @@ it.effect('extracts, persists, and returns an article body', () => {
       extractor: {
         extract: () =>
           Effect.succeed({
-            title: 'Fresh',
-            description: Option.some(''),
-            content: Option.some('<p>Fresh</p>'),
+            title: decodeTitle('Fresh'),
+            description: decodeDescription(''),
+            content: decodeContent('<p>Fresh</p>'),
             publishedAt: extractedPublishedAt,
           }),
       },
@@ -673,9 +689,9 @@ it.effect('treats a deleted article as missing after extraction', () =>
       extractor: {
         extract: () =>
           Effect.succeed({
-            title: 'Fresh',
-            description: Option.some(''),
-            content: Option.some('<p>Fresh</p>'),
+            title: decodeTitle('Fresh'),
+            description: decodeDescription(''),
+            content: decodeContent('<p>Fresh</p>'),
             publishedAt: extractedPublishedAt,
           }),
       },
@@ -713,14 +729,10 @@ it.effect('patches articles through owner-scoped repository operations', () => {
 
   return provide(
     Effect.gen(function* () {
-      expect(yield* markArticle(alice, firstId, false)).toEqual({ ok: true });
-      expect(yield* markLaterRead(alice)).toEqual({ ok: true });
-      expect(yield* markFeedsRead(alice, [feed, otherFeed])).toEqual({
-        ok: true,
-      });
-      expect(yield* markArticlesRead(alice, [firstId, secondId])).toEqual({
-        ok: true,
-      });
+      yield* markArticle(alice, firstId, false);
+      yield* markLaterRead(alice);
+      yield* markFeedsRead(alice, [feed, otherFeed]);
+      yield* markArticlesRead(alice, [firstId, secondId]);
       expect(calls).toEqual([
         ['updateByArticleIds', alice, [firstId], { read: false }],
         ['updateLater', alice, { read: true }],
@@ -755,7 +767,7 @@ it.effect('forwards an empty feed selection when marking feeds read', () => {
 
   return provide(
     Effect.gen(function* () {
-      expect(yield* markFeedsRead(alice, [])).toEqual({ ok: true });
+      yield* markFeedsRead(alice, []);
       expect(calls).toEqual([
         ['updateFeeds', alice, Option.some([]), { read: true }],
       ]);
@@ -779,8 +791,8 @@ it.effect(
 
     return provide(
       Effect.gen(function* () {
-        expect(yield* removeArticle(alice, firstId)).toEqual({ ok: true });
-        expect(yield* removeArticle(alice, secondId)).toEqual({ ok: true });
+        yield* removeArticle(alice, firstId);
+        yield* removeArticle(alice, secondId);
         const feedError = yield* Effect.flip(
           removeArticle(alice, ArticleId.make('c'.repeat(64)))
         );
@@ -828,7 +840,7 @@ it.effect('pages thirty later articles and continues from the cursor', () => {
       const second = yield* listLaterArticles(
         alice,
         'all',
-        first.cursor ?? undefined
+        decodeCursor(first.cursor ?? '')
       );
       expect(second.items).toEqual([items[30]]);
       expect(second.cursor).toBeNull();
@@ -863,7 +875,7 @@ it.effect('binds cursors to owner, scope, and filter', () => {
   return provide(
     Effect.gen(function* () {
       const page = yield* listLaterArticles(alice, 'all');
-      const cursor = page.cursor ?? '';
+      const cursor = decodeCursor(page.cursor ?? '');
       const decoded = yield* listLaterArticles(alice, 'all', cursor);
       expect(decoded.items).toEqual([items[30]]);
 
@@ -871,8 +883,6 @@ it.effect('binds cursors to owner, scope, and filter', () => {
         listLaterArticles(bob, 'all', cursor),
         listLaterArticles(alice, 'unread', cursor),
         listFeedArticles(alice, undefined, 'all', cursor),
-        listLaterArticles(alice, 'all', 'not-a-cursor'),
-        listLaterArticles(alice, 'all', btoa('{"version":1}')),
       ]) {
         expect((yield* Effect.flip(attempt))._tag).toBe('InvalidCursor');
       }
@@ -881,7 +891,7 @@ it.effect('binds cursors to owner, scope, and filter', () => {
   );
 });
 
-it.effect('lists a scoped feed or every subscription feed', () => {
+it.effect('lists a scoped feed or every feed', () => {
   const calls: Array<
     readonly [OwnerId, Option.Option<ReadonlyArray<FeedId>>, ArticleQuery]
   > = [];
@@ -907,11 +917,11 @@ it.effect('lists a scoped feed or every subscription feed', () => {
           return Effect.succeed([]);
         },
       },
-      subscriptions: {
+      feeds: {
         find: (owner, id) => {
           checks.push([owner, id]);
 
-          return Effect.succeed(Option.some(subscription(id)));
+          return Effect.succeed(Option.some(storedFeed(id)));
         },
       },
     }
@@ -928,9 +938,9 @@ it.effect('refreshes through the original boundary article inclusively', () => {
       const second = yield* listLaterArticles(
         alice,
         'all',
-        first.cursor ?? undefined
+        decodeCursor(first.cursor ?? '')
       );
-      const boundary = second.boundary ?? '';
+      const boundary = decodeCursor(second.boundary ?? '');
       const refreshed = yield* refreshLaterArticles(alice, 'all', boundary);
       expect(refreshed.map((item) => item.id)).toEqual(
         items.slice(0, 60).map((item) => item.id)
@@ -982,7 +992,7 @@ it.effect('keeps a tail boundary on a final page without a cursor', () => {
       const refreshed = yield* refreshLaterArticles(
         alice,
         'all',
-        page.boundary ?? ''
+        decodeCursor(page.boundary ?? '')
       );
       expect(refreshed.map((item) => item.id)).toEqual(
         items.map((item) => item.id)
@@ -1016,14 +1026,14 @@ it.effect('refreshes from a boundary whose article was removed', () => {
       const second = yield* listLaterArticles(
         alice,
         'all',
-        first.cursor ?? undefined
+        decodeCursor(first.cursor ?? '')
       );
       expect(second.cursor).toBeNull();
       stored = items.filter((item) => item.id !== items[39]?.id);
       const refreshed = yield* refreshLaterArticles(
         alice,
         'all',
-        second.boundary ?? ''
+        decodeCursor(second.boundary ?? '')
       );
       expect(refreshed.map((item) => item.id)).toEqual(
         items.slice(0, 39).map((item) => item.id)
@@ -1056,23 +1066,26 @@ it.effect('rejects feed pages once the feed no longer exists', () => {
       const listError = yield* Effect.flip(
         listFeedArticles(alice, feed, 'all')
       );
-      expect(listError._tag).toBe('SubscriptionNotFound');
-      expect(listError._tag === 'SubscriptionNotFound' && listError.id).toBe(
-        feed
-      );
+      expect(listError._tag).toBe('FeedNotFound');
+      expect(listError._tag === 'FeedNotFound' && listError.id).toBe(feed);
       const refreshError = yield* Effect.flip(
-        refreshFeedArticles(alice, feed, 'all', page.boundary ?? '')
+        refreshFeedArticles(
+          alice,
+          feed,
+          'all',
+          decodeCursor(page.boundary ?? '')
+        )
       );
-      expect(refreshError._tag).toBe('SubscriptionNotFound');
+      expect(refreshError._tag).toBe('FeedNotFound');
     }),
     {
       articles: pagedArticles(items),
-      subscriptions: {
+      feeds: {
         find: (owner, id) => {
           expect([owner, id]).toEqual([alice, feed]);
 
           return Effect.succeed(
-            exists ? Option.some(subscription(id)) : Option.none()
+            exists ? Option.some(storedFeed(id)) : Option.none()
           );
         },
       },

@@ -53,15 +53,15 @@ const WebpageFetcherErrorSchema = failure('WebpageFetcherError', 422);
 
 const ArticleExtractorErrorSchema = failure('ArticleExtractorError', 422);
 
-const SubscriptionUrlInvalidSchema = failure('SubscriptionUrlInvalid', 400);
+const FeedUrlInvalidSchema = failure('FeedUrlInvalid', 400);
 
-const SubscriptionExistsSchema = failure('SubscriptionExists', 409);
+const FeedExistsSchema = failure('FeedExists', 409);
 
-const SubscriptionNotFoundSchema = failure('SubscriptionNotFound', 404);
+const FeedNotFoundSchema = failure('FeedNotFound', 404);
 
-const SubscriptionImportFailedSchema = failure('SubscriptionImportFailed', 422);
+const FeedImportFailedSchema = failure('FeedImportFailed', 422);
 
-const FetchSubscriptionErrorSchema = failure('FetchSubscriptionError', 422);
+const FetchFeedErrorSchema = failure('FetchFeedError', 422);
 
 const FeedParserErrorSchema = failure('FeedParserError', 422);
 
@@ -106,7 +106,7 @@ const urlPayload = Schema.Struct({
   url: Schema.String.check(Schema.isMaxLength(4096)),
 });
 
-const SubscriptionPreview = Schema.Struct({
+const FeedPreview = Schema.Struct({
   url: Schema.URLFromString,
   title: Schema.String,
   description: Schema.OptionFromOptional(Schema.String),
@@ -129,11 +129,7 @@ const library = HttpApiGroup.make('library').add(
   HttpApiEndpoint.get('feedArticles', '/api/library/feeds/articles', {
     query: { ...pageQuery, feedId: Schema.OptionFromOptional(FeedId) },
     success: ArticlePage,
-    error: [
-      ...readErrors,
-      SubscriptionNotFoundSchema,
-      FeedRepositoryErrorSchema,
-    ],
+    error: [...readErrors, FeedNotFoundSchema, FeedRepositoryErrorSchema],
   }),
   HttpApiEndpoint.get('laterRefresh', '/api/library/later/refresh', {
     query: refreshQuery,
@@ -143,11 +139,7 @@ const library = HttpApiGroup.make('library').add(
   HttpApiEndpoint.get('feedRefresh', '/api/library/feeds/refresh', {
     query: { ...refreshQuery, feedId: Schema.OptionFromOptional(FeedId) },
     success: Schema.Struct({ items: Schema.Array(Article) }),
-    error: [
-      ...readErrors,
-      SubscriptionNotFoundSchema,
-      FeedRepositoryErrorSchema,
-    ],
+    error: [...readErrors, FeedNotFoundSchema, FeedRepositoryErrorSchema],
   }),
   HttpApiEndpoint.get('feeds', '/api/library/feeds', {
     success: Schema.Struct({ items: Schema.Array(Feed) }),
@@ -155,10 +147,10 @@ const library = HttpApiGroup.make('library').add(
   }),
   HttpApiEndpoint.post('preview', '/api/library/feeds/preview', {
     payload: urlPayload,
-    success: Schema.Struct({ preview: SubscriptionPreview }),
+    success: Schema.Struct({ preview: FeedPreview }),
     error: [
-      SubscriptionUrlInvalidSchema,
-      FetchSubscriptionErrorSchema,
+      FeedUrlInvalidSchema,
+      FetchFeedErrorSchema,
       FeedParserErrorSchema,
       ...authErrors,
     ],
@@ -167,10 +159,10 @@ const library = HttpApiGroup.make('library').add(
     payload: urlPayload,
     success: Schema.Struct({ item: Feed }),
     error: [
-      SubscriptionUrlInvalidSchema,
-      SubscriptionExistsSchema,
-      SubscriptionImportFailedSchema,
-      FetchSubscriptionErrorSchema,
+      FeedUrlInvalidSchema,
+      FeedExistsSchema,
+      FeedImportFailedSchema,
+      FetchFeedErrorSchema,
       FeedParserErrorSchema,
       FeedRepositoryErrorSchema,
       ...authErrors,
@@ -179,11 +171,7 @@ const library = HttpApiGroup.make('library').add(
   HttpApiEndpoint.delete('unsubscribe', '/api/library/feeds', {
     payload: Schema.Struct({ id: FeedId }),
     success: Schema.Struct({ ok: Schema.Boolean }),
-    error: [
-      SubscriptionNotFoundSchema,
-      FeedRepositoryErrorSchema,
-      ...authErrors,
-    ],
+    error: [FeedNotFoundSchema, FeedRepositoryErrorSchema, ...authErrors],
   }),
   HttpApiEndpoint.get('unreadCounts', '/api/library/unread', {
     success: ArticleUnreadCounts,

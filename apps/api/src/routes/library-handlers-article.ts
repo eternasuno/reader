@@ -1,18 +1,23 @@
 import {
+  type ArticleCursor,
+  ArticleCursorFromString,
   ArticleRepository,
   addArticle,
   extractArticle,
   getArticle,
+  InvalidArticleUrl,
+  InvalidCursor,
   listLaterArticles,
   markArticle,
   markArticlesRead,
   markFeedsRead,
   markLaterRead,
+  NormalizedUrl,
   refreshLaterArticles,
   removeArticle,
   saveArticle,
 } from '@reader/business';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { webpageFetcherForOwner } from '../adapter/webpage-fetcher';
 import {
   type HandlerRequest,
@@ -28,26 +33,51 @@ import {
   saveFailure,
 } from './library-failures';
 
+const invalidCursor = () =>
+  new InvalidCursor({ message: 'Invalid pagination cursor' });
+
+const cursor = (value: string): Effect.Effect<ArticleCursor, InvalidCursor> =>
+  Schema.decodeEffect(ArticleCursorFromString)(value).pipe(
+    Effect.mapError(invalidCursor)
+  );
+
+const optionalCursor = (
+  value: Option.Option<string>
+): Effect.Effect<ArticleCursor | undefined, InvalidCursor> =>
+  Option.match(value, {
+    onNone: () => Effect.succeed(undefined),
+    onSome: cursor,
+  });
+
 const laterList = ({ query }: HandlerRequest<'laterList'>) =>
   withSession((owner) =>
-    listLaterArticles(
-      owner,
-      Option.getOrElse(query.filter, () => 'all'),
-      Option.getOrUndefined(query.cursor),
-      Option.getOrUndefined(query.through)
-    )
+    Effect.gen(function* () {
+      const after = yield* optionalCursor(query.cursor);
+      const through = yield* optionalCursor(query.through);
+
+      return yield* listLaterArticles(
+        owner,
+        Option.getOrElse(query.filter, () => 'all'),
+        after,
+        through
+      );
+    })
   ).pipe(Effect.catchTags(articlePageFailure));
 
 const laterRefresh = ({ query }: HandlerRequest<'laterRefresh'>) =>
   withSession((owner) =>
-    Effect.map(
-      refreshLaterArticles(
-        owner,
-        Option.getOrElse(query.filter, () => 'all'),
-        query.through
-      ),
-      (items) => ({ items })
-    )
+    Effect.gen(function* () {
+      const through = yield* cursor(query.through);
+
+      return yield* Effect.map(
+        refreshLaterArticles(
+          owner,
+          Option.getOrElse(query.filter, () => 'all'),
+          through
+        ),
+        (items) => ({ items })
+      );
+    })
   ).pipe(Effect.catchTags(articlePageFailure));
 
 const unreadCounts = () =>
@@ -69,50 +99,66 @@ const article = ({ query }: HandlerRequest<'article'>) =>
 const add = ({ payload }: HandlerRequest<'addArticle'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
+      const url = yield* Schema.decodeEffect(NormalizedUrl)(payload.url).pipe(
+        Effect.mapError(
+          () =>
+            new InvalidArticleUrl({
+              message: 'Article URL must use HTTP or HTTPS',
+            })
+        )
+      );
       const layer = yield* webpageFetcherForOwner(owner);
 
-      return yield* addArticle(owner, payload.url).pipe(Effect.provide(layer));
+      const item = yield* addArticle(owner, url).pipe(Effect.provide(layer));
+
+      return { item };
     })
   ).pipe(Effect.catchTags(addFailure));
 
 const save = ({ payload }: HandlerRequest<'saveArticle'>) =>
-  withSession((owner) => saveArticle(owner, payload.id)).pipe(
-    Effect.catchTags(saveFailure)
-  );
+  withSession((owner) =>
+    Effect.map(saveArticle(owner, payload.id), (item) => ({ item }))
+  ).pipe(Effect.catchTags(saveFailure));
 
 const extract = ({ payload }: HandlerRequest<'extractArticle'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
       const layer = yield* webpageFetcherForOwner(owner);
 
-      return yield* extractArticle(owner, payload.id).pipe(
+      const item = yield* extractArticle(owner, payload.id).pipe(
         Effect.provide(layer)
       );
+
+      return { item };
     })
   ).pipe(Effect.catchTags(extractFailure));
 
 const markRead = ({ payload }: HandlerRequest<'markRead'>) =>
-  withSession((owner) => markArticle(owner, payload.id, payload.read)).pipe(
-    Effect.catchTags(articleFailure)
-  );
+  withSession((owner) =>
+    markArticle(owner, payload.id, payload.read).pipe(
+      Effect.as({ ok: true as const })
+    )
+  ).pipe(Effect.catchTags(articleFailure));
 
 const markLater = () =>
-  withSession(markLaterRead).pipe(Effect.catchTags(articleFailure));
+  withSession((owner) =>
+    markLaterRead(owner).pipe(Effect.as({ ok: true as const }))
+  ).pipe(Effect.catchTags(articleFailure));
 
 const markFeeds = ({ payload }: HandlerRequest<'markFeeds'>) =>
-  withSession((owner) => markFeedsRead(owner, payload.feedIds)).pipe(
-    Effect.catchTags(articleFailure)
-  );
+  withSession((owner) =>
+    markFeedsRead(owner, payload.feedIds).pipe(Effect.as({ ok: true as const }))
+  ).pipe(Effect.catchTags(articleFailure));
 
 const markArticles = ({ payload }: HandlerRequest<'markArticles'>) =>
-  withSession((owner) => markArticlesRead(owner, payload.ids)).pipe(
-    Effect.catchTags(articleFailure)
-  );
+  withSession((owner) =>
+    markArticlesRead(owner, payload.ids).pipe(Effect.as({ ok: true as const }))
+  ).pipe(Effect.catchTags(articleFailure));
 
 const remove = ({ payload }: HandlerRequest<'removeArticle'>) =>
-  withSession((owner) => removeArticle(owner, payload.id)).pipe(
-    Effect.catchTags(removeFailure)
-  );
+  withSession((owner) =>
+    removeArticle(owner, payload.id).pipe(Effect.as({ ok: true as const }))
+  ).pipe(Effect.catchTags(removeFailure));
 
 export const articleHandlers = {
   laterList,

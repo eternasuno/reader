@@ -1,6 +1,6 @@
 import { expect, it } from '@effect/vitest';
 import { DocumentSantize, HtmlParser } from '@reader/business';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 import { DocumentSantizeLive } from '../../src/adapter/document-santize';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 
@@ -16,7 +16,7 @@ it.effect('sanitizes HTML and resolves links against the article URL', () =>
       '<p onclick="steal()">Hi <a href="/next">next</a></p><script>alert(1)</script>',
       articleUrl
     );
-    const html = yield* processor.sanitize(document);
+    const html = Option.getOrThrow(yield* processor.sanitize(document));
     expect(html).toContain('<p>Hi ');
     expect(html).toContain(
       '<a href="https://example.com/next" target="_blank" rel="noopener noreferrer">next</a>'
@@ -35,7 +35,7 @@ it.effect(
       const document = yield* parser.parse(
         '<p><a href="/next">next</a><a href="javascript:alert(1)">bad</a></p><img src="images/pic.png">'
       );
-      const html = yield* processor.sanitize(document);
+      const html = Option.getOrThrow(yield* processor.sanitize(document));
       expect(html).toContain(
         '<a href="/next" target="_blank" rel="noopener noreferrer">next</a>'
       );
@@ -45,4 +45,16 @@ it.effect(
       expect(html).not.toContain('javascript:');
       expect(html).toContain('>bad</a>');
     }).pipe(Effect.scoped, Effect.provide(Live))
+);
+
+it.effect('trims sanitized HTML and maps empty markup to none', () =>
+  Effect.gen(function* () {
+    const parser = yield* HtmlParser;
+    const processor = yield* DocumentSantize;
+    const padded = yield* parser.parse('  <p>Hi</p>  ', articleUrl);
+    const empty = yield* parser.parse('   ', articleUrl);
+
+    expect(yield* processor.sanitize(padded)).toEqual(Option.some('<p>Hi</p>'));
+    expect(yield* processor.sanitize(empty)).toEqual(Option.none());
+  }).pipe(Effect.scoped, Effect.provide(Live))
 );

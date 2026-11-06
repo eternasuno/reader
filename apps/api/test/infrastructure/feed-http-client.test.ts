@@ -1,7 +1,8 @@
 import { expect, it } from '@effect/vitest';
-import { fetchFeed } from '@reader/business';
-import { Effect } from 'effect';
+import { FeedFetcher } from '@reader/business';
+import { Effect, Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
+import { FeedFetcherLive } from '../../src/adapter/feed-fetcher';
 import { FeedHttpClientLive } from '../../src/infrastructure/feed-http-client';
 
 const rss = `<?xml version="1.0"?>
@@ -11,10 +12,17 @@ const rss = `<?xml version="1.0"?>
 
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
 
+const fetchFeed = (url: URL) =>
+  Effect.flatMap(FeedFetcher, (feedFetcher) => feedFetcher.fetch(url));
+
 const fetchWith = (url: URL, fetchImpl: typeof globalThis.fetch) =>
   fetchFeed(url).pipe(
-    Effect.provide(FeedHttpClientLive),
-    Effect.provideService(FetchHttpClient.Fetch, fetchImpl)
+    Effect.provide(
+      Layer.mergeAll(
+        FeedFetcherLive.pipe(Layer.provide(FeedHttpClientLive)),
+        Layer.succeed(FetchHttpClient.Fetch, fetchImpl)
+      )
+    )
   );
 
 it.effect('fetches a feed through the configured public client', () =>
@@ -50,7 +58,7 @@ it.effect('rejects a private target before requesting', () =>
         fetchImpl as typeof globalThis.fetch
       )
     );
-    expect(error._tag).toBe('FetchSubscriptionError');
+    expect(error._tag).toBe('FetchFeedError');
     expect(called).toBe(false);
   })
 );
@@ -74,7 +82,7 @@ it.effect('rejects a redirect to a private target before following', () =>
         fetchImpl as typeof globalThis.fetch
       )
     );
-    expect(error._tag).toBe('FetchSubscriptionError');
+    expect(error._tag).toBe('FetchFeedError');
     expect(seen).toEqual(['http://8.8.8.8/rss']);
   })
 );

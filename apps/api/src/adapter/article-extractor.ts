@@ -2,12 +2,10 @@ import { Readability } from '@mozilla/readability';
 import {
   ArticleExtractor,
   ArticleExtractorError,
-  type ExtractedArticle,
+  ExtractedArticle,
 } from '@reader/business';
 import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { cleanArticle } from '../infrastructure/article-sanitizer';
-
-const UNTITLED = 'Untitled';
 
 const decodePublishedAt = Schema.decodeUnknownOption(
   Schema.DateTimeUtcFromString
@@ -54,12 +52,12 @@ const readArticle = (
 
   cleanArticle(document, result.content);
 
-  return {
-    title: result.title?.trim() || UNTITLED,
-    description: descriptionOf(document, result.excerpt),
-    content: Option.some(document.body.innerHTML),
-    publishedAt: publishedAtOf(result.publishedTime, now),
-  };
+  return Schema.decodeSync(ExtractedArticle)({
+    title: result.title ?? '',
+    description: Option.getOrUndefined(descriptionOf(document, result.excerpt)),
+    content: document.body.innerHTML,
+    publishedAt: DateTime.toDateUtc(publishedAtOf(result.publishedTime, now)),
+  });
 };
 
 export const ArticleExtractorLive = Layer.succeed(ArticleExtractor, {

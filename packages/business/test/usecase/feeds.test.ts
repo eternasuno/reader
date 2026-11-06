@@ -1,18 +1,29 @@
-// biome-ignore-all lint/style/noExcessiveLinesPerFile: subscription workflow tests share one set of feed and store fixtures.
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: feed workflow tests share one set of feed and store fixtures.
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each test declares its mocks alongside the asserted scenario.
 import { expect, it } from '@effect/vitest';
 import { type Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
-import { HttpClient, HttpClientResponse } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import { type Article, ArticleId } from '../../src/entity/article';
+import {
+  type Article,
+  ArticleContent,
+  ArticleDescription,
+  ArticleId,
+  ArticleTitle,
+} from '../../src/entity/article';
 import type { Feed } from '../../src/entity/feed';
-import { OwnerId } from '../../src/entity/object-value';
+import {
+  NormalizedUrl,
+  OptionalTrimmedString,
+  OwnerId,
+} from '../../src/entity/object-value';
+import { Retention, type Setting } from '../../src/entity/setting';
 import {
   type ArticleBoundary,
   ArticleRepository,
   ArticleRepositoryError,
 } from '../../src/port/article-repository';
 import { DocumentSantize } from '../../src/port/document-santize';
+import { FeedFetcher, FetchFeedError } from '../../src/port/feed-fetcher';
 import {
   FeedParser,
   FeedParserError,
@@ -25,15 +36,24 @@ import {
 } from '../../src/port/feed-repository';
 import { HtmlParser } from '../../src/port/html-parser';
 import { SettingsRepository } from '../../src/port/settings-repository';
-import { articleId, feedId, normalizeUrl } from '../../src/usecase/identity';
-import {
-  refreshSubscription,
-  subscribe,
-} from '../../src/usecase/subscriptions';
+import { addFeed, refreshFeed } from '../../src/usecase/feeds';
+import { articleId, feedId } from '../../src/usecase/identity';
+
+const decodeContent = Schema.decodeSync(ArticleContent);
+
+const decodeDescription = Schema.decodeSync(ArticleDescription);
+
+const decodeTitle = Schema.decodeSync(ArticleTitle);
+
+const decodeSanitized = Schema.decodeSync(OptionalTrimmedString);
+
+const decodeUrl = Schema.decodeSync(NormalizedUrl);
+
+const decodeRetention = Schema.decodeSync(Retention);
 
 const alice = OwnerId.make('alice');
 
-const url = normalizeUrl('https://example.com/feed.xml');
+const url = decodeUrl('https://example.com/feed.xml');
 
 const id = feedId(alice, url);
 
@@ -50,10 +70,10 @@ const encoded = (value: DateTime.Utc) =>
   Schema.encodeSync(Schema.DateTimeUtcFromString)(value);
 
 const entry = (overrides: Partial<ParsedArticle> = {}): ParsedArticle => ({
-  title: 'One',
-  url: Option.some(new URL('https://example.com/one')),
-  description: Option.none(),
-  content: Option.none(),
+  title: decodeTitle('One'),
+  url: Option.some(decodeUrl('https://example.com/one')),
+  description: decodeDescription(undefined),
+  content: decodeContent(undefined),
   publishedAt: at('2026-01-01T12:00:00.000Z'),
   ...overrides,
 });
@@ -63,51 +83,37 @@ const feed = (
   title = 'News'
 ): ParsedFeed => ({ title, url, description: Option.none(), articles });
 
-const subscription = (): Feed => ({
+const storedFeed = (): Feed => ({
   id,
   ownerId: alice,
   url,
-  title: 'Old',
+  title: decodeTitle('Old'),
   updatedAt: at('2025-12-01T00:00:00.000Z'),
 });
 
 const feedBody = '<rss/>';
 
-const feedResponse = () =>
-  Effect.succeed(new Response(feedBody, { status: 200 }));
+const feedDocument = (url: URL) => ({ content: feedBody, url });
 
-const httpClient = (
-  respond: (url: URL) => Effect.Effect<Response>
-): Layer.Layer<HttpClient.HttpClient> =>
-  Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request, url) =>
-      Effect.map(respond(url), (response) =>
-        HttpClientResponse.fromWeb(request, response)
-      )
-    )
-  );
-
-const settingsValue = (retention: number) => ({
+const settingsValue = (retention: Setting['retention']): Setting => ({
+  ownerId: alice,
   retention,
-  provider: 'jina' as const,
+  provider: 'jina',
   jinaKey: Option.none(),
-  browserEndpoint: Option.none<string>(),
+  browserEndpoint: Option.none(),
 });
 
 const provide = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   layers: {
-    readonly http?: (url: URL) => Effect.Effect<Response>;
+    readonly feedFetcher?: Partial<Context.Service.Shape<typeof FeedFetcher>>;
     readonly feedParser?: Partial<Context.Service.Shape<typeof FeedParser>>;
     readonly parser?: Partial<Context.Service.Shape<typeof HtmlParser>>;
     readonly processor?: Partial<Context.Service.Shape<typeof DocumentSantize>>;
     readonly articles?: Partial<
       Context.Service.Shape<typeof ArticleRepository>
     >;
-    readonly subscriptions?: Partial<
-      Context.Service.Shape<typeof FeedRepository>
-    >;
+    readonly feeds?: Partial<Context.Service.Shape<typeof FeedRepository>>;
     readonly settings?: Partial<
       Context.Service.Shape<typeof SettingsRepository>
     >;
@@ -116,7 +122,10 @@ const provide = <A, E, R>(
   effect.pipe(
     Effect.provide(
       Layer.mergeAll(
-        httpClient(layers.http ?? feedResponse),
+        Layer.mock(FeedFetcher, {
+          fetch: (requested) => Effect.succeed(feedDocument(requested)),
+          ...layers.feedFetcher,
+        }),
         Layer.mock(FeedParser, {
           parse: () => Effect.succeed(feed([])),
           ...layers.feedParser,
@@ -126,40 +135,19 @@ const provide = <A, E, R>(
           ...layers.parser,
         }),
         Layer.mock(DocumentSantize, {
-          sanitize: (document) => Effect.succeed(document.body.innerHTML),
+          sanitize: (document) =>
+            Effect.succeed(decodeSanitized(document.body.innerHTML)),
           ...layers.processor,
         }),
         Layer.mock(ArticleRepository, layers.articles ?? {}),
-        Layer.mock(FeedRepository, layers.subscriptions ?? {}),
+        Layer.mock(FeedRepository, layers.feeds ?? {}),
         Layer.mock(SettingsRepository, {
-          get: () => Effect.succeed(settingsValue(100)),
+          get: () => Effect.succeed(settingsValue(decodeRetention(100))),
           ...layers.settings,
         })
       )
     )
   );
-
-it.effect('rejects a non-HTTP subscription URL before fetching', () => {
-  let fetched = false;
-
-  return provide(
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        subscribe(alice, 'ftp://example.com/feed')
-      );
-      expect(error._tag).toBe('SubscriptionUrlInvalid');
-      expect(error.message).toBe('Subscription URL must use HTTP or HTTPS');
-      expect(fetched).toBe(false);
-    }),
-    {
-      http: () => {
-        fetched = true;
-
-        return feedResponse();
-      },
-    }
-  );
-});
 
 it.effect('parses the fetched document against its final URL', () => {
   const finalUrl = new URL('https://final.example/feed.xml');
@@ -167,32 +155,26 @@ it.effect('parses the fetched document against its final URL', () => {
 
   return provide(
     Effect.gen(function* () {
-      yield* refreshSubscription(alice, id);
+      yield* refreshFeed(alice, id);
       expect(calls).toEqual([
         `fetch ${url.href}`,
-        `fetch ${finalUrl.href}`,
         `parse <rss/> ${finalUrl.href}`,
       ]);
     }),
     {
       settings: {
-        get: () => Effect.succeed(settingsValue(100)),
+        get: () => Effect.succeed(settingsValue(decodeRetention(100))),
       },
-      subscriptions: {
-        find: () => Effect.succeed(Option.some(subscription())),
+      feeds: {
+        find: () => Effect.succeed(Option.some(storedFeed())),
         update: () => Effect.void,
       },
-      http: (requested) => {
-        calls.push(`fetch ${requested.href}`);
+      feedFetcher: {
+        fetch: (requested) => {
+          calls.push(`fetch ${requested.href}`);
 
-        return Effect.succeed(
-          requested.href === url.href
-            ? new Response(null, {
-                status: 302,
-                headers: { location: finalUrl.href },
-              })
-            : new Response(feedBody, { status: 200 })
-        );
+          return Effect.succeed({ content: feedBody, url: finalUrl });
+        },
       },
       feedParser: {
         parse: (content, sourceUrl) => {
@@ -214,18 +196,23 @@ it.effect('reports a feed fetch failure without parsing the document', () => {
 
   return provide(
     Effect.gen(function* () {
-      const error = yield* Effect.flip(refreshSubscription(alice, id));
+      const error = yield* Effect.flip(refreshFeed(alice, id));
       expect(error).toMatchObject({
-        _tag: 'FetchSubscriptionError',
-        message: 'Failed to fetch the subscription feed',
+        _tag: 'FetchFeedError',
+        message: 'Failed to fetch the feed',
       });
       expect(parsed).toBe(false);
     }),
     {
-      subscriptions: {
-        find: () => Effect.succeed(Option.some(subscription())),
+      feeds: {
+        find: () => Effect.succeed(Option.some(storedFeed())),
       },
-      http: () => Effect.succeed(new Response('no', { status: 503 })),
+      feedFetcher: {
+        fetch: () =>
+          Effect.fail(
+            new FetchFeedError({ message: 'Failed to fetch the feed' })
+          ),
+      },
       feedParser: {
         parse: () => {
           parsed = true;
@@ -237,48 +224,24 @@ it.effect('reports a feed fetch failure without parsing the document', () => {
   );
 });
 
-it.effect('reports an invalid redirect as a feed fetch failure', () =>
-  provide(
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(refreshSubscription(alice, id));
-      expect(error).toMatchObject({
-        _tag: 'FetchSubscriptionError',
-        message: 'Failed to fetch the subscription feed',
-      });
-    }),
-    {
-      subscriptions: {
-        find: () => Effect.succeed(Option.some(subscription())),
-      },
-      http: () =>
-        Effect.succeed(
-          new Response(null, {
-            status: 302,
-            headers: { location: 'http://[invalid' },
-          })
-        ),
-    }
-  )
-);
-
 it.effect('reports a feed parse failure', () =>
   provide(
     Effect.gen(function* () {
-      const error = yield* Effect.flip(refreshSubscription(alice, id));
+      const error = yield* Effect.flip(refreshFeed(alice, id));
       expect(error).toMatchObject({
         _tag: 'FeedParserError',
-        message: 'Failed to parse the subscription feed',
+        message: 'Failed to parse the feed feed',
       });
     }),
     {
-      subscriptions: {
-        find: () => Effect.succeed(Option.some(subscription())),
+      feeds: {
+        find: () => Effect.succeed(Option.some(storedFeed())),
       },
       feedParser: {
         parse: () =>
           Effect.fail(
             new FeedParserError({
-              message: 'Failed to parse the subscription feed',
+              message: 'Failed to parse the feed feed',
             })
           ),
       },
@@ -287,48 +250,45 @@ it.effect('reports a feed parse failure', () =>
 );
 
 it.effect(
-  'creates the subscription before importing the newest distinct articles',
+  'creates the feed before importing the newest distinct articles',
   () => {
     const events: Array<string> = [];
     const created: Array<ReadonlyArray<Article>> = [];
     const processed: Array<string> = [];
     const newest = entry({
-      title: 'Newest',
-      url: Option.some(new URL('https://example.com/newest')),
-      description: Option.some('Plain summary'),
-      content: Option.some('<p>Body</p>'),
+      title: decodeTitle('Newest'),
+      url: Option.some(decodeUrl('https://example.com/newest')),
+      description: decodeDescription('Plain summary'),
+      content: decodeContent('<p>Body</p>'),
       publishedAt: at('2026-01-02T00:00:00.000Z'),
     });
     const older = entry({
-      title: 'Older',
-      url: Option.some(new URL('https://example.com/older')),
-      content: Option.some('plain body'),
+      title: decodeTitle('Older'),
+      url: Option.some(decodeUrl('https://example.com/older')),
+      content: decodeContent('plain body'),
       publishedAt: at('2026-01-01T00:00:00.000Z'),
     });
     const undated = entry({
-      title: 'Undated',
-      url: Option.some(new URL('https://example.com/undated')),
+      title: decodeTitle('Undated'),
+      url: Option.some(decodeUrl('https://example.com/undated')),
     });
     let stored: Feed | undefined;
 
     return provide(
       Effect.gen(function* () {
         yield* TestClock.setTime(nowMillis);
-        const result = yield* subscribe(
-          alice,
-          'https://Example.com/feed.xml?utm_source=x'
-        );
-        expect(result.item).toEqual(stored);
+        const result = yield* addFeed(alice, url);
+        expect(result).toEqual(stored);
         expect(stored).toMatchObject({
           id,
           ownerId: alice,
           url,
-          title: 'News',
+          title: decodeTitle('News'),
         });
         expect(
           encoded(stored?.updatedAt ?? at('1970-01-01T00:00:00.000Z'))
         ).toBe('2026-01-01T12:00:00.000Z');
-        expect(events).toEqual(['subscription', 'articles']);
+        expect(events).toEqual(['feed', 'articles']);
         expect(processed).toEqual([
           'Plain summary',
           '<p>Body</p>',
@@ -341,24 +301,26 @@ it.effect(
           'Older',
         ]);
         expect(items[0]).toMatchObject({
-          description: Option.some('Plain summary'),
-          content: Option.some('<p>Body</p>'),
+          description: decodeDescription('Plain summary'),
+          content: decodeContent('<p>Body</p>'),
           feedId: Option.some(id),
           read: false,
         });
         expect(items[0]?.id).toBe(
-          articleId(
-            alice,
-            id,
-            Option.getOrUndefined(newest.url),
-            newest.title,
-            Option.getOrUndefined(newest.description)
-          )
+          articleId({
+            ownerId: alice,
+            feedId: Option.some(id),
+            url: newest.url,
+            title: newest.title,
+            description: newest.description,
+          })
         );
         expect(
           encoded(items[0]?.publishedAt ?? at('1970-01-01T00:00:00.000Z'))
         ).toBe('2026-01-02T00:00:00.000Z');
-        expect(items[2]).toMatchObject({ content: Option.some('plain body') });
+        expect(items[2]).toMatchObject({
+          content: decodeContent('plain body'),
+        });
         expect(
           encoded(items[1]?.publishedAt ?? at('1970-01-01T00:00:00.000Z'))
         ).toBe('2026-01-01T12:00:00.000Z');
@@ -368,10 +330,10 @@ it.effect(
           parse: () =>
             Effect.succeed(feed([older, undated, newest, { ...newest }])),
         },
-        subscriptions: {
+        feeds: {
           find: () => Effect.succeed(Option.none()),
           create: (owner, items) => {
-            events.push('subscription');
+            events.push('feed');
             expect(owner).toBe(alice);
             stored = items[0];
 
@@ -401,29 +363,35 @@ it.effect(
 it.effect('imports entries without a URL', () => {
   const created: Array<ReadonlyArray<Article>> = [];
   const linkless = entry({
-    title: 'No URL',
+    title: decodeTitle('No URL'),
     url: Option.none(),
-    content: Option.some('plain body'),
+    content: decodeContent('plain body'),
   });
 
   return provide(
     Effect.gen(function* () {
-      yield* subscribe(alice, url.href);
+      yield* addFeed(alice, url);
       const items = created[0] ?? [];
       expect(items).toHaveLength(1);
       expect(items[0]).toMatchObject({
-        title: 'No URL',
-        content: Option.some('plain body'),
+        title: decodeTitle('No URL'),
+        content: decodeContent('plain body'),
         feedId: Option.some(id),
       });
       expect(items[0]?.url).toEqual(Option.none());
       expect(items[0]?.id).toBe(
-        articleId(alice, id, undefined, 'No URL', undefined)
+        articleId({
+          ownerId: alice,
+          feedId: Option.some(id),
+          url: Option.none(),
+          title: decodeTitle('No URL'),
+          description: decodeDescription(undefined),
+        })
       );
     }),
     {
       feedParser: { parse: () => Effect.succeed(feed([linkless])) },
-      subscriptions: {
+      feeds: {
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed([id]),
       },
@@ -440,17 +408,17 @@ it.effect('imports entries without a URL', () => {
 
 it.effect('truncates feed content before parsing it', () => {
   const parsed: Array<string> = [];
-  const long = entry({ content: Option.some('a'.repeat(100_500)) });
+  const long = entry({ content: decodeContent('a'.repeat(100_500)) });
 
   return provide(
     Effect.gen(function* () {
-      yield* subscribe(alice, url.href);
+      yield* addFeed(alice, url);
       expect(parsed).toHaveLength(1);
       expect(parsed[0]).toHaveLength(100_000);
     }),
     {
       feedParser: { parse: () => Effect.succeed(feed([long])) },
-      subscriptions: {
+      feeds: {
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed([id]),
       },
@@ -472,15 +440,15 @@ it.effect('imports at most 30 articles from a large feed', () => {
   const created: Array<ReadonlyArray<Article>> = [];
   const entries = Array.from({ length: 35 }, (_, index) =>
     entry({
-      title: `Article ${index}`,
-      url: Option.some(new URL(`https://example.com/${index}`)),
+      title: decodeTitle(`Article ${index}`),
+      url: Option.some(decodeUrl(`https://example.com/${index}`)),
       publishedAt: at(new Date(nowMillis + index * 60_000).toISOString()),
     })
   );
 
   return provide(
     Effect.gen(function* () {
-      yield* subscribe(alice, url.href);
+      yield* addFeed(alice, url);
       const items = created[0] ?? [];
       expect(items).toHaveLength(30);
       expect(items[0]?.title).toBe('Article 34');
@@ -488,7 +456,7 @@ it.effect('imports at most 30 articles from a large feed', () => {
     }),
     {
       feedParser: { parse: () => Effect.succeed(feed(entries)) },
-      subscriptions: {
+      feeds: {
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed([id]),
       },
@@ -503,41 +471,43 @@ it.effect('imports at most 30 articles from a large feed', () => {
   );
 });
 
-it.effect('reports a duplicate subscription without fetching the feed', () => {
+it.effect('reports a duplicate feed without fetching the feed', () => {
   let fetched = false;
 
   return provide(
     Effect.gen(function* () {
-      const error = yield* Effect.flip(subscribe(alice, url.href));
-      expect(error._tag).toBe('SubscriptionExists');
+      const error = yield* Effect.flip(addFeed(alice, url));
+      expect(error._tag).toBe('FeedExists');
       expect(error).toMatchObject({
         id,
-        message: 'Subscription already exists',
+        message: 'Feed already exists',
       });
       expect(fetched).toBe(false);
     }),
     {
-      subscriptions: {
-        find: () => Effect.succeed(Option.some(subscription())),
+      feeds: {
+        find: () => Effect.succeed(Option.some(storedFeed())),
       },
-      http: () => {
-        fetched = true;
+      feedFetcher: {
+        fetch: (requested) => {
+          fetched = true;
 
-        return feedResponse();
+          return Effect.succeed(feedDocument(requested));
+        },
       },
     }
   );
 });
 
-it.effect('reports a duplicate subscription when creation loses a race', () =>
+it.effect('reports a duplicate feed when creation loses a race', () =>
   provide(
     Effect.gen(function* () {
-      const error = yield* Effect.flip(subscribe(alice, url.href));
-      expect(error._tag).toBe('SubscriptionExists');
+      const error = yield* Effect.flip(addFeed(alice, url));
+      expect(error._tag).toBe('FeedExists');
       expect(error).toMatchObject({ id });
     }),
     {
-      subscriptions: {
+      feeds: {
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed([]),
       },
@@ -546,18 +516,15 @@ it.effect('reports a duplicate subscription when creation loses a race', () =>
   )
 );
 
-it.effect('reports an article write failure as an import failure', () =>
+it.effect('propagates an article write failure while adding a feed', () =>
   provide(
     Effect.gen(function* () {
-      const error = yield* Effect.flip(subscribe(alice, url.href));
-      expect(error._tag).toBe('SubscriptionImportFailed');
-      expect(error).toMatchObject({
-        id,
-        message: 'Failed to import subscription articles',
-      });
+      const error = yield* Effect.flip(addFeed(alice, url));
+      expect(error._tag).toBe('ArticleRepositoryError');
+      expect(error).toMatchObject({ message: 'write failed' });
     }),
     {
-      subscriptions: {
+      feeds: {
         find: () => Effect.succeed(Option.none()),
         create: () => Effect.succeed([id]),
       },
@@ -570,25 +537,27 @@ it.effect('reports an article write failure as an import failure', () =>
   )
 );
 
-it.effect('does not fetch a missing subscription', () => {
+it.effect('does not fetch a missing feed', () => {
   let fetched = false;
 
   return provide(
     Effect.gen(function* () {
-      const error = yield* Effect.flip(refreshSubscription(alice, id));
-      expect(error._tag).toBe('SubscriptionNotFound');
+      const error = yield* Effect.flip(refreshFeed(alice, id));
+      expect(error._tag).toBe('FeedNotFound');
       expect(error).toMatchObject({
         id,
-        message: 'Subscription not found',
+        message: 'Feed not found',
       });
       expect(fetched).toBe(false);
     }),
     {
-      subscriptions: { find: () => Effect.succeed(Option.none()) },
-      http: () => {
-        fetched = true;
+      feeds: { find: () => Effect.succeed(Option.none()) },
+      feedFetcher: {
+        fetch: (requested) => {
+          fetched = true;
 
-        return feedResponse();
+          return Effect.succeed(feedDocument(requested));
+        },
       },
     }
   );
@@ -601,15 +570,24 @@ it.effect(
     const created: Array<ReadonlyArray<Article>> = [];
     const retained: Array<ReadonlyArray<ArticleId>> = [];
     const processed: Array<string> = [];
-    const knownUrl = new URL('https://example.com/known');
-    const knownId = articleId(alice, id, knownUrl, 'Known', undefined);
+    const knownUrl = decodeUrl('https://example.com/known');
+    const knownId = articleId({
+      ownerId: alice,
+      feedId: Option.some(id),
+      url: Option.some(knownUrl),
+      title: decodeTitle('Known'),
+      description: decodeDescription(undefined),
+    });
     const tied = entry({
-      title: 'Tied',
-      url: Option.some(new URL('https://example.com/tied')),
-      content: Option.some('<p>Tied body</p>'),
+      title: decodeTitle('Tied'),
+      url: Option.some(decodeUrl('https://example.com/tied')),
+      content: decodeContent('<p>Tied body</p>'),
       publishedAt: at('2026-01-02T00:00:00.000Z'),
     });
-    const known = entry({ title: 'Known', url: Option.some(knownUrl) });
+    const known = entry({
+      title: decodeTitle('Known'),
+      url: Option.some(knownUrl),
+    });
     const inventory: Array<ArticleBoundary> = [
       {
         id: ArticleId.make('b'.repeat(64)),
@@ -619,22 +597,23 @@ it.effect(
     ];
     const patches: Array<FeedUpdate> = [];
     let patchedOwner: string | undefined;
+    let current = storedFeed();
 
     return provide(
       Effect.gen(function* () {
         yield* TestClock.setTime(nowMillis);
-        const result = yield* refreshSubscription(alice, id);
+        const result = yield* refreshFeed(alice, id);
         expect(events).toEqual(['articles', 'retain', 'update']);
         expect(created[0]?.map((item) => item.title)).toEqual(['Tied']);
         expect(retained[0]).toEqual([
           ArticleId.make('b'.repeat(64)),
-          articleId(
-            alice,
-            id,
-            Option.getOrUndefined(tied.url),
-            tied.title,
-            Option.getOrUndefined(tied.description)
-          ),
+          articleId({
+            ownerId: alice,
+            feedId: Option.some(id),
+            url: tied.url,
+            title: tied.title,
+            description: tied.description,
+          }),
           knownId,
         ]);
         expect(processed).toEqual(['<p>Tied body</p>']);
@@ -643,27 +622,37 @@ it.effect(
           {
             id,
             feedPatch: {
-              title: 'Updated',
+              title: decodeTitle('Updated'),
               updatedAt: at('2026-01-01T12:00:00.000Z'),
             },
           },
         ]);
-        expect(result.item).toMatchObject({ id, url, title: 'Updated' });
+        expect(result).toMatchObject({
+          id,
+          url,
+          title: decodeTitle('Updated'),
+        });
         expect(
-          encoded(result.item.updatedAt ?? at('1970-01-01T00:00:00.000Z'))
+          encoded(result.updatedAt ?? at('1970-01-01T00:00:00.000Z'))
         ).toBe('2026-01-01T12:00:00.000Z');
       }),
       {
         settings: {
-          get: () => Effect.succeed(settingsValue(100)),
+          get: () => Effect.succeed(settingsValue(decodeRetention(100))),
         },
-        subscriptions: {
-          find: () => Effect.succeed(Option.some(subscription())),
+        feeds: {
+          find: () => Effect.succeed(Option.some(current)),
           update: (owner, items) =>
             Effect.sync(() => {
               events.push('update');
               patchedOwner = owner;
               patches.push(...items);
+              const patch = items[0]?.feedPatch;
+              current = {
+                ...current,
+                title: patch?.title ?? current.title,
+                updatedAt: patch?.updatedAt ?? current.updatedAt,
+              };
             }),
         },
         feedParser: {
@@ -673,7 +662,7 @@ it.effect(
           sanitize: (document) => {
             processed.push(document.body.innerHTML);
 
-            return Effect.succeed(document.body.innerHTML);
+            return Effect.succeed(decodeSanitized(document.body.innerHTML));
           },
         },
         articles: {
@@ -711,7 +700,7 @@ it.effect('keeps the configured retention and drops older new articles', () => {
 
   return provide(
     Effect.gen(function* () {
-      yield* refreshSubscription(alice, id);
+      yield* refreshFeed(alice, id);
       expect(created).toEqual([]);
       expect(processed).toBe(false);
       expect(retained[0]).toHaveLength(50);
@@ -720,10 +709,10 @@ it.effect('keeps the configured retention and drops older new articles', () => {
     }),
     {
       settings: {
-        get: () => Effect.succeed(settingsValue(50)),
+        get: () => Effect.succeed(settingsValue(decodeRetention(50))),
       },
-      subscriptions: {
-        find: () => Effect.succeed(Option.some(subscription())),
+      feeds: {
+        find: () => Effect.succeed(Option.some(storedFeed())),
         update: () => Effect.void,
       },
       feedParser: {
@@ -736,7 +725,7 @@ it.effect('keeps the configured retention and drops older new articles', () => {
         sanitize: () => {
           processed = true;
 
-          return Effect.succeed('');
+          return Effect.succeed(decodeSanitized(undefined));
         },
       },
       articles: {
@@ -761,29 +750,29 @@ it.effect(
   () => {
     const created: Array<ReadonlyArray<Article>> = [];
     const retained: Array<ReadonlyArray<ArticleId>> = [];
-    const repeated = new URL('https://example.com/repeated');
+    const repeated = decodeUrl('https://example.com/repeated');
     const stale = entry({
-      title: 'Repeated',
+      title: decodeTitle('Repeated'),
       url: Option.some(repeated),
       publishedAt: at('2026-01-01T00:00:00.000Z'),
     });
     const newest = entry({
-      title: 'Repeated',
+      title: decodeTitle('Repeated'),
       url: Option.some(repeated),
       publishedAt: at('2026-01-05T00:00:00.000Z'),
     });
-    const newestId = articleId(
-      alice,
-      id,
-      repeated,
-      newest.title,
-      Option.getOrUndefined(newest.description)
-    );
+    const newestId = articleId({
+      ownerId: alice,
+      feedId: Option.some(id),
+      url: Option.some(repeated),
+      title: newest.title,
+      description: newest.description,
+    });
 
     return provide(
       Effect.gen(function* () {
         yield* TestClock.setTime(nowMillis);
-        yield* refreshSubscription(alice, id);
+        yield* refreshFeed(alice, id);
         expect(created[0]?.map((item) => item.title)).toEqual(['Repeated']);
         expect(created[0]?.[0]?.publishedAt).toEqual(
           at('2026-01-05T00:00:00.000Z')
@@ -792,10 +781,10 @@ it.effect(
       }),
       {
         settings: {
-          get: () => Effect.succeed(settingsValue(100)),
+          get: () => Effect.succeed(settingsValue(decodeRetention(100))),
         },
-        subscriptions: {
-          find: () => Effect.succeed(Option.some(subscription())),
+        feeds: {
+          find: () => Effect.succeed(Option.some(storedFeed())),
           update: () => Effect.void,
         },
         feedParser: {
@@ -824,36 +813,36 @@ it.effect(
   () => {
     const created: Array<ReadonlyArray<Article>> = [];
     const retained: Array<ReadonlyArray<ArticleId>> = [];
-    const repeated = new URL('https://example.com/repeated');
+    const repeated = decodeUrl('https://example.com/repeated');
     const stale = entry({
-      title: 'Repeated',
+      title: decodeTitle('Repeated'),
       url: Option.some(repeated),
       publishedAt: at('2026-01-01T00:00:00.000Z'),
     });
     const fresh = entry({
-      title: 'Fresh',
-      url: Option.some(new URL('https://example.com/fresh')),
+      title: decodeTitle('Fresh'),
+      url: Option.some(decodeUrl('https://example.com/fresh')),
       publishedAt: at('2026-01-15T00:00:00.000Z'),
     });
     const newest = entry({
-      title: 'Repeated',
+      title: decodeTitle('Repeated'),
       url: Option.some(repeated),
       publishedAt: at('2026-01-20T00:00:00.000Z'),
     });
-    const newestId = articleId(
-      alice,
-      id,
-      repeated,
-      newest.title,
-      Option.getOrUndefined(newest.description)
-    );
-    const freshId = articleId(
-      alice,
-      id,
-      Option.getOrUndefined(fresh.url),
-      fresh.title,
-      undefined
-    );
+    const newestId = articleId({
+      ownerId: alice,
+      feedId: Option.some(id),
+      url: Option.some(repeated),
+      title: newest.title,
+      description: newest.description,
+    });
+    const freshId = articleId({
+      ownerId: alice,
+      feedId: Option.some(id),
+      url: fresh.url,
+      title: fresh.title,
+      description: decodeDescription(undefined),
+    });
     const inventory: Array<ArticleBoundary> = [
       {
         id: ArticleId.make('c'.repeat(64)),
@@ -868,7 +857,7 @@ it.effect(
     return provide(
       Effect.gen(function* () {
         yield* TestClock.setTime(nowMillis);
-        yield* refreshSubscription(alice, id);
+        yield* refreshFeed(alice, id);
         expect(created[0]?.map((item) => item.title)).toEqual([
           'Repeated',
           'Fresh',
@@ -876,14 +865,19 @@ it.effect(
         expect(created[0]?.[0]?.publishedAt).toEqual(
           at('2026-01-20T00:00:00.000Z')
         );
-        expect(retained[0]).toEqual([newestId, freshId]);
+        expect(retained[0]).toEqual([
+          newestId,
+          freshId,
+          ArticleId.make('c'.repeat(64)),
+          ArticleId.make('d'.repeat(64)),
+        ]);
       }),
       {
         settings: {
-          get: () => Effect.succeed(settingsValue(2)),
+          get: () => Effect.succeed(settingsValue(decodeRetention(100))),
         },
-        subscriptions: {
-          find: () => Effect.succeed(Option.some(subscription())),
+        feeds: {
+          find: () => Effect.succeed(Option.some(storedFeed())),
           update: () => Effect.void,
         },
         feedParser: {
@@ -907,33 +901,26 @@ it.effect(
   }
 );
 
-it.effect(
-  'reports a refresh write failure with the subscription identity',
-  () =>
-    provide(
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(refreshSubscription(alice, id));
-        expect(error._tag).toBe('SubscriptionRefreshFailed');
-        expect(error).toMatchObject({
-          id,
-          message: 'Failed to refresh subscription',
-        });
-      }),
-      {
-        settings: {
-          get: () => Effect.succeed(settingsValue(100)),
-        },
-        subscriptions: {
-          find: () => Effect.succeed(Option.some(subscription())),
-        },
-        feedParser: { parse: () => Effect.succeed(feed([])) },
-        articles: {
-          inventory: () => Effect.succeed([]),
-          retain: () =>
-            Effect.fail(
-              new ArticleRepositoryError({ message: 'retain failed' })
-            ),
-        },
-      }
-    )
+it.effect('propagates a refresh write failure', () =>
+  provide(
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(refreshFeed(alice, id));
+      expect(error._tag).toBe('ArticleRepositoryError');
+      expect(error).toMatchObject({ message: 'retain failed' });
+    }),
+    {
+      settings: {
+        get: () => Effect.succeed(settingsValue(decodeRetention(100))),
+      },
+      feeds: {
+        find: () => Effect.succeed(Option.some(storedFeed())),
+      },
+      feedParser: { parse: () => Effect.succeed(feed([])) },
+      articles: {
+        inventory: () => Effect.succeed([]),
+        retain: () =>
+          Effect.fail(new ArticleRepositoryError({ message: 'retain failed' })),
+      },
+    }
+  )
 );

@@ -4,12 +4,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
 import {
   Article,
+  ArticleContent,
   ArticleId,
   type ArticleQuery,
   ArticleRepository,
+  ArticleTitle,
   Feed,
   FeedId,
   FeedRepository,
+  NormalizedUrl,
   OwnerId,
 } from '@reader/business';
 import { Effect, Layer, Option, Schema } from 'effect';
@@ -29,6 +32,14 @@ const owner = (value: string) => Schema.decodeSync(OwnerId)(value);
 
 const dateTime = (value: string) =>
   Schema.decodeSync(Schema.DateTimeUtcFromString)(value);
+
+const normalizedUrl = Schema.decodeSync(NormalizedUrl);
+
+const changedTitle = Schema.decodeSync(ArticleTitle)('Changed');
+
+const bodyContent = Schema.decodeSync(ArticleContent)('<p>Body</p>');
+
+const emptyContent = Schema.decodeSync(ArticleContent)(undefined);
 
 const feed = (ownerId: string, url: string, updatedAt: string, id?: string) =>
   Schema.decodeSync(Feed)({
@@ -238,7 +249,7 @@ it.effect('batches feed writes with owner protection and empty no-ops', () =>
 
       const movedSecond = {
         ...retitled,
-        url: new URL('https://example.com/moved.xml'),
+        url: normalizedUrl('https://example.com/moved.xml'),
       };
       yield* subscriptions.update(alice, [
         { id: aliceSecond.id, feedPatch: { url: movedSecond.url } },
@@ -457,7 +468,11 @@ it.effect('writes atomically and preserves duplicates and read state', () =>
       ).toEqual([first.id]);
       expect(
         yield* articles.create(alice, [
-          { ...first, title: 'Changed', read: false },
+          {
+            ...first,
+            title: changedTitle,
+            read: false,
+          },
           second,
           third,
         ])
@@ -707,20 +722,20 @@ it.effect('applies partial article patches and clears extracted content', () =>
 
       expect(
         yield* articles.updateByArticleIds(alice, [item.id], {
-          extractedContent: Option.some('<p>Body</p>'),
+          extractedContent: bodyContent,
         })
       ).toEqual([item.id]);
       expect(yield* articles.find(alice, item.id)).toEqual(
         Option.some({
           ...item,
           read: true,
-          extractedContent: Option.some('<p>Body</p>'),
+          extractedContent: bodyContent,
         })
       );
 
       expect(
         yield* articles.updateByArticleIds(alice, [item.id], {
-          extractedContent: Option.none(),
+          extractedContent: emptyContent,
         })
       ).toEqual([item.id]);
       expect(yield* articles.find(alice, item.id)).toEqual(
@@ -795,15 +810,18 @@ it.effect('inventories, retains, and extracts articles', () =>
 
       expect(
         yield* articles.updateByArticleIds(alice, [later.id], {
-          extractedContent: Option.some('<p>Body</p>'),
+          extractedContent: bodyContent,
         })
       ).toEqual([later.id]);
       expect(yield* articles.find(alice, later.id)).toEqual(
-        Option.some({ ...later, extractedContent: Option.some('<p>Body</p>') })
+        Option.some({
+          ...later,
+          extractedContent: bodyContent,
+        })
       );
       expect(
         yield* articles.updateByArticleIds(alice, [missingArticleId], {
-          extractedContent: Option.some('<p>Body</p>'),
+          extractedContent: bodyContent,
         })
       ).toEqual([]);
     })

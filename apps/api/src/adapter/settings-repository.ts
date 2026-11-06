@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import {
+  type BrowserEndpoint,
   DEFAULT_RETENTION,
   type OwnerId,
-  ReaderProvider,
+  type ReaderProvider,
+  type Retention,
   Setting,
   type SettingsPatch,
   SettingsRepository,
   SettingsRepositoryError,
-  type SettingsRepositoryValue,
 } from '@reader/business';
 import { Effect, Layer, Option, Redacted, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
@@ -15,12 +16,18 @@ import { Database } from '../infrastructure/db';
 
 type Bindings = Record<string, unknown>;
 
-const StoredRow = Schema.Struct({
-  jinaKey: Schema.OptionFromOptional(Schema.String),
-  provider: Schema.OptionFromOptional(ReaderProvider),
-  browserEndpoint: Schema.OptionFromOptional(Schema.String),
-  retention: Schema.OptionFromOptional(Setting.fields.retention),
-});
+const StoredSetting = Setting.mapFields((fields) => ({
+  ...fields,
+  jinaKey: Schema.OptionFromOptional(
+    Schema.String.pipe(Schema.decodeTo(Schema.RedactedFromValue(Schema.String)))
+  ),
+  provider: fields.provider.pipe(
+    Schema.withDecodingDefaultType(Effect.succeed<ReaderProvider>('jina'))
+  ),
+  retention: fields.retention.pipe(
+    Schema.withDecodingDefaultType(Effect.succeed(DEFAULT_RETENTION))
+  ),
+}));
 
 const ownerHash = (owner: OwnerId) =>
   createHash('sha256').update(owner).digest('hex');
@@ -42,54 +49,25 @@ const query = <A, E>(
     catch: onError,
   }).pipe(Effect.map(([result]) => result));
 
-const decodeRows = (rows: unknown) =>
-  Schema.decodeUnknownEffect(Schema.Array(StoredRow))(rows).pipe(
+const decodeRow = (row: unknown) =>
+  Schema.decodeUnknownEffect(StoredSetting)(row).pipe(
     Effect.mapError(repositoryError)
   );
 
-const toJinaKey = (stored: Option.Option<string>) =>
-  Option.map(
-    Option.filter(stored, (key) => key !== ''),
-    (key) => Redacted.make(key)
-  );
-
 const load = (db: Surreal, owner: OwnerId) =>
-  query<unknown, SettingsRepositoryError>(
+  query<Array<unknown>, SettingsRepositoryError>(
     db,
-    'SELECT jinaKey, provider, browserEndpoint, retention FROM setting WHERE owner = $owner;',
+    'SELECT owner AS ownerId, jinaKey, provider, browserEndpoint, retention FROM setting WHERE owner = $owner;',
     owner,
     {},
     repositoryError
-  ).pipe(
-    Effect.flatMap(decodeRows),
-    Effect.map((rows): SettingsRepositoryValue => {
-      const row = Option.fromUndefinedOr(rows[0]);
-      const storedKey = Option.flatMap(row, (value) => value.jinaKey);
-      const endpoint = Option.map(
-        Option.flatMap(row, (value) => value.browserEndpoint),
-        (value) => value.trim()
-      );
-
-      return {
-        retention: Option.getOrElse(
-          Option.flatMap(row, (value) => value.retention),
-          () => DEFAULT_RETENTION
-        ),
-        provider: Option.getOrElse(
-          Option.flatMap(row, (value) => value.provider),
-          () => 'jina' as const
-        ),
-        jinaKey: toJinaKey(storedKey),
-        browserEndpoint: Option.filter(endpoint, (value) => value !== ''),
-      };
-    })
-  );
+  ).pipe(Effect.flatMap((rows) => decodeRow(rows[0] ?? { ownerId: owner })));
 
 type SaveBindings = {
   provider?: ReaderProvider;
   jinaKey?: string;
-  browserEndpoint?: string;
-  retention?: number;
+  browserEndpoint?: BrowserEndpoint;
+  retention?: Retention;
 };
 
 const saveSql = (settingsPatch: SettingsPatch) => {
@@ -119,7 +97,7 @@ const saveSql = (settingsPatch: SettingsPatch) => {
       onNone: () => clauses.push('browserEndpoint = NONE'),
       onSome: (value) => {
         clauses.push('browserEndpoint = $browserEndpoint');
-        bindings.browserEndpoint = value.trim();
+        bindings.browserEndpoint = value;
       },
     });
   }

@@ -2,11 +2,21 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: the scenario follows the user journey in order.
 import { expect, it } from '@effect/vitest';
 import {
+  ArticleContent,
+  ArticleDescription,
   ArticleExtractor,
   ArticleRepository,
   ArticleRepositoryError,
+  ArticleTitle,
   DocumentSantize,
+  DocumentSantizeError,
   FeedParser,
+  HtmlParser,
+  HtmlParserError,
+  NormalizedUrl,
+  OptionalTrimmedString,
+  SettingsRepository,
+  SettingsRepositoryError,
 } from '@reader/business';
 import { BrowserConcurrencyLive } from '@reader/webpage';
 import { surrealAdapter } from '@surrealdb/better-auth';
@@ -26,6 +36,7 @@ import {
   UnreadCountsSchema,
 } from '../../../web/src/lib/library-schema.ts';
 import { makeArticles } from '../../src/adapter/article-store';
+import { FeedFetcherLive } from '../../src/adapter/feed-fetcher';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 import {
   ArticleRepositoryLive,
@@ -48,6 +59,10 @@ const origin = 'http://localhost:3000';
 const publishedAt = DateTime.fromDateUnsafe(
   new Date('2026-01-01T00:00:00.000Z')
 );
+
+const decodeUrl = Schema.decodeSync(NormalizedUrl);
+
+const decodeSanitized = Schema.decodeSync(OptionalTrimmedString);
 
 type Handler = (request: Request) => Promise<Response>;
 
@@ -183,8 +198,8 @@ const subscribe = async (handler: Handler, alice: string) => {
   });
   expect(duplicate.status).toBe(409);
   expect(await json(duplicate)).toMatchObject({
-    _tag: 'SubscriptionExists',
-    message: 'Subscription already exists',
+    _tag: 'FeedExists',
+    message: 'Feed already exists',
     id: item.id,
   });
 
@@ -243,7 +258,8 @@ const verifyArticles = async (
     throw new Error('Missing seeded article');
   }
 
-  const rawFirst = pagePayload.items[0];
+  const rawFirst =
+    pagePayload.items[page.items.findIndex((item) => item.title === 'Two')];
   if (rawFirst === undefined) {
     throw new Error('Missing seeded article payload');
   }
@@ -418,10 +434,42 @@ const verifySettings = async (handler: Handler, alice: string) => {
   });
 
   expect(
+    await json<{ _tag: string; message: string }>(
+      await call(handler, 'PUT', '/api/library/settings/extraction', alice, {
+        provider: 'other',
+      })
+    )
+  ).toEqual({
+    _tag: 'InvalidProvider',
+    message: 'Choose a valid extraction provider',
+  });
+  expect(
+    await json<{ _tag: string; message: string }>(
+      await call(handler, 'PUT', '/api/library/settings/extraction', alice, {
+        provider: 'jina',
+        jinaKey: '   ',
+      })
+    )
+  ).toEqual({
+    _tag: 'InvalidKey',
+    message: 'Enter a valid Jina API key',
+  });
+  expect(
+    await json<{ _tag: string; message: string }>(
+      await call(handler, 'PUT', '/api/library/settings/extraction', alice, {
+        provider: 'browser',
+      })
+    )
+  ).toEqual({
+    _tag: 'InvalidEndpoint',
+    message: 'Enter a valid browser service address',
+  });
+
+  expect(
     (
       await call(handler, 'PUT', '/api/library/settings/extraction', alice, {
         provider: 'browser',
-        browserEndpoint: 'http://127.0.0.1:9222',
+        browserEndpoint: '  http://127.0.0.1:9222  ',
       })
     ).status
   ).toBe(200);
@@ -489,13 +537,17 @@ const verifyLibrary = async (handler: Handler) => {
 };
 
 const feedSource = Layer.mergeAll(
-  Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) =>
-      Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          new Response('<rss/>', { status: 200 })
+  FeedFetcherLive.pipe(
+    Layer.provideMerge(
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response('<rss/>', { status: 200 })
+            )
+          )
         )
       )
     )
@@ -504,35 +556,35 @@ const feedSource = Layer.mergeAll(
     parse: () =>
       Effect.succeed({
         title: 'Example feed',
-        url: new URL('https://example.com/feed.xml'),
+        url: decodeUrl('https://example.com/feed.xml'),
         description: Option.some('Daily updates'),
         articles: [
           {
-            title: 'One',
-            url: Option.some(new URL('https://example.com/one')),
-            description: Option.none(),
-            content: Option.none(),
+            title: Schema.decodeSync(ArticleTitle)('One'),
+            url: Option.some(decodeUrl('https://example.com/one')),
+            description: Schema.decodeSync(ArticleDescription)(undefined),
+            content: Schema.decodeSync(ArticleContent)('<p>One</p>'),
             publishedAt,
           },
           {
-            title: 'Two',
-            url: Option.some(new URL('https://example.com/two')),
-            description: Option.none(),
-            content: Option.none(),
+            title: Schema.decodeSync(ArticleTitle)('Two'),
+            url: Option.some(decodeUrl('https://example.com/two')),
+            description: Schema.decodeSync(ArticleDescription)(undefined),
+            content: Schema.decodeSync(ArticleContent)(undefined),
             publishedAt,
           },
           {
-            title: 'Three',
-            url: Option.some(new URL('https://example.com/three')),
-            description: Option.none(),
-            content: Option.none(),
+            title: Schema.decodeSync(ArticleTitle)('Three'),
+            url: Option.some(decodeUrl('https://example.com/three')),
+            description: Schema.decodeSync(ArticleDescription)(undefined),
+            content: Schema.decodeSync(ArticleContent)(undefined),
             publishedAt,
           },
           {
-            title: 'Four',
+            title: Schema.decodeSync(ArticleTitle)('Four'),
             url: Option.none(),
-            description: Option.none(),
-            content: Option.none(),
+            description: Schema.decodeSync(ArticleDescription)(undefined),
+            content: Schema.decodeSync(ArticleContent)(undefined),
             publishedAt,
           },
         ],
@@ -543,9 +595,9 @@ const feedSource = Layer.mergeAll(
 const articleExtractor = Layer.succeed(ArticleExtractor, {
   extract: () =>
     Effect.succeed({
-      title: 'Example article',
-      description: Option.none(),
-      content: Option.some('<p>Body</p>'),
+      title: Schema.decodeSync(ArticleTitle)('Example article'),
+      description: Schema.decodeSync(ArticleDescription)(undefined),
+      content: Schema.decodeSync(ArticleContent)('<p>Body</p>'),
       publishedAt,
     }),
 });
@@ -602,22 +654,28 @@ const failingCounts = (
 const makeHandler = (
   db: Surreal,
   options: ReturnType<typeof authOptions>,
-  articles: ArticleStore
+  articles: ArticleStore,
+  overrides: {
+    readonly parser?: Layer.Layer<HtmlParser>;
+    readonly sanitizer?: Layer.Layer<DocumentSantize>;
+    readonly settings?: Layer.Layer<SettingsRepository>;
+  } = {}
 ) => {
   const services = Layer.mergeAll(
     articles,
     FeedRepositoryLive,
-    SettingsRepositoryLive,
+    overrides.settings ?? SettingsRepositoryLive,
     feedSource,
-    Layer.succeed(DocumentSantize, {
-      sanitize: () => Effect.succeed('<p>Body</p>'),
-    }),
+    overrides.sanitizer ??
+      Layer.succeed(DocumentSantize, {
+        sanitize: () => Effect.succeed(decodeSanitized('<p>Body</p>')),
+      }),
     BrowserConcurrencyLive,
     Layer.succeed(FetchHttpClient.Fetch, () =>
       Promise.resolve(new Response('<html><body><p>Body</p></body></html>'))
     ),
     articleExtractor,
-    HtmlParserLive
+    overrides.parser ?? HtmlParserLive
   ).pipe(
     Layer.provide(
       Layer.mergeAll(Layer.succeed(Database, db), ReaderStoreConcurrencyLive)
@@ -718,4 +776,158 @@ it.effect('reports repository failures for the unified unread counts', () =>
       }),
     (db) => Effect.promise(() => db.close())
   )
+);
+
+for (const { failure, articles, overrides } of [
+  {
+    failure: 'parser',
+    articles: ArticleRepositoryLive,
+    overrides: {
+      parser: Layer.succeed(HtmlParser, {
+        parse: () =>
+          Effect.fail(new HtmlParserError({ message: 'parse failed' })),
+      }),
+    },
+  },
+  {
+    failure: 'sanitizer',
+    articles: ArticleRepositoryLive,
+    overrides: {
+      sanitizer: Layer.succeed(DocumentSantize, {
+        sanitize: () =>
+          Effect.fail(new DocumentSantizeError({ message: 'sanitize failed' })),
+      }),
+    },
+  },
+  {
+    failure: 'articles',
+    articles: Layer.mock(ArticleRepository, {
+      create: () =>
+        Effect.fail(new ArticleRepositoryError({ message: 'write failed' })),
+    }),
+    overrides: {},
+  },
+]) {
+  it.effect(`maps ${failure} failures at the library HTTP boundary`, () =>
+    Effect.acquireUseRelease(
+      openDatabase(`route-failure-${failure}`),
+      (db) =>
+        Effect.promise(async () => {
+          const options = await setupDatabase(db);
+          const { handler, dispose } = makeHandler(
+            db,
+            options,
+            articles,
+            overrides
+          );
+          try {
+            const alice = await signIn(handler, 'alice@example.com');
+            const response = await call(
+              handler,
+              'POST',
+              '/api/library/feeds',
+              alice,
+              {
+                url: 'https://example.com/feed.xml',
+              }
+            );
+            expect(response.status).toBe(422);
+            const error = await json<{ id: string }>(response);
+            expect(error).toMatchObject({
+              _tag: 'FeedImportFailed',
+              message: 'Failed to import feed articles',
+              id: expect.any(String),
+            });
+            expect(
+              await json(
+                await call(handler, 'GET', '/api/library/feeds', alice)
+              )
+            ).toMatchObject({
+              items: [{ id: error.id }],
+            });
+
+            if (failure === 'parser') {
+              const added = await call(
+                handler,
+                'POST',
+                '/api/library/articles',
+                alice,
+                {
+                  url: 'https://example.com/manual',
+                }
+              );
+              expect(added.status).toBe(422);
+              expect(await json(added)).toMatchObject({
+                _tag: 'ArticleExtractorError',
+                message: 'Unable to extract article content',
+              });
+            }
+          } finally {
+            await dispose();
+          }
+        }),
+      (db) => Effect.promise(() => db.close())
+    )
+  );
+}
+
+it.effect(
+  'maps settings repository failures to public read and save errors',
+  () =>
+    Effect.acquireUseRelease(
+      openDatabase('route-settings-failure'),
+      (db) =>
+        Effect.promise(async () => {
+          const options = await setupDatabase(db);
+          const unavailable = () =>
+            Effect.fail(
+              new SettingsRepositoryError({ message: 'database unavailable' })
+            );
+          const { handler, dispose } = makeHandler(
+            db,
+            options,
+            ArticleRepositoryLive,
+            {
+              settings: Layer.succeed(SettingsRepository, {
+                get: unavailable,
+                update: unavailable,
+              }),
+            }
+          );
+          try {
+            const alice = await signIn(handler, 'alice@example.com');
+            const read = await call(
+              handler,
+              'GET',
+              '/api/library/settings',
+              alice
+            );
+            expect(read.status).toBe(500);
+            expect(await json(read)).toMatchObject({
+              _tag: 'SettingsReadError',
+              message: 'Unable to read settings',
+            });
+            for (const [path, payload] of [
+              ['retention', { retention: 100 }],
+              ['extraction', { provider: 'jina' }],
+            ] as const) {
+              const saved = await call(
+                handler,
+                'PUT',
+                `/api/library/settings/${path}`,
+                alice,
+                payload
+              );
+              expect(saved.status).toBe(500);
+              expect(await json(saved)).toMatchObject({
+                _tag: 'SettingsSaveError',
+                message: 'Unable to save settings',
+              });
+            }
+          } finally {
+            await dispose();
+          }
+        }),
+      (db) => Effect.promise(() => db.close())
+    )
 );

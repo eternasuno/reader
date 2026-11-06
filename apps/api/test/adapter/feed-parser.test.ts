@@ -90,7 +90,7 @@ it('retains RSS items with missing or invalid URLs and resolves relative links',
   expectNoLink(linkless);
 });
 
-it('resolves relative links against the redirected feed url and drops credentialed links', () => {
+it('resolves relative links against the redirected feed url and preserves credentials', () => {
   const redirected = new URL('https://mirror.example.com/feeds/news.xml');
   const xml = `<rss version="2.0">
     <channel>
@@ -107,7 +107,7 @@ it('resolves relative links against the redirected feed url and drops credential
   </rss>`;
   const feed = parseFeed(xml, redirected, now);
   expectLink(feed.articles[0], 'https://mirror.example.com/story');
-  expectNoLink(feed.articles[1]);
+  expectLink(feed.articles[1], 'https://alice:secret@example.com/private');
 });
 
 it('uses only pubDate for RSS dates', () => {
@@ -471,3 +471,18 @@ it.effect('reports unparseable content as a FeedParserError', () =>
     });
   }).pipe(Effect.provide(FeedParserLive))
 );
+
+it('normalizes article URLs and metadata before returning parsed entries', () => {
+  const feed = parseFeed(
+    `<rss version="2.0"><channel><title>News</title><item>
+    <title>  </title><link>/story?UTM_Source=tracker&amp;keep=1</link>
+    <description>  Summary  </description>
+  </item></channel></rss>`,
+    base,
+    now
+  );
+  const [entry] = feed.articles;
+  expect(entry?.title).toBe('Untitled');
+  expectLink(entry, 'https://example.com/story?keep=1');
+  expectDescription(entry, 'Summary');
+});

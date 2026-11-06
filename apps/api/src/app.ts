@@ -4,6 +4,7 @@ import { Effect, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
 import { ArticleExtractorLive } from './adapter/article-extractor';
 import { DocumentSantizeLive } from './adapter/document-santize';
+import { FeedFetcherLive } from './adapter/feed-fetcher';
 import { FeedParserLive } from './adapter/feed-parser';
 import { HtmlParserLive } from './adapter/html-parser';
 import { ReaderStoreLive } from './adapter/reader-store';
@@ -13,13 +14,17 @@ import { FeedHttpClientLive } from './infrastructure/feed-http-client';
 import { authRoutes } from './routes/auth';
 import { libraryRoutes } from './routes/library';
 
+const FeedFetcherLayer = FeedFetcherLive.pipe(
+  Layer.provideMerge(FeedHttpClientLive)
+);
+
 export const LibraryServicesLive = Layer.mergeAll(
   ReaderStoreLive,
   SettingsRepositoryLive,
   ArticleExtractorLive,
   BrowserConcurrencyLive,
   HtmlParserLive,
-  FeedHttpClientLive,
+  FeedFetcherLayer,
   FeedParserLive,
   DocumentSantizeLive,
   HttpFetchLive

@@ -57,31 +57,26 @@ export const webpageFetchError = () =>
 export const articleExtractError = () =>
   failure('ArticleExtractorError', 'Unable to extract article content');
 
-export const subscriptionUrlInvalid = () =>
-  failure('SubscriptionUrlInvalid', 'Subscription URL must use HTTP or HTTPS');
+export const feedUrlInvalid = () =>
+  failure('FeedUrlInvalid', 'Feed URL must use HTTP or HTTPS');
 
-export const subscriptionExists = (error: { readonly id: string }) =>
+export const feedExists = (error: { readonly id: string }) =>
+  identifiedFailure('FeedExists', 'Feed already exists', error.id);
+
+export const feedNotFound = () => failure('FeedNotFound', 'Feed not found');
+
+export const feedImportFailed = (error: { readonly id: string }) =>
   identifiedFailure(
-    'SubscriptionExists',
-    'Subscription already exists',
+    'FeedImportFailed',
+    'Failed to import feed articles',
     error.id
   );
 
-export const subscriptionNotFound = () =>
-  failure('SubscriptionNotFound', 'Subscription not found');
+export const fetchFeedError = () =>
+  failure('FetchFeedError', 'Unable to fetch the feed');
 
-export const subscriptionImportFailed = (error: { readonly id: string }) =>
-  identifiedFailure(
-    'SubscriptionImportFailed',
-    'Failed to import subscription articles',
-    error.id
-  );
-
-export const fetchSubscriptionError = () =>
-  failure('FetchSubscriptionError', 'Unable to fetch the subscription feed');
-
-export const parseSubscriptionError = () =>
-  failure('FeedParserError', 'Unable to parse the subscription feed');
+export const parseFeedError = () =>
+  failure('FeedParserError', 'Unable to parse the feed');
 
 export const feedRepositoryError = () =>
   failure('FeedRepositoryError', 'Unable to access feeds');

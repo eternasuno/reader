@@ -1,13 +1,15 @@
 import { expect, it } from '@effect/vitest';
 import {
+  BrowserEndpoint,
   OwnerId,
+  Retention,
   SettingsRepository,
   SettingsRepositoryError,
   WebpageFetcher,
   WebpageFetcherLayer,
 } from '@reader/business';
 import { BrowserConcurrency, BrowserConcurrencyLive } from '@reader/webpage';
-import { Effect, Layer, Option, Redacted, Semaphore } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema, Semaphore } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { vi } from 'vitest';
 import { webpageFetcherForOwner } from '../../src/adapter/webpage-fetcher';
@@ -24,6 +26,13 @@ const alice = OwnerId.make('alice');
 
 const bob = OwnerId.make('bob');
 
+const retention = Schema.decodeSync(Retention);
+
+const browserEndpoint = Schema.decodeSync(BrowserEndpoint);
+
+const discoveryFailure = () =>
+  Promise.resolve(new Response(null, { status: 500 }));
+
 it.effect('selects each owner key when building a Jina layer', () => {
   const headers: Array<string> = [];
   const calls: Array<string> = [];
@@ -32,8 +41,9 @@ it.effect('selects each owner key when building a Jina layer', () => {
       calls.push(`get:${owner}`);
 
       return Effect.succeed({
+        ownerId: owner,
         provider: 'jina',
-        retention: 100,
+        retention: retention(100),
         jinaKey: Option.some(Redacted.make(`${owner}-secret`)),
         browserEndpoint: Option.none(),
       });
@@ -97,16 +107,15 @@ it.effect('shares browser concurrency across owners', () => {
   const settings = Layer.mock(SettingsRepository, {
     get: (owner) =>
       Effect.succeed({
+        ownerId: owner,
         provider: 'browser',
-        retention: 100,
+        retention: retention(100),
         jinaKey: Option.none(),
-        browserEndpoint: Option.some(
-          owner === alice
-            ? ' ftp://127.0.0.1:1 '
-            : 'http://user:pass@127.0.0.1:9222'
-        ),
+        browserEndpoint: Option.some(browserEndpoint('http://127.0.0.1:9222')),
       }),
   });
+
+  vi.stubGlobal('fetch', discoveryFailure);
 
   return Effect.gen(function* () {
     for (const owner of [alice, bob]) {
@@ -122,11 +131,14 @@ it.effect('shares browser concurrency across owners', () => {
           }).pipe(Effect.provide(layer));
         }).pipe(Effect.provide(configured))
       );
-      expect(error.message).toBe('Invalid browser service address');
+      expect(error.message).toBe('Browser extraction failed');
     }
 
     expect(permits).toEqual([1, 1]);
-  }).pipe(Effect.provide(Layer.merge(settings, concurrency)));
+  }).pipe(
+    Effect.provide(Layer.merge(settings, concurrency)),
+    Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals()))
+  );
 });
 
 it.effect(

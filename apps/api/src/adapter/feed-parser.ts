@@ -1,10 +1,12 @@
 import {
+  ArticleTitle,
   FeedParser,
   FeedParserError,
-  type ParsedArticle,
+  NormalizedUrl,
+  ParsedArticle,
   type ParsedFeed,
 } from '@reader/business';
-import { DateTime, Effect, Layer, Match, Option } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 import { type AnyFeed, parseFeed as parseSyndication } from 'feedsmith';
 
 const MAX_TITLE_LENGTH = 500;
@@ -169,22 +171,16 @@ const rawEntries = (parsed: AnyFeed): ReadonlyArray<RawEntry> =>
     Match.exhaustive
   );
 
-const toUrl = (value: string | undefined, sourceUrl: URL): URL | undefined => {
+const toUrl = (
+  value: string | undefined,
+  sourceUrl: URL
+): string | undefined => {
   if (value === undefined || value.trim() === '') {
     return undefined;
   }
 
   try {
-    const url = new URL(value, sourceUrl);
-    if (
-      (url.protocol !== 'http:' && url.protocol !== 'https:') ||
-      url.username !== '' ||
-      url.password !== ''
-    ) {
-      return undefined;
-    }
-
-    return url;
+    return new URL(value, sourceUrl).href;
   } catch {
     return undefined;
   }
@@ -199,7 +195,9 @@ const toPublishedAt = (value: string | undefined) => {
 };
 
 const cleanTitle = (title: string | undefined) =>
-  title?.trim().slice(0, MAX_TITLE_LENGTH) || 'Untitled';
+  Schema.decodeSync(ArticleTitle)(
+    (title ?? '').trim().slice(0, MAX_TITLE_LENGTH)
+  );
 
 const toEntry = (
   item: RawEntry,
@@ -213,9 +211,14 @@ const toEntry = (
   return {
     title: cleanTitle(item.title),
     publishedAt: toPublishedAt(item.date) ?? now,
-    url: Option.fromUndefinedOr(url),
-    description: Option.fromUndefinedOr(description),
-    content: Option.fromUndefinedOr(content),
+    url:
+      url === undefined
+        ? Option.none()
+        : Schema.decodeOption(NormalizedUrl)(url),
+    description: Schema.decodeSync(ParsedArticle.fields.description)(
+      description
+    ),
+    content: Schema.decodeSync(ParsedArticle.fields.content)(content),
   };
 };
 
@@ -254,7 +257,7 @@ export const parseFeed = (
 
   return {
     title: feedTitle(parsed),
-    url: sourceUrl,
+    url: Schema.decodeSync(NormalizedUrl)(sourceUrl.href),
     description,
     articles: feedEntries(parsed, sourceUrl, now),
   };

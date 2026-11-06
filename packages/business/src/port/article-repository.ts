@@ -6,8 +6,10 @@ import {
   Schema,
   Struct,
 } from 'effect';
-import { Article, type ArticleId } from '../entity/article';
+import { Article, type ArticleFilter, type ArticleId } from '../entity/article';
 import { FeedId, type OwnerId } from '../entity/object-value';
+
+export { ArticleFilter } from '../entity/article';
 
 export class ArticleRepositoryError extends Data.TaggedError(
   'ArticleRepositoryError'
@@ -17,10 +19,6 @@ export type ArticleBoundary = {
   readonly publishedAt: string;
   readonly id: ArticleId;
 };
-
-export const ArticleFilter = Schema.Literals(['all', 'unread', 'read']);
-
-export type ArticleFilter = typeof ArticleFilter.Type;
 
 export type ArticleQuery = {
   readonly filter: ArticleFilter;

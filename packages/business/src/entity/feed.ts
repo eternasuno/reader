@@ -1,10 +1,10 @@
 import { Schema } from 'effect';
-import { FeedId, OwnerId } from './object-value';
+import { FeedId, NormalizedUrl, OwnerId } from './object-value';
 
 export const Feed = Schema.Struct({
   id: FeedId,
   ownerId: OwnerId,
-  url: Schema.URLFromString,
+  url: NormalizedUrl,
   title: Schema.String,
   updatedAt: Schema.DateTimeUtcFromDate,
 });

@@ -1,10 +1,7 @@
 import { Effect, Option } from 'effect';
 import type { Article, ArticleId } from '../entity/article';
-import type { FeedId, OwnerId } from '../entity/object-value';
-import {
-  ArticleExtractor,
-  ArticleExtractorError,
-} from '../port/article-extractor';
+import type { FeedId, NormalizedUrl, OwnerId } from '../entity/object-value';
+import { ArticleExtractor } from '../port/article-extractor';
 import { ArticleRepository } from '../port/article-repository';
 import { HtmlParser } from '../port/html-parser';
 import { WebpageFetcher, WebpageFetcherLayer } from '../port/webpage-fetcher';
@@ -15,9 +12,8 @@ import {
   ArticleNotInFeed,
   ArticleNotLater,
   DuplicateArticle,
-  InvalidArticleUrl,
 } from './article-errors';
-import { articleId, normalizeUrl } from './identity';
+import { articleId } from './identity';
 
 export {
   ArticleEmptyContent,
@@ -29,6 +25,7 @@ export {
   InvalidArticleUrl,
   InvalidCursor,
 } from './article-errors';
+
 export {
   ArticlePage,
   listFeedArticles,
@@ -36,8 +33,6 @@ export {
   refreshFeedArticles,
   refreshLaterArticles,
 } from './article-list';
-
-const UNTITLED = 'Untitled';
 
 const fetchAndExtract = (sourceUrl: URL) =>
   Effect.gen(function* () {
@@ -48,215 +43,170 @@ const fetchAndExtract = (sourceUrl: URL) =>
       return yield* fetcher.fetch(sourceUrl.href);
     }).pipe(Effect.provide(fetcherLayer));
     const parser = yield* HtmlParser;
-    const document = yield* parser.parse(html, sourceUrl).pipe(
-      Effect.mapError(
-        () =>
-          new ArticleExtractorError({
-            message:
-              'Unable to extract article content; open the original page',
-          })
-      )
-    );
+    const document = yield* parser.parse(html, sourceUrl);
     const extractor = yield* ArticleExtractor;
     const extracted = yield* extractor.extract(document);
-    const content = Option.getOrUndefined(extracted.content);
-    if (content === undefined || content.trim() === '') {
+    if (Option.isNone(extracted.content)) {
       return yield* new ArticleEmptyContent({
         message: 'Article content is empty',
       });
     }
 
-    return {
-      ...extracted,
-      title: extracted.title.trim() || UNTITLED,
-      content,
-    };
+    return extracted;
   }).pipe(Effect.scoped);
 
-export const getArticle = Effect.fn('articles.get')(function* (
-  owner: OwnerId,
-  id: ArticleId
-) {
-  const articles = yield* ArticleRepository;
+export const getArticle = (owner: OwnerId, id: ArticleId) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
 
-  return yield* articles.find(owner, id);
-});
-
-export const addArticle = Effect.fn('articles.add')(function* (
-  owner: OwnerId,
-  value: string
-) {
-  const url = yield* Effect.try({
-    try: () => normalizeUrl(value),
-    catch: () =>
-      new InvalidArticleUrl({ message: 'Article URL must use HTTP or HTTPS' }),
+    return yield* articles.find(owner, id);
   });
-  const extracted = yield* fetchAndExtract(url);
-  const article: Article = {
-    id: articleId(
-      owner,
-      undefined,
-      url,
-      extracted.title,
-      Option.getOrUndefined(extracted.description)
-    ),
-    ownerId: owner,
-    feedId: Option.none(),
-    url: Option.some(url),
-    title: extracted.title,
-    description: extracted.description,
-    content: Option.some(extracted.content),
-    extractedContent: Option.some(extracted.content),
-    publishedAt: extracted.publishedAt,
-    read: false,
-  };
-  const articles = yield* ArticleRepository;
-  const created = yield* articles.create(owner, [article]);
-  if (created.length === 0) {
-    return yield* new DuplicateArticle({
-      id: article.id,
-      message: 'Article already exists',
-    });
-  }
 
-  return { item: article };
-});
+export const addArticle = (owner: OwnerId, url: NormalizedUrl) =>
+  Effect.gen(function* () {
+    const extracted = yield* fetchAndExtract(url);
+    const article: Article = {
+      id: articleId({
+        ownerId: owner,
+        feedId: Option.none(),
+        url: Option.some(url),
+        title: extracted.title,
+        description: extracted.description,
+      }),
+      ownerId: owner,
+      feedId: Option.none(),
+      url: Option.some(url),
+      title: extracted.title,
+      description: extracted.description,
+      content: extracted.content,
+      extractedContent: extracted.content,
+      publishedAt: extracted.publishedAt,
+      read: false,
+    };
+    const articles = yield* ArticleRepository;
+    const created = yield* articles.create(owner, [article]);
+    if (created.length === 0) {
+      return yield* new DuplicateArticle({
+        id: article.id,
+        message: 'Article already exists',
+      });
+    }
 
-export const saveArticle = Effect.fn('articles.save')(function* (
-  owner: OwnerId,
-  id: ArticleId
-) {
-  const articles = yield* ArticleRepository;
-  const found = yield* articles.find(owner, id);
-  if (Option.isNone(found)) {
-    return yield* new ArticleNotFound({ message: 'Article not found' });
-  }
-
-  const source = found.value;
-  if (Option.isNone(source.feedId)) {
-    return yield* new ArticleNotInFeed({
-      message: 'Article is not part of a subscription',
-    });
-  }
-
-  const copy: Article = {
-    id: articleId(
-      owner,
-      undefined,
-      Option.getOrUndefined(source.url),
-      source.title,
-      Option.getOrUndefined(source.description)
-    ),
-    ownerId: owner,
-    feedId: Option.none(),
-    url: source.url,
-    title: source.title,
-    description: source.description,
-    content: source.content,
-    extractedContent: source.extractedContent,
-    publishedAt: source.publishedAt,
-    read: false,
-  };
-  const created = yield* articles.create(owner, [copy]);
-  if (created.length === 0) {
-    return yield* new DuplicateArticle({
-      id: copy.id,
-      message: 'Article is already in later reading',
-    });
-  }
-
-  return { item: copy };
-});
-
-export const extractArticle = Effect.fn('articles.extract')(function* (
-  owner: OwnerId,
-  id: ArticleId
-) {
-  const articles = yield* ArticleRepository;
-  const found = yield* articles.find(owner, id);
-  if (Option.isNone(found)) {
-    return yield* new ArticleNotFound({ message: 'Article not found' });
-  }
-
-  const article = found.value;
-  if (Option.isSome(article.extractedContent)) {
-    return { item: article };
-  }
-
-  if (Option.isNone(article.url)) {
-    return yield* new ArticleMissingUrl({
-      message: 'Article has no source URL',
-    });
-  }
-
-  const extracted = yield* fetchAndExtract(article.url.value);
-  const updated = yield* articles.updateByArticleIds(owner, [id], {
-    extractedContent: Option.some(extracted.content),
+    return article;
   });
-  if (updated.length === 0) {
-    return yield* new ArticleNotFound({ message: 'Article not found' });
-  }
 
-  return {
-    item: { ...article, extractedContent: Option.some(extracted.content) },
-  };
-});
+export const saveArticle = (owner: OwnerId, id: ArticleId) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
+    const found = yield* articles.find(owner, id);
+    if (Option.isNone(found)) {
+      return yield* new ArticleNotFound({ message: 'Article not found' });
+    }
 
-export const markArticle = Effect.fn('articles.mark')(function* (
-  owner: OwnerId,
-  id: ArticleId,
-  read: boolean
-) {
-  const articles = yield* ArticleRepository;
-  yield* articles.updateByArticleIds(owner, [id], { read });
+    const source = found.value;
+    if (Option.isNone(source.feedId)) {
+      return yield* new ArticleNotInFeed({
+        message: 'Article is not part of a feed',
+      });
+    }
 
-  return { ok: true as const };
-});
+    const copy: Article = {
+      id: articleId({
+        ownerId: owner,
+        feedId: Option.none(),
+        url: source.url,
+        title: source.title,
+        description: source.description,
+      }),
+      ownerId: owner,
+      feedId: Option.none(),
+      url: source.url,
+      title: source.title,
+      description: source.description,
+      content: source.content,
+      extractedContent: source.extractedContent,
+      publishedAt: source.publishedAt,
+      read: false,
+    };
+    const created = yield* articles.create(owner, [copy]);
+    if (created.length === 0) {
+      return yield* new DuplicateArticle({
+        id: copy.id,
+        message: 'Article is already in later reading',
+      });
+    }
 
-export const markLaterRead = Effect.fn('articles.markLater')(function* (
-  owner: OwnerId
-) {
-  const articles = yield* ArticleRepository;
-  yield* articles.updateLater(owner, { read: true });
+    return copy;
+  });
 
-  return { ok: true as const };
-});
+export const extractArticle = (owner: OwnerId, id: ArticleId) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
+    const found = yield* articles.find(owner, id);
+    if (Option.isNone(found)) {
+      return yield* new ArticleNotFound({ message: 'Article not found' });
+    }
 
-export const markFeedsRead = Effect.fn('articles.markFeeds')(function* (
-  owner: OwnerId,
-  ids: ReadonlyArray<FeedId>
-) {
-  const articles = yield* ArticleRepository;
-  yield* articles.updateFeeds(owner, Option.some(ids), { read: true });
+    const article = found.value;
+    if (Option.isSome(article.extractedContent)) {
+      return article;
+    }
 
-  return { ok: true as const };
-});
+    if (Option.isNone(article.url)) {
+      return yield* new ArticleMissingUrl({
+        message: 'Article has no source URL',
+      });
+    }
 
-export const markArticlesRead = Effect.fn('articles.markArticles')(function* (
+    const extracted = yield* fetchAndExtract(article.url.value);
+    const updated = yield* articles.updateByArticleIds(owner, [id], {
+      extractedContent: extracted.content,
+    });
+    if (updated.length === 0) {
+      return yield* new ArticleNotFound({ message: 'Article not found' });
+    }
+
+    return { ...article, extractedContent: extracted.content };
+  });
+
+export const markArticle = (owner: OwnerId, id: ArticleId, read: boolean) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
+    yield* articles.updateByArticleIds(owner, [id], { read });
+  });
+
+export const markLaterRead = (owner: OwnerId) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
+    yield* articles.updateLater(owner, { read: true });
+  });
+
+export const markFeedsRead = (owner: OwnerId, ids: ReadonlyArray<FeedId>) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
+    yield* articles.updateFeeds(owner, Option.some(ids), { read: true });
+  });
+
+export const markArticlesRead = (
   owner: OwnerId,
   ids: ReadonlyArray<ArticleId>
-) {
-  const articles = yield* ArticleRepository;
-  yield* articles.updateByArticleIds(owner, ids, { read: true });
+) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
+    yield* articles.updateByArticleIds(owner, ids, { read: true });
+  });
 
-  return { ok: true as const };
-});
+export const removeArticle = (owner: OwnerId, id: ArticleId) =>
+  Effect.gen(function* () {
+    const articles = yield* ArticleRepository;
+    const found = yield* articles.find(owner, id);
+    if (Option.isSome(found) && Option.isSome(found.value.feedId)) {
+      return yield* new ArticleNotLater({
+        message: 'Feed articles cannot be removed directly',
+      });
+    }
 
-export const removeArticle = Effect.fn('articles.remove')(function* (
-  owner: OwnerId,
-  id: ArticleId
-) {
-  const articles = yield* ArticleRepository;
-  const found = yield* articles.find(owner, id);
-  if (Option.isSome(found) && Option.isSome(found.value.feedId)) {
-    return yield* new ArticleNotLater({
-      message: 'Subscription articles cannot be removed directly',
-    });
-  }
-
-  if (Option.isSome(found)) {
-    yield* articles.removeLater(owner, [id]);
-  }
-
-  return { ok: true as const };
-});
+    if (Option.isSome(found)) {
+      yield* articles.removeLater(owner, [id]);
+    }
+  });

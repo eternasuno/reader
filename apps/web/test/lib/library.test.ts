@@ -308,14 +308,14 @@ describe('library error tags', () => {
 
   it('keeps the existing feed id for a duplicate subscription', async () => {
     const { client } = makeClient(
-      json({ _tag: 'SubscriptionExists', message: 'Exists', id: 'f1' }, 409)
+      json({ _tag: 'FeedExists', message: 'Exists', id: 'f1' }, 409)
     );
     const error = await failure(
       client.subscribe('https://example.com/feed.xml')
     );
 
     expect(error).toMatchObject({
-      tag: 'SubscriptionExists',
+      tag: 'FeedExists',
       id: 'f1',
       message: '该订阅已存在',
     });

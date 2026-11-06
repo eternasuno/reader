@@ -8,12 +8,6 @@ export class SettingsRepositoryError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
-export const SettingsRepositoryValue = Setting.mapFields(
-  Struct.omit(['ownerId'])
-);
-
-export type SettingsRepositoryValue = typeof SettingsRepositoryValue.Type;
-
 export const SettingsPatch = Setting.mapFields((fields) =>
   Struct.map(
     Struct.pick(fields, [
@@ -31,7 +25,7 @@ export type SettingsPatch = typeof SettingsPatch.Type;
 export type ISettingsRepository = {
   readonly get: (
     owner: OwnerId
-  ) => Effect.Effect<SettingsRepositoryValue, SettingsRepositoryError>;
+  ) => Effect.Effect<Setting, SettingsRepositoryError>;
   readonly update: (
     owner: OwnerId,
     settingsPatch: SettingsPatch

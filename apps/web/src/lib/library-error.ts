@@ -13,11 +13,11 @@ export type LibraryErrorTag =
   | 'SettingsRepositoryError'
   | 'WebpageFetcherError'
   | 'ArticleExtractorError'
-  | 'SubscriptionUrlInvalid'
-  | 'SubscriptionExists'
-  | 'SubscriptionNotFound'
-  | 'SubscriptionImportFailed'
-  | 'FetchSubscriptionError'
+  | 'FeedUrlInvalid'
+  | 'FeedExists'
+  | 'FeedNotFound'
+  | 'FeedImportFailed'
+  | 'FetchFeedError'
   | 'FeedParserError'
   | 'FeedRepositoryError'
   | 'RequestFailed'
@@ -39,11 +39,11 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   SettingsRepositoryError: '正文提取设置暂时不可用，请稍后重试',
   WebpageFetcherError: '网页抓取失败，请稍后重试',
   ArticleExtractorError: '正文提取失败，请稍后重试',
-  SubscriptionUrlInvalid: '请输入有效的订阅地址',
-  SubscriptionExists: '该订阅已存在',
-  SubscriptionNotFound: '订阅不存在，可能已被删除',
-  SubscriptionImportFailed: '订阅文章导入失败，请稍后重试',
-  FetchSubscriptionError: '无法获取订阅内容，请稍后重试',
+  FeedUrlInvalid: '请输入有效的订阅地址',
+  FeedExists: '该订阅已存在',
+  FeedNotFound: '订阅不存在，可能已被删除',
+  FeedImportFailed: '订阅文章导入失败，请稍后重试',
+  FetchFeedError: '无法获取订阅内容，请稍后重试',
   FeedParserError: '无法解析订阅源，请确认地址正确',
   FeedRepositoryError: '暂时无法访问订阅，请稍后重试',
   RequestFailed: '请求失败，请稍后重试',

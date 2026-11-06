@@ -28,7 +28,7 @@ const subscribeFailure = async (
   store: LibraryStore,
   error: unknown
 ): Promise<boolean> => {
-  if (error instanceof LibraryError && error.tag === 'SubscriptionExists') {
+  if (error instanceof LibraryError && error.tag === 'FeedExists') {
     store.notify('success', '该订阅已存在');
     if (error.id !== undefined) {
       await reloadFeed(store, error.id);
@@ -37,7 +37,7 @@ const subscribeFailure = async (
     return true;
   }
 
-  const kept = errorFeedId(error, 'SubscriptionImportFailed');
+  const kept = errorFeedId(error, 'FeedImportFailed');
   if (kept !== undefined) {
     store.notify('error', libraryErrorMessage(error));
     await reloadFeed(store, kept);

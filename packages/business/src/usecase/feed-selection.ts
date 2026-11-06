@@ -1,6 +1,15 @@
 import { DateTime, Effect, Option } from 'effect';
-import type { ArticleId } from '../entity/article';
-import type { FeedId, OwnerId } from '../entity/object-value';
+import {
+  type ArticleId,
+  articleContent,
+  articleDescription,
+} from '../entity/article';
+import {
+  type FeedId,
+  type OptionalTrimmedString,
+  type OwnerId,
+  optionalTrimmedString,
+} from '../entity/object-value';
 import {
   type ArticleBoundary,
   ArticleRepository,
@@ -10,7 +19,7 @@ import type { ParsedArticle } from '../port/feed-parser';
 import { HtmlParser } from '../port/html-parser';
 import { articleId } from './identity';
 
-export const SUBSCRIPTION_INITIAL_IMPORT = 30;
+const FEED_INITIAL_IMPORT = 30;
 
 const MAX_CONTENT_LENGTH = 100_000;
 
@@ -34,13 +43,13 @@ const newCandidate = (
   entry: ParsedArticle,
   order: number
 ): Candidate => ({
-  id: articleId(
+  id: articleId({
     ownerId,
-    id,
-    Option.getOrUndefined(entry.url),
-    entry.title,
-    Option.getOrUndefined(entry.description)
-  ),
+    feedId: Option.some(id),
+    url: entry.url,
+    title: entry.title,
+    description: entry.description,
+  }),
   publishedAtIso: DateTime.formatIso(entry.publishedAt),
   existing: false,
   order,
@@ -91,7 +100,7 @@ export const initialSelection = (
 
       return true;
     })
-    .slice(0, SUBSCRIPTION_INITIAL_IMPORT);
+    .slice(0, FEED_INITIAL_IMPORT);
 };
 
 export const refreshSelection = (
@@ -127,14 +136,13 @@ const isRetained = (candidate: Candidate): candidate is RetainedArticle =>
 const sanitizeDocument = (document: Document) =>
   Effect.gen(function* () {
     const processor = yield* DocumentSantize;
-    const processed = yield* processor.sanitize(document);
 
-    return processed === '' ? Option.none<string>() : Option.some(processed);
+    return yield* processor.sanitize(document);
   });
 
-const processHtml = (value: Option.Option<string>, url: Option.Option<URL>) =>
+const processHtml = (value: OptionalTrimmedString, url: Option.Option<URL>) =>
   Option.match(value, {
-    onNone: () => Effect.succeed(Option.none<string>()),
+    onNone: () => Effect.succeed(optionalTrimmedString(Option.none())),
     onSome: (html) =>
       Effect.gen(function* () {
         const parser = yield* HtmlParser;
@@ -165,9 +173,9 @@ const buildArticle = (
       publishedAt: candidate.publishedAt,
       read: false,
       url: entry.url,
-      description,
-      content,
-      extractedContent: Option.none(),
+      description: articleDescription(description),
+      content: articleContent(content),
+      extractedContent: articleContent(optionalTrimmedString(Option.none())),
     };
   });
 

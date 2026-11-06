@@ -80,7 +80,7 @@ it.effect('retains escaped plain text literally after DOM sanitization', () =>
       ],
     });
     const content =
-      Option.getOrUndefined(
+      Option.getOrUndefined<string>(
         parseFeed(json, base, now).articles[0]?.content ?? Option.none()
       ) ?? '';
     const parser = yield* HtmlParser;
@@ -88,6 +88,6 @@ it.effect('retains escaped plain text literally after DOM sanitization', () =>
     const document = yield* parser.parse(content, base);
     const html = yield* processor.sanitize(document);
 
-    expect(html).toBe('&lt;title&gt; &amp;copy; &amp; more');
+    expect(html).toEqual(Option.some('&lt;title&gt; &amp;copy; &amp; more'));
   }).pipe(Effect.scoped, Effect.provide(Live))
 );
