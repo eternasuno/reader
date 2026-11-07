@@ -44,7 +44,10 @@ describe('library open', () => {
 
     expect(opened?.id).toBe('a');
     expect(model.state().selected?.title).toBe('Article a');
-    expect(client.markRead).toHaveBeenCalledWith('a', true);
+    expect(client.markRead).toHaveBeenCalledWith(
+      { id: 'a', feedId: undefined },
+      true
+    );
     expect(model.state().items[0]?.read).toBe(true);
   });
 
@@ -64,10 +67,11 @@ describe('library open', () => {
     expect(reopened?.id).toBe('a');
     expect(model.state().selected?.id).toBe('a');
     expect(model.state().items[0]?.read).toBe(true);
+    const ref = { id: 'a', feedId: 'f1' };
     expect(client.markRead.mock.calls).toEqual([
-      ['a', true],
-      ['a', false],
-      ['a', true],
+      [ref, true],
+      [ref, false],
+      [ref, true],
     ]);
   });
 

@@ -1,14 +1,23 @@
-import { ArticleRepository, FeedRepository } from '@reader/business';
+import {
+  FeedItemRepository,
+  FeedRepository,
+  SavedPageRepository,
+} from '@reader/business';
 import { Context, Effect, Layer, Semaphore } from 'effect';
 import { Database } from '../infrastructure/db';
-import { makeArticles } from './article-store';
+import { makeFeedItems } from './feed-item-store';
+import { makeSavedPages } from './saved-page-store';
 import { makeSubscriptions } from './subscription-store';
 
 export const readerStoreSchema = `
-DEFINE TABLE IF NOT EXISTS article SCHEMALESS;
-DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE article TYPE datetime;
-DEFINE INDEX IF NOT EXISTS article_owner_feed ON article FIELDS owner, feedId;
-DEFINE INDEX IF NOT EXISTS article_owner_feed_published ON article FIELDS owner, feedId, publishedAt;
+DEFINE TABLE IF NOT EXISTS feed_item SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE feed_item TYPE datetime;
+DEFINE INDEX IF NOT EXISTS feed_item_feed ON feed_item FIELDS feedId;
+DEFINE INDEX IF NOT EXISTS feed_item_feed_published ON feed_item FIELDS feedId, publishedAt;
+DEFINE TABLE IF NOT EXISTS saved_page SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE saved_page TYPE datetime;
+DEFINE INDEX IF NOT EXISTS saved_page_owner ON saved_page FIELDS owner;
+DEFINE INDEX IF NOT EXISTS saved_page_owner_published ON saved_page FIELDS owner, publishedAt;
 DEFINE TABLE IF NOT EXISTS feed SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS updatedAt ON TABLE feed TYPE datetime;
 DEFINE INDEX IF NOT EXISTS reader_feed_owner ON feed FIELDS owner;
@@ -26,13 +35,23 @@ export const ReaderStoreConcurrencyLive = Layer.effect(
   Semaphore.make(1)
 );
 
-export const ArticleRepositoryLive = Layer.effect(
-  ArticleRepository,
+export const FeedItemRepositoryLive = Layer.effect(
+  FeedItemRepository,
   Effect.gen(function* () {
     const db = yield* Database;
     const lock = yield* ReaderStoreConcurrency;
 
-    return makeArticles(db, lock);
+    return makeFeedItems(db, lock);
+  })
+);
+
+export const SavedPageRepositoryLive = Layer.effect(
+  SavedPageRepository,
+  Effect.gen(function* () {
+    const db = yield* Database;
+    const lock = yield* ReaderStoreConcurrency;
+
+    return makeSavedPages(db, lock);
   })
 );
 
@@ -46,7 +65,8 @@ export const FeedRepositoryLive = Layer.effect(
   })
 );
 
-export const ReaderStoreLive = Layer.merge(
-  ArticleRepositoryLive,
+export const ReaderStoreLive = Layer.mergeAll(
+  FeedItemRepositoryLive,
+  SavedPageRepositoryLive,
   FeedRepositoryLive
 ).pipe(Layer.provide(ReaderStoreConcurrencyLive));

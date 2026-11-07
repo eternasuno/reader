@@ -3,7 +3,7 @@ import { HttpFetchLive } from '@reader/webpage/http';
 import { Effect, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
 import { ArticleExtractorLive } from './adapter/article-extractor';
-import { DocumentSantizeLive } from './adapter/document-santize';
+import { DocumentSanitizerLive } from './adapter/document-sanitizer';
 import { FeedFetcherLive } from './adapter/feed-fetcher';
 import { FeedParserLive } from './adapter/feed-parser';
 import { HtmlParserLive } from './adapter/html-parser';
@@ -26,7 +26,7 @@ export const LibraryServicesLive = Layer.mergeAll(
   HtmlParserLive,
   FeedFetcherLayer,
   FeedParserLive,
-  DocumentSantizeLive,
+  DocumentSanitizerLive,
   HttpFetchLive
 );
 

@@ -1,18 +1,21 @@
 import {
+  type Article,
   type Feed,
   type LibraryClient,
   LibraryError,
+  refOf,
   type Scope,
 } from '../lib/library';
 
 const ID_CHUNK = 5000;
 
-export const markArticleIds = async (
+export const markArticleRefs = async (
   client: LibraryClient,
-  ids: ReadonlyArray<string>
+  articles: ReadonlyArray<Article>
 ) => {
-  for (let index = 0; index < ids.length; index += ID_CHUNK) {
-    await client.markArticles(ids.slice(index, index + ID_CHUNK));
+  const refs = articles.map(refOf);
+  for (let index = 0; index < refs.length; index += ID_CHUNK) {
+    await client.markArticles(refs.slice(index, index + ID_CHUNK));
   }
 };
 
@@ -35,7 +38,7 @@ export const markScope = async (
   client: LibraryClient,
   scope: Scope,
   feedIds: ReadonlyArray<string> | undefined,
-  ids: ReadonlyArray<string>
+  articles: ReadonlyArray<Article>
 ) => {
   if (scope.kind === 'later') {
     await client.markLater();
@@ -49,11 +52,11 @@ export const markScope = async (
     return;
   }
 
-  await markArticleIds(client, ids);
+  await markArticleRefs(client, articles);
 };
 
 export const duplicateId = (error: unknown): string | undefined =>
-  error instanceof LibraryError && error.tag === 'DuplicateArticle'
+  error instanceof LibraryError && error.tag === 'DuplicateSavedPage'
     ? error.id
     : undefined;
 

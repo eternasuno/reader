@@ -1,48 +1,48 @@
 import { expect, it } from '@effect/vitest';
 import { Option, Schema } from 'effect';
-import { ArticleId } from '../../src/entity/article';
-import { FeedId, OwnerId } from '../../src/entity/object-value';
+import { FeedId } from '../../src/entity/feed/feed';
+import { OwnerId } from '../../src/entity/object-value/owner-id';
 import {
-  type ArticleCursor,
-  ArticleCursorFromString,
-  encodeArticleCursor,
-} from '../../src/port/article-pagination';
+  encodeListCursor,
+  type ListCursor,
+  ListCursorFromString,
+} from '../../src/usecase/list-cursor';
 
 const publishedAt = Schema.decodeSync(Schema.DateTimeUtcFromString)(
   '2026-01-01T00:00:00.000Z'
 );
 
-const cursor = (overrides: Partial<ArticleCursor> = {}): ArticleCursor => ({
+const cursor = (overrides: Partial<ListCursor> = {}): ListCursor => ({
   version: 1,
   owner: OwnerId.make('alice'),
-  scope: { kind: 'later' },
+  scope: { kind: 'saved' },
   filter: 'all',
-  after: { publishedAt, id: ArticleId.make('a'.repeat(64)) },
+  after: { publishedAt, id: 'a'.repeat(64) },
   ...overrides,
 });
 
-const encode = Schema.encodeSync(ArticleCursorFromString);
+const encode = Schema.encodeSync(ListCursorFromString);
 
-const decode = Schema.decodeSync(ArticleCursorFromString);
+const decode = Schema.decodeSync(ListCursorFromString);
 
 it('keeps the emitted cursor an opaque base64 JSON payload', () => {
-  const wire = encodeArticleCursor({
+  const wire = encodeListCursor({
     owner: OwnerId.make('alice'),
-    scope: { kind: 'later' },
+    scope: { kind: 'saved' },
     filter: 'all',
     publishedAt,
-    id: ArticleId.make('a'.repeat(64)),
+    id: 'a'.repeat(64),
   });
 
   expect(JSON.parse(atob(wire))).toEqual({
     version: 1,
     owner: 'alice',
-    scope: { kind: 'later' },
+    scope: { kind: 'saved' },
     filter: 'all',
     after: { publishedAt: '2026-01-01T00:00:00.000Z', id: 'a'.repeat(64) },
   });
 
-  const feedWire = encodeArticleCursor({
+  const feedWire = encodeListCursor({
     owner: OwnerId.make('alice'),
     scope: {
       kind: 'feeds',
@@ -50,7 +50,7 @@ it('keeps the emitted cursor an opaque base64 JSON payload', () => {
     },
     filter: 'unread',
     publishedAt,
-    id: ArticleId.make('a'.repeat(64)),
+    id: 'a'.repeat(64),
   });
 
   expect(JSON.parse(atob(feedWire))).toEqual({
@@ -62,8 +62,8 @@ it('keeps the emitted cursor an opaque base64 JSON payload', () => {
   });
 });
 
-it('round-trips later and feed-scoped cursors', () => {
-  const later = encode(cursor());
+it('round-trips saved and feed-scoped cursors', () => {
+  const saved = encode(cursor());
   const allFeeds = encode(
     cursor({ scope: { kind: 'feeds', feedId: Option.none() } })
   );
@@ -77,7 +77,7 @@ it('round-trips later and feed-scoped cursors', () => {
     })
   );
 
-  for (const wire of [later, allFeeds, oneFeed]) {
+  for (const wire of [saved, allFeeds, oneFeed]) {
     expect(encode(decode(wire))).toBe(wire);
   }
 });

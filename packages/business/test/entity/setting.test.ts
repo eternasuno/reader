@@ -1,16 +1,14 @@
 import { Option, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'vitest';
-import { OwnerId } from '../../src/entity/object-value';
+import { OwnerId } from '../../src/entity/object-value/owner-id';
+import { Retention } from '../../src/entity/setting/feed';
 import {
   BrowserEndpoint,
   FetcherProvider,
-  type FetcherSetting,
-  fetcherEndpoint,
   JinaKey,
-  Retention,
-  Setting,
-} from '../../src/entity/setting';
-import { JinaKeyInput } from '../../src/port/setting-input';
+} from '../../src/entity/setting/fetcher';
+import { Setting } from '../../src/entity/setting/setting';
+import { JinaKeyInput } from '../../src/usecase/setting-input';
 
 const decodeRetention = Schema.decodeUnknownResult(Retention);
 
@@ -123,114 +121,67 @@ it('encodes browser endpoints back to strings', () => {
   ).toBe('ws://10.0.0.5:9222/');
 });
 
-it('decodes a jina fetcher setting without a key', () => {
-  const decodeSetting = Schema.decodeUnknownResult(Setting);
-  const ownerId = OwnerId.make('alice');
+const ownerId = OwnerId.make('alice');
+
+const decodeSetting = Schema.decodeUnknownResult(Setting);
+
+const settingOf = (fetcher: object, feed: object = {}) => ({
+  ownerId,
+  feed,
+  fetcher,
+});
+
+it('decodes a setting with defaults for every group', () => {
   const setting = Result.getOrThrow(
-    decodeSetting({
-      ownerId,
-      retention: 100,
-      fetcher: { provider: 'jina' },
-    })
+    decodeSetting(settingOf({ jina: {}, browser: {} }))
   );
 
   expect(setting.ownerId).toBe(ownerId);
-  expect(setting.retention).toBe(100);
-  expect(setting.fetcher.provider).toBe('jina');
-  expect(setting.fetcher).toMatchObject({
-    key: Option.none(),
-    endpoint: Option.none(),
+  expect(setting.feed.retention).toBe(100);
+  expect(setting.fetcher).toEqual({
+    provider: 'jina',
+    jina: { key: Option.none() },
+    browser: { endpoint: Option.none() },
   });
 });
 
-it('decodes a browser fetcher setting with an endpoint', () => {
-  const decodeSetting = Schema.decodeUnknownResult(Setting);
-  const ownerId = OwnerId.make('alice');
-  const setting = Result.getOrThrow(
-    decodeSetting({
-      ownerId,
-      retention: 100,
-      fetcher: {
+it('keeps jina and browser configuration side by side', () => {
+  const { fetcher } = Result.getOrThrow(
+    decodeSetting(
+      settingOf({
         provider: 'browser',
-        endpoint: 'http://127.0.0.1:9222',
-      },
-    })
+        jina: { key: ' secret ' },
+        browser: { endpoint: 'http://127.0.0.1:9222' },
+      })
+    )
   );
 
-  expect(setting.fetcher.provider).toBe('browser');
-  expect(Option.getOrThrow(fetcherEndpoint(setting.fetcher)).href).toBe(
+  expect(fetcher.provider).toBe('browser');
+  expect(Redacted.value(Option.getOrThrow(fetcher.jina.key))).toBe('secret');
+  expect(Option.getOrThrow(fetcher.browser.endpoint).href).toBe(
     'http://127.0.0.1:9222/'
   );
 });
 
-it('keeps an optional endpoint for the jina fetcher provider', () => {
-  const decodeFetcher = Schema.decodeUnknownResult(Setting);
-  const ownerId = OwnerId.make('alice');
-  const decodeFetcherSetting = (fetcher: object): FetcherSetting =>
-    Result.getOrThrow(decodeFetcher({ ownerId, retention: 100, fetcher }))
-      .fetcher;
-
-  expect(fetcherEndpoint(decodeFetcherSetting({ provider: 'jina' }))).toEqual(
-    Option.none()
+it('maps blank optional fetcher fields to none', () => {
+  const { fetcher } = Result.getOrThrow(
+    decodeSetting(settingOf({ jina: { key: '  ' }, browser: { endpoint: '' } }))
   );
-  expect(
-    Option.getOrThrow(
-      fetcherEndpoint(
-        decodeFetcherSetting({
-          provider: 'jina',
-          endpoint: 'ws://10.0.0.5:9222',
-        })
-      )
-    ).href
-  ).toBe('ws://10.0.0.5:9222/');
-  expect(
-    isInvalid(
-      decodeFetcher({
-        ownerId,
-        retention: 100,
-        fetcher: { provider: 'jina', endpoint: 'not-a-url' },
-      })
-    )
-  ).toBe(true);
+
+  expect(fetcher.jina.key).toEqual(Option.none());
+  expect(fetcher.browser.endpoint).toEqual(Option.none());
 });
 
-it('requires an endpoint for the browser fetcher provider', () => {
-  const decodeSetting = Schema.decodeUnknownResult(Setting);
-  const ownerId = OwnerId.make('alice');
-
-  for (const fetcher of [
-    { provider: 'browser' },
-    { provider: 'browser', endpoint: '' },
-    { provider: 'browser', endpoint: '   ' },
-    { provider: 'browser', endpoint: 'not-a-url' },
-  ]) {
-    expect(isInvalid(decodeSetting({ ownerId, retention: 100, fetcher }))).toBe(
-      true
-    );
-  }
+it('rejects an invalid browser endpoint', () => {
+  expect(
+    isInvalid(
+      decodeSetting(settingOf({ jina: {}, browser: { endpoint: 'not-a-url' } }))
+    )
+  ).toBe(true);
 });
 
 it('defaults the fetcher provider to jina', () => {
   expect(Result.getOrThrow(decodeProvider(undefined))).toBe('jina');
   expect(Result.getOrThrow(decodeProvider('browser'))).toBe('browser');
   expect(isInvalid(decodeProvider('other'))).toBe(true);
-});
-
-it('maps blank optional fetcher fields to none', () => {
-  const decodeSetting = Schema.decodeUnknownResult(Setting);
-  const ownerId = OwnerId.make('alice');
-  const decodeFetcherOf = (fetcher: object) =>
-    Result.getOrThrow(decodeSetting({ ownerId, retention: 100, fetcher }))
-      .fetcher;
-
-  expect(
-    decodeFetcherOf({ provider: 'jina', key: '  ', endpoint: '' })
-  ).toEqual({ provider: 'jina', key: Option.none(), endpoint: Option.none() });
-  expect(
-    decodeFetcherOf({
-      provider: 'browser',
-      key: '',
-      endpoint: 'ws://10.0.0.5:9222',
-    })
-  ).toMatchObject({ provider: 'browser', key: Option.none() });
 });

@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto';
 import { Option, Struct } from 'effect';
-import { Article, ArticleId } from '../entity/article';
-import {
-  FeedId,
-  type NormalizedUrl,
-  type OwnerId,
-} from '../entity/object-value';
+import { FeedId } from '../entity/feed/feed';
+import { FeedItem, FeedItemId } from '../entity/feed/feed-item';
+import type { NormalizedUrl } from '../entity/object-value/normalized-url';
+import type { OwnerId } from '../entity/object-value/owner-id';
+import { SavedPage, SavedPageId } from '../entity/saved-page/saved-page';
 
 const sha256 = (values: ReadonlyArray<unknown>): string =>
   createHash('sha256').update(JSON.stringify(values)).digest('hex');
@@ -13,24 +12,47 @@ const sha256 = (values: ReadonlyArray<unknown>): string =>
 export const feedId = (ownerId: OwnerId, url: NormalizedUrl): FeedId =>
   FeedId.make(sha256([ownerId, url.href]));
 
-export const ArticleIdentity = Article.mapFields(
-  Struct.pick(['ownerId', 'feedId', 'url', 'title', 'description'])
+const FeedItemIdentity = FeedItem.mapFields(
+  Struct.pick(['feedId', 'url', 'title', 'description'])
 );
 
-export type ArticleIdentity = typeof ArticleIdentity.Type;
+type FeedItemIdentity = typeof FeedItemIdentity.Type;
 
-export const articleId = ({
-  ownerId,
+const urlText = (url: Option.Option<NormalizedUrl>): string =>
+  Option.match(url, { onNone: () => '', onSome: (value) => value.href });
+
+export const feedItemId = ({
   feedId,
   url,
   title,
   description,
-}: ArticleIdentity): ArticleId =>
-  ArticleId.make(
+}: FeedItemIdentity): FeedItemId =>
+  FeedItemId.make(
     sha256([
-      Option.match(url, { onNone: () => '', onSome: (url) => url.href }),
+      urlText(url),
       title,
       Option.getOrElse(description, () => ''),
-      Option.getOrElse(feedId, () => ownerId),
+      feedId,
+    ])
+  );
+
+const SavedPageIdentity = SavedPage.mapFields(
+  Struct.pick(['ownerId', 'url', 'title', 'description'])
+);
+
+type SavedPageIdentity = typeof SavedPageIdentity.Type;
+
+export const savedPageId = ({
+  ownerId,
+  url,
+  title,
+  description,
+}: SavedPageIdentity): SavedPageId =>
+  SavedPageId.make(
+    sha256([
+      urlText(url),
+      title,
+      Option.getOrElse(description, () => ''),
+      ownerId,
     ])
   );

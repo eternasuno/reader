@@ -1,6 +1,6 @@
 import {
-  DocumentSantize,
-  DocumentSantizeError,
+  DocumentSanitizer,
+  DocumentSanitizerError,
   OptionFromOptionalNonEmpty,
 } from '@reader/business';
 import { Effect, Layer, Schema } from 'effect';
@@ -16,12 +16,12 @@ const sanitizeContent = (document: Document) => {
   return decodeContent(document.body.innerHTML);
 };
 
-export const DocumentSantizeLive = Layer.succeed(DocumentSantize, {
+export const DocumentSanitizerLive = Layer.succeed(DocumentSanitizer, {
   sanitize: (document) =>
     Effect.try({
       try: () => sanitizeContent(document),
       catch: () =>
-        new DocumentSantizeError({
+        new DocumentSanitizerError({
           message: 'Failed to sanitize article content',
         }),
     }),

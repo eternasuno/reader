@@ -1,17 +1,17 @@
 import { expect, it } from '@effect/vitest';
-import { DocumentSantize, HtmlParser } from '@reader/business';
+import { DocumentSanitizer, HtmlParser } from '@reader/business';
 import { Effect, Layer, Option } from 'effect';
-import { DocumentSantizeLive } from '../../src/adapter/document-santize';
+import { DocumentSanitizerLive } from '../../src/adapter/document-sanitizer';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 
 const articleUrl = new URL('https://example.com/posts/1');
 
-const Live = Layer.mergeAll(HtmlParserLive, DocumentSantizeLive);
+const Live = Layer.mergeAll(HtmlParserLive, DocumentSanitizerLive);
 
 it.effect('sanitizes HTML and resolves links against the article URL', () =>
   Effect.gen(function* () {
     const parser = yield* HtmlParser;
-    const processor = yield* DocumentSantize;
+    const processor = yield* DocumentSanitizer;
     const document = yield* parser.parse(
       '<p onclick="steal()">Hi <a href="/next">next</a></p><script>alert(1)</script>',
       articleUrl
@@ -31,7 +31,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const parser = yield* HtmlParser;
-      const processor = yield* DocumentSantize;
+      const processor = yield* DocumentSanitizer;
       const document = yield* parser.parse(
         '<p><a href="/next">next</a><a href="javascript:alert(1)">bad</a></p><img src="images/pic.png">'
       );
@@ -50,7 +50,7 @@ it.effect(
 it.effect('trims sanitized HTML and maps empty markup to none', () =>
   Effect.gen(function* () {
     const parser = yield* HtmlParser;
-    const processor = yield* DocumentSantize;
+    const processor = yield* DocumentSanitizer;
     const padded = yield* parser.parse('  <p>Hi</p>  ', articleUrl);
     const empty = yield* parser.parse('   ', articleUrl);
 

@@ -116,7 +116,7 @@ const removeSubscriptions = (
     ? Effect.void
     : write(
         db,
-        'BEGIN TRANSACTION; DELETE article WHERE owner = $owner AND feedId IN $ids; DELETE feed WHERE owner = $owner AND id IN $records; COMMIT TRANSACTION;',
+        'BEGIN TRANSACTION; LET $owned = SELECT VALUE feedId FROM feed WHERE owner = $owner AND id IN $records; DELETE feed_item WHERE feedId IN $owned; DELETE feed WHERE owner = $owner AND id IN $records; COMMIT TRANSACTION;',
         {
           owner,
           ids,

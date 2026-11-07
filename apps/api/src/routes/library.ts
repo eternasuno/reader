@@ -4,8 +4,9 @@ import { HttpServer } from 'effect/http';
 import { HttpApiBuilder } from 'effect/http-api';
 import { checkOrigin } from '../middleware/origin';
 import { sessionMiddleware } from '../middleware/session';
-import { articleHandlers } from './library-handlers-article';
 import { feedHandlers } from './library-handlers-feed';
+import { feedItemHandlers } from './library-handlers-feed-item';
+import { savedPageHandlers } from './library-handlers-saved-page';
 import { settingsHandlers } from './library-handlers-settings';
 
 export const libraryHandlers = HttpApiBuilder.group(
@@ -13,7 +14,8 @@ export const libraryHandlers = HttpApiBuilder.group(
   'library',
   (group) =>
     group.handleAll({
-      ...articleHandlers,
+      ...savedPageHandlers,
+      ...feedItemHandlers,
       ...feedHandlers,
       ...settingsHandlers,
     })

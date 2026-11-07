@@ -1,6 +1,7 @@
 import { Option } from 'effect';
 import { createMemo, Show } from 'solid-js';
 import type { Article, Feed } from '../../lib/library';
+import { articlePath } from '../../lib/library-path';
 import {
   EntryMeta,
   EntryReadToggle,
@@ -33,9 +34,6 @@ const entrySource = (article: Article, feeds: ReadonlyArray<Feed>): string => {
     feed?.title ?? hostOf(Option.getOrUndefined(article.url)) ?? '稍后阅读'
   );
 };
-
-const entryPath = (article: Article): string =>
-  `/read/${Option.isNone(article.feedId) ? 'link' : 'feed'}/${encodeURIComponent(article.id)}`;
 
 const openEntry = (
   event: MouseEvent,
@@ -88,7 +86,7 @@ export const LibraryEntry = (props: {
         onToggle={() => props.onToggleRead(props.article)}
       />
       <EntryTitle
-        href={entryPath(props.article)}
+        href={articlePath(props.article)}
         current={props.selected}
         onClick={(event) => openEntry(event, props.article, props.onOpen)}
       >

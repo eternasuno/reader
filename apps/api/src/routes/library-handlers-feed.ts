@@ -1,23 +1,17 @@
 import {
-  type ArticleCursor,
-  ArticleCursorFromString,
   addFeed,
   FeedFetcher,
   type FeedId,
   FeedParser,
   FeedRepository,
   feedId,
-  InvalidCursor,
-  listFeedArticles,
   NormalizedUrl,
   type OwnerId,
-  refreshFeedArticles,
 } from '@reader/business';
 import { Effect, Option, Schema } from 'effect';
 import { type HandlerRequest, withSession } from './library-contract';
 import { feedImportFailed, feedNotFound } from './library-errors';
 import {
-  feedPageFailure,
   feedRepositoryFailure,
   previewFailure,
   subscribeFailure,
@@ -46,7 +40,7 @@ const preview = (url: NormalizedUrl) =>
         url,
         title: feed.title,
         description: feed.description,
-        titles: feed.articles.map((article) => article.title),
+        titles: feed.items.map((item) => item.title),
       },
     };
   });
@@ -63,55 +57,6 @@ const removeSubscription = (owner: OwnerId, id: FeedId) =>
 
     return { ok: true as const };
   });
-
-const invalidCursor = () =>
-  new InvalidCursor({ message: 'Invalid pagination cursor' });
-
-const cursor = (value: string): Effect.Effect<ArticleCursor, InvalidCursor> =>
-  Schema.decodeEffect(ArticleCursorFromString)(value).pipe(
-    Effect.mapError(invalidCursor)
-  );
-
-const optionalCursor = (
-  value: Option.Option<string>
-): Effect.Effect<ArticleCursor | undefined, InvalidCursor> =>
-  Option.match(value, {
-    onNone: () => Effect.succeed(undefined),
-    onSome: cursor,
-  });
-
-const feedArticles = ({ query }: HandlerRequest<'feedArticles'>) =>
-  withSession((owner) =>
-    Effect.gen(function* () {
-      const after = yield* optionalCursor(query.cursor);
-      const through = yield* optionalCursor(query.through);
-
-      return yield* listFeedArticles(
-        owner,
-        Option.getOrUndefined(query.feedId),
-        Option.getOrElse(query.filter, () => 'all'),
-        after,
-        through
-      );
-    })
-  ).pipe(Effect.catchTags(feedPageFailure));
-
-const feedRefresh = ({ query }: HandlerRequest<'feedRefresh'>) =>
-  withSession((owner) =>
-    Effect.gen(function* () {
-      const through = yield* cursor(query.through);
-
-      return yield* Effect.map(
-        refreshFeedArticles(
-          owner,
-          Option.getOrUndefined(query.feedId),
-          Option.getOrElse(query.filter, () => 'all'),
-          through
-        ),
-        (items) => ({ items })
-      );
-    })
-  ).pipe(Effect.catchTags(feedPageFailure));
 
 const feeds = () =>
   withSession((owner) =>
@@ -133,9 +78,9 @@ const subscribeHandler = ({ payload }: HandlerRequest<'subscribe'>) =>
       addFeed(owner, url).pipe(
         Effect.map((item) => ({ item })),
         Effect.catchTags({
-          ArticleRepositoryError: () =>
+          FeedItemRepositoryError: () =>
             feedImportFailed({ id: feedId(owner, url) }),
-          DocumentSantizeError: () =>
+          DocumentSanitizerError: () =>
             feedImportFailed({ id: feedId(owner, url) }),
           HtmlParserError: () => feedImportFailed({ id: feedId(owner, url) }),
         })
@@ -149,8 +94,6 @@ const unsubscribe = ({ payload }: HandlerRequest<'unsubscribe'>) =>
   );
 
 export const feedHandlers = {
-  feedArticles,
-  feedRefresh,
   feeds,
   preview: previewHandler,
   subscribe: subscribeHandler,

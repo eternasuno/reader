@@ -21,32 +21,29 @@ const identifiedFailure = <Tag extends string>(
 export const invalidCursor = () =>
   failure('InvalidCursor', 'Invalid pagination cursor');
 
-export const articleRepositoryError = () =>
-  failure('ArticleRepositoryError', 'Unable to access articles');
+export const feedItemRepositoryError = () =>
+  failure('FeedItemRepositoryError', 'Unable to access feed items');
 
-export const invalidArticleUrl = () =>
+export const savedPageRepositoryError = () =>
+  failure('SavedPageRepositoryError', 'Unable to access saved pages');
+
+export const invalidPageUrl = () =>
   failure(
-    'InvalidArticleUrl',
-    'Article URL must use HTTP or HTTPS without credentials'
+    'InvalidPageUrl',
+    'Page URL must use HTTP or HTTPS without credentials'
   );
 
-export const articleNotFound = () =>
-  failure('ArticleNotFound', 'Article not found');
+export const feedItemNotFound = (error: { readonly id: string }) =>
+  identifiedFailure('FeedItemNotFound', 'Feed item not found', error.id);
 
-export const articleNotInFeed = () =>
-  failure('ArticleNotInFeed', 'Article does not belong to a subscription');
-
-export const articleNotLater = () =>
-  failure('ArticleNotLater', 'Subscribed articles cannot be deleted');
-
-export const articleMissingUrl = () =>
-  failure('ArticleMissingUrl', 'Article has no original URL');
+export const feedItemMissingUrl = () =>
+  failure('FeedItemMissingUrl', 'Feed item has no original URL');
 
 export const articleEmptyContent = () =>
   failure('ArticleEmptyContent', 'Extracted article content is empty');
 
-export const duplicateArticle = (error: { readonly id: string }) =>
-  identifiedFailure('DuplicateArticle', 'Article already exists', error.id);
+export const duplicateSavedPage = (error: { readonly id: string }) =>
+  identifiedFailure('DuplicateSavedPage', 'Page is already saved', error.id);
 
 export const settingsRepositoryError = () =>
   failure('SettingsRepositoryError', 'Unable to access extraction settings');

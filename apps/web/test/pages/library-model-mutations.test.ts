@@ -36,7 +36,7 @@ describe('library read marks', () => {
     expect(model.state().counts.feeds['f1']).toBe(0);
     expect(model.state().pending.has('a')).toBe(true);
 
-    mark.reject(new LibraryError('ArticleRepositoryError'));
+    mark.reject(new LibraryError('FeedItemRepositoryError'));
     await pending;
 
     expect(model.state().items[0]?.read).toBe(false);
@@ -45,7 +45,7 @@ describe('library read marks', () => {
     expect(model.state().pending.has('a')).toBe(false);
     expect(model.state().toast).toEqual({
       kind: 'error',
-      message: '暂时无法访问文章，请稍后重试',
+      message: '暂时无法访问订阅文章，请稍后重试',
     });
   });
 
@@ -71,7 +71,10 @@ describe('library read marks', () => {
 
     await model.markLoaded();
 
-    expect(client.markArticles).toHaveBeenCalledWith(['a', 'b']);
+    expect(client.markArticles).toHaveBeenCalledWith([
+      { id: 'a', feedId: 'f1' },
+      { id: 'b', feedId: undefined },
+    ]);
     expect(model.state().items.every((item) => item.read)).toBe(true);
     expect(model.state().pending.size).toBe(0);
   });
@@ -163,7 +166,7 @@ describe('library mark all', () => {
     expect(model.state().counts).toEqual(counts(0));
     expect(model.state().items.every((item) => item.read)).toBe(true);
 
-    mark.reject(new LibraryError('ArticleRepositoryError'));
+    mark.reject(new LibraryError('FeedItemRepositoryError'));
     await pending;
 
     expect(model.state().counts).toEqual(counts(0, { f1: 1 }));
@@ -184,13 +187,16 @@ describe('library add and save', () => {
   it('opens the existing article reported as a duplicate', async () => {
     const client = createStubClient();
     client.add.mockRejectedValue(
-      new LibraryError('DuplicateArticle', { id: 'dup' })
+      new LibraryError('DuplicateSavedPage', { id: 'dup' })
     );
     client.article.mockResolvedValue(article('dup'));
     const model = createLibraryModel(client);
 
     expect(await model.add('https://example.com/post')).toBe(true);
-    expect(client.article).toHaveBeenCalledWith('dup');
+    expect(client.article).toHaveBeenCalledWith({
+      id: 'dup',
+      feedId: undefined,
+    });
     expect(model.state().selected?.id).toBe('dup');
   });
 
@@ -217,7 +223,7 @@ describe('library add and save', () => {
     expect(model.state().items.map((item) => item.id)).toEqual(['b']);
     expect(model.state().pending.has('a')).toBe(true);
 
-    remove.reject(new LibraryError('ArticleNotLater'));
+    remove.reject(new LibraryError('SavedPageRepositoryError'));
     await pending;
 
     expect(model.state().items.map((item) => item.id)).toEqual(['a', 'b']);
@@ -242,7 +248,7 @@ describe('library add and save', () => {
   it('opens the existing article when save reports a duplicate', async () => {
     const client = createStubClient();
     client.save.mockRejectedValue(
-      new LibraryError('DuplicateArticle', { id: 'existing' })
+      new LibraryError('DuplicateSavedPage', { id: 'existing' })
     );
     client.article.mockResolvedValue(article('existing', { read: true }));
     const model = createLibraryModel(client);
@@ -250,7 +256,10 @@ describe('library add and save', () => {
 
     expect(await model.save(article('source'))).toBe(true);
 
-    expect(client.article).toHaveBeenCalledWith('existing');
+    expect(client.article).toHaveBeenCalledWith({
+      id: 'existing',
+      feedId: undefined,
+    });
     expect(model.state().selected?.id).toBe('existing');
   });
 });
@@ -286,7 +295,7 @@ describe('library delete selection', () => {
     client.remove.mockReturnValue(remove.promise);
 
     const pending = model.remove(article('a'));
-    remove.reject(new LibraryError('ArticleNotLater'));
+    remove.reject(new LibraryError('SavedPageRepositoryError'));
     await pending;
 
     expect(model.state().selected?.id).toBe('a');

@@ -55,7 +55,7 @@ export const toggleRead = async (
   article: Article
 ): Promise<void> => {
   const current = store.lookup(article.id) ?? article;
-  await writeRead(store, article.id, !current.read);
+  await writeRead(store, current, !current.read);
 };
 
 export const removeArticle = async (
@@ -103,7 +103,7 @@ export const saveArticle = async (
 ): Promise<boolean> => {
   const token = store.begin(article.id);
   try {
-    const saved = await store.client.save(article.id);
+    const saved = await store.client.save(article);
     store.end(article.id, token);
     store.setState((current) => upsertItem(current, saved));
     await loadCounts(store);
@@ -216,7 +216,7 @@ export const extractArticle = async (
 ): Promise<Article | undefined> => {
   const token = store.begin(article.id);
   try {
-    const item = await store.client.extract(article.id);
+    const item = await store.client.extract(article);
     store.end(article.id, token);
     store.setState((current) => upsertItem(current, item));
 

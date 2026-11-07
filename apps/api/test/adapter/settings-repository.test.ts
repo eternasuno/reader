@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
 import {
   BrowserEndpoint,
-  fetcherEndpoint,
   OwnerId,
   Retention,
   type Setting,
@@ -78,10 +77,10 @@ const selectRow = (ownerId: OwnerId) =>
   settingRows(ownerId).pipe(Effect.map((rows) => rows[0]));
 
 const plainSettings = (value: Setting) => ({
-  retention: value.retention,
+  retention: value.feed.retention,
   provider: value.fetcher.provider,
-  jinaKey: Option.map(value.fetcher.key, (key) => Redacted.value(key)),
-  browserEndpoint: fetcherEndpoint(value.fetcher),
+  jinaKey: Option.map(value.fetcher.jina.key, (key) => Redacted.value(key)),
+  browserEndpoint: value.fetcher.browser.endpoint,
 });
 
 const corruptField = (
@@ -120,16 +119,19 @@ const setStoredEndpoint = (ownerId: OwnerId, value: string) =>
     );
   });
 
+const optionalKey = (key?: string) =>
+  key === undefined ? Option.none() : Option.some(Redacted.make(key));
+
 const browserFetcher = (key?: string) => ({
   provider: 'browser' as const,
-  key: key === undefined ? Option.none() : Option.some(Redacted.make(key)),
-  endpoint: browserEndpoint('http://127.0.0.1:9222'),
+  jina: { key: optionalKey(key) },
+  browser: { endpoint: optionalEndpoint('http://127.0.0.1:9222') },
 });
 
 const jinaFetcher = (key?: string, endpoint?: string) => ({
   provider: 'jina' as const,
-  key: key === undefined ? Option.none() : Option.some(Redacted.make(key)),
-  endpoint: optionalEndpoint(endpoint),
+  jina: { key: optionalKey(key) },
+  browser: { endpoint: optionalEndpoint(endpoint) },
 });
 
 it.effect('defaults unknown owners to anonymous jina settings', () =>
@@ -164,7 +166,7 @@ it.effect('saves the fetcher and retention in one row', () =>
       const settings = yield* SettingsRepository;
 
       yield* settings.update(owner, {
-        retention: retention(60),
+        feed: { retention: retention(60) },
         fetcher: browserFetcher('alice-secret'),
       });
 
@@ -191,8 +193,8 @@ it.effect('trims stored browser endpoints while loading', () =>
       yield* settings.update(owner, { fetcher: browserFetcher() });
       yield* setStoredEndpoint(owner, '  ws://127.0.0.1:9222  ');
 
-      expect((yield* settings.get(owner)).fetcher.endpoint).toEqual(
-        browserEndpoint('ws://127.0.0.1:9222')
+      expect((yield* settings.get(owner)).fetcher.browser.endpoint).toEqual(
+        Option.some(browserEndpoint('ws://127.0.0.1:9222'))
       );
     })
   )
@@ -217,7 +219,7 @@ it.effect('defaults legacy rows without a provider to jina', () =>
   )
 );
 
-it.effect('loads browser rows without an endpoint as jina fetchers', () =>
+it.effect('keeps a browser provider row that has no endpoint', () =>
   runWithSettings(
     Effect.gen(function* () {
       const settings = yield* SettingsRepository;
@@ -229,7 +231,7 @@ it.effect('loads browser rows without an endpoint as jina fetchers', () =>
 
       expect(plainSettings(yield* settings.get(owner))).toEqual({
         retention: 100,
-        provider: 'jina',
+        provider: 'browser',
         jinaKey: Option.some('alice-secret'),
         browserEndpoint: Option.none(),
       });
@@ -245,7 +247,7 @@ it.effect('keeps the fetcher when only retention changes', () =>
       yield* settings.update(owner, {
         fetcher: browserFetcher('alice-secret'),
       });
-      yield* settings.update(owner, { retention: retention(42) });
+      yield* settings.update(owner, { feed: { retention: retention(42) } });
 
       expect(plainSettings(yield* settings.get(owner))).toEqual({
         retention: retention(42),
@@ -327,7 +329,9 @@ it.effect('isolates settings between owners', () =>
         jinaKey: Option.none(),
         browserEndpoint: optionalEndpoint('http://127.0.0.1:9222'),
       });
-      expect((yield* settings.get(other)).fetcher.key).toEqual(Option.none());
+      expect((yield* settings.get(other)).fetcher.jina.key).toEqual(
+        Option.none()
+      );
 
       yield* settings.update(owner, { fetcher: jinaFetcher() });
       expect(plainSettings(yield* settings.get(other))).toEqual({
@@ -383,6 +387,43 @@ it.effect('reports unreadable keys and endpoints as repository failures', () =>
       yield* corruptField(owner, 'browserEndpoint');
       const settingsError = yield* Effect.flip(settings.get(owner));
       expect(settingsError._tag).toBe('SettingsRepositoryError');
+    })
+  )
+);
+
+it.effect('patches the provider, key, and endpoint independently', () =>
+  runWithSettings(
+    Effect.gen(function* () {
+      const settings = yield* SettingsRepository;
+
+      yield* settings.update(owner, {
+        fetcher: browserFetcher('alice-secret'),
+      });
+      yield* settings.update(owner, { fetcher: { provider: 'jina' } });
+
+      expect(plainSettings(yield* settings.get(owner))).toEqual({
+        retention: 100,
+        provider: 'jina',
+        jinaKey: Option.some('alice-secret'),
+        browserEndpoint: optionalEndpoint('http://127.0.0.1:9222'),
+      });
+
+      yield* settings.update(owner, {
+        fetcher: { jina: { key: Option.none() } },
+      });
+
+      expect(plainSettings(yield* settings.get(owner))).toEqual({
+        retention: 100,
+        provider: 'jina',
+        jinaKey: Option.none(),
+        browserEndpoint: optionalEndpoint('http://127.0.0.1:9222'),
+      });
+
+      yield* settings.update(owner, {
+        fetcher: { browser: { endpoint: Option.none() } },
+      });
+
+      expect((yield* selectRow(owner))?.browserEndpoint).toBeUndefined();
     })
   )
 );

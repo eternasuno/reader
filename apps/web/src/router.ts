@@ -10,7 +10,8 @@ export const routes: Array<RouteDefinition> = [
     children: [
       { path: '/', component: EmptyRoute },
       { path: '/rss', component: EmptyRoute },
-      { path: '/read/:kind/:key', component: EmptyRoute },
+      { path: '/read/link/:key', component: EmptyRoute },
+      { path: '/read/feed/:feedId/:key', component: EmptyRoute },
     ],
   },
   { path: '/settings', component: lazy(() => import('./pages/settings')) },

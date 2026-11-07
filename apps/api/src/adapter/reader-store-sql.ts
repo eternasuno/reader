@@ -1,16 +1,21 @@
 import {
-  Article,
-  ArticleRepositoryError,
   Feed,
+  FeedItem,
+  FeedItemRepositoryError,
   FeedRepositoryError,
+  SavedPage,
+  SavedPageRepositoryError,
 } from '@reader/business';
 import { Effect, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
 
 export type Bindings = Record<string, unknown>;
 
-export const articleRepositoryError = () =>
-  new ArticleRepositoryError({ message: 'Failed to access articles' });
+export const feedItemRepositoryError = () =>
+  new FeedItemRepositoryError({ message: 'Failed to access feed items' });
+
+export const savedPageRepositoryError = () =>
+  new SavedPageRepositoryError({ message: 'Failed to access saved pages' });
 
 export const feedRepositoryError = () =>
   new FeedRepositoryError({ message: 'Failed to access feeds' });
@@ -78,8 +83,11 @@ export const read = <A, E>(
     )
   );
 
-export const articles = (db: Surreal, sql: string, bindings: Bindings) =>
-  read(db, sql, bindings, Schema.Array(Article), articleRepositoryError);
+export const feedItems = (db: Surreal, sql: string, bindings: Bindings) =>
+  read(db, sql, bindings, Schema.Array(FeedItem), feedItemRepositoryError);
+
+export const savedPages = (db: Surreal, sql: string, bindings: Bindings) =>
+  read(db, sql, bindings, Schema.Array(SavedPage), savedPageRepositoryError);
 
 export const subscriptions = (db: Surreal, sql: string, bindings: Bindings) =>
   read(db, sql, bindings, Schema.Array(Feed), feedRepositoryError);

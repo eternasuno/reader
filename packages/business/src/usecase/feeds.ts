@@ -1,31 +1,19 @@
-import { Data, DateTime, Effect, Option } from 'effect';
-import type { Feed } from '../entity/feed';
-import type { FeedId, NormalizedUrl, OwnerId } from '../entity/object-value';
-import { ArticleRepository } from '../port/article-repository';
+import { DateTime, Effect, Option } from 'effect';
+import type { Feed, FeedId } from '../entity/feed/feed';
+import type { NormalizedUrl } from '../entity/object-value/normalized-url';
+import type { OwnerId } from '../entity/object-value/owner-id';
 import { FeedFetcher } from '../port/feed-fetcher';
+import { FeedItemRepository } from '../port/feed-item-repository';
 import { FeedParser } from '../port/feed-parser';
 import { FeedRepository } from '../port/feed-repository';
 import { SettingsRepository } from '../port/settings-repository';
+import { FeedExists, FeedNotFound } from './feed-errors';
 import {
-  importArticles,
+  importFeedItems,
   initialSelection,
   refreshSelection,
 } from './feed-selection';
 import { feedId } from './identity';
-
-export class FeedUrlInvalid extends Data.TaggedError('FeedUrlInvalid')<{
-  readonly message: string;
-}> {}
-
-export class FeedExists extends Data.TaggedError('FeedExists')<{
-  readonly message: string;
-  readonly id: FeedId;
-}> {}
-
-export class FeedNotFound extends Data.TaggedError('FeedNotFound')<{
-  readonly message: string;
-  readonly id: FeedId;
-}> {}
 
 const existsError = (id: FeedId) =>
   new FeedExists({ message: 'Feed already exists', id });
@@ -54,11 +42,7 @@ export const addFeed = (ownerId: OwnerId, url: NormalizedUrl) =>
       return yield* existsError(id);
     }
 
-    yield* importArticles(
-      ownerId,
-      id,
-      initialSelection(ownerId, id, parsed.articles)
-    );
+    yield* importFeedItems(id, initialSelection(id, parsed.items));
 
     return feed;
   });
@@ -68,7 +52,7 @@ const readRetention = (ownerId: OwnerId) =>
     const settings = yield* SettingsRepository;
     const value = yield* settings.get(ownerId);
 
-    return value.retention;
+    return value.feed.retention;
   });
 
 export const refreshFeed = (ownerId: OwnerId, id: FeedId) =>
@@ -87,21 +71,18 @@ export const refreshFeed = (ownerId: OwnerId, id: FeedId) =>
     const document = yield* feedFetcher.fetch(existing.value.url);
     const parsed = yield* feedParser.parse(document.content, document.url);
     const now = yield* DateTime.now;
-    const articles = yield* ArticleRepository;
-    const inventory = yield* articles.inventory(ownerId, id);
+    const feedItems = yield* FeedItemRepository;
+    const inventory = yield* feedItems.inventory(id);
     const retention = yield* readRetention(ownerId);
-    const retained = refreshSelection(
-      ownerId,
-      id,
-      inventory,
-      parsed.articles
-    ).slice(0, retention);
+    const retained = refreshSelection(id, inventory, parsed.items).slice(
+      0,
+      retention
+    );
     const feedPatch = { title: parsed.title, updatedAt: now };
 
-    yield* importArticles(ownerId, id, retained).pipe(
+    yield* importFeedItems(id, retained).pipe(
       Effect.andThen(
-        articles.retain(
-          ownerId,
+        feedItems.retain(
           id,
           retained.map((candidate) => candidate.id)
         )

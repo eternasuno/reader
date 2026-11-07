@@ -120,15 +120,19 @@ Deploy the frontend and `/api` on the same public origin. In development and pre
 - `/login` — email/password login
 - `/` — protected later reading list; redirects to `/login` when no session exists
 - `/rss` — subscribed Feed articles
-- `/read/:kind/:key` — selected article
+- `/read/link/:key` — selected saved page
+- `/read/feed/:feedId/:key` — selected feed item
 - `/settings` — account, article retention, and extraction settings
 
 ### API
 
 - `/api/auth/*` — Better Auth protocol
-- `/api/library/*` — authenticated articles, subscriptions, unread counts, and reading settings
+- `/api/library/saved-pages*` — authenticated read-later pages: list, refresh, add a link, save a feed item, mark read, remove
+- `/api/library/feeds*` — subscriptions and their feed items; item operations carry `feedId`
+- `/api/library/unread` — saved and per-feed unread counts
+- `/api/library/settings*` — reading and extraction settings
 
-Business storage uses the unified Article and Feed model. Existing records from the previous reading-link and feed-article model are not migrated; use a fresh database for this version. Run `pnpm db:migrate` before starting against a new persistent database.
+Business storage keeps `feed_item` (owned through its feed) and `saved_page` (owned by the user) separately. Existing records from the previous unified article model are not migrated; use a fresh database for this version. Run `pnpm db:migrate` before starting against a new persistent database.
 
 ## Production
 

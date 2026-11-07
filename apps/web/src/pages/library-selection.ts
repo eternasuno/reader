@@ -1,4 +1,9 @@
-import { type Article, libraryErrorMessage } from '../lib/library';
+import {
+  type Article,
+  type ArticleRef,
+  libraryErrorMessage,
+  refOf,
+} from '../lib/library';
 import { selectSnapshot, upsertItem } from './library-articles';
 import { duplicateId } from './library-commands';
 import type { LibraryStore } from './library-context';
@@ -19,10 +24,10 @@ const applyOpened = (store: LibraryStore, fetched: Article) => {
 const loadOpened = async (
   store: LibraryStore,
   version: number,
-  id: string
+  ref: ArticleRef
 ): Promise<OpenResponse> => {
   try {
-    const item = await store.client.article(id);
+    const item = await store.client.article(ref);
     if (version !== store.flags.openVersion()) {
       return { kind: 'stale' };
     }
@@ -50,7 +55,7 @@ const finishOpen = async (
   }
 
   if (item !== undefined && !item.read) {
-    await writeRead(store, id, true);
+    await writeRead(store, item, true);
   }
 
   return store.lookup(id) ?? item;
@@ -58,14 +63,19 @@ const finishOpen = async (
 
 export const openArticle = async (
   store: LibraryStore,
-  id: string
+  id: string,
+  feedId?: string
 ): Promise<Article | undefined> => {
   const version = store.flags.openVersion() + 1;
   store.flags.setOpenVersion(version);
   const snapshot = store.lookup(id);
   store.setState((current) => selectSnapshot(current, snapshot));
   let item = snapshot;
-  const result = await loadOpened(store, version, id);
+  const result = await loadOpened(
+    store,
+    version,
+    snapshot === undefined ? { id, feedId } : refOf(snapshot)
+  );
   if (result.kind === 'stale') {
     return store.lookup(id);
   }

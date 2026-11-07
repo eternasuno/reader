@@ -4,12 +4,13 @@ import { Option, Schema } from 'effect';
 import { describe, expect, it } from 'vitest';
 import {
   type Article,
-  ArticleSchema,
   createLibraryClient,
   type Feed,
+  FeedItemSchema,
   LibraryError,
   type Preview,
   PreviewSchema,
+  SavedPageSchema,
 } from '../../src/lib/library';
 
 type RecordedRequest = {
@@ -23,7 +24,6 @@ type RecordedRequest = {
 
 const article = (id: string, extra: Partial<Article> = {}): Article => ({
   id,
-  ownerId: 'owner',
   title: `Article ${id}`,
   publishedAt: '2026-01-01T00:00:00.000Z',
   read: false,
@@ -35,9 +35,43 @@ const article = (id: string, extra: Partial<Article> = {}): Article => ({
   ...extra,
 });
 
-/** Encodes a stored article back to the JSON shape the API returns. */
-const articleJson = (item: Article) =>
-  Schema.encodeUnknownSync(ArticleSchema)(item);
+/** A saved page as the API returns it; its content is always present. */
+const savedPageJson = (id: string, title = `Article ${id}`) =>
+  Schema.encodeUnknownSync(SavedPageSchema)({
+    id,
+    ownerId: 'owner',
+    url: Option.none(),
+    title,
+    description: Option.none(),
+    content: '<p>Body</p>',
+    publishedAt: '2026-01-01T00:00:00.000Z',
+    read: false,
+  });
+
+/** The unified article a saved page maps to in the browser. */
+const savedArticle = (id: string, title = `Article ${id}`): Article =>
+  article(id, {
+    title,
+    content: Option.some('<p>Body</p>'),
+    extractedContent: Option.some('<p>Body</p>'),
+  });
+
+/** A feed item as the API returns it. */
+const feedItemJson = (id: string, feedId: string) =>
+  Schema.encodeUnknownSync(FeedItemSchema)({
+    id,
+    feedId,
+    url: Option.none(),
+    title: `Article ${id}`,
+    description: Option.none(),
+    content: Option.none(),
+    extractedContent: Option.none(),
+    publishedAt: '2026-01-01T00:00:00.000Z',
+    read: false,
+  });
+
+const feedArticle = (id: string, feedId: string): Article =>
+  article(id, { feedId: Option.some(feedId) });
 
 const feed = (id: string): Feed => ({
   id,
@@ -96,7 +130,7 @@ describe('library list requests', () => {
   it('lists later articles with the filter and cursor', async () => {
     const { client, requests } = makeClient(
       json({
-        items: [articleJson(article('a'))],
+        items: [savedPageJson('a')],
         cursor: 'next',
         boundary: 'top',
       })
@@ -104,7 +138,7 @@ describe('library list requests', () => {
     const page = await client.list({ kind: 'later' }, 'unread', 'cursor-1');
     const request = requests[0];
 
-    expect(request?.path).toBe('/api/library/later');
+    expect(request?.path).toBe('/api/library/saved-pages');
     expect(request?.method).toBe('GET');
     expect(request?.params.get('filter')).toBe('unread');
     expect(request?.params.get('cursor')).toBe('cursor-1');
@@ -112,7 +146,7 @@ describe('library list requests', () => {
     expect(request?.credentials).toBe('include');
     expect(request?.cache).toBe('no-store');
     expect(page).toEqual({
-      items: [article('a')],
+      items: [savedArticle('a')],
       cursor: 'next',
       boundary: 'top',
     });
@@ -124,7 +158,7 @@ describe('library list requests', () => {
     expect(
       await failure(client.list({ kind: 'feeds', feedId: 'feed-1' }, 'all'))
     ).toMatchObject({ tag: 'InvalidResponse' });
-    expect(requests[0]?.path).toBe('/api/library/feeds/articles');
+    expect(requests[0]?.path).toBe('/api/library/feeds/items');
     expect(requests[0]?.params.get('feedId')).toBe('feed-1');
   });
 });
@@ -142,7 +176,7 @@ describe('library feed scope', () => {
 
   it('syncs through the stored boundary of the loaded tail', async () => {
     const { client, requests } = makeClient(
-      json({ items: [articleJson(article('new'))] })
+      json({ items: [feedItemJson('new', 'feed-1')] })
     );
     const items = await client.refresh(
       { kind: 'feeds', feedId: 'feed-1' },
@@ -150,10 +184,10 @@ describe('library feed scope', () => {
       'boundary-1'
     );
 
-    expect(requests[0]?.path).toBe('/api/library/feeds/refresh');
+    expect(requests[0]?.path).toBe('/api/library/feeds/items/refresh');
     expect(requests[0]?.params.get('through')).toBe('boundary-1');
     expect(requests[0]?.params.get('filter')).toBe('unread');
-    expect(items).toEqual([article('new')]);
+    expect(items).toEqual([feedArticle('new', 'feed-1')]);
   });
 });
 
@@ -167,7 +201,7 @@ describe('library reads', () => {
   it('reads the combined unread counts in one request', async () => {
     const { client, requests } = makeClient(
       json({
-        later: 3,
+        saved: 3,
         feedsTotal: 5,
         feeds: [
           { id: 'f1', count: 2 },
@@ -188,68 +222,135 @@ describe('library reads', () => {
 
   it('reports a failed unread counts request', async () => {
     const { client } = makeClient(() =>
-      Response.json({ _tag: 'ArticleRepositoryError' }, { status: 500 })
+      Response.json({ _tag: 'FeedItemRepositoryError' }, { status: 500 })
     );
 
     expect(await failure(client.unreadCounts())).toMatchObject({
-      tag: 'ArticleRepositoryError',
+      tag: 'FeedItemRepositoryError',
     });
   });
 
   it('rejects unread counts that omit the feed totals', async () => {
-    const { client } = makeClient(json({ later: 3, feeds: [] }));
+    const { client } = makeClient(json({ saved: 3, feeds: [] }));
 
     expect(await failure(client.unreadCounts())).toMatchObject({
       tag: 'InvalidResponse',
     });
   });
 
-  it('reads one article and reports deletion as null', async () => {
-    const found = makeClient(
-      json({ item: articleJson(article('a', { title: 'One' })) })
-    );
+  it('reads a saved page by id and reports deletion as null', async () => {
+    const found = makeClient(json({ item: savedPageJson('a', 'One') }));
     const missing = makeClient(json({ item: null }));
 
-    expect(await found.client.article('a')).toEqual(
-      article('a', { title: 'One' })
+    expect(await found.client.article({ id: 'a', feedId: undefined })).toEqual(
+      savedArticle('a', 'One')
     );
+    expect(found.requests[0]?.path).toBe('/api/library/saved-pages/item');
     expect(found.requests[0]?.params.get('id')).toBe('a');
-    expect(await missing.client.article('gone')).toBeNull();
+    expect(
+      await missing.client.article({ id: 'gone', feedId: undefined })
+    ).toBeNull();
+  });
+
+  it('reads a feed item through its feed', async () => {
+    const found = makeClient(json({ item: feedItemJson('a', 'f1') }));
+
+    expect(await found.client.article({ id: 'a', feedId: 'f1' })).toEqual(
+      feedArticle('a', 'f1')
+    );
+    expect(found.requests[0]?.path).toBe('/api/library/feeds/items/item');
+    expect(found.requests[0]?.params.get('feedId')).toBe('f1');
+    expect(found.requests[0]?.params.get('id')).toBe('a');
   });
 });
 
 describe('library article writes', () => {
-  it('sends article mutations as JSON payloads', async () => {
-    const { client, requests } = makeClient((current) =>
-      current.method === 'POST' && current.path === '/api/library/articles'
-        ? Response.json({ item: articleJson(article('a')) }, { status: 201 })
-        : Response.json({ item: articleJson(article('a')) })
-    );
+  it('sends saved page and feed item mutations as JSON payloads', async () => {
+    const { client, requests } = makeClient((current) => {
+      if (
+        current.path === '/api/library/saved-pages' &&
+        current.method === 'POST'
+      ) {
+        return Response.json({ item: savedPageJson('a') }, { status: 201 });
+      }
 
-    await client.markRead('a', true);
+      if (current.path === '/api/library/feeds/items/extract') {
+        return Response.json({ item: feedItemJson('a', 'f1') });
+      }
+
+      return Response.json({ item: savedPageJson('a') });
+    });
+    const saved = savedArticle('a');
+    const fromFeed = feedArticle('a', 'f1');
+
+    await client.markRead({ id: 'a', feedId: undefined }, true);
     expect(requests[0]).toMatchObject({
       method: 'PATCH',
-      path: '/api/library/articles',
+      path: '/api/library/saved-pages',
       body: { id: 'a', read: true },
     });
+    await client.markRead({ id: 'a', feedId: 'f1' }, false);
+    expect(requests[1]).toMatchObject({
+      method: 'PATCH',
+      path: '/api/library/feeds/items',
+      body: { feedId: 'f1', id: 'a', read: false },
+    });
     await client.markLater();
-    expect(requests[1]?.body).toEqual({});
+    expect(requests[2]).toMatchObject({
+      path: '/api/library/saved-pages/mark-all-read',
+      body: {},
+    });
     await client.markFeeds(['f1', 'f2']);
-    expect(requests[2]?.body).toEqual({ feedIds: ['f1', 'f2'] });
-    await client.markArticles(['a']);
-    expect(requests[3]?.body).toEqual({ ids: ['a'] });
+    expect(requests[3]).toMatchObject({
+      path: '/api/library/feeds/mark-read',
+      body: { feedIds: ['f1', 'f2'] },
+    });
+    await client.markArticles([
+      { id: 's1', feedId: undefined },
+      { id: 'a', feedId: 'f1' },
+      { id: 'b', feedId: 'f1' },
+      { id: 'c', feedId: 'f2' },
+    ]);
+    expect(requests.slice(4).map(({ path, body }) => ({ path, body }))).toEqual(
+      [
+        { path: '/api/library/saved-pages/mark-read', body: { ids: ['s1'] } },
+        {
+          path: '/api/library/feeds/items/mark-read',
+          body: { feedId: 'f1', ids: ['a', 'b'] },
+        },
+        {
+          path: '/api/library/feeds/items/mark-read',
+          body: { feedId: 'f2', ids: ['c'] },
+        },
+      ]
+    );
     await client.remove('a');
-    expect(requests[4]).toMatchObject({
+    expect(requests[7]).toMatchObject({
       method: 'DELETE',
-      path: '/api/library/articles',
+      path: '/api/library/saved-pages',
       body: { id: 'a' },
     });
-    expect(await client.add('https://example.com/post')).toEqual(article('a'));
-    expect(requests[5]?.body).toEqual({ url: 'https://example.com/post' });
-    expect(await client.save('a')).toEqual(article('a'));
-    expect(requests[6]?.body).toEqual({ id: 'a' });
-    expect(await client.extract('a')).toEqual(article('a'));
-    expect(requests[7]?.body).toEqual({ id: 'a' });
+    expect(await client.add('https://example.com/post')).toEqual(saved);
+    expect(requests[8]?.body).toEqual({ url: 'https://example.com/post' });
+    expect(await client.save(fromFeed)).toEqual(saved);
+    expect(requests[9]).toMatchObject({
+      path: '/api/library/saved-pages/from-feed-item',
+      body: { feedId: 'f1', id: 'a' },
+    });
+    expect(await client.extract(fromFeed)).toEqual(fromFeed);
+    expect(requests[10]).toMatchObject({
+      path: '/api/library/feeds/items/extract',
+      body: { feedId: 'f1', id: 'a' },
+    });
+  });
+
+  it('keeps saved pages as they are when saving or extracting', async () => {
+    const { client, requests } = makeClient(() => Response.json({}));
+    const saved = savedArticle('a');
+
+    expect(await client.save(saved)).toBe(saved);
+    expect(await client.extract(saved)).toBe(saved);
+    expect(requests).toEqual([]);
   });
 });
 
@@ -289,7 +390,7 @@ describe('library error tags', () => {
     const { client } = makeClient(
       json(
         {
-          _tag: 'DuplicateArticle',
+          _tag: 'DuplicateSavedPage',
           message: 'Article already exists',
           id: 'a1',
         },
@@ -300,7 +401,7 @@ describe('library error tags', () => {
 
     expect(error).toBeInstanceOf(LibraryError);
     expect(error).toMatchObject({
-      tag: 'DuplicateArticle',
+      tag: 'DuplicateSavedPage',
       id: 'a1',
       message: '该文章已在稍后阅读中',
     });

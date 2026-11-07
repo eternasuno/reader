@@ -3,32 +3,30 @@ import {
   markFeeds,
   markLater,
   markRead,
-  readArticle,
-  readArticleById,
+  readArticleByRef,
+  readFeedItem,
   readFeeds,
   readPage,
   readPreview,
   readRefresh,
+  readSavedPage,
   readSubscription,
   readUnreadCounts,
-  removeArticle,
+  refOf,
+  removeSavedPage,
   removeSubscription,
 } from './library-requests';
 import { createSend, type LibraryClientOptions } from './library-transport';
-import type { Filter, Scope } from './library-types';
+import type { Article, ArticleRef, Filter, Scope } from './library-types';
 
 export * from './library-error';
-
+export { refOf } from './library-requests';
 export * from './library-schema';
-
 export type { FetchLike, LibraryClientOptions } from './library-transport';
-
 export * from './library-types';
 
 export const createLibraryClient = (options: LibraryClientOptions = {}) => {
   const send = createSend(options);
-  const article = (path: string, body: unknown) =>
-    readArticle(send, path, body);
 
   return {
     list: (scope: Scope, filter: Filter, cursor?: string) =>
@@ -37,15 +35,34 @@ export const createLibraryClient = (options: LibraryClientOptions = {}) => {
       readRefresh(send, scope, filter, through),
     feeds: () => readFeeds(send),
     unreadCounts: () => readUnreadCounts(send),
-    article: (id: string) => readArticleById(send, id),
-    markRead: (id: string, read: boolean) => markRead(send, id, read),
+    article: (ref: ArticleRef) => readArticleByRef(send, ref),
+    markRead: (ref: ArticleRef, read: boolean) => markRead(send, ref, read),
     markLater: () => markLater(send),
     markFeeds: (feedIds: ReadonlyArray<string>) => markFeeds(send, feedIds),
-    markArticles: (ids: ReadonlyArray<string>) => markArticles(send, ids),
-    remove: (id: string) => removeArticle(send, id),
-    save: (id: string) => article('/api/library/articles/save', { id }),
-    add: (url: string) => article('/api/library/articles', { url }),
-    extract: (id: string) => article('/api/library/articles/extract', { id }),
+    markArticles: (refs: ReadonlyArray<ArticleRef>) => markArticles(send, refs),
+    remove: (id: string) => removeSavedPage(send, id),
+    save: (article: Article) => {
+      const { id, feedId } = refOf(article);
+
+      return feedId === undefined
+        ? Promise.resolve(article)
+        : readSavedPage(send, '/api/library/saved-pages/from-feed-item', {
+            feedId,
+            id,
+          });
+    },
+    add: (url: string) =>
+      readSavedPage(send, '/api/library/saved-pages', { url }),
+    extract: (article: Article) => {
+      const { id, feedId } = refOf(article);
+
+      return feedId === undefined
+        ? Promise.resolve(article)
+        : readFeedItem(send, '/api/library/feeds/items/extract', {
+            feedId,
+            id,
+          });
+    },
     preview: (url: string) => readPreview(send, url),
     subscribe: (url: string) => readSubscription(send, url),
     unsubscribe: (id: string) => removeSubscription(send, id),

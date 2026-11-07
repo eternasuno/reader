@@ -5,11 +5,11 @@ import {
   ArticleContent,
   ArticleDescription,
   ArticleExtractor,
-  ArticleRepository,
-  ArticleRepositoryError,
   ArticleTitle,
-  DocumentSantize,
-  DocumentSantizeError,
+  DocumentSanitizer,
+  DocumentSanitizerError,
+  FeedItemRepository,
+  FeedItemRepositoryError,
   FeedParser,
   HtmlParser,
   HtmlParserError,
@@ -31,19 +31,21 @@ import {
 import type { Surreal } from 'surrealdb';
 import { vi } from 'vitest';
 import {
-  ArticleItemSchema,
-  ArticlePageSchema,
+  FeedItemPageSchema,
+  SavedPagePageSchema,
+  SavedPageResponseSchema,
   UnreadCountsSchema,
 } from '../../../web/src/lib/library-schema.ts';
-import { makeArticles } from '../../src/adapter/article-store';
 import { FeedFetcherLive } from '../../src/adapter/feed-fetcher';
+import { makeFeedItems } from '../../src/adapter/feed-item-store';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 import {
-  ArticleRepositoryLive,
+  FeedItemRepositoryLive,
   FeedRepositoryLive,
   ReaderStoreConcurrency,
   ReaderStoreConcurrencyLive,
   readerStoreSchema,
+  SavedPageRepositoryLive,
 } from '../../src/adapter/reader-store';
 import { SettingsRepositoryLive } from '../../src/adapter/settings-repository';
 import { AppLive } from '../../src/app';
@@ -125,23 +127,24 @@ const readCounts = async (handler: Handler, cookie?: string) => {
   return Schema.decodeUnknownPromise(UnreadCountsSchema)(await json(response));
 };
 
-type FeedItem = { readonly id: string; readonly title: string };
+type Feed = { readonly id: string; readonly title: string };
 
-type ArticleItem = {
+type ItemSummary = {
   readonly id: string;
   readonly title: string;
   readonly read: boolean;
+  readonly content?: string;
   readonly extractedContent?: string;
 };
 
-type Page = {
-  readonly items: ReadonlyArray<ArticleItem>;
-  readonly cursor: string | null;
-  readonly boundary: string | null;
-};
+type ItemRef = { readonly id: string; readonly title: string };
+
+type Failure = { readonly _tag: string; readonly message: string };
 
 const verifyAuthAndPreview = async (handler: Handler, alice: string) => {
-  expect((await call(handler, 'GET', '/api/library/later')).status).toBe(401);
+  expect((await call(handler, 'GET', '/api/library/saved-pages')).status).toBe(
+    401
+  );
   expect(
     (
       await call(handler, 'POST', '/api/library/feeds/preview', undefined, {
@@ -179,7 +182,7 @@ const verifyAuthAndPreview = async (handler: Handler, alice: string) => {
       url: 'https://example.com/feed.xml',
       title: 'Example feed',
       description: 'Daily updates',
-      titles: ['One', 'Two', 'Three', 'Four'],
+      titles: ['One', 'Two', 'Three', 'Four', 'Five'],
     },
   });
   expect(
@@ -196,7 +199,7 @@ const subscribe = async (handler: Handler, alice: string) => {
     url: 'https://example.com/feed.xml',
   });
   expect(subscribed.status).toBe(200);
-  const { item } = await json<{ item: FeedItem }>(subscribed);
+  const { item } = await json<{ item: Feed }>(subscribed);
   expect(item.title).toBe('Example feed');
 
   const duplicate = await call(handler, 'POST', '/api/library/feeds', alice, {
@@ -212,13 +215,15 @@ const subscribe = async (handler: Handler, alice: string) => {
   return item;
 };
 
-const verifyArticles = async (
+const feedItemTitles = ['One', 'Two', 'Three', 'Four', 'Five'];
+
+const verifyFeedItems = async (
   handler: Handler,
   alice: string,
   bob: string,
   feedId: string
 ) => {
-  const feeds = await json<{ items: ReadonlyArray<FeedItem> }>(
+  const feeds = await json<{ items: ReadonlyArray<Feed> }>(
     await call(handler, 'GET', '/api/library/feeds', alice)
   );
   expect(feeds.items.map(({ id }) => id)).toEqual([feedId]);
@@ -227,181 +232,336 @@ const verifyArticles = async (
   ).toEqual({ items: [] });
 
   expect(await readCounts(handler, alice)).toEqual({
-    later: 0,
-    feedsTotal: 4,
-    feeds: [{ id: feedId, count: 4 }],
+    saved: 0,
+    feedsTotal: 5,
+    feeds: [{ id: feedId, count: 5 }],
   });
   expect(await readCounts(handler, bob)).toEqual({
-    later: 0,
+    saved: 0,
     feedsTotal: 0,
     feeds: [],
   });
   expect((await call(handler, 'GET', '/api/library/unread')).status).toBe(401);
 
-  const feedPageText = await (
+  const pageText = await (
     await call(
       handler,
       'GET',
-      `/api/library/feeds/articles?feedId=${feedId}&filter=unread`,
+      `/api/library/feeds/items?feedId=${feedId}&filter=unread`,
       alice
     )
   ).text();
-  expect(feedPageText).not.toContain('"description":null');
-  expect(feedPageText).not.toContain('"content":null');
-  expect(feedPageText).not.toContain('"extractedContent":null');
-  const pagePayload = JSON.parse(feedPageText) as {
+  expect(pageText).not.toContain('"description":null');
+  expect(pageText).not.toContain('"content":null');
+  expect(pageText).not.toContain('"extractedContent":null');
+  const payload = JSON.parse(pageText) as {
     readonly items: ReadonlyArray<object>;
   };
-  const page =
-    await Schema.decodeUnknownPromise(ArticlePageSchema)(pagePayload);
+  const page = await Schema.decodeUnknownPromise(FeedItemPageSchema)(payload);
   expect(page.items.map(({ title }) => title).toSorted()).toEqual(
-    ['One', 'Two', 'Three', 'Four'].toSorted()
+    feedItemTitles.toSorted()
   );
   expect(page.cursor).toBeNull();
+  const rawTwo = payload.items[page.items.findIndex((i) => i.title === 'Two')];
+  expect(Object.hasOwn(rawTwo ?? {}, 'content')).toBe(false);
+  expect(Object.hasOwn(rawTwo ?? {}, 'extractedContent')).toBe(false);
 
-  const first = page.items[0];
-  if (first === undefined) {
-    throw new Error('Missing seeded article');
+  return page.items;
+};
+
+const verifyForeignFeedAccess = async (
+  handler: Handler,
+  bob: string,
+  feedId: string,
+  itemId: string
+) => {
+  for (const response of [
+    await call(
+      handler,
+      'GET',
+      `/api/library/feeds/items?feedId=${feedId}`,
+      bob
+    ),
+    await call(
+      handler,
+      'GET',
+      `/api/library/feeds/items/item?feedId=${feedId}&id=${itemId}`,
+      bob
+    ),
+    await call(handler, 'PATCH', '/api/library/feeds/items', bob, {
+      feedId,
+      id: itemId,
+      read: true,
+    }),
+    await call(
+      handler,
+      'POST',
+      '/api/library/saved-pages/from-feed-item',
+      bob,
+      {
+        feedId,
+        id: itemId,
+      }
+    ),
+    await call(handler, 'POST', '/api/library/feeds/items/extract', bob, {
+      feedId,
+      id: itemId,
+    }),
+  ]) {
+    expect(response.status).toBe(404);
+    expect(await json<Failure>(response)).toMatchObject({
+      _tag: 'FeedNotFound',
+    });
+  }
+};
+
+const itemOf = (items: ReadonlyArray<ItemRef>, title: string): ItemRef => {
+  const found = items.find((item) => item.title === title);
+  if (found === undefined) {
+    throw new Error(`Missing seeded item ${title}`);
   }
 
-  const rawFirst =
-    pagePayload.items[page.items.findIndex((item) => item.title === 'Two')];
-  if (rawFirst === undefined) {
-    throw new Error('Missing seeded article payload');
-  }
+  return found;
+};
 
-  expect(Object.hasOwn(rawFirst, 'content')).toBe(false);
-  expect(Object.hasOwn(rawFirst, 'extractedContent')).toBe(false);
+const verifySavingFeedItems = async (
+  handler: Handler,
+  alice: string,
+  bob: string,
+  feedId: string,
+  items: ReadonlyArray<ItemRef>
+) => {
+  const one = itemOf(items, 'One');
+  await verifyForeignFeedAccess(handler, bob, feedId, one.id);
 
   const saved = await call(
     handler,
     'POST',
-    '/api/library/articles/save',
+    '/api/library/saved-pages/from-feed-item',
     alice,
-    { id: first.id }
+    { feedId, id: one.id }
   );
   expect(saved.status).toBe(200);
-  const { item: later } = await json<{ item: ArticleItem }>(saved);
+  const { item: page } = await Schema.decodeUnknownPromise(
+    SavedPageResponseSchema
+  )(await json(saved));
+  expect(page.content).toBe('<p>Body</p>');
   expect(await readCounts(handler, alice)).toEqual({
-    later: 1,
-    feedsTotal: 4,
-    feeds: [{ id: feedId, count: 4 }],
+    saved: 1,
+    feedsTotal: 5,
+    feeds: [{ id: feedId, count: 5 }],
+  });
+
+  const again = await call(
+    handler,
+    'POST',
+    '/api/library/saved-pages/from-feed-item',
+    alice,
+    { feedId, id: one.id }
+  );
+  expect(again.status).toBe(409);
+  expect(await json(again)).toMatchObject({
+    _tag: 'DuplicateSavedPage',
+    id: page.id,
   });
 
   expect(
     (
-      await call(handler, 'PATCH', '/api/library/articles', alice, {
-        id: first.id,
+      await call(handler, 'PATCH', '/api/library/feeds/items', alice, {
+        feedId,
+        id: one.id,
         read: true,
       })
     ).status
   ).toBe(200);
-  expect(await readCounts(handler, alice)).toEqual({
-    later: 1,
-    feedsTotal: 3,
-    feeds: [{ id: feedId, count: 3 }],
+  expect(await readCounts(handler, alice)).toMatchObject({
+    saved: 1,
+    feedsTotal: 4,
   });
 
+  const savedList = `/api/library/saved-pages?filter=all`;
   expect(
-    await json<Page>(
-      await call(handler, 'GET', '/api/library/later?filter=all', alice)
-    )
-  ).toMatchObject({ items: [{ id: later.id, read: false }], cursor: null });
-  expect(
-    await json<Page>(
-      await call(handler, 'GET', '/api/library/later?filter=all', bob)
-    )
-  ).toEqual({ items: [], cursor: null, boundary: null });
-
-  expect(
-    (await call(handler, 'POST', '/api/library/mark-later', alice, {})).status
-  ).toBe(200);
-  expect(await readCounts(handler, alice)).toEqual({
-    later: 0,
-    feedsTotal: 3,
-    feeds: [{ id: feedId, count: 3 }],
+    await json(await call(handler, 'GET', savedList, alice))
+  ).toMatchObject({ items: [{ id: page.id, read: false }], cursor: null });
+  expect(await json(await call(handler, 'GET', savedList, bob))).toEqual({
+    items: [],
+    cursor: null,
+    boundary: null,
   });
 
   expect(
     (
-      await call(handler, 'DELETE', '/api/library/articles', alice, {
-        id: later.id,
-      })
+      await call(
+        handler,
+        'POST',
+        '/api/library/saved-pages/mark-all-read',
+        alice,
+        {}
+      )
     ).status
   ).toBe(200);
-  expect(
-    await json<Page>(
-      await call(handler, 'GET', '/api/library/later?filter=all', alice)
-    )
-  ).toEqual({ items: [], cursor: null, boundary: null });
-
-  const urlLess = page.items.find(({ title }) => title === 'Four');
-  if (urlLess === undefined) {
-    throw new Error('Missing seeded URL-less article');
-  }
-
-  const savedUrlLess = await call(
-    handler,
-    'POST',
-    '/api/library/articles/save',
-    alice,
-    { id: urlLess.id }
-  );
-  expect(savedUrlLess.status).toBe(200);
-  const savedUrlLessText = await savedUrlLess.text();
-  expect(savedUrlLessText).not.toContain('"feedId":null');
-  expect(savedUrlLessText).not.toContain('"url":null');
-  const urlLessPayload = JSON.parse(savedUrlLessText) as {
-    readonly item: object;
-  };
-  expect(Object.hasOwn(urlLessPayload.item, 'feedId')).toBe(false);
-  expect(Object.hasOwn(urlLessPayload.item, 'url')).toBe(false);
-  const { item: urlLessLater } =
-    await Schema.decodeUnknownPromise(ArticleItemSchema)(urlLessPayload);
-
-  const laterPageText = await (
-    await call(handler, 'GET', '/api/library/later?filter=all', alice)
-  ).text();
-  expect(laterPageText).not.toContain('"feedId":null');
-  expect(laterPageText).not.toContain('"url":null');
-  const laterPage = await Schema.decodeUnknownPromise(ArticlePageSchema)(
-    JSON.parse(laterPageText)
-  );
-  expect(laterPage.items.map(({ id }) => id)).toEqual([urlLessLater.id]);
-
+  expect(await readCounts(handler, alice)).toMatchObject({ saved: 0 });
   expect(
     (
-      await call(handler, 'DELETE', '/api/library/articles', alice, {
-        id: urlLessLater.id,
+      await call(handler, 'DELETE', '/api/library/saved-pages', alice, {
+        id: page.id,
       })
     ).status
   ).toBe(200);
+  expect(await json(await call(handler, 'GET', savedList, alice))).toEqual({
+    items: [],
+    cursor: null,
+    boundary: null,
+  });
 };
 
-const verifyAddedArticle = async (handler: Handler, alice: string) => {
-  const added = await call(handler, 'POST', '/api/library/articles', alice, {
-    url: 'https://example.com/manual',
-  });
-  expect(added.status).toBe(201);
-  const { item } = await json<{ item: ArticleItem }>(added);
-  expect(item.title).toBe('Example article');
-  expect(item.extractedContent).toBe('<p>Body</p>');
-
-  const fetched = await json<{ item: ArticleItem | null }>(
-    await call(handler, 'GET', `/api/library/articles?id=${item.id}`, alice)
+const verifyLinklessItem = async (
+  handler: Handler,
+  alice: string,
+  feedId: string,
+  items: ReadonlyArray<ItemRef>
+) => {
+  const four = itemOf(items, 'Four');
+  const saved = await call(
+    handler,
+    'POST',
+    '/api/library/saved-pages/from-feed-item',
+    alice,
+    { feedId, id: four.id }
   );
-  expect(fetched.item?.id).toBe(item.id);
+  expect(saved.status).toBe(200);
+  const savedText = await saved.text();
+  expect(savedText).not.toContain('"url":null');
+  const payload = JSON.parse(savedText) as { readonly item: object };
+  expect(Object.hasOwn(payload.item, 'url')).toBe(false);
+  const { item } = await Schema.decodeUnknownPromise(SavedPageResponseSchema)(
+    payload
+  );
+  expect(item.content).toBe('<p>Body</p>');
 
+  const listText = await (
+    await call(handler, 'GET', '/api/library/saved-pages?filter=all', alice)
+  ).text();
+  expect(listText).not.toContain('"url":null');
+  const list = await Schema.decodeUnknownPromise(SavedPagePageSchema)(
+    JSON.parse(listText)
+  );
+  expect(list.items.map(({ id }) => id)).toEqual([item.id]);
   expect(
     (
-      await call(handler, 'POST', '/api/library/articles/extract', alice, {
+      await call(handler, 'DELETE', '/api/library/saved-pages', alice, {
         id: item.id,
       })
     ).status
   ).toBe(200);
-  expect(await readCounts(handler, alice)).toMatchObject({
-    later: 1,
-    feedsTotal: 3,
+
+  const five = itemOf(items, 'Five');
+  const empty = await call(
+    handler,
+    'POST',
+    '/api/library/saved-pages/from-feed-item',
+    alice,
+    { feedId, id: five.id }
+  );
+  expect(empty.status).toBe(422);
+  expect(await json<Failure>(empty)).toMatchObject({
+    _tag: 'ArticleEmptyContent',
+  });
+};
+
+const verifyFeedItemOperations = async (
+  handler: Handler,
+  alice: string,
+  feedId: string,
+  items: ReadonlyArray<ItemRef>
+) => {
+  const two = itemOf(items, 'Two');
+  const extracted = await json<{ item: ItemSummary }>(
+    await call(handler, 'POST', '/api/library/feeds/items/extract', alice, {
+      feedId,
+      id: two.id,
+    })
+  );
+  expect(extracted.item.extractedContent).toBe('<p>Body</p>');
+  const fetched = await json<{ item: ItemSummary | null }>(
+    await call(
+      handler,
+      'GET',
+      `/api/library/feeds/items/item?feedId=${feedId}&id=${two.id}`,
+      alice
+    )
+  );
+  expect(fetched.item?.extractedContent).toBe('<p>Body</p>');
+
+  const three = itemOf(items, 'Three');
+  expect(
+    (
+      await call(handler, 'POST', '/api/library/feeds/items/mark-read', alice, {
+        feedId,
+        ids: [two.id, three.id],
+      })
+    ).status
+  ).toBe(200);
+  expect(await readCounts(handler, alice)).toMatchObject({ feedsTotal: 2 });
+  expect(
+    (
+      await call(handler, 'POST', '/api/library/feeds/mark-read', alice, {
+        feedIds: [feedId, 'f'.repeat(64)],
+      })
+    ).status
+  ).toBe(200);
+  expect(await readCounts(handler, alice)).toEqual({
+    saved: 0,
+    feedsTotal: 0,
+    feeds: [],
+  });
+};
+
+const verifyAddedPage = async (handler: Handler, alice: string) => {
+  const added = await call(handler, 'POST', '/api/library/saved-pages', alice, {
+    url: 'https://example.com/manual',
+  });
+  expect(added.status).toBe(201);
+  const { item } = await json<{ item: ItemSummary }>(added);
+  expect(item.title).toBe('Example article');
+  expect(item.content).toBe('<p>Body</p>');
+
+  const fetched = await json<{ item: ItemSummary | null }>(
+    await call(
+      handler,
+      'GET',
+      `/api/library/saved-pages/item?id=${item.id}`,
+      alice
+    )
+  );
+  expect(fetched.item?.id).toBe(item.id);
+  expect(await readCounts(handler, alice)).toMatchObject({ saved: 1 });
+
+  const duplicate = await call(
+    handler,
+    'POST',
+    '/api/library/saved-pages',
+    alice,
+    { url: 'https://example.com/manual' }
+  );
+  expect(duplicate.status).toBe(409);
+  expect(await json(duplicate)).toMatchObject({
+    _tag: 'DuplicateSavedPage',
+    id: item.id,
+  });
+
+  const invalid = await call(
+    handler,
+    'POST',
+    '/api/library/saved-pages',
+    alice,
+    {
+      url: 'ftp://example.com/manual',
+    }
+  );
+  expect(invalid.status).toBe(400);
+  expect(await json<Failure>(invalid)).toMatchObject({
+    _tag: 'InvalidPageUrl',
   });
 };
 
@@ -421,51 +581,30 @@ const verifySettings = async (handler: Handler, alice: string) => {
       })
     ).status
   ).toBe(200);
-  expect(
-    (
-      await call(handler, 'PUT', '/api/library/settings/retention', alice, {
-        retention: 10,
-      })
-    ).status
-  ).toBe(400);
-  expect(
-    await json<{ _tag: string; message: string }>(
-      await call(handler, 'PUT', '/api/library/settings/retention', alice, {
-        retention: 10,
-      })
-    )
-  ).toEqual({
+  const lowRetention = await call(
+    handler,
+    'PUT',
+    '/api/library/settings/retention',
+    alice,
+    { retention: 10 }
+  );
+  expect(lowRetention.status).toBe(400);
+  expect(await json<Failure>(lowRetention)).toEqual({
     _tag: 'InvalidRetention',
     message: 'Retention must be an integer between 30 and 300',
   });
 
-  expect(
-    await json<{ _tag: string; message: string }>(
-      await call(handler, 'PUT', '/api/library/settings/extraction', alice, {
-        provider: 'other',
-      })
-    )
-  ).toEqual({
+  const extraction = (payload: object) =>
+    call(handler, 'PUT', '/api/library/settings/extraction', alice, payload);
+  expect(await json<Failure>(await extraction({ provider: 'other' }))).toEqual({
     _tag: 'InvalidProvider',
     message: 'Choose a valid extraction provider',
   });
   expect(
-    await json<{ _tag: string; message: string }>(
-      await call(handler, 'PUT', '/api/library/settings/extraction', alice, {
-        provider: 'jina',
-        jinaKey: '   ',
-      })
-    )
-  ).toEqual({
-    _tag: 'InvalidKey',
-    message: 'Enter a valid Jina API key',
-  });
+    await json<Failure>(await extraction({ provider: 'jina', jinaKey: '   ' }))
+  ).toEqual({ _tag: 'InvalidKey', message: 'Enter a valid Jina API key' });
   expect(
-    await json<{ _tag: string; message: string }>(
-      await call(handler, 'PUT', '/api/library/settings/extraction', alice, {
-        provider: 'browser',
-      })
-    )
+    await json<Failure>(await extraction({ provider: 'browser' }))
   ).toEqual({
     _tag: 'InvalidEndpoint',
     message: 'Enter a valid browser service address',
@@ -473,7 +612,7 @@ const verifySettings = async (handler: Handler, alice: string) => {
 
   expect(
     (
-      await call(handler, 'PUT', '/api/library/settings/extraction', alice, {
+      await extraction({
         provider: 'browser',
         browserEndpoint: '  http://127.0.0.1:9222  ',
       })
@@ -507,6 +646,7 @@ const verifySettings = async (handler: Handler, alice: string) => {
 const verifyUnsubscribe = async (
   handler: Handler,
   alice: string,
+  bob: string,
   feedId: string
 ) => {
   expect(
@@ -517,6 +657,10 @@ const verifyUnsubscribe = async (
     ).status
   ).toBe(404);
   expect(
+    (await call(handler, 'DELETE', '/api/library/feeds', bob, { id: feedId }))
+      .status
+  ).toBe(404);
+  expect(
     (await call(handler, 'DELETE', '/api/library/feeds', alice, { id: feedId }))
       .status
   ).toBe(200);
@@ -524,7 +668,7 @@ const verifyUnsubscribe = async (
     await json(await call(handler, 'GET', '/api/library/feeds', alice))
   ).toEqual({ items: [] });
   expect(await readCounts(handler, alice)).toEqual({
-    later: 1,
+    saved: 1,
     feedsTotal: 0,
     feeds: [],
   });
@@ -536,11 +680,28 @@ const verifyLibrary = async (handler: Handler) => {
 
   await verifyAuthAndPreview(handler, alice);
   const subscription = await subscribe(handler, alice);
-  await verifyArticles(handler, alice, bob, subscription.id);
-  await verifyAddedArticle(handler, alice);
+  const items = await verifyFeedItems(handler, alice, bob, subscription.id);
+  await verifySavingFeedItems(handler, alice, bob, subscription.id, items);
+  await verifyLinklessItem(handler, alice, subscription.id, items);
+  await verifyFeedItemOperations(handler, alice, subscription.id, items);
+  await verifyAddedPage(handler, alice);
   await verifySettings(handler, alice);
-  await verifyUnsubscribe(handler, alice, subscription.id);
+  await verifyUnsubscribe(handler, alice, bob, subscription.id);
 };
+
+const seededItem = (
+  title: string,
+  options: { readonly url?: string; readonly content?: string }
+) => ({
+  title: Schema.decodeSync(ArticleTitle)(title),
+  url:
+    options.url === undefined
+      ? Option.none()
+      : Option.some(decodeUrl(options.url)),
+  description: decodeDescription(undefined),
+  content: decodeContent(options.content),
+  publishedAt,
+});
 
 const feedSource = Layer.mergeAll(
   FeedFetcherLive.pipe(
@@ -564,35 +725,15 @@ const feedSource = Layer.mergeAll(
         title: 'Example feed',
         url: decodeUrl('https://example.com/feed.xml'),
         description: Option.some('Daily updates'),
-        articles: [
-          {
-            title: Schema.decodeSync(ArticleTitle)('One'),
-            url: Option.some(decodeUrl('https://example.com/one')),
-            description: decodeDescription(undefined),
-            content: decodeContent('<p>One</p>'),
-            publishedAt,
-          },
-          {
-            title: Schema.decodeSync(ArticleTitle)('Two'),
-            url: Option.some(decodeUrl('https://example.com/two')),
-            description: decodeDescription(undefined),
-            content: decodeContent(undefined),
-            publishedAt,
-          },
-          {
-            title: Schema.decodeSync(ArticleTitle)('Three'),
-            url: Option.some(decodeUrl('https://example.com/three')),
-            description: decodeDescription(undefined),
-            content: decodeContent(undefined),
-            publishedAt,
-          },
-          {
-            title: Schema.decodeSync(ArticleTitle)('Four'),
-            url: Option.none(),
-            description: decodeDescription(undefined),
-            content: decodeContent(undefined),
-            publishedAt,
-          },
+        items: [
+          seededItem('One', {
+            url: 'https://example.com/one',
+            content: '<p>One</p>',
+          }),
+          seededItem('Two', { url: 'https://example.com/two' }),
+          seededItem('Three', { url: 'https://example.com/three' }),
+          seededItem('Four', { content: '<p>Four</p>' }),
+          seededItem('Five', {}),
         ],
       }),
   })
@@ -632,26 +773,26 @@ const setupDatabase = async (db: Surreal) => {
   return options;
 };
 
-type ArticleStore = Layer.Layer<
-  ArticleRepository,
+type FeedItemStore = Layer.Layer<
+  FeedItemRepository,
   never,
   Database | ReaderStoreConcurrency
 >;
 
 const failingCounts = (
   db: Surreal
-): Layer.Layer<ArticleRepository, never, ReaderStoreConcurrency> =>
+): Layer.Layer<FeedItemRepository, never, ReaderStoreConcurrency> =>
   Layer.effect(
-    ArticleRepository,
+    FeedItemRepository,
     Effect.gen(function* () {
       const lock = yield* ReaderStoreConcurrency;
-      const articles = makeArticles(db, lock);
+      const feedItems = makeFeedItems(db, lock);
 
       return {
-        ...articles,
+        ...feedItems,
         unreadCounts: () =>
           Effect.fail(
-            new ArticleRepositoryError({ message: 'Unread count failed' })
+            new FeedItemRepositoryError({ message: 'Unread count failed' })
           ),
       };
     })
@@ -660,20 +801,21 @@ const failingCounts = (
 const makeHandler = (
   db: Surreal,
   options: ReturnType<typeof authOptions>,
-  articles: ArticleStore,
+  feedItems: FeedItemStore,
   overrides: {
     readonly parser?: Layer.Layer<HtmlParser>;
-    readonly sanitizer?: Layer.Layer<DocumentSantize>;
+    readonly sanitizer?: Layer.Layer<DocumentSanitizer>;
     readonly settings?: Layer.Layer<SettingsRepository>;
   } = {}
 ) => {
   const services = Layer.mergeAll(
-    articles,
+    feedItems,
+    SavedPageRepositoryLive,
     FeedRepositoryLive,
     overrides.settings ?? SettingsRepositoryLive,
     feedSource,
     overrides.sanitizer ??
-      Layer.succeed(DocumentSantize, {
+      Layer.succeed(DocumentSanitizer, {
         sanitize: () => Effect.succeed(decodeContent('<p>Body</p>')),
       }),
     BrowserConcurrencyLive,
@@ -708,7 +850,7 @@ it.effect('serves authenticated owner-scoped library operations', () =>
         const { handler, dispose } = makeHandler(
           db,
           options,
-          ArticleRepositoryLive
+          FeedItemRepositoryLive
         );
         try {
           await verifyLibrary(handler);
@@ -737,18 +879,7 @@ it.effect('reports repository failures for the unified unread counts', () =>
             { url: 'https://example.com/feed.xml' }
           );
           expect(subscribed.status).toBe(200);
-          const { item } = await json<{ item: FeedItem }>(subscribed);
-          expect(
-            (
-              await call(
-                unreadFails.handler,
-                'POST',
-                '/api/library/articles',
-                alice,
-                { url: 'https://example.com/manual' }
-              )
-            ).status
-          ).toBe(201);
+          const { item } = await json<{ item: Feed }>(subscribed);
 
           const failed = await call(
             unreadFails.handler,
@@ -758,8 +889,8 @@ it.effect('reports repository failures for the unified unread counts', () =>
           );
           expect(failed.status).toBe(500);
           expect(await json(failed)).toMatchObject({
-            _tag: 'ArticleRepositoryError',
-            message: 'Unable to access articles',
+            _tag: 'FeedItemRepositoryError',
+            message: 'Unable to access feed items',
           });
 
           expect(
@@ -784,10 +915,10 @@ it.effect('reports repository failures for the unified unread counts', () =>
   )
 );
 
-for (const { failure, articles, overrides } of [
+for (const { failure, feedItems, overrides } of [
   {
     failure: 'parser',
-    articles: ArticleRepositoryLive,
+    feedItems: FeedItemRepositoryLive,
     overrides: {
       parser: Layer.succeed(HtmlParser, {
         parse: () =>
@@ -797,33 +928,35 @@ for (const { failure, articles, overrides } of [
   },
   {
     failure: 'sanitizer',
-    articles: ArticleRepositoryLive,
+    feedItems: FeedItemRepositoryLive,
     overrides: {
-      sanitizer: Layer.succeed(DocumentSantize, {
+      sanitizer: Layer.succeed(DocumentSanitizer, {
         sanitize: () =>
-          Effect.fail(new DocumentSantizeError({ message: 'sanitize failed' })),
+          Effect.fail(
+            new DocumentSanitizerError({ message: 'sanitize failed' })
+          ),
       }),
     },
   },
   {
-    failure: 'articles',
-    articles: Layer.mock(ArticleRepository, {
+    failure: 'feed items',
+    feedItems: Layer.mock(FeedItemRepository, {
       create: () =>
-        Effect.fail(new ArticleRepositoryError({ message: 'write failed' })),
+        Effect.fail(new FeedItemRepositoryError({ message: 'write failed' })),
     }),
     overrides: {},
   },
 ]) {
   it.effect(`maps ${failure} failures at the library HTTP boundary`, () =>
     Effect.acquireUseRelease(
-      openDatabase(`route-failure-${failure}`),
+      openDatabase(`route-failure-${failure.replace(' ', '-')}`),
       (db) =>
         Effect.promise(async () => {
           const options = await setupDatabase(db);
           const { handler, dispose } = makeHandler(
             db,
             options,
-            articles,
+            feedItems,
             overrides
           );
           try {
@@ -833,9 +966,7 @@ for (const { failure, articles, overrides } of [
               'POST',
               '/api/library/feeds',
               alice,
-              {
-                url: 'https://example.com/feed.xml',
-              }
+              { url: 'https://example.com/feed.xml' }
             );
             expect(response.status).toBe(422);
             const error = await json<{ id: string }>(response);
@@ -848,19 +979,15 @@ for (const { failure, articles, overrides } of [
               await json(
                 await call(handler, 'GET', '/api/library/feeds', alice)
               )
-            ).toMatchObject({
-              items: [{ id: error.id }],
-            });
+            ).toMatchObject({ items: [{ id: error.id }] });
 
             if (failure === 'parser') {
               const added = await call(
                 handler,
                 'POST',
-                '/api/library/articles',
+                '/api/library/saved-pages',
                 alice,
-                {
-                  url: 'https://example.com/manual',
-                }
+                { url: 'https://example.com/manual' }
               );
               expect(added.status).toBe(422);
               expect(await json(added)).toMatchObject({
@@ -892,7 +1019,7 @@ it.effect(
           const { handler, dispose } = makeHandler(
             db,
             options,
-            ArticleRepositoryLive,
+            FeedItemRepositoryLive,
             {
               settings: Layer.succeed(SettingsRepository, {
                 get: unavailable,

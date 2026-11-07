@@ -3,8 +3,8 @@ import {
   FeedParser,
   FeedParserError,
   NormalizedUrl,
-  ParsedArticle,
   type ParsedFeed,
+  ParsedFeedItem,
 } from '@reader/business';
 import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 import { type AnyFeed, parseFeed as parseSyndication } from 'feedsmith';
@@ -203,7 +203,7 @@ const toEntry = (
   item: RawEntry,
   sourceUrl: URL,
   now: DateTime.Utc
-): ParsedArticle => {
+): ParsedFeedItem => {
   const url = toUrl(item.url, sourceUrl);
   const description = item.description?.slice(0, MAX_FIELD_LENGTH);
   const content = item.content?.slice(0, MAX_FIELD_LENGTH);
@@ -215,10 +215,10 @@ const toEntry = (
       url === undefined
         ? Option.none()
         : Schema.decodeOption(NormalizedUrl)(url),
-    description: Schema.decodeSync(ParsedArticle.fields.description)(
+    description: Schema.decodeSync(ParsedFeedItem.fields.description)(
       description
     ),
-    content: Schema.decodeSync(ParsedArticle.fields.content)(content),
+    content: Schema.decodeSync(ParsedFeedItem.fields.content)(content),
   };
 };
 
@@ -259,7 +259,7 @@ export const parseFeed = (
     title: feedTitle(parsed),
     url: Schema.decodeSync(NormalizedUrl)(sourceUrl.href),
     description,
-    articles: feedEntries(parsed, sourceUrl, now),
+    items: feedEntries(parsed, sourceUrl, now),
   };
 };
 
