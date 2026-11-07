@@ -2,6 +2,7 @@ import { useLocation, useNavigate, useParams } from '@solidjs/router';
 import { Option } from 'effect';
 import { createEffect, createMemo, createSignal, on, onMount } from 'solid-js';
 import type { Article, Feed, Scope } from '../../lib/library';
+import { articlePath } from '../../lib/library-path';
 import {
   confirmUnsubscribe,
   createFeedMenu,
@@ -19,12 +20,9 @@ import { LibraryReader } from './library-reader';
 import { LibrarySidebar } from './library-sidebar';
 
 type LibraryParams = {
-  readonly kind?: string | undefined;
+  readonly feedId?: string | undefined;
   readonly key?: string | undefined;
 };
-
-const articlePath = (article: Article): string =>
-  `/read/${Option.isNone(article.feedId) ? 'link' : 'feed'}/${encodeURIComponent(article.id)}`;
 
 const listPathOf = (scope: Scope): string =>
   scope.kind === 'later' ? '/' : '/rss';
@@ -42,17 +40,17 @@ const useLibraryRoute = (model: LibraryModel) => {
   const navigate = useNavigate();
   let opened: string | undefined;
 
-  const openKey = (key: string, kind: string | undefined) => {
+  const openKey = (key: string, feedId: string | undefined) => {
     const scope: Scope =
-      kind === 'feed' ? { kind: 'feeds' } : { kind: 'later' };
+      feedId === undefined ? { kind: 'later' } : { kind: 'feeds' };
     if (!sameScope(model.state().scope, scope)) void model.setScope(scope);
 
-    void model.openArticle(key);
+    void model.openArticle(key, feedId);
   };
 
   const open = (article: Article) => {
     opened = article.id;
-    void model.openArticle(article.id);
+    void model.openArticle(article.id, Option.getOrUndefined(article.feedId));
     const path = articlePath(article);
     if (location.pathname !== path) navigate(path);
   };
@@ -82,7 +80,7 @@ const useLibraryRoute = (model: LibraryModel) => {
     if (key === undefined || key === '' || key === opened) return;
 
     opened = key;
-    openKey(key, params.kind);
+    openKey(key, params.feedId);
   });
 
   return { location, key: () => params.key, open, back, navigate };

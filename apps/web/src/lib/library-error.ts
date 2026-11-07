@@ -2,14 +2,13 @@ export type LibraryErrorTag =
   | 'Unauthorized'
   | 'Forbidden'
   | 'InvalidCursor'
-  | 'ArticleRepositoryError'
-  | 'InvalidArticleUrl'
-  | 'ArticleNotFound'
-  | 'ArticleNotInFeed'
-  | 'ArticleNotLater'
-  | 'ArticleMissingUrl'
+  | 'FeedItemRepositoryError'
+  | 'SavedPageRepositoryError'
+  | 'InvalidPageUrl'
+  | 'FeedItemNotFound'
+  | 'FeedItemMissingUrl'
   | 'ArticleEmptyContent'
-  | 'DuplicateArticle'
+  | 'DuplicateSavedPage'
   | 'SettingsRepositoryError'
   | 'WebpageFetcherError'
   | 'ArticleExtractorError'
@@ -28,14 +27,13 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   Unauthorized: '登录状态已失效，请重新登录',
   Forbidden: '不允许跨站修改',
   InvalidCursor: '列表已更新，请刷新后重试',
-  ArticleRepositoryError: '暂时无法访问文章，请稍后重试',
-  InvalidArticleUrl: '请输入有效的 http 或 https 链接',
-  ArticleNotFound: '文章不存在，可能已被删除',
-  ArticleNotInFeed: '该文章不属于任何订阅',
-  ArticleNotLater: '订阅文章不能从稍后阅读中删除',
-  ArticleMissingUrl: '该文章没有原始链接',
+  FeedItemRepositoryError: '暂时无法访问订阅文章，请稍后重试',
+  SavedPageRepositoryError: '暂时无法访问稍后阅读，请稍后重试',
+  InvalidPageUrl: '请输入有效的 http 或 https 链接',
+  FeedItemNotFound: '文章不存在，可能已被删除',
+  FeedItemMissingUrl: '该文章没有原始链接',
   ArticleEmptyContent: '未能提取到文章内容',
-  DuplicateArticle: '该文章已在稍后阅读中',
+  DuplicateSavedPage: '该文章已在稍后阅读中',
   SettingsRepositoryError: '正文提取设置暂时不可用，请稍后重试',
   WebpageFetcherError: '网页抓取失败，请稍后重试',
   ArticleExtractorError: '正文提取失败，请稍后重试',

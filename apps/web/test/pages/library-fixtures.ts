@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 import type {
   Article,
   ArticlePage,
+  ArticleRef,
   Counts,
   Feed,
   Filter,
@@ -23,7 +24,6 @@ export const article = (
   } = {}
 ): Article => ({
   id,
-  ownerId: 'owner',
   title: `Article ${id}`,
   publishedAt: options.publishedAt ?? '2026-01-01T00:00:00.000Z',
   read: options.read ?? false,
@@ -93,21 +93,21 @@ export const createStubClient = () => ({
   ),
   feeds: vi.fn(async () => [] as ReadonlyArray<Feed>),
   unreadCounts: vi.fn(async (): Promise<Counts> => counts()),
-  article: vi.fn(async (_id: string) => null as Article | null),
+  article: vi.fn(async (_ref: ArticleRef) => null as Article | null),
   markRead: vi.fn(
-    async (_id: string, _read: boolean): Promise<void> => undefined
+    async (_ref: ArticleRef, _read: boolean): Promise<void> => undefined
   ),
   markLater: vi.fn(async (): Promise<void> => undefined),
   markFeeds: vi.fn(
     async (_feedIds: ReadonlyArray<string>): Promise<void> => undefined
   ),
   markArticles: vi.fn(
-    async (_ids: ReadonlyArray<string>): Promise<void> => undefined
+    async (_refs: ReadonlyArray<ArticleRef>): Promise<void> => undefined
   ),
   remove: vi.fn(async (_id: string): Promise<void> => undefined),
-  save: vi.fn(async (_id: string) => article('saved')),
+  save: vi.fn(async (_article: Article) => article('saved')),
   add: vi.fn(async (_url: string) => article('added')),
-  extract: vi.fn(async (_id: string) => article('extracted')),
+  extract: vi.fn(async (_article: Article) => article('extracted')),
   preview: vi.fn(async (_url: string) => preview),
   subscribe: vi.fn(async (_url: string) => feed('f1')),
   unsubscribe: vi.fn(async (_id: string): Promise<void> => undefined),

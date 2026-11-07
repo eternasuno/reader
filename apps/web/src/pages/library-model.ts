@@ -29,7 +29,10 @@ export type LibraryModel = {
   readonly setFilter: (filter: Filter) => Promise<void>;
   readonly loadMore: () => Promise<void>;
   readonly refresh: () => Promise<void>;
-  readonly openArticle: (id: string) => Promise<Article | undefined>;
+  readonly openArticle: (
+    id: string,
+    feedId?: string
+  ) => Promise<Article | undefined>;
   readonly clearSelection: () => void;
   readonly toggleRead: (article: Article) => Promise<void>;
   readonly markLoaded: () => Promise<void>;
@@ -57,7 +60,7 @@ export const createLibraryModel = (
     setFilter: (filter) => setFilter(store, filter),
     loadMore: () => loadMore(store),
     refresh: () => refresh(store),
-    openArticle: (id) => openArticle(store, id),
+    openArticle: (id, feedId) => openArticle(store, id, feedId),
     clearSelection: () => clearSelection(store),
     toggleRead: (article) => toggleRead(store, article),
     markLoaded: () => markLoaded(store),

@@ -42,7 +42,7 @@ describe('library initial load', () => {
     client.list.mockResolvedValue(page([article('a')], null, 'top'));
     client.feeds.mockRejectedValue(new LibraryError('FeedRepositoryError'));
     client.unreadCounts.mockRejectedValue(
-      new LibraryError('ArticleRepositoryError')
+      new LibraryError('FeedItemRepositoryError')
     );
     const model = createLibraryModel(client);
 
@@ -54,7 +54,7 @@ describe('library initial load', () => {
     expect(model.state().error).toBeUndefined();
     expect(model.state().toast).toEqual({
       kind: 'error',
-      message: '暂时无法访问文章，请稍后重试',
+      message: '暂时无法访问订阅文章，请稍后重试',
     });
   });
 
@@ -69,7 +69,7 @@ describe('library initial load', () => {
     expect(model.state().counts).toEqual(counts(4, { f1: 2 }));
 
     client.unreadCounts.mockRejectedValueOnce(
-      new LibraryError('ArticleRepositoryError')
+      new LibraryError('FeedItemRepositoryError')
     );
     await model.refresh();
 
@@ -80,14 +80,14 @@ describe('library initial load', () => {
     const client = createStubClient();
     client.list.mockResolvedValue(page([article('a')], null, 'top'));
     client.unreadCounts.mockRejectedValue(
-      new LibraryError('ArticleRepositoryError')
+      new LibraryError('FeedItemRepositoryError')
     );
     const model = createLibraryModel(client);
 
     await model.refresh();
     expect(model.state().toast).toEqual({
       kind: 'error',
-      message: '暂时无法访问文章，请稍后重试',
+      message: '暂时无法访问订阅文章，请稍后重试',
     });
 
     model.dismissToast();
@@ -97,12 +97,12 @@ describe('library initial load', () => {
     client.unreadCounts.mockResolvedValue(counts());
     await model.refresh();
     client.unreadCounts.mockRejectedValue(
-      new LibraryError('ArticleRepositoryError')
+      new LibraryError('FeedItemRepositoryError')
     );
     await model.refresh();
     expect(model.state().toast).toEqual({
       kind: 'error',
-      message: '暂时无法访问文章，请稍后重试',
+      message: '暂时无法访问订阅文章，请稍后重试',
     });
   });
 });
@@ -180,13 +180,13 @@ describe('library paging', () => {
     const client = createStubClient();
     client.list
       .mockResolvedValueOnce(page([article('a')], 'cursor-1', 'top'))
-      .mockRejectedValueOnce(new LibraryError('ArticleRepositoryError'))
+      .mockRejectedValueOnce(new LibraryError('FeedItemRepositoryError'))
       .mockResolvedValueOnce(page([article('b')], null, 'top'));
     const model = createLibraryModel(client);
     await model.refresh();
 
     await model.loadMore();
-    expect(model.state().error).toBe('暂时无法访问文章，请稍后重试');
+    expect(model.state().error).toBe('暂时无法访问订阅文章，请稍后重试');
     expect(model.state().cursor).toBe('cursor-1');
     expect(model.state().items.map((item) => item.id)).toEqual(['a']);
 
