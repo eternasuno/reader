@@ -8,21 +8,21 @@ import {
   type ListCursorScope,
 } from './list-cursor';
 
-export const PAGE_SIZE = 30;
+const PAGE_SIZE = 30;
 
 type Boundary<Id extends string> = {
   readonly publishedAt: DateTime.Utc;
   readonly id: Id;
 };
 
-export type PageQuery<Id extends string> = {
+type PageQuery<Id extends string> = {
   readonly filter: ReadFilter;
   readonly after?: Boundary<Id>;
   readonly through?: Boundary<Id>;
   readonly limit: number;
 };
 
-export type Paging<Item extends Boundary<Id>, Id extends string, E, R> = {
+type Paging<Item extends Boundary<Id>, Id extends string, E, R> = {
   readonly owner: OwnerId;
   readonly scope: ListCursorScope;
   readonly filter: ReadFilter;

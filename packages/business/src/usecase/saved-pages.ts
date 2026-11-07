@@ -24,7 +24,7 @@ export const SavedPageList = Schema.Struct({
 
 export type SavedPageList = typeof SavedPageList.Type;
 
-export const savedPageFromFeedItem = (
+const savedPageFromFeedItem = (
   owner: OwnerId,
   item: FeedItem,
   content: ArticleContent

@@ -12,11 +12,11 @@ const sha256 = (values: ReadonlyArray<unknown>): string =>
 export const feedId = (ownerId: OwnerId, url: NormalizedUrl): FeedId =>
   FeedId.make(sha256([ownerId, url.href]));
 
-export const FeedItemIdentity = FeedItem.mapFields(
+const FeedItemIdentity = FeedItem.mapFields(
   Struct.pick(['feedId', 'url', 'title', 'description'])
 );
 
-export type FeedItemIdentity = typeof FeedItemIdentity.Type;
+type FeedItemIdentity = typeof FeedItemIdentity.Type;
 
 const urlText = (url: Option.Option<NormalizedUrl>): string =>
   Option.match(url, { onNone: () => '', onSome: (value) => value.href });
@@ -36,11 +36,11 @@ export const feedItemId = ({
     ])
   );
 
-export const SavedPageIdentity = SavedPage.mapFields(
+const SavedPageIdentity = SavedPage.mapFields(
   Struct.pick(['ownerId', 'url', 'title', 'description'])
 );
 
-export type SavedPageIdentity = typeof SavedPageIdentity.Type;
+type SavedPageIdentity = typeof SavedPageIdentity.Type;
 
 export const savedPageId = ({
   ownerId,
