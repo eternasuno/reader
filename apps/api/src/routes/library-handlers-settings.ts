@@ -1,13 +1,10 @@
 import {
   BrowserEndpoint,
   FetcherProvider,
-  type FetcherSetting,
-  fetcherEndpoint,
   JinaKeyUpdate,
   Retention,
-  type Setting,
-  type SettingsPatch,
   SettingsRepository,
+  updateSettings,
 } from '@reader/business';
 import { Effect, Option, Schema } from 'effect';
 import { type HandlerRequest, withSession } from './library-contract';
@@ -18,7 +15,7 @@ import {
   invalidRetention,
 } from './library-errors';
 import {
-  extractionFailure,
+  extractionSettingsFailure,
   retentionFailure,
   settingsReadFailure,
   settingsRepositoryFailure,
@@ -40,11 +37,11 @@ const settings = () =>
       const value = yield* repository.get(owner);
 
       return {
-        retention: value.retention,
+        retention: value.feed.retention,
         provider: value.fetcher.provider,
-        jinaConfigured: Option.isSome(value.fetcher.key),
+        jinaConfigured: Option.isSome(value.fetcher.jina.key),
         browserEndpoint: Option.map(
-          fetcherEndpoint(value.fetcher),
+          value.fetcher.browser.endpoint,
           (url) => url.href
         ),
       };
@@ -60,14 +57,39 @@ const setRetention = ({ payload }: HandlerRequest<'setRetention'>) =>
       );
 
       const repository = yield* SettingsRepository;
-      yield* repository.update(owner, { retention });
+      yield* repository.update(owner, { feed: { retention } });
 
       return { ok: true as const };
     })
   ).pipe(Effect.catchTags(retentionFailure));
 
+const jinaPatch = (payload: HandlerRequest<'setExtraction'>['payload']) =>
+  Effect.gen(function* () {
+    const key = yield* decodeInput(
+      Schema.decodeEffect(JinaKeyUpdate)(
+        Option.getOrUndefined(payload.jinaKey)
+      ),
+      invalidKey
+    );
+
+    return key === undefined ? {} : { jina: { key: Option.some(key) } };
+  });
+
+const browserPatch = (payload: HandlerRequest<'setExtraction'>['payload']) =>
+  Option.match(payload.browserEndpoint, {
+    onNone: () => Effect.succeed({}),
+    onSome: (value) =>
+      decodeInput(
+        Schema.decodeEffect(BrowserEndpoint)(value),
+        invalidEndpoint
+      ).pipe(
+        Effect.map((endpoint) => ({
+          browser: { endpoint: Option.some(endpoint) },
+        }))
+      ),
+  });
+
 const extractionFetcher = (
-  current: Setting,
   payload: HandlerRequest<'setExtraction'>['payload']
 ) =>
   Effect.gen(function* () {
@@ -75,57 +97,34 @@ const extractionFetcher = (
       Schema.decodeUnknownEffect(FetcherProvider)(payload.provider),
       invalidProvider
     );
-    const key = yield* decodeInput(
-      Schema.decodeEffect(JinaKeyUpdate)(
-        Option.getOrUndefined(payload.jinaKey)
-      ),
-      invalidKey
-    );
-    const endpoint = yield* Option.match(payload.browserEndpoint, {
-      onNone: () => Effect.succeed(fetcherEndpoint(current.fetcher)),
-      onSome: (value) =>
-        decodeInput(
-          Schema.decodeEffect(BrowserEndpoint)(value),
-          invalidEndpoint
-        ).pipe(Effect.map(Option.some)),
-    });
+    const jina = yield* jinaPatch(payload);
+    const browser = yield* browserPatch(payload);
 
-    const fetcherKey =
-      key === undefined ? current.fetcher.key : Option.some(key);
-
-    return yield* provider === 'browser'
-      ? Option.match(endpoint, {
-          onNone: invalidEndpoint,
-          onSome: (value) =>
-            Effect.succeed<FetcherSetting>({
-              provider,
-              key: fetcherKey,
-              endpoint: value,
-            }),
-        })
-      : Effect.succeed<FetcherSetting>({ provider, key: fetcherKey, endpoint });
+    return { provider, ...jina, ...browser };
   });
 
 const setExtraction = ({ payload }: HandlerRequest<'setExtraction'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const repository = yield* SettingsRepository;
-      const current = yield* repository.get(owner);
-      const fetcher = yield* extractionFetcher(current, payload);
+      const fetcher = yield* extractionFetcher(payload);
 
-      yield* repository.update(owner, { fetcher } satisfies SettingsPatch);
+      yield* updateSettings(owner, { fetcher });
 
       return { ok: true as const };
     })
-  ).pipe(Effect.catchTags(extractionFailure));
+  ).pipe(
+    Effect.catchTags({
+      ...extractionSettingsFailure,
+      BrowserEndpointRequired: invalidEndpoint,
+    })
+  );
 
 const deleteKey = () =>
   withSession((owner) =>
     Effect.gen(function* () {
       const repository = yield* SettingsRepository;
-      const current = yield* repository.get(owner);
       yield* repository.update(owner, {
-        fetcher: { ...current.fetcher, key: Option.none() },
+        fetcher: { jina: { key: Option.none() } },
       });
 
       return { ok: true as const };
@@ -136,12 +135,10 @@ const deleteBrowser = () =>
   withSession((owner) =>
     Effect.gen(function* () {
       const repository = yield* SettingsRepository;
-      const current = yield* repository.get(owner);
       yield* repository.update(owner, {
         fetcher: {
           provider: 'jina',
-          key: current.fetcher.key,
-          endpoint: Option.none(),
+          browser: { endpoint: Option.none() },
         },
       });
 

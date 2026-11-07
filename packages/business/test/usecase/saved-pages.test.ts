@@ -18,7 +18,10 @@ import {
 import { savedPageId } from '../../src/usecase/identity';
 import {
   addSavedPage,
+  findSavedPage,
   listSavedPages,
+  markAllSavedPagesRead,
+  markSavedPages,
   refreshSavedPages,
   removeSavedPage,
   saveFeedItem,
@@ -423,3 +426,41 @@ it.effect('refreshes through the original boundary item inclusively', () =>
     listing(65)
   )
 );
+
+it.effect('finds and marks saved pages within the owner scope', () => {
+  const calls: Array<unknown> = [];
+  const page = makeSavedPage();
+
+  return provide(
+    Effect.gen(function* () {
+      expect(yield* findSavedPage(alice, SavedPageId.make(hex(1)))).toEqual(
+        Option.some(page)
+      );
+      yield* markSavedPages(alice, [SavedPageId.make(hex(1))], true);
+      yield* markAllSavedPagesRead(alice);
+      expect(calls).toEqual([
+        { owner: alice, ids: [hex(1)], patch: { read: true } },
+        { owner: alice, patch: { read: true } },
+      ]);
+    }),
+    {
+      pages: {
+        find: (owner) => {
+          expect(owner).toBe(alice);
+
+          return Effect.succeed(Option.some(page));
+        },
+        update: (owner, ids, patch) => {
+          calls.push({ owner, ids, patch });
+
+          return Effect.succeed(ids);
+        },
+        updateAll: (owner, patch) => {
+          calls.push({ owner, patch });
+
+          return Effect.succeed([]);
+        },
+      },
+    }
+  );
+});

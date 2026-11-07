@@ -159,3 +159,28 @@ export const refreshSavedPages = (
 
     return yield* paging.refresh(through);
   });
+
+export const findSavedPage = (owner: OwnerId, id: SavedPageId) =>
+  Effect.gen(function* () {
+    const pages = yield* SavedPageRepository;
+
+    return yield* pages.find(owner, id);
+  });
+
+export const markSavedPages = (
+  owner: OwnerId,
+  ids: ReadonlyArray<SavedPageId>,
+  read: boolean
+) =>
+  Effect.gen(function* () {
+    const pages = yield* SavedPageRepository;
+
+    yield* pages.update(owner, ids, { read });
+  });
+
+export const markAllSavedPagesRead = (owner: OwnerId) =>
+  Effect.gen(function* () {
+    const pages = yield* SavedPageRepository;
+
+    yield* pages.updateAll(owner, { read: true });
+  });

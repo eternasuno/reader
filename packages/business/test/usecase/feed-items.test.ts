@@ -1,6 +1,8 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: feed item tests share one set of fixtures and layers.
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: each test declares its dependency mocks alongside the scenario.
 import { expect, it } from '@effect/vitest';
 import { type Context, Effect, Layer, Option } from 'effect';
+import { FeedId } from '../../src/entity/feed/feed';
 import { FeedItemId } from '../../src/entity/feed/feed-item';
 import { ArticleExtractor } from '../../src/port/article-extractor';
 import {
@@ -15,7 +17,10 @@ import {
 } from '../../src/port/webpage-fetcher';
 import {
   extractFeedItem,
+  findFeedItem,
   listFeedItems,
+  markFeedItems,
+  markFeedsRead,
   refreshFeedItems,
 } from '../../src/usecase/feed-items';
 import {
@@ -311,3 +316,69 @@ it.effect('reports a missing feed or item and preserves fetch failures', () =>
     expect(fetchFailure).toMatchObject({ message: 'fetch failed' });
   })
 );
+
+it.effect('finds a feed item only inside an owned feed', () =>
+  Effect.gen(function* () {
+    const item = makeFeedItem();
+    const found = yield* provide(findFeedItem(alice, feedId, itemId), {
+      items: { find: () => Effect.succeed(Option.some(item)) },
+    });
+    expect(found).toEqual(Option.some(item));
+
+    const error = yield* Effect.flip(
+      provide(findFeedItem(alice, feedId, itemId), {
+        feeds: { find: () => Effect.succeed(Option.none()) },
+      })
+    );
+    expect(error._tag).toBe('FeedNotFound');
+  })
+);
+
+it.effect('marks feed items read after checking feed ownership', () => {
+  const updates: Array<unknown> = [];
+
+  return Effect.gen(function* () {
+    yield* provide(markFeedItems(alice, feedId, [itemId], false), {
+      items: {
+        update: (requestedFeed, ids, patch) => {
+          updates.push({ requestedFeed, ids, patch });
+
+          return Effect.succeed(ids);
+        },
+      },
+    });
+    expect(updates).toEqual([
+      { requestedFeed: feedId, ids: [itemId], patch: { read: false } },
+    ]);
+
+    const error = yield* Effect.flip(
+      provide(markFeedItems(alice, feedId, [itemId], true), {
+        feeds: { find: () => Effect.succeed(Option.none()) },
+      })
+    );
+    expect(error._tag).toBe('FeedNotFound');
+    expect(updates).toHaveLength(1);
+  });
+});
+
+it.effect('marks only the requested feeds the owner actually has', () => {
+  const marked: Array<ReadonlyArray<string>> = [];
+
+  return provide(
+    Effect.gen(function* () {
+      yield* markFeedsRead(alice, [feedId, FeedId.make('foreign')]);
+      expect(marked).toEqual([[feedId]]);
+    }),
+    {
+      feeds: { list: () => Effect.succeed([storedFeed(feedId)]) },
+      items: {
+        updateByFeeds: (feedIds, patch) => {
+          expect(patch).toEqual({ read: true });
+          marked.push(feedIds);
+
+          return Effect.succeed([]);
+        },
+      },
+    }
+  );
+});

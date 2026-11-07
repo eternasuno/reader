@@ -31,3 +31,4 @@ export * from './usecase/saved-page-errors';
 export * from './usecase/saved-pages';
 export * from './usecase/setting-input';
 export * from './usecase/settings';
+export * from './usecase/unread';

@@ -1,85 +1,96 @@
 import {
   articleEmptyContent,
   articleExtractError,
-  articleMissingUrl,
-  articleNotFound,
-  articleNotInFeed,
-  articleNotLater,
-  articleRepositoryError,
-  duplicateArticle,
+  duplicateSavedPage,
   feedExists,
+  feedItemMissingUrl,
+  feedItemNotFound,
+  feedItemRepositoryError,
   feedNotFound,
   feedRepositoryError,
   feedUrlInvalid,
   fetchFeedError,
-  invalidArticleUrl,
   invalidCursor,
   invalidEndpoint,
   invalidKey,
+  invalidPageUrl,
   invalidProvider,
   invalidRetention,
   parseFeedError,
+  savedPageRepositoryError,
   settingsReadError,
   settingsRepositoryError,
   settingsSaveError,
   webpageFetchError,
 } from './library-errors';
 
-export const articleFailure = {
-  ArticleRepositoryError: articleRepositoryError,
+export const savedPageFailure = {
+  SavedPageRepositoryError: savedPageRepositoryError,
 };
 
-export const articlePageFailure = {
+export const savedPagePageFailure = {
   InvalidCursor: invalidCursor,
-  ...articleFailure,
+  ...savedPageFailure,
 };
 
-export const feedPageFailure = {
-  ...articlePageFailure,
-  FeedNotFound: feedNotFound,
+export const feedRepositoryFailure = {
   FeedRepositoryError: feedRepositoryError,
+};
+
+export const feedItemFailure = {
+  FeedItemRepositoryError: feedItemRepositoryError,
+  FeedNotFound: feedNotFound,
+  ...feedRepositoryFailure,
+};
+
+export const feedItemPageFailure = {
+  InvalidCursor: invalidCursor,
+  ...feedItemFailure,
 };
 
 export const settingsRepositoryFailure = {
   SettingsRepositoryError: settingsRepositoryError,
 };
 
-export const addFailure = {
-  InvalidArticleUrl: invalidArticleUrl,
+const extractionFailure = {
   ArticleEmptyContent: articleEmptyContent,
   ...settingsRepositoryFailure,
   WebpageFetcherError: webpageFetchError,
   ArticleExtractorError: articleExtractError,
   HtmlParserError: articleExtractError,
-  DuplicateArticle: duplicateArticle,
-  ...articleFailure,
 };
 
-export const saveFailure = {
-  ArticleNotFound: articleNotFound,
-  ArticleNotInFeed: articleNotInFeed,
-  DuplicateArticle: duplicateArticle,
-  ...articleFailure,
+export const addSavedPageFailure = {
+  InvalidPageUrl: invalidPageUrl,
+  DuplicateSavedPage: duplicateSavedPage,
+  ...extractionFailure,
+  ...savedPageFailure,
 };
 
-export const extractFailure = {
-  ArticleNotFound: articleNotFound,
-  ArticleMissingUrl: articleMissingUrl,
-  ArticleEmptyContent: articleEmptyContent,
-  ...settingsRepositoryFailure,
-  WebpageFetcherError: webpageFetchError,
-  ArticleExtractorError: articleExtractError,
-  HtmlParserError: articleExtractError,
-  ...articleFailure,
+export const saveFeedItemFailure = {
+  FeedItemNotFound: feedItemNotFound,
+  DuplicateSavedPage: duplicateSavedPage,
+  ...extractionFailure,
+  ...feedItemFailure,
+  ...savedPageFailure,
 };
 
-export const removeFailure = {
-  ArticleNotLater: articleNotLater,
-  ...articleFailure,
+export const extractFeedItemFailure = {
+  FeedItemNotFound: feedItemNotFound,
+  FeedItemMissingUrl: feedItemMissingUrl,
+  ...extractionFailure,
+  ...feedItemFailure,
 };
 
-export const feedRepositoryFailure = {
-  FeedRepositoryError: feedRepositoryError,
+export const unreadCountsFailure = {
+  FeedItemRepositoryError: feedItemRepositoryError,
+  ...feedRepositoryFailure,
+  ...savedPageFailure,
+};
+
+export const markFeedsFailure = {
+  FeedItemRepositoryError: feedItemRepositoryError,
+  ...feedRepositoryFailure,
 };
 
 export const previewFailure = {
@@ -105,7 +116,7 @@ export const retentionFailure = {
   SettingsRepositoryError: settingsSaveError,
 };
 
-export const extractionFailure = {
+export const extractionSettingsFailure = {
   InvalidProvider: invalidProvider,
   InvalidKey: invalidKey,
   InvalidEndpoint: invalidEndpoint,

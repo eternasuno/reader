@@ -2,8 +2,6 @@ import { createHash } from 'node:crypto';
 import {
   BrowserEndpoint,
   FetcherProvider,
-  type FetcherSetting,
-  fetcherEndpoint,
   JinaKey,
   OwnerId,
   Retention,
@@ -26,23 +24,14 @@ const StoredSetting = Schema.Struct({
   browserEndpoint: Schema.OptionFromOptional(BrowserEndpoint),
 });
 
-const fetcherOf = (stored: typeof StoredSetting.Type): FetcherSetting =>
-  stored.provider === 'browser' && Option.isSome(stored.browserEndpoint)
-    ? {
-        provider: 'browser',
-        key: stored.jinaKey,
-        endpoint: stored.browserEndpoint.value,
-      }
-    : {
-        provider: 'jina',
-        key: stored.jinaKey,
-        endpoint: stored.browserEndpoint,
-      };
-
 const settingOf = (stored: typeof StoredSetting.Type): Setting => ({
   ownerId: stored.ownerId,
-  retention: stored.retention,
-  fetcher: fetcherOf(stored),
+  feed: { retention: stored.retention },
+  fetcher: {
+    provider: stored.provider,
+    jina: { key: stored.jinaKey },
+    browser: { endpoint: stored.browserEndpoint },
+  },
 });
 
 const ownerHash = (owner: OwnerId) =>
@@ -87,52 +76,88 @@ type SaveBindings = {
   retention?: Retention;
 };
 
+type Assignments = {
+  readonly clauses: ReadonlyArray<string>;
+  readonly bindings: SaveBindings;
+};
+
+const NO_ASSIGNMENTS: Assignments = { clauses: [], bindings: {} };
+
+const optionalAssignment = <A>(
+  parameter: 'jinaKey' | 'browserEndpoint',
+  value: Option.Option<A>,
+  encode: (value: A) => string
+): Assignments =>
+  Option.match(value, {
+    onNone: () => ({ clauses: [`${parameter} = NONE`], bindings: {} }),
+    onSome: (some) => ({
+      clauses: [`${parameter} = $${parameter}`],
+      bindings: { [parameter]: encode(some) },
+    }),
+  });
+
+const merge = (parts: ReadonlyArray<Assignments>): Assignments => ({
+  clauses: parts.flatMap((part) => part.clauses),
+  bindings: Object.assign({}, ...parts.map((part) => part.bindings)),
+});
+
+const fetcherAssignments = (
+  fetcher: NonNullable<SettingsPatch['fetcher']>
+): Assignments =>
+  merge([
+    fetcher.provider === undefined
+      ? NO_ASSIGNMENTS
+      : {
+          clauses: ['provider = $provider'],
+          bindings: { provider: fetcher.provider },
+        },
+    fetcher.jina === undefined
+      ? NO_ASSIGNMENTS
+      : optionalAssignment('jinaKey', fetcher.jina.key, (key) =>
+          Redacted.value(key)
+        ),
+    fetcher.browser === undefined
+      ? NO_ASSIGNMENTS
+      : optionalAssignment(
+          'browserEndpoint',
+          fetcher.browser.endpoint,
+          (endpoint) => endpoint.href
+        ),
+  ]);
+
+const feedAssignments = (
+  feed: NonNullable<SettingsPatch['feed']>
+): Assignments =>
+  feed.retention === undefined
+    ? NO_ASSIGNMENTS
+    : {
+        clauses: ['retention = $retention'],
+        bindings: { retention: feed.retention },
+      };
+
 const saveSql = (settingsPatch: SettingsPatch) => {
-  const clauses = ['owner = $owner'];
-  const bindings: SaveBindings = {};
-  const fetcher = settingsPatch.fetcher;
+  const { clauses, bindings } = merge([
+    settingsPatch.fetcher === undefined
+      ? NO_ASSIGNMENTS
+      : fetcherAssignments(settingsPatch.fetcher),
+    settingsPatch.feed === undefined
+      ? NO_ASSIGNMENTS
+      : feedAssignments(settingsPatch.feed),
+  ]);
 
-  if (fetcher !== undefined) {
-    clauses.push('provider = $provider');
-    bindings.provider = fetcher.provider;
-
-    Option.match(fetcherEndpoint(fetcher), {
-      onNone: () => clauses.push('browserEndpoint = NONE'),
-      onSome: (value) => {
-        clauses.push('browserEndpoint = $browserEndpoint');
-        bindings.browserEndpoint = value.href;
-      },
-    });
-
-    Option.match(fetcher.key, {
-      onNone: () => clauses.push('jinaKey = NONE'),
-      onSome: (key) => {
-        clauses.push('jinaKey = $jinaKey');
-        bindings.jinaKey = Redacted.value(key);
-      },
-    });
-  }
-
-  if (settingsPatch.retention !== undefined) {
-    clauses.push('retention = $retention');
-    bindings.retention = settingsPatch.retention;
-  }
-
-  return {
-    sql: `UPSERT type::record("setting", $id) SET ${clauses.join(', ')};`,
-    bindings,
-  };
+  return clauses.length === 0
+    ? undefined
+    : {
+        sql: `UPSERT type::record("setting", $id) SET ${['owner = $owner', ...clauses].join(', ')};`,
+        bindings,
+      };
 };
 
 const update = (db: Surreal, owner: OwnerId, settingsPatch: SettingsPatch) => {
-  if (
-    settingsPatch.fetcher === undefined &&
-    settingsPatch.retention === undefined
-  ) {
+  const statement = saveSql(settingsPatch);
+  if (statement === undefined) {
     return Effect.void;
   }
-
-  const statement = saveSql(settingsPatch);
 
   return query<unknown, SettingsRepositoryError>(
     db,

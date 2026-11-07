@@ -39,7 +39,7 @@ const browserEndpointOf = (config: Setting): BrowserEndpoint => {
     throw new Error('Expected a browser fetcher setting');
   }
 
-  return config.fetcher.endpoint;
+  return Option.getOrThrow(config.fetcher.browser.endpoint);
 };
 
 const discoveryFailure = () =>
@@ -74,11 +74,11 @@ it.effect('selects each owner key when building a Jina layer', () => {
 
       return Effect.succeed({
         ownerId: owner,
-        retention: retention(100),
+        feed: { retention: retention(100) },
         fetcher: {
           provider: 'jina' as const,
-          key: Option.some(Redacted.make(`${owner}-secret`)),
-          endpoint: Option.none(),
+          jina: { key: Option.some(Redacted.make(`${owner}-secret`)) },
+          browser: { endpoint: Option.none() },
         },
       });
     },
@@ -94,7 +94,7 @@ it.effect('selects each owner key when building a Jina layer', () => {
       const settingsRepository = yield* SettingsRepository;
       const config = yield* settingsRepository.get(owner);
       const configured = jinaWebpageFetcherLive(
-        Option.getOrUndefined(config.fetcher.key)
+        Option.getOrUndefined(config.fetcher.jina.key)
       );
       const result = yield* Effect.gen(function* () {
         const fetcher = yield* WebpageFetcher;
@@ -127,11 +127,13 @@ it.effect('shares browser concurrency across owners', () => {
     get: (owner) =>
       Effect.succeed({
         ownerId: owner,
-        retention: retention(100),
+        feed: { retention: retention(100) },
         fetcher: {
           provider: 'browser' as const,
-          key: Option.none(),
-          endpoint: browserEndpoint('http://127.0.0.1:9222'),
+          jina: { key: Option.none() },
+          browser: {
+            endpoint: Option.some(browserEndpoint('http://127.0.0.1:9222')),
+          },
         },
       }),
   });

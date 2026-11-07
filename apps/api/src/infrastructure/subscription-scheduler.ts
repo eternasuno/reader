@@ -1,8 +1,8 @@
 import {
-  type ArticleRepository,
-  type DocumentSantize,
+  type DocumentSanitizer,
   type FeedFetcher,
   type FeedId,
+  type FeedItemRepository,
   type FeedParser,
   FeedRepository,
   type HtmlParser,
@@ -43,11 +43,11 @@ type OwnerTimers = Map<
 
 type RefreshRequirements =
   | FeedRepository
-  | ArticleRepository
+  | FeedItemRepository
   | SettingsRepository
   | FeedFetcher
   | FeedParser
-  | DocumentSantize
+  | DocumentSanitizer
   | HtmlParser;
 
 const register = (registered: Set<OwnerId>, ownerId: OwnerId) =>

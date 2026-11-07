@@ -1,5 +1,5 @@
 import { expect, it } from '@effect/vitest';
-import { FeedParser, type ParsedArticle } from '@reader/business';
+import { FeedParser, type ParsedFeedItem } from '@reader/business';
 import { DateTime, Effect, Option } from 'effect';
 import { FeedParserLive, parseFeed } from '../../src/adapter/feed-parser';
 
@@ -13,35 +13,35 @@ const iso = (value: DateTime.Utc | undefined) =>
   value === undefined ? undefined : DateTime.formatIso(value);
 
 const field = <A>(
-  entry: ParsedArticle | undefined,
-  select: (entry: ParsedArticle) => Option.Option<A>
+  entry: ParsedFeedItem | undefined,
+  select: (entry: ParsedFeedItem) => Option.Option<A>
 ) => Option.flatMap(Option.fromUndefinedOr(entry), select);
 
-const linkOf = (entry: ParsedArticle | undefined) =>
+const linkOf = (entry: ParsedFeedItem | undefined) =>
   Option.map(
     field(entry, (item) => item.url),
     (url) => url.href
   );
 
 const expectOptional = <A>(
-  entry: ParsedArticle | undefined,
-  select: (entry: ParsedArticle) => Option.Option<A>,
+  entry: ParsedFeedItem | undefined,
+  select: (entry: ParsedFeedItem) => Option.Option<A>,
   expected: Option.Option<A>
 ) => expect(field(entry, select)).toEqual(expected);
 
-const expectDescription = (entry: ParsedArticle | undefined, value: string) =>
+const expectDescription = (entry: ParsedFeedItem | undefined, value: string) =>
   expectOptional(entry, (item) => item.description, Option.some(value));
 
-const expectContent = (entry: ParsedArticle | undefined, value: string) =>
+const expectContent = (entry: ParsedFeedItem | undefined, value: string) =>
   expectOptional(entry, (item) => item.content, Option.some(value));
 
-const expectNoContent = (entry: ParsedArticle | undefined) =>
+const expectNoContent = (entry: ParsedFeedItem | undefined) =>
   expectOptional(entry, (item) => item.content, Option.none());
 
-const expectLink = (entry: ParsedArticle | undefined, value: string) =>
+const expectLink = (entry: ParsedFeedItem | undefined, value: string) =>
   expect(linkOf(entry)).toEqual(Option.some(value));
 
-const expectNoLink = (entry: ParsedArticle | undefined) =>
+const expectNoLink = (entry: ParsedFeedItem | undefined) =>
   expect(linkOf(entry)).toEqual(Option.none());
 
 const rss = `<?xml version="1.0"?>
@@ -75,8 +75,8 @@ it('retains RSS items with missing or invalid URLs and resolves relative links',
   expect(feed.title).toBe('News');
   expect(feed.url).toEqual(base);
   expect(feed.description).toEqual(Option.some('Daily'));
-  expect(feed.articles).toHaveLength(4);
-  const [first, second, third, linkless] = feed.articles;
+  expect(feed.items).toHaveLength(4);
+  const [first, second, third, linkless] = feed.items;
   expect(first?.title).toBe('First');
   expectDescription(first, 'Summary');
   expectContent(first, '<p>Body</p>');
@@ -106,8 +106,8 @@ it('resolves relative links against the redirected feed url and preserves creden
     </channel>
   </rss>`;
   const feed = parseFeed(xml, redirected, now);
-  expectLink(feed.articles[0], 'https://mirror.example.com/story');
-  expectLink(feed.articles[1], 'https://alice:secret@example.com/private');
+  expectLink(feed.items[0], 'https://mirror.example.com/story');
+  expectLink(feed.items[1], 'https://alice:secret@example.com/private');
 });
 
 it('uses only pubDate for RSS dates', () => {
@@ -121,7 +121,7 @@ it('uses only pubDate for RSS dates', () => {
     </channel>
   </rss>`;
   const feed = parseFeed(dated, base, now);
-  expect(iso(feed.articles[0]?.publishedAt)).toBe(nowIso);
+  expect(iso(feed.items[0]?.publishedAt)).toBe(nowIso);
 });
 
 it('falls back to Untitled for missing entry and feed titles', () => {
@@ -135,7 +135,7 @@ it('falls back to Untitled for missing entry and feed titles', () => {
   </rss>`;
   const feed = parseFeed(untitled, base, now);
   expect(feed.title).toBe('Untitled');
-  expect(feed.articles[0]).toMatchObject({ title: 'Untitled' });
+  expect(feed.items[0]).toMatchObject({ title: 'Untitled' });
 });
 
 it('maps Atom entries and normalizes plain summaries and content', () => {
@@ -163,7 +163,7 @@ it('maps Atom entries and normalizes plain summaries and content', () => {
   const feed = parseFeed(atom, base, now);
   expect(feed.title).toBe('Atom News');
   expect(feed.description).toEqual(Option.some('Updates'));
-  const [entry, text, mixed] = feed.articles;
+  const [entry, text, mixed] = feed.items;
   expect(entry?.title).toBe('Entry');
   expectDescription(entry, 'Plain summary');
   expectContent(entry, '<p>Body</p>');
@@ -188,7 +188,7 @@ it('normalizes Atom content and summaries without a media type as plain text', (
     </entry>
   </feed>`;
   const feed = parseFeed(atom, base, now);
-  const [summary, content] = feed.articles;
+  const [summary, content] = feed.items;
   expectDescription(summary, 'plain summary');
   expectNoContent(summary);
   expectContent(content, 'plain content');
@@ -208,8 +208,8 @@ it('uses only published for Atom dates', () => {
     </entry>
   </feed>`;
   const feed = parseFeed(atom, base, now);
-  expect(iso(feed.articles[0]?.publishedAt)).toBe(nowIso);
-  expect(iso(feed.articles[1]?.publishedAt)).toBe('2026-01-07T00:00:00.000Z');
+  expect(iso(feed.items[0]?.publishedAt)).toBe(nowIso);
+  expect(iso(feed.items[1]?.publishedAt)).toBe('2026-01-07T00:00:00.000Z');
 });
 
 it('prefers Atom alternate links with HTML media types and then without a type', () => {
@@ -233,7 +233,7 @@ it('prefers Atom alternate links with HTML media types and then without a type',
     </entry>
   </feed>`;
   const feed = parseFeed(atom, base, now);
-  const [preferred, untyped, fallback] = feed.articles;
+  const [preferred, untyped, fallback] = feed.items;
   expectLink(preferred, 'https://example.com/html');
   expectLink(untyped, 'https://example.com/untyped');
   expectLink(fallback, 'https://example.com/xhtml');
@@ -265,8 +265,8 @@ it('maps Atom content and summary media types and drops external or unsupported 
     </entry>
   </feed>`;
   const feed = parseFeed(atom, base, now);
-  expect(feed.articles).toHaveLength(5);
-  const [html, xhtml, plain, external, binary] = feed.articles;
+  expect(feed.items).toHaveLength(5);
+  const [html, xhtml, plain, external, binary] = feed.items;
   expectDescription(html, '<i>summary</i>');
   expectContent(html, '<p>html</p>');
   expectContent(xhtml, '<p>xhtml</p>');
@@ -290,8 +290,8 @@ it('uses only date_published for JSON Feed dates', () => {
     ],
   });
   const feed = parseFeed(json, base, now);
-  expect(iso(feed.articles[0]?.publishedAt)).toBe(nowIso);
-  expect(iso(feed.articles[1]?.publishedAt)).toBe('2026-01-10T00:00:00.000Z');
+  expect(iso(feed.items[0]?.publishedAt)).toBe(nowIso);
+  expect(iso(feed.items[1]?.publishedAt)).toBe('2026-01-10T00:00:00.000Z');
 });
 
 it('maps JSON Feed items without using external_url', () => {
@@ -319,13 +319,13 @@ it('maps JSON Feed items without using external_url', () => {
   const feed = parseFeed(json, base, now);
   expect(feed.title).toBe('JSON News');
   expect(feed.description).toEqual(Option.some('J'));
-  expect(feed.articles[0]?.title).toBe('J1');
-  expectDescription(feed.articles[0], 'sum');
-  expectContent(feed.articles[0], 'body');
-  expect(iso(feed.articles[0]?.publishedAt)).toBe('2026-01-03T00:00:00.000Z');
-  expect(feed.articles[1]?.title).toBe('J2');
-  expectContent(feed.articles[1], '<p>rich</p>');
-  expectNoLink(feed.articles[1]);
+  expect(feed.items[0]?.title).toBe('J1');
+  expectDescription(feed.items[0], 'sum');
+  expectContent(feed.items[0], 'body');
+  expect(iso(feed.items[0]?.publishedAt)).toBe('2026-01-03T00:00:00.000Z');
+  expect(feed.items[1]?.title).toBe('J2');
+  expectContent(feed.items[1], '<p>rich</p>');
+  expectNoLink(feed.items[1]);
 });
 
 it('maps RDF items to raw entries', () => {
@@ -345,9 +345,9 @@ it('maps RDF items to raw entries', () => {
   const feed = parseFeed(rdf, base, now);
   expect(feed.title).toBe('RDF News');
   expect(feed.description).toEqual(Option.some('RDF daily'));
-  expect(feed.articles[0]?.title).toBe('R');
-  expectDescription(feed.articles[0], 'rdf summary');
-  expect(iso(feed.articles[0]?.publishedAt)).toBe('2026-01-04T00:00:00.000Z');
+  expect(feed.items[0]?.title).toBe('R');
+  expectDescription(feed.items[0], 'rdf summary');
+  expect(iso(feed.items[0]?.publishedAt)).toBe('2026-01-04T00:00:00.000Z');
 });
 
 it('rejects declarations and unparseable documents', () => {
@@ -395,12 +395,12 @@ it('allows declaration literals inside comments, CDATA and processing instructio
 </rss>`;
   const feed = parseFeed(xml, base, now);
   expect(feed.title).toBe('Literals');
-  expect(feed.articles[0]?.title).toBe('Markup');
+  expect(feed.items[0]?.title).toBe('Markup');
   expectDescription(
-    feed.articles[0],
+    feed.items[0],
     '<!DOCTYPE html> <!ENTITY author "Example"> <![CDATA[ nested ]]>'
   );
-  expectContent(feed.articles[0], '<p>Body</p>');
+  expectContent(feed.items[0], '<p>Body</p>');
 });
 
 it('parses JSON feeds whose text contains declaration literals', () => {
@@ -432,7 +432,7 @@ it('parses JSON feeds whose text contains declaration literals', () => {
   });
   const feed = parseFeed(json, base, now);
   expect(feed.title).toBe('Literals');
-  const [doctype, entity, cdata, comment] = feed.articles;
+  const [doctype, entity, cdata, comment] = feed.items;
   expectContent(doctype, '&lt;!DOCTYPE html&gt;&lt;p&gt;Body&lt;/p&gt;');
   expectContent(entity, '&lt;!ENTITY author "Example"&gt;');
   expectContent(cdata, '&lt;![CDATA[&lt;!DOCTYPE html&gt;]]&gt;');
@@ -449,7 +449,7 @@ it('parses JSON feeds that start with a byte order mark', () => {
   })}`;
   const feed = parseFeed(json, base, now);
   expect(feed.title).toBe('BOM');
-  expectContent(feed.articles[0], '&lt;!DOCTYPE html&gt;');
+  expectContent(feed.items[0], '&lt;!DOCTYPE html&gt;');
 });
 
 it.effect('parses feed content through the FeedParser service', () =>
@@ -457,7 +457,7 @@ it.effect('parses feed content through the FeedParser service', () =>
     const parser = yield* FeedParser;
     const feed = yield* parser.parse(rss, base);
     expect(feed.title).toBe('News');
-    expectLink(feed.articles[0], 'https://example.com/a');
+    expectLink(feed.items[0], 'https://example.com/a');
   }).pipe(Effect.provide(FeedParserLive))
 );
 
@@ -481,7 +481,7 @@ it('normalizes article URLs and metadata before returning parsed entries', () =>
     base,
     now
   );
-  const [entry] = feed.articles;
+  const [entry] = feed.items;
   expect(entry?.title).toBe('Untitled');
   expectLink(entry, 'https://example.com/story?keep=1');
   expectDescription(entry, 'Summary');

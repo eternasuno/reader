@@ -105,3 +105,14 @@ it.effect('allows clearing the endpoint while jina is active', () => {
     expect(updates).toHaveLength(1);
   });
 });
+
+it.effect('does not validate the provider for unrelated patches', () => {
+  const { updates, result } = run(current('browser'), {
+    feed: { retention: Retention.make(120) },
+  });
+
+  return Effect.gen(function* () {
+    yield* result;
+    expect(updates).toHaveLength(1);
+  });
+});

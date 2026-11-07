@@ -11,6 +11,6 @@ export const jinaWebpageFetcherLive = (
 ): Layer.Layer<WebpageFetcher> => JinaWebpageFetcherLive(key);
 
 export const browserWebpageFetcherLive = (
-  endpoint: BrowserEndpoint
+  endpoint: BrowserEndpoint | undefined
 ): Layer.Layer<WebpageFetcher, never, BrowserConcurrency> =>
   BrowserWebpageFetcherLive(endpoint);

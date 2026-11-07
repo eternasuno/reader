@@ -132,3 +132,36 @@ export const extractFeedItem = (
 
     return { ...item, extractedContent };
   });
+
+export const findFeedItem = (owner: OwnerId, feedId: FeedId, id: FeedItemId) =>
+  Effect.gen(function* () {
+    yield* requireFeed(owner, feedId);
+    const feedItems = yield* FeedItemRepository;
+
+    return yield* feedItems.find(feedId, id);
+  });
+
+export const markFeedItems = (
+  owner: OwnerId,
+  feedId: FeedId,
+  ids: ReadonlyArray<FeedItemId>,
+  read: boolean
+) =>
+  Effect.gen(function* () {
+    yield* requireFeed(owner, feedId);
+    const feedItems = yield* FeedItemRepository;
+
+    yield* feedItems.update(feedId, ids, { read });
+  });
+
+export const markFeedsRead = (owner: OwnerId, feedIds: ReadonlyArray<FeedId>) =>
+  Effect.gen(function* () {
+    const feeds = yield* FeedRepository;
+    const requested = new Set(feedIds);
+    const owned = (yield* feeds.list(owner))
+      .map((feed) => feed.id)
+      .filter((id) => requested.has(id));
+    const feedItems = yield* FeedItemRepository;
+
+    yield* feedItems.updateByFeeds(owned, { read: true });
+  });

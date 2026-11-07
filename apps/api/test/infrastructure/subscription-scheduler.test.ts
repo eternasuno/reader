@@ -3,10 +3,10 @@
 import { expect, it } from '@effect/vitest';
 import {
   ArticleContent,
-  ArticleRepository,
-  DocumentSantize,
+  DocumentSanitizer,
   type Feed,
   FeedId,
+  FeedItemRepository,
   FeedParser,
   FeedRepository,
   NormalizedUrl,
@@ -44,8 +44,8 @@ type Mocks = {
   >;
   readonly http?: (url: URL) => Effect.Effect<Response>;
   readonly parser?: Partial<Context.Service.Shape<typeof FeedParser>>;
-  readonly articles?: Partial<Context.Service.Shape<typeof ArticleRepository>>;
-  readonly processor?: Partial<Context.Service.Shape<typeof DocumentSantize>>;
+  readonly items?: Partial<Context.Service.Shape<typeof FeedItemRepository>>;
+  readonly processor?: Partial<Context.Service.Shape<typeof DocumentSanitizer>>;
 };
 
 const feedId = (seed: string) => FeedId.make(seed.repeat(64).slice(0, 64));
@@ -77,7 +77,7 @@ const feed = {
   title: 'Feed',
   url: decodeUrl('https://example.com/feed'),
   description: Option.none(),
-  articles: [],
+  items: [],
 };
 
 const document = () => new Response('<rss/>', { status: 200 });
@@ -117,11 +117,11 @@ const scheduler = (mocks: Mocks) =>
           get: (owner) =>
             Effect.succeed({
               ownerId: owner,
-              retention: decodeRetention(100),
+              feed: { retention: decodeRetention(100) },
               fetcher: {
                 provider: 'jina' as const,
-                key: Option.none(),
-                endpoint: Option.none(),
+                jina: { key: Option.none() },
+                browser: { endpoint: Option.none() },
               },
             }),
         }),
@@ -134,8 +134,8 @@ const scheduler = (mocks: Mocks) =>
           parse: () => Effect.succeed(feed),
           ...mocks.parser,
         }),
-        Layer.mock(ArticleRepository, mocks.articles ?? {}),
-        Layer.mock(DocumentSantize, {
+        Layer.mock(FeedItemRepository, mocks.items ?? {}),
+        Layer.mock(DocumentSanitizer, {
           sanitize: () => Effect.succeed(decodeSanitized(undefined)),
           ...mocks.processor,
         }),
@@ -195,7 +195,7 @@ it.effect(
 
               return document();
             }),
-          articles: {
+          items: {
             inventory: () => Effect.succeed([]),
             retain: () => Effect.void,
           },
@@ -258,7 +258,7 @@ it.effect('runs independent owner schedules at their own intervals', () => {
 
             return document();
           }),
-        articles: {
+        items: {
           inventory: () => Effect.succeed([]),
           retain: () => Effect.void,
         },
@@ -311,7 +311,7 @@ it.effect(
 
               return document();
             }),
-          articles: {
+          items: {
             inventory: () => Effect.succeed([]),
             retain: () => Effect.void,
           },
@@ -361,7 +361,7 @@ it.effect(
 
               return document();
             }),
-          articles: {
+          items: {
             inventory: () => Effect.succeed([]),
             retain: () => Effect.void,
           },
@@ -407,7 +407,7 @@ it.effect('isolates a failing subscription from the rest of the owner', () => {
               ? new Response('no', { status: 503 })
               : document()
           ),
-        articles: {
+        items: {
           inventory: () => Effect.succeed([]),
           retain: () => Effect.void,
         },
@@ -453,7 +453,7 @@ it.effect('skips a subscription removed before it refreshes', () => {
 
             return document();
           }),
-        articles: {
+        items: {
           inventory: () => Effect.succeed([]),
           retain: () => Effect.void,
         },
@@ -514,7 +514,7 @@ it.effect('reconciles owners that are added or removed', () => {
 
             return document();
           }),
-        articles: {
+        items: {
           inventory: () => Effect.succeed([]),
           retain: () => Effect.void,
         },
@@ -565,7 +565,7 @@ it.effect(
 
               return document();
             }),
-          articles: {
+          items: {
             inventory: () => Effect.succeed([]),
             retain: () => Effect.void,
           },
