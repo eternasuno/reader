@@ -21,7 +21,7 @@ export const SettingsPatch = Schema.Struct({
 
 export type SettingsPatch = typeof SettingsPatch.Type;
 
-export type ISettingsRepository = {
+export interface ISettingsRepository {
   readonly get: (
     owner: OwnerId
   ) => Effect.Effect<Setting, SettingsRepositoryError>;
@@ -29,7 +29,7 @@ export type ISettingsRepository = {
     owner: OwnerId,
     settingsPatch: SettingsPatch
   ) => Effect.Effect<void, SettingsRepositoryError>;
-};
+}
 
 export class SettingsRepository extends Context.Service<
   SettingsRepository,

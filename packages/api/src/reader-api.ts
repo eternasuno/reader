@@ -103,7 +103,6 @@ const feedRepositoryErrors = [FeedRepositoryErrorSchema, ...authErrors];
 const pageQuery = {
   filter: Schema.OptionFromOptional(ReadFilter),
   cursor: Schema.OptionFromOptional(Schema.String),
-  through: Schema.OptionFromOptional(Schema.String),
 };
 
 const refreshQuery = {

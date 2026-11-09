@@ -6,9 +6,9 @@ export class WebpageFetcherError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
-export type IWebpageFetcher = {
+export interface IWebpageFetcher {
   readonly fetch: (url: string) => Effect.Effect<string, WebpageFetcherError>;
-};
+}
 
 export class WebpageFetcher extends Context.Service<
   WebpageFetcher,

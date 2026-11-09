@@ -19,7 +19,12 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "allowedUnstableApis": ["effect/http", "effect/http-api"]
+        "allowedUnstableApis": [
+          "effect/http",
+          "effect/http-api",
+          "@effect/platform-node",
+          "@effect/vitest"
+        ]
       }
     ],
     "resolveJsonModule": true,

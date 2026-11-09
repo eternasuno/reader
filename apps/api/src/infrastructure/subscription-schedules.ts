@@ -14,12 +14,12 @@ export class SubscriptionScheduleError extends Data.TaggedError(
   'SubscriptionScheduleError'
 )<{ readonly message: string }> {}
 
-export type ISubscriptionSchedules = {
+export interface ISubscriptionSchedules {
   readonly list: () => Effect.Effect<
     ReadonlyArray<SubscriptionSchedule>,
     SubscriptionScheduleError
   >;
-};
+}
 
 export class SubscriptionSchedules extends Context.Service<
   SubscriptionSchedules,

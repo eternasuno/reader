@@ -11,14 +11,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-node": "4.0.0",
+    "@effect/platform-node": "4.1.2",
     "@reader/business": "workspace:*",
-    "effect": "4.0.0",
+    "effect": "4.1.2",
     "puppeteer-core": "25.16.0",
-    "ws": "8.22.0"
+    "ws": "8.22.1"
   },
   "devDependencies": {
-    "@effect/vitest": "4.0.0",
+    "@effect/vitest": "4.1.2",
     "@types/node": "catalog:",
     "@types/ws": "8.18.2",
     "typescript": "catalog:",

@@ -30,7 +30,6 @@ const decodeContent = Schema.decodeSync(
 );
 
 const pageQuery = (overrides: Partial<FeedItemQuery> = {}): FeedItemQuery => ({
-  filter: 'all',
   limit: 100,
   ...overrides,
 });
@@ -176,15 +175,12 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
       ).toEqual([tieHigh.id, oldest.id]);
       expect(
         yield* ids(
-          feedItems.list(
-            feedIds,
-            pageQuery({
-              through: {
-                publishedAt: dateTime(at),
-                id: FeedItemId.make(highId),
-              },
-            })
-          )
+          feedItems.listThrough(feedIds, {
+            through: {
+              publishedAt: dateTime(at),
+              id: FeedItemId.make(highId),
+            },
+          })
         )
       ).toEqual([newest.id, tieLow.id, tieHigh.id]);
       expect(
@@ -206,10 +202,25 @@ it.effect('filters by read state', () =>
       yield* feedItems.create([unread, read]);
 
       expect(
-        yield* ids(feedItems.list([feedId], pageQuery({ filter: 'unread' })))
+        yield* ids(feedItems.list([feedId], pageQuery({ read: false })))
       ).toEqual([unread.id]);
       expect(
-        yield* ids(feedItems.list([feedId], pageQuery({ filter: 'read' })))
+        yield* ids(feedItems.list([feedId], pageQuery({ read: true })))
+      ).toEqual([read.id]);
+
+      const beforeAll = {
+        publishedAt: dateTime('2000-01-01T00:00:00.000Z'),
+        id: FeedItemId.make(hash('boundary')),
+      };
+      expect(
+        yield* ids(
+          feedItems.listThrough([feedId], { read: false, through: beforeAll })
+        )
+      ).toEqual([unread.id]);
+      expect(
+        yield* ids(
+          feedItems.listThrough([feedId], { read: true, through: beforeAll })
+        )
       ).toEqual([read.id]);
     })
   )

@@ -344,8 +344,12 @@ const listing = (count: number) => {
 
   return {
     pages: {
-      list: (_owner: OwnerId, query: Parameters<typeof store>[0]) =>
-        store(query),
+      list: (_owner: OwnerId, query: Parameters<typeof store.list>[0]) =>
+        store.list(query),
+      listThrough: (
+        _owner: OwnerId,
+        query: Parameters<typeof store.listThrough>[0]
+      ) => store.listThrough(query),
     },
   };
 };

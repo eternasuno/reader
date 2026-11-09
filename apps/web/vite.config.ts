@@ -32,12 +32,15 @@ export default defineConfig(({ mode }) => {
     },
     test: {
       environment: 'node',
-      alias: {
-        'solid-js': new URL(
-          './dist/solid.js',
-          import.meta.resolve('solid-js/package.json')
-        ).pathname,
-      },
+      alias: [
+        {
+          find: /^solid-js$/,
+          replacement: new URL(
+            './dist/solid.js',
+            import.meta.resolve('solid-js/package.json')
+          ).pathname,
+        },
+      ],
     },
   };
 });

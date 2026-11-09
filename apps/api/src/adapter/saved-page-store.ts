@@ -6,12 +6,15 @@ import {
   type SavedPageQuery,
   SavedPageRepository,
   type SavedPageRepositoryError,
+  type SavedPageThroughQuery,
 } from '@reader/business';
 import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
 import type { Surreal } from 'surrealdb';
 import {
   type Bindings,
   one,
+  readBindings,
+  readClause,
   run,
   savedPageRepositoryError,
   savedPages,
@@ -20,6 +23,8 @@ import {
 
 const COLUMNS =
   'pageId AS id, owner AS ownerId, url, title, description, content, publishedAt, read';
+
+const ORDER = 'ORDER BY publishedAt DESC, pageId ASC';
 
 const encodeSavedPage = Schema.encodeSync(SavedPage);
 
@@ -71,38 +76,34 @@ const updateWhere = (
         savedPageRepositoryError
       ).pipe(Effect.map((rows) => rows.map((row) => row.pageId)));
 
-const filterClause = (filter: SavedPageQuery['filter']) =>
-  filter === 'all' ? '' : ' AND read = $read';
+const afterClause = (after: SavedPageQuery['after']) =>
+  after === undefined
+    ? ''
+    : ' AND (publishedAt < $afterAt OR (publishedAt = $afterAt AND pageId > $afterId))';
 
-const boundaryClauses = (query: SavedPageQuery) => {
-  const after =
-    query.after === undefined
-      ? ''
-      : ' AND (publishedAt < $afterAt OR (publishedAt = $afterAt AND pageId > $afterId))';
-  const through =
-    query.through === undefined
-      ? ''
-      : ' AND (publishedAt > $throughAt OR (publishedAt = $throughAt AND pageId <= $throughId))';
-
-  return `${after}${through}`;
-};
+const THROUGH_CLAUSE =
+  ' AND (publishedAt > $throughAt OR (publishedAt = $throughAt AND pageId <= $throughId))';
 
 const pageBindings = (owner: OwnerId, query: SavedPageQuery): Bindings => ({
   owner,
   limit: query.limit,
-  ...(query.filter === 'all' ? {} : { read: query.filter === 'read' }),
+  ...readBindings(query.read),
   ...(query.after === undefined
     ? {}
     : {
         afterAt: DateTime.toDate(query.after.publishedAt),
         afterId: query.after.id,
       }),
-  ...(query.through === undefined
-    ? {}
-    : {
-        throughAt: DateTime.toDate(query.through.publishedAt),
-        throughId: query.through.id,
-      }),
+});
+
+const throughBindings = (
+  owner: OwnerId,
+  query: SavedPageThroughQuery
+): Bindings => ({
+  owner,
+  ...readBindings(query.read),
+  throughAt: DateTime.toDate(query.through.publishedAt),
+  throughId: query.through.id,
 });
 
 const UnreadRow = Schema.Struct({
@@ -134,8 +135,14 @@ const readQueries = (db: Surreal) => ({
   list: (owner: OwnerId, query: SavedPageQuery) =>
     savedPages(
       db,
-      `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner${filterClause(query.filter)}${boundaryClauses(query)} ORDER BY publishedAt DESC, pageId ASC LIMIT $limit;`,
+      `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner${readClause(query.read)}${afterClause(query.after)} ${ORDER} LIMIT $limit;`,
       pageBindings(owner, query)
+    ),
+  listThrough: (owner: OwnerId, query: SavedPageThroughQuery) =>
+    savedPages(
+      db,
+      `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner${readClause(query.read)}${THROUGH_CLAUSE} ${ORDER};`,
+      throughBindings(owner, query)
     ),
   unreadCount: (owner: OwnerId) => unreadCount(db, owner),
 });

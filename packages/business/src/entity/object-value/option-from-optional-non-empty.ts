@@ -11,5 +11,5 @@ const NonBlankText = Schema.optional(Schema.Trim).pipe(
 
 export const OptionFromOptionalNonEmpty = Fn.flow(
   Schema.OptionFromOptional,
-  (to) => NonBlankText.pipe(Schema.decodeTo(to))
+  (to) => Schema.decodeTo(to)(NonBlankText)
 );

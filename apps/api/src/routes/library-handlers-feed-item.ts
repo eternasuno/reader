@@ -29,14 +29,12 @@ const feedItems = ({ query }: HandlerRequest<'feedItems'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
       const after = yield* optionalCursor(query.cursor);
-      const through = yield* optionalCursor(query.through);
 
       return yield* listFeedItems(
         owner,
         Option.getOrUndefined(query.feedId),
         Option.getOrElse(query.filter, () => 'all'),
-        after,
-        through
+        after
       );
     })
   ).pipe(Effect.catchTags(feedItemPageFailure));

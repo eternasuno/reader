@@ -8,10 +8,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "effect": "4.0.0"
+    "effect": "4.1.2"
   },
   "devDependencies": {
-    "@effect/vitest": "4.0.0",
+    "@effect/vitest": "4.1.2",
     "vitest": "catalog:",
     "typescript": "catalog:",
     "@types/node": "catalog:"

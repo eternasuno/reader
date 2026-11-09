@@ -95,35 +95,33 @@ export const series = <T>(
 type Listed = { readonly id: string; readonly publishedAt: DateTime.Utc };
 
 /**
- * Fake listing store keeping `items` in list order: `after` is the exclusive
- * suffix past the boundary, `through` the inclusive prefix up to it. The
- * boundary is matched by its (publishedAt, id) tuple, so a removed boundary
- * item still bounds the returned page.
+ * Fake listing store keeping `items` in list order: `list` returns the
+ * exclusive suffix past `after`, `listThrough` the inclusive prefix up to
+ * `through`. The boundary is matched by its (publishedAt, id) tuple, so a
+ * removed boundary item still bounds the returned page.
  */
-export const pagedStore =
-  <T extends Listed>(items: ReadonlyArray<T>) =>
-  (query: {
-    readonly after?: Listed;
-    readonly through?: Listed;
-    readonly limit: number;
-  }) => {
-    const isLaterThan = (item: Listed, boundary: Listed): boolean => {
-      const publishedAt = timeOf(item.publishedAt);
-      const boundaryAt = timeOf(boundary.publishedAt);
+export const pagedStore = <T extends Listed>(items: ReadonlyArray<T>) => {
+  const isLaterThan = (item: Listed, boundary: Listed): boolean => {
+    const publishedAt = timeOf(item.publishedAt);
+    const boundaryAt = timeOf(boundary.publishedAt);
 
-      return (
-        publishedAt > boundaryAt ||
-        (publishedAt === boundaryAt && item.id > boundary.id)
-      );
-    };
-
-    return Effect.succeed(
-      items
-        .filter(
-          (item) =>
-            (query.after === undefined || isLaterThan(item, query.after)) &&
-            (query.through === undefined || !isLaterThan(item, query.through))
-        )
-        .slice(0, query.limit)
+    return (
+      publishedAt > boundaryAt ||
+      (publishedAt === boundaryAt && item.id > boundary.id)
     );
   };
+
+  return {
+    list: (query: { readonly after?: Listed; readonly limit: number }) =>
+      Effect.succeed(
+        items
+          .filter(
+            (item) =>
+              query.after === undefined || isLaterThan(item, query.after)
+          )
+          .slice(0, query.limit)
+      ),
+    listThrough: (query: { readonly through: Listed }) =>
+      Effect.succeed(items.filter((item) => !isLaterThan(item, query.through))),
+  };
+};

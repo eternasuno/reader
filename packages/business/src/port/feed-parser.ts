@@ -20,12 +20,12 @@ export const ParsedFeed = Schema.Struct({
 
 export type ParsedFeed = typeof ParsedFeed.Type;
 
-export type IFeedParser = {
+export interface IFeedParser {
   readonly parse: (
     content: string,
     sourceUrl: URL
   ) => Effect.Effect<ParsedFeed, FeedParserError>;
-};
+}
 
 export class FeedParser extends Context.Service<FeedParser, IFeedParser>()(
   '@reader/business/FeedParser'

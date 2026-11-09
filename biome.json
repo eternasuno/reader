@@ -40,7 +40,8 @@
             "maxLines": 40,
             "skipBlankLines": true
           }
-        }
+        },
+        "useMathMinMax": "off"
       },
       "correctness": {
         "noSolidDestructuredProps": "error",

@@ -6,6 +6,7 @@ import {
   type FeedItemQuery,
   FeedItemRepository,
   type FeedItemRepositoryError,
+  type FeedItemThroughQuery,
 } from '@reader/business';
 import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
 import { RecordId, type Surreal } from 'surrealdb';
@@ -15,12 +16,16 @@ import {
   feedItems,
   one,
   read,
+  readBindings,
+  readClause,
   run,
   write,
 } from './reader-store-sql';
 
 const COLUMNS =
   'itemId AS id, feedId, url, title, description, content, extractedContent, publishedAt, read';
+
+const ORDER = 'ORDER BY publishedAt DESC, itemId ASC';
 
 const encodeFeedItem = Schema.encodeSync(FeedItem);
 
@@ -102,21 +107,13 @@ const updateWhere = (
       ).pipe(Effect.map((rows) => rows.map((row) => row.itemId)));
 };
 
-const filterClause = (filter: FeedItemQuery['filter']) =>
-  filter === 'all' ? '' : ' AND read = $read';
+const afterClause = (after: FeedItemQuery['after']) =>
+  after === undefined
+    ? ''
+    : ' AND (publishedAt < $afterAt OR (publishedAt = $afterAt AND itemId > $afterId))';
 
-const boundaryClauses = (query: FeedItemQuery) => {
-  const after =
-    query.after === undefined
-      ? ''
-      : ' AND (publishedAt < $afterAt OR (publishedAt = $afterAt AND itemId > $afterId))';
-  const through =
-    query.through === undefined
-      ? ''
-      : ' AND (publishedAt > $throughAt OR (publishedAt = $throughAt AND itemId <= $throughId))';
-
-  return `${after}${through}`;
-};
+const THROUGH_CLAUSE =
+  ' AND (publishedAt > $throughAt OR (publishedAt = $throughAt AND itemId <= $throughId))';
 
 const pageBindings = (
   feedIds: ReadonlyArray<FeedId>,
@@ -124,19 +121,23 @@ const pageBindings = (
 ): Bindings => ({
   feedIds: [...feedIds],
   limit: query.limit,
-  ...(query.filter === 'all' ? {} : { read: query.filter === 'read' }),
+  ...readBindings(query.read),
   ...(query.after === undefined
     ? {}
     : {
         afterAt: DateTime.toDate(query.after.publishedAt),
         afterId: query.after.id,
       }),
-  ...(query.through === undefined
-    ? {}
-    : {
-        throughAt: DateTime.toDate(query.through.publishedAt),
-        throughId: query.through.id,
-      }),
+});
+
+const throughBindings = (
+  feedIds: ReadonlyArray<FeedId>,
+  query: FeedItemThroughQuery
+): Bindings => ({
+  feedIds: [...feedIds],
+  ...readBindings(query.read),
+  throughAt: DateTime.toDate(query.through.publishedAt),
+  throughId: query.through.id,
 });
 
 const listFeedItems = (
@@ -148,8 +149,21 @@ const listFeedItems = (
     ? Effect.succeed([] as ReadonlyArray<FeedItem>)
     : feedItems(
         db,
-        `SELECT ${COLUMNS} FROM feed_item WHERE feedId IN $feedIds${filterClause(query.filter)}${boundaryClauses(query)} ORDER BY publishedAt DESC, itemId ASC LIMIT $limit;`,
+        `SELECT ${COLUMNS} FROM feed_item WHERE feedId IN $feedIds${readClause(query.read)}${afterClause(query.after)} ${ORDER} LIMIT $limit;`,
         pageBindings(feedIds, query)
+      );
+
+const listFeedItemsThrough = (
+  db: Surreal,
+  feedIds: ReadonlyArray<FeedId>,
+  query: FeedItemThroughQuery
+) =>
+  feedIds.length === 0
+    ? Effect.succeed([] as ReadonlyArray<FeedItem>)
+    : feedItems(
+        db,
+        `SELECT ${COLUMNS} FROM feed_item WHERE feedId IN $feedIds${readClause(query.read)}${THROUGH_CLAUSE} ${ORDER};`,
+        throughBindings(feedIds, query)
       );
 
 const UnreadRow = Schema.Struct({
@@ -186,12 +200,14 @@ const readQueries = (db: Surreal) => ({
     ).pipe(Effect.map((items) => Option.fromNullishOr(items[0]))),
   list: (feedIds: ReadonlyArray<FeedId>, query: FeedItemQuery) =>
     listFeedItems(db, feedIds, query),
+  listThrough: (feedIds: ReadonlyArray<FeedId>, query: FeedItemThroughQuery) =>
+    listFeedItemsThrough(db, feedIds, query),
   unreadCounts: (feedIds: ReadonlyArray<FeedId>) =>
     readUnreadCounts(db, feedIds),
   inventory: (feedId: FeedId) =>
     read(
       db,
-      'SELECT publishedAt, itemId AS id FROM feed_item WHERE feedId = $feedId ORDER BY publishedAt DESC, itemId ASC;',
+      `SELECT publishedAt, itemId AS id FROM feed_item WHERE feedId = $feedId ${ORDER};`,
       { feedId },
       Schema.Array(BoundaryRow),
       feedItemRepositoryError

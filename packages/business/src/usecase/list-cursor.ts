@@ -1,7 +1,7 @@
 import { Data, type DateTime, Schema } from 'effect';
 import { FeedId } from '../entity/feed/feed';
 import { OwnerId } from '../entity/object-value/owner-id';
-import { ReadFilter } from '../port/read-filter';
+import { ReadFilter } from './read-filter';
 
 export class InvalidCursor extends Data.TaggedError('InvalidCursor')<{
   readonly message: string;

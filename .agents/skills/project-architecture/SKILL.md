@@ -10,8 +10,8 @@ description: Follow the client architecture and resource-lifecycle constraints w
 - Keep `apps/web` limited to browser routes, components, the Better Auth client, and the API client; preserve client rendering.
 - Do not introduce `apps/api`, Effect server modules, database clients, embedded engines, secrets, or Better Auth server configuration into web; do not add SSR or server functions.
 - API HTTP routes belong in `apps/api/src/routes`, runtime Layers and database capabilities in `apps/api/src/infrastructure`, and request middleware in `apps/api/src/middleware`; place server capabilities according to these responsibilities and do not move them into web.
-- Use `type` aliases for ordinary TypeScript data shapes and contracts. Preserve Effect Service classes and runtime classes such as `Data.TaggedError` constructors.
-- Keep shared Effect language-service settings in the root `tsconfig.json`; let app configs inherit them rather than duplicate the plugin array. Use app overrides only for genuinely app-specific settings.
+- Use `type` aliases for ordinary TypeScript data shapes and contracts. Preserve Effect Service classes and runtime classes such as `Data.TaggedError` constructors. The one exception is the shape of an Effect service: declare it as `interface I<Service>` next to its `Context.Service` class (ports in `packages/business/src/port`, `ISubscriptionSchedules`), and keep every such shape an `interface`, not a `type`.
+- Keep shared Effect language-service settings in the root `tsconfig.json`; let app configs inherit them rather than duplicate the plugin array. Use app overrides only for genuinely app-specific settings. Its `allowedUnstableApis` allows whole modules or packages (`effect/http`, `effect/http-api`, `@effect/platform-node`, `@effect/vitest`): Effect marks every package other than `effect` as `@stability unstable`, and an unlisted unstable API makes `pnpm typecheck` exit non-zero, so allow the package rather than individual exports.
 
 ## Web Layers
 

@@ -83,6 +83,12 @@ export const read = <A, E>(
     )
   );
 
+export const readClause = (isRead: boolean | undefined): string =>
+  isRead === undefined ? '' : ' AND read = $read';
+
+export const readBindings = (isRead: boolean | undefined): Bindings =>
+  isRead === undefined ? {} : { read: isRead };
+
 export const feedItems = (db: Surreal, sql: string, bindings: Bindings) =>
   read(db, sql, bindings, Schema.Array(FeedItem), feedItemRepositoryError);
 

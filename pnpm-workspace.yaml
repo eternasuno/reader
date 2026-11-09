@@ -3,16 +3,16 @@ packages:
   - "packages/*"
 
 catalog:
-  "@types/node": 26.6.4
-  better-auth: 1.7.7
+  "@types/node": 26.6.6
+  better-auth: 1.7.18
   typescript: "7.0.2"
-  vite: 8.3.2
-  vitest: 5.0.3
+  vite: 8.3.6
+  vitest: 5.1.0
 
 peerDependencyRules:
   allowedVersions:
-    "surrealdb@2.0.10>typescript": "7.0.2"
-    "@surrealdb/sqon@0.1.5>typescript": "7.0.2"
+    "surrealdb@2.2.2>typescript": "7.0.2"
+    "@surrealdb/sqon@0.2.1>typescript": "7.0.2"
 
 allowBuilds:
   esbuild: true

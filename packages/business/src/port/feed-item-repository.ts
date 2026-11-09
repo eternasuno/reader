@@ -9,7 +9,6 @@ import {
 } from 'effect';
 import type { FeedId } from '../entity/feed/feed';
 import { FeedItem, type FeedItemId } from '../entity/feed/feed-item';
-import type { ReadFilter } from './read-filter';
 
 export class FeedItemRepositoryError extends Data.TaggedError(
   'FeedItemRepositoryError'
@@ -21,10 +20,14 @@ export type FeedItemBoundary = {
 };
 
 export type FeedItemQuery = {
-  readonly filter: ReadFilter;
+  readonly read?: boolean;
   readonly after?: FeedItemBoundary;
-  readonly through?: FeedItemBoundary;
   readonly limit: number;
+};
+
+export type FeedItemThroughQuery = {
+  readonly read?: boolean;
+  readonly through: FeedItemBoundary;
 };
 
 export const FeedItemPatch = FeedItem.mapFields((fields) =>
@@ -45,7 +48,7 @@ export type FeedItemUnreadCount = {
  * Items are owned through their feed: callers must first resolve the feeds
  * through `FeedRepository` for the current owner, then pass the feed ids here.
  */
-export type IFeedItemRepository = {
+export interface IFeedItemRepository {
   readonly find: (
     feedId: FeedId,
     id: FeedItemId
@@ -53,6 +56,10 @@ export type IFeedItemRepository = {
   readonly list: (
     feedIds: ReadonlyArray<FeedId>,
     query: FeedItemQuery
+  ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
+  readonly listThrough: (
+    feedIds: ReadonlyArray<FeedId>,
+    query: FeedItemThroughQuery
   ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
   readonly create: (
     items: ReadonlyArray<FeedItem>
@@ -79,7 +86,7 @@ export type IFeedItemRepository = {
     feedId: FeedId,
     ids: ReadonlyArray<FeedItemId>
   ) => Effect.Effect<void, FeedItemRepositoryError>;
-};
+}
 
 export class FeedItemRepository extends Context.Service<
   FeedItemRepository,

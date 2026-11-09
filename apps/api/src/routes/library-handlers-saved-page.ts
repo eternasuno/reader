@@ -34,13 +34,11 @@ const savedPages = ({ query }: HandlerRequest<'savedPages'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
       const after = yield* optionalCursor(query.cursor);
-      const through = yield* optionalCursor(query.through);
 
       return yield* listSavedPages(
         owner,
         Option.getOrElse(query.filter, () => 'all'),
-        after,
-        through
+        after
       );
     })
   ).pipe(Effect.catchTags(savedPagePageFailure));

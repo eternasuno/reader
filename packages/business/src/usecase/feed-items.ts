@@ -7,7 +7,6 @@ import {
   FeedRepository,
   type FeedRepositoryError,
 } from '../port/feed-repository';
-import type { ReadFilter } from '../port/read-filter';
 import { fetchAndExtract } from './extract-page';
 import {
   FeedItemMissingUrl,
@@ -16,6 +15,7 @@ import {
 } from './feed-errors';
 import type { ListCursor } from './list-cursor';
 import { makePaging } from './pagination';
+import type { ReadFilter } from './read-filter';
 
 export const FeedItemList = Schema.Struct({
   items: Schema.Array(FeedItem),
@@ -66,7 +66,8 @@ const feedItemPaging = (
       scope: { kind: 'feeds', feedId: Option.fromUndefinedOr(feedId) },
       filter,
       toId: FeedItemId.make,
-      fetch: (query) => feedItems.list(feedIds, query),
+      fetchPage: (query) => feedItems.list(feedIds, query),
+      fetchThrough: (query) => feedItems.listThrough(feedIds, query),
     });
   });
 
@@ -74,13 +75,12 @@ export const listFeedItems = (
   owner: OwnerId,
   feedId: FeedId | undefined,
   filter: ReadFilter,
-  cursor?: ListCursor,
-  through?: ListCursor
+  cursor?: ListCursor
 ) =>
   Effect.gen(function* () {
     const paging = yield* feedItemPaging(owner, feedId, filter);
 
-    return yield* paging.list(cursor, through);
+    return yield* paging.list(cursor);
   });
 
 export const refreshFeedItems = (

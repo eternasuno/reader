@@ -15,3 +15,5 @@ description: Follow the project's behavior and test-directory boundaries when wr
 - For unified unread counts, cover zero defaults, owner isolation, feeds without items, and retaining previous counts on request failure. For owner refresh scheduling, cover independent intervals, deduplication, owner addition/removal, and scoped cleanup.
 - Frontend test scripts should not use `--passWithNoTests`; a missing web test suite should fail visibly rather than silently pass.
 - Test browser-independent frontend state and validation logic in the existing Node/Vitest environment. Add a DOM environment only when the behavior under test depends on rendered DOM interactions.
+- Keep the web Vitest `solid-js` alias in `apps/web/vite.config.ts` an exact-match regex (`/^solid-js$/`); a string key also rewrites `solid-js/store` and `solid-js/web` and breaks Better Auth's Solid client in tests.
+- Paging fakes expose `list` and `listThrough` separately (`pagedStore` in `packages/business/test/support.ts`). Store tests cover tie-breaks, exclusive `after`, inclusive `through`, and `read` filtering on both; a use case test asserts that refresh issues one query without `limit`.

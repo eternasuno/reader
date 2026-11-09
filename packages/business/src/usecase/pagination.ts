@@ -1,12 +1,12 @@
-import { type DateTime, Effect, Option, Stream } from 'effect';
+import { type DateTime, Effect, Option } from 'effect';
 import type { OwnerId } from '../entity/object-value/owner-id';
-import type { ReadFilter } from '../port/read-filter';
 import {
   encodeListCursor,
   InvalidCursor,
   type ListCursor,
   type ListCursorScope,
 } from './list-cursor';
+import { type ReadFilter, readStateOf } from './read-filter';
 
 const PAGE_SIZE = 30;
 
@@ -16,10 +16,14 @@ type Boundary<Id extends string> = {
 };
 
 type PageQuery<Id extends string> = {
-  readonly filter: ReadFilter;
+  readonly read?: boolean;
   readonly after?: Boundary<Id>;
-  readonly through?: Boundary<Id>;
   readonly limit: number;
+};
+
+type ThroughQuery<Id extends string> = {
+  readonly read?: boolean;
+  readonly through: Boundary<Id>;
 };
 
 type Paging<Item extends Boundary<Id>, Id extends string, E, R> = {
@@ -27,8 +31,11 @@ type Paging<Item extends Boundary<Id>, Id extends string, E, R> = {
   readonly scope: ListCursorScope;
   readonly filter: ReadFilter;
   readonly toId: (id: string) => Id;
-  readonly fetch: (
+  readonly fetchPage: (
     query: PageQuery<Id>
+  ) => Effect.Effect<ReadonlyArray<Item>, E, R>;
+  readonly fetchThrough: (
+    query: ThroughQuery<Id>
   ) => Effect.Effect<ReadonlyArray<Item>, E, R>;
 };
 
@@ -39,24 +46,12 @@ const scopeKey = (scope: ListCursorScope): string =>
 
 const pageQuery = <Id extends string>(
   filter: ReadFilter,
-  after: Boundary<Id> | undefined,
-  through: Boundary<Id> | undefined
+  after: Boundary<Id> | undefined
 ): PageQuery<Id> => ({
-  filter,
+  ...readStateOf(filter),
   limit: PAGE_SIZE + 1,
   ...(after === undefined ? {} : { after }),
-  ...(through === undefined ? {} : { through }),
 });
-
-const continuationOf = <Id extends string>(
-  rows: ReadonlyArray<Boundary<Id>>
-): Option.Option<Boundary<Id>> => {
-  const last = rows.at(-1);
-
-  return rows.length > PAGE_SIZE && last !== undefined
-    ? Option.some({ publishedAt: last.publishedAt, id: last.id })
-    : Option.none();
-};
 
 const cursorBoundary = <Item extends Boundary<Id>, Id extends string, E, R>(
   { owner, scope, filter, toId }: Paging<Item, Id, E, R>,
@@ -93,13 +88,11 @@ const tokenOf = <Item extends Boundary<Id>, Id extends string, E, R>(
 
 const listPage = <Item extends Boundary<Id>, Id extends string, E, R>(
   paging: Paging<Item, Id, E, R>,
-  cursor: ListCursor | undefined,
-  through: ListCursor | undefined
+  cursor: ListCursor | undefined
 ) =>
   Effect.gen(function* () {
     const after = yield* optionalBoundary(paging, cursor);
-    const boundary = yield* optionalBoundary(paging, through);
-    const rows = yield* paging.fetch(pageQuery(paging.filter, after, boundary));
+    const rows = yield* paging.fetchPage(pageQuery(paging.filter, after));
     const items = rows.slice(0, PAGE_SIZE);
     const last = items.at(-1);
     const tail = last === undefined ? null : tokenOf(paging, last);
@@ -118,20 +111,15 @@ const refreshPages = <Item extends Boundary<Id>, Id extends string, E, R>(
   Effect.gen(function* () {
     const boundary = yield* cursorBoundary(paging, through);
 
-    return yield* Stream.paginate(
-      undefined as Boundary<Id> | undefined,
-      (after) =>
-        Effect.map(
-          paging.fetch(pageQuery(paging.filter, after, boundary)),
-          (rows) => [rows, continuationOf(rows)] as const
-        )
-    ).pipe(Stream.runCollect);
+    return yield* paging.fetchThrough({
+      ...readStateOf(paging.filter),
+      through: boundary,
+    });
   });
 
 export const makePaging = <Item extends Boundary<Id>, Id extends string, E, R>(
   paging: Paging<Item, Id, E, R>
 ) => ({
-  list: (cursor?: ListCursor, through?: ListCursor) =>
-    listPage(paging, cursor, through),
+  list: (cursor?: ListCursor) => listPage(paging, cursor),
   refresh: (through: ListCursor) => refreshPages(paging, through),
 });

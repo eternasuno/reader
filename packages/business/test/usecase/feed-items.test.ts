@@ -8,6 +8,7 @@ import { ArticleExtractor } from '../../src/port/article-extractor';
 import {
   type FeedItemQuery,
   FeedItemRepository,
+  type FeedItemThroughQuery,
 } from '../../src/port/feed-item-repository';
 import { FeedRepository } from '../../src/port/feed-repository';
 import { HtmlParser } from '../../src/port/html-parser';
@@ -91,7 +92,7 @@ it.effect('lists a scoped feed after checking it belongs to the owner', () => {
       items: {
         list: (feedIds, query: FeedItemQuery) => {
           requested.push(feedIds);
-          expect(query).toEqual({ filter: 'unread', limit: 31 });
+          expect(query).toEqual({ read: false, limit: 31 });
 
           return Effect.succeed([]);
         },
@@ -139,7 +140,10 @@ const listing = (count: number) => {
 
   return {
     items: {
-      list: (_ids: ReadonlyArray<string>, query: FeedItemQuery) => store(query),
+      list: (_ids: ReadonlyArray<string>, query: FeedItemQuery) =>
+        store.list(query),
+      listThrough: (_ids: ReadonlyArray<string>, query: FeedItemThroughQuery) =>
+        store.listThrough(query),
     },
   };
 };
@@ -191,6 +195,39 @@ it.effect(
       }),
       listing(65)
     )
+);
+
+it.effect(
+  'refreshes with one unlimited query scoped to the read filter',
+  () => {
+    const queries: Array<FeedItemThroughQuery> = [];
+
+    return provide(
+      Effect.gen(function* () {
+        const first = yield* listFeedItems(alice, feedId, 'unread');
+        yield* refreshFeedItems(
+          alice,
+          feedId,
+          'unread',
+          decodeCursor(first.boundary ?? '')
+        );
+        expect(queries).toHaveLength(1);
+        expect(queries[0]?.read).toBe(false);
+        expect(queries[0]?.through.id).toBe(hex(29));
+        expect(queries[0]).not.toHaveProperty('limit');
+      }),
+      {
+        items: {
+          ...listing(65).items,
+          listThrough: (_ids, query) => {
+            queries.push(query);
+
+            return Effect.succeed([]);
+          },
+        },
+      }
+    );
+  }
 );
 
 it.effect(

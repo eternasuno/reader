@@ -43,7 +43,7 @@ pnpm dev        # run the web and API development servers
 pnpm build      # build both applications
 pnpm start      # run the built API server
 pnpm test       # run all Vitest suites
-pnpm check      # run Biome checks
+pnpm check      # run Biome checks, including Markdown and YAML formatting
 pnpm check --fix  # run Biome checks and apply fixes
 pnpm typecheck  # run TypeScript checks for both applications
 ```
@@ -53,8 +53,8 @@ pnpm typecheck  # run TypeScript checks for both applications
 Maintainers should read [`AGENTS.md`](AGENTS.md) first, then read the relevant project skill for the task:
 
 - [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — architecture, browser/API boundaries, session subscriptions, or deployment topology.
-- [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, sessions, protected APIs, Effect services, or Layer composition.
-- [`project-database`](.agents/skills/project-database/SKILL.md) — SurrealDB/SurrealKV, schema migrations, or database deployment configuration.
+- [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, sessions, protected APIs, business ports and use cases, repository and paging contracts, Effect services, or Layer composition.
+- [`project-database`](.agents/skills/project-database/SKILL.md) — SurrealDB/SurrealKV connections, queries, schema migrations, or database deployment configuration.
 - [`project-testing`](.agents/skills/project-testing/SKILL.md) — tests, test doubles, Effect Layers, or in-memory database schema setup.
 
 ## Architecture
@@ -91,24 +91,26 @@ pnpm --filter api db:migrate
 
 The script derives the DDL from the adapter and applies it to the configured database. Apply schema during deployment rather than at startup, so changes are applied once instead of racing across restarted instances. Tests initialize the adapter schema directly against `mem://`.
 
+The project is in development and keeps no database compatibility or data migration path. `@surrealdb/node` 3.2 embeds SurrealDB 4.0, which refuses to open a SurrealKV directory written by SurrealDB 3.x. After an engine or schema change that makes existing data unusable, delete the directory named by `SURREAL_ENDPOINT` (for example `.data/database`) and run `pnpm db:migrate` again.
+
 ## Environment variables
 
 Web variables belong in `apps/web/.env`:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `WEB_PORT` | `3000` | Web development/preview port |
+| Variable   | Default | Purpose                      |
+| ---------- | ------- | ---------------------------- |
+| `WEB_PORT` | `3000`  | Web development/preview port |
 
 API variables belong in `apps/api/.env`:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `API_PORT` | `3001` | Effect HTTP server port |
-| `SURREAL_ENDPOINT` | `mem://` | Database endpoint; defaults to ephemeral `mem://`; use an absolute SurrealKV path or managed endpoint in production. |
-| `SURREAL_NAMESPACE` | `app` | SurrealDB namespace |
-| `SURREAL_DATABASE` | `app` | SurrealDB database |
-| `BETTER_AUTH_SECRET` | — | Better Auth signing secret |
-| `BETTER_AUTH_URL` | `http://localhost:3000` | Canonical public site origin used for auth URLs |
+| Variable             | Default                 | Purpose                                                                                                              |
+| -------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `API_PORT`           | `3001`                  | Effect HTTP server port                                                                                              |
+| `SURREAL_ENDPOINT`   | `mem://`                | Database endpoint; defaults to ephemeral `mem://`; use an absolute SurrealKV path or managed endpoint in production. |
+| `SURREAL_NAMESPACE`  | `app`                   | SurrealDB namespace                                                                                                  |
+| `SURREAL_DATABASE`   | `app`                   | SurrealDB database                                                                                                   |
+| `BETTER_AUTH_SECRET` | —                       | Better Auth signing secret                                                                                           |
+| `BETTER_AUTH_URL`    | `http://localhost:3000` | Canonical public site origin used for auth URLs                                                                      |
 
 Deploy the frontend and `/api` on the same public origin. In development and preview, Vite provides the `/api` proxy.
 
@@ -131,6 +133,8 @@ Deploy the frontend and `/api` on the same public origin. In development and pre
 - `/api/library/feeds*` — subscriptions and their feed items; item operations carry `feedId`
 - `/api/library/unread` — saved and per-feed unread counts
 - `/api/library/settings*` — reading and extraction settings
+
+List endpoints page with an opaque `cursor`. Refresh endpoints take the `through` token returned by a list response and return everything from the top of the list through that item.
 
 Business storage keeps `feed_item` (owned through its feed) and `saved_page` (owned by the user) separately. Existing records from the previous unified article model are not migrated; use a fresh database for this version. Run `pnpm db:migrate` before starting against a new persistent database.
 
@@ -190,3 +194,5 @@ docker run --rm --init \
 ```
 
 Run this with the application stopped and the same namespace/database configuration. Create the named volume with writable ownership for UID 1000 before migration (for example, using the runtime image's `/data` directory). Never apply migrations automatically at startup.
+
+A volume written by an image built with SurrealDB 3.x hits the same refusal described in Embedded SurrealDB: remove the old volume (or use a new one) and run the migration again.

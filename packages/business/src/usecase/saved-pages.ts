@@ -6,7 +6,6 @@ import type { NormalizedUrl } from '../entity/object-value/normalized-url';
 import type { OwnerId } from '../entity/object-value/owner-id';
 import { SavedPage, SavedPageId } from '../entity/saved-page/saved-page';
 import { FeedItemRepository } from '../port/feed-item-repository';
-import type { ReadFilter } from '../port/read-filter';
 import { SavedPageRepository } from '../port/saved-page-repository';
 import { ArticleEmptyContent, fetchAndExtract } from './extract-page';
 import { FeedItemNotFound } from './feed-errors';
@@ -14,6 +13,7 @@ import { requireFeed } from './feed-items';
 import { savedPageId } from './identity';
 import type { ListCursor } from './list-cursor';
 import { makePaging } from './pagination';
+import type { ReadFilter } from './read-filter';
 import { DuplicateSavedPage } from './saved-page-errors';
 
 export const SavedPageList = Schema.Struct({
@@ -133,20 +133,20 @@ const savedPagePaging = (owner: OwnerId, filter: ReadFilter) =>
       scope: { kind: 'saved' },
       filter,
       toId: SavedPageId.make,
-      fetch: (query) => pages.list(owner, query),
+      fetchPage: (query) => pages.list(owner, query),
+      fetchThrough: (query) => pages.listThrough(owner, query),
     });
   });
 
 export const listSavedPages = (
   owner: OwnerId,
   filter: ReadFilter,
-  cursor?: ListCursor,
-  through?: ListCursor
+  cursor?: ListCursor
 ) =>
   Effect.gen(function* () {
     const paging = yield* savedPagePaging(owner, filter);
 
-    return yield* paging.list(cursor, through);
+    return yield* paging.list(cursor);
   });
 
 export const refreshSavedPages = (

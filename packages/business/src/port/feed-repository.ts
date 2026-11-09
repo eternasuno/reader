@@ -27,7 +27,7 @@ export type FeedUpdate = {
   readonly feedPatch: FeedPatch;
 };
 
-export type IFeedRepository = {
+export interface IFeedRepository {
   readonly find: (
     ownerId: OwnerId,
     id: FeedId
@@ -47,7 +47,7 @@ export type IFeedRepository = {
     ownerId: OwnerId,
     updates: ReadonlyArray<FeedUpdate>
   ) => Effect.Effect<void, FeedRepositoryError>;
-};
+}
 
 export class FeedRepository extends Context.Service<
   FeedRepository,

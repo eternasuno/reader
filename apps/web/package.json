@@ -11,20 +11,20 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@solidjs/router": "1.0.0",
-    "@tanstack/solid-virtual": "3.13.50",
+    "@solidjs/router": "1.0.1",
+    "@tanstack/solid-virtual": "3.13.53",
     "better-auth": "catalog:",
-    "effect": "4.0.0",
-    "solid-js": "1.9.17"
+    "effect": "4.1.2",
+    "solid-js": "1.9.18"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "4.3.3",
+    "@tailwindcss/vite": "4.3.5",
     "@types/node": "catalog:",
-    "daisyui": "5.7.47",
-    "tailwindcss": "4.3.3",
+    "daisyui": "5.7.50",
+    "tailwindcss": "4.3.5",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vite-plugin-solid": "2.11.14",
+    "vite-plugin-solid": "2.11.15",
     "vitest": "catalog:"
   }
 }

@@ -20,7 +20,6 @@ import {
 const pageQuery = (
   overrides: Partial<SavedPageQuery> = {}
 ): SavedPageQuery => ({
-  filter: 'all',
   limit: 100,
   ...overrides,
 });
@@ -139,15 +138,12 @@ it.effect('orders ties and applies inclusive through and exclusive after', () =>
       ).toEqual([tieHigh.id, oldest.id]);
       expect(
         yield* ids(
-          pages.list(
-            alice,
-            pageQuery({
-              through: {
-                publishedAt: dateTime(at),
-                id: SavedPageId.make(highId),
-              },
-            })
-          )
+          pages.listThrough(alice, {
+            through: {
+              publishedAt: dateTime(at),
+              id: SavedPageId.make(highId),
+            },
+          })
         )
       ).toEqual([newest.id, tieLow.id, tieHigh.id]);
       expect(yield* pages.list(alice, pageQuery({ limit: 2 }))).toHaveLength(2);
@@ -167,11 +163,26 @@ it.effect('filters by read state and counts unread pages per owner', () =>
       const bobPage = savedPage('bob', 'bob');
       yield* pages.create([unread, read, another, bobPage]);
 
+      expect(yield* ids(pages.list(alice, pageQuery({ read: true })))).toEqual([
+        read.id,
+      ]);
       expect(
-        yield* ids(pages.list(alice, pageQuery({ filter: 'read' })))
+        sorted(yield* ids(pages.list(alice, pageQuery({ read: false }))))
+      ).toEqual(sorted([unread.id, another.id]));
+
+      const beforeAll = {
+        publishedAt: dateTime('2000-01-01T00:00:00.000Z'),
+        id: SavedPageId.make(hash('boundary')),
+      };
+      expect(
+        yield* ids(pages.listThrough(alice, { read: true, through: beforeAll }))
       ).toEqual([read.id]);
       expect(
-        sorted(yield* ids(pages.list(alice, pageQuery({ filter: 'unread' }))))
+        sorted(
+          yield* ids(
+            pages.listThrough(alice, { read: false, through: beforeAll })
+          )
+        )
       ).toEqual(sorted([unread.id, another.id]));
       expect(yield* pages.unreadCount(alice)).toBe(2);
       expect(yield* pages.unreadCount(bob)).toBe(1);
