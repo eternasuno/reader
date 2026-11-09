@@ -89,6 +89,18 @@ export const readClause = (isRead: boolean | undefined): string =>
 export const readBindings = (isRead: boolean | undefined): Bindings =>
   isRead === undefined ? {} : { read: isRead };
 
+/**
+ * List order is `publishedAt DESC, <id> DESC`. The plain `publishedAt` bound is
+ * redundant for correctness but is what lets SurrealDB turn the clause into an
+ * index range; without it the ordered index scan starts at the head of the list
+ * and a deep page or refresh costs O(position).
+ */
+export const afterBoundary = (idColumn: string): string =>
+  ` AND publishedAt <= $afterAt AND (publishedAt < $afterAt OR ${idColumn} < $afterId)`;
+
+export const throughBoundary = (idColumn: string): string =>
+  ` AND publishedAt >= $throughAt AND (publishedAt > $throughAt OR ${idColumn} >= $throughId)`;
+
 export const feedItems = (db: Surreal, sql: string, bindings: Bindings) =>
   read(db, sql, bindings, Schema.Array(FeedItem), feedItemRepositoryError);
 

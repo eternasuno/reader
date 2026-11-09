@@ -11,6 +11,7 @@ import {
 import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
 import { RecordId, type Surreal } from 'surrealdb';
 import {
+  afterBoundary,
   type Bindings,
   feedItemRepositoryError,
   feedItems,
@@ -19,13 +20,14 @@ import {
   readBindings,
   readClause,
   run,
+  throughBoundary,
   write,
 } from './reader-store-sql';
 
 const COLUMNS =
   'itemId AS id, feedId, url, title, description, content, extractedContent, publishedAt, read';
 
-const ORDER = 'ORDER BY publishedAt DESC, itemId ASC';
+const ORDER = 'ORDER BY publishedAt DESC, itemId DESC';
 
 const encodeFeedItem = Schema.encodeSync(FeedItem);
 
@@ -108,12 +110,9 @@ const updateWhere = (
 };
 
 const afterClause = (after: FeedItemQuery['after']) =>
-  after === undefined
-    ? ''
-    : ' AND (publishedAt < $afterAt OR (publishedAt = $afterAt AND itemId > $afterId))';
+  after === undefined ? '' : afterBoundary('itemId');
 
-const THROUGH_CLAUSE =
-  ' AND (publishedAt > $throughAt OR (publishedAt = $throughAt AND itemId <= $throughId))';
+const THROUGH_CLAUSE = throughBoundary('itemId');
 
 const pageBindings = (
   feedIds: ReadonlyArray<FeedId>,

@@ -744,6 +744,57 @@ it.effect('keeps the configured retention and drops older new articles', () => {
 });
 
 it.effect(
+  'evicts the lowest ids first among existing articles tied on time',
+  () => {
+    const hex = (value: number) => value.toString(16).padStart(64, '0');
+    const inventory: Array<FeedItemBoundary> = Array.from(
+      { length: 35 },
+      (_, index) => ({
+        id: FeedItemId.make(hex(index)),
+        publishedAt: at('2026-01-02T00:00:00.000Z'),
+      })
+    );
+    const retained: Array<ReadonlyArray<FeedItemId>> = [];
+
+    return provide(
+      Effect.gen(function* () {
+        yield* refreshFeed(alice, id);
+        expect(retained[0]).toHaveLength(30);
+        expect(retained[0]?.[0]).toBe(FeedItemId.make(hex(34)));
+        expect(retained[0]?.[29]).toBe(FeedItemId.make(hex(5)));
+      }),
+      {
+        settings: {
+          get: () => Effect.succeed(settingsValue(decodeRetention(30))),
+        },
+        feeds: {
+          find: () => Effect.succeed(Option.some(storedFeed())),
+          update: () => Effect.void,
+        },
+        feedParser: {
+          parse: () =>
+            Effect.succeed(
+              feed([entry({ publishedAt: at('2026-01-01T00:00:00.000Z') })])
+            ),
+        },
+        processor: {
+          sanitize: () => Effect.succeed(decodeContent(undefined)),
+        },
+        items: {
+          inventory: () => Effect.succeed(inventory),
+          create: (items) => Effect.succeed(items.map((item) => item.id)),
+          retain: (_feedId, ids) => {
+            retained.push(ids);
+
+            return Effect.void;
+          },
+        },
+      }
+    );
+  }
+);
+
+it.effect(
   'imports the newest copy when a feed repeats an article identity',
   () => {
     const created: Array<ReadonlyArray<FeedItem>> = [];

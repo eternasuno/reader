@@ -130,64 +130,79 @@ it.effect('scopes listings to the selected feeds', () =>
   )
 );
 
-it.effect('orders ties and applies inclusive through and exclusive after', () =>
-  runCheck(() =>
-    Effect.gen(function* () {
-      const feedItems = yield* FeedItemRepository;
-      const [feedId = missingFeedId] = yield* subscribed(
-        'https://example.com/a.xml'
-      );
-      const feedIds = [feedId];
-      const hashA = hash('tie-a');
-      const hashB = hash('tie-b');
-      const lowId = hashA < hashB ? hashA : hashB;
-      const highId = hashA < hashB ? hashB : hashA;
-      const at = '2026-01-02T00:00:00.000Z';
-      const newest = feedItem(feedId, 'newest', {
-        publishedAt: '2026-01-03T00:00:00.000Z',
-      });
-      const tieLow = feedItem(feedId, 'low', {
-        id: lowId,
-        publishedAt: at,
-      });
-      const tieHigh = feedItem(feedId, 'high', {
-        id: highId,
-        publishedAt: at,
-      });
-      const oldest = feedItem(feedId, 'oldest');
-      yield* feedItems.create([oldest, tieHigh, newest, tieLow]);
+it.effect(
+  'orders ties by descending id with inclusive through and exclusive after',
+  () =>
+    runCheck(() =>
+      Effect.gen(function* () {
+        const feedItems = yield* FeedItemRepository;
+        const [feedId = missingFeedId] = yield* subscribed(
+          'https://example.com/a.xml'
+        );
+        const feedIds = [feedId];
+        const hashA = hash('tie-a');
+        const hashB = hash('tie-b');
+        const lowId = hashA < hashB ? hashA : hashB;
+        const highId = hashA < hashB ? hashB : hashA;
+        const at = '2026-01-02T00:00:00.000Z';
+        const newest = feedItem(feedId, 'newest', {
+          publishedAt: '2026-01-03T00:00:00.000Z',
+        });
+        const tieLow = feedItem(feedId, 'low', {
+          id: lowId,
+          publishedAt: at,
+        });
+        const tieHigh = feedItem(feedId, 'high', {
+          id: highId,
+          publishedAt: at,
+        });
+        const oldest = feedItem(feedId, 'oldest');
+        yield* feedItems.create([oldest, tieHigh, newest, tieLow]);
 
-      expect(yield* ids(feedItems.list(feedIds, pageQuery()))).toEqual([
-        newest.id,
-        tieLow.id,
-        tieHigh.id,
-        oldest.id,
-      ]);
-      expect(
-        yield* ids(
-          feedItems.list(
-            feedIds,
-            pageQuery({
-              after: { publishedAt: dateTime(at), id: FeedItemId.make(lowId) },
+        expect(yield* ids(feedItems.list(feedIds, pageQuery()))).toEqual([
+          newest.id,
+          tieHigh.id,
+          tieLow.id,
+          oldest.id,
+        ]);
+        expect(
+          yield* ids(
+            feedItems.list(
+              feedIds,
+              pageQuery({
+                after: {
+                  publishedAt: dateTime(at),
+                  id: FeedItemId.make(highId),
+                },
+              })
+            )
+          )
+        ).toEqual([tieLow.id, oldest.id]);
+        expect(
+          yield* ids(
+            feedItems.listThrough(feedIds, {
+              through: {
+                publishedAt: dateTime(at),
+                id: FeedItemId.make(highId),
+              },
             })
           )
-        )
-      ).toEqual([tieHigh.id, oldest.id]);
-      expect(
-        yield* ids(
-          feedItems.listThrough(feedIds, {
-            through: {
-              publishedAt: dateTime(at),
-              id: FeedItemId.make(highId),
-            },
-          })
-        )
-      ).toEqual([newest.id, tieLow.id, tieHigh.id]);
-      expect(
-        yield* feedItems.list(feedIds, pageQuery({ limit: 2 }))
-      ).toHaveLength(2);
-    })
-  )
+        ).toEqual([newest.id, tieHigh.id]);
+        expect(
+          yield* ids(
+            feedItems.listThrough(feedIds, {
+              through: {
+                publishedAt: dateTime(at),
+                id: FeedItemId.make(lowId),
+              },
+            })
+          )
+        ).toEqual([newest.id, tieHigh.id, tieLow.id]);
+        expect(
+          yield* feedItems.list(feedIds, pageQuery({ limit: 2 }))
+        ).toHaveLength(2);
+      })
+    )
 );
 
 it.effect('filters by read state', () =>

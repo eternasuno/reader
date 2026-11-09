@@ -51,15 +51,15 @@ describe('library bounded refresh', () => {
     expect(synced.items.map((item) => item.id)).toEqual(['n', 'a', 'old']);
   });
 
-  it('retains pending rows the server does not return yet', () => {
+  it('retains pending rows the server does not return yet, ties by descending id', () => {
     const state = {
       ...setItemsRead(loaded(), new Set(['a']), true),
       pending: new Set(['a']),
     };
     const synced = applyRefresh(state, [article('b')], state.generation);
 
-    expect(synced.items.map((item) => item.id)).toEqual(['a', 'b']);
-    expect(synced.items[0]?.read).toBe(true);
+    expect(synced.items.map((item) => item.id)).toEqual(['b', 'a']);
+    expect(synced.items[1]?.read).toBe(true);
   });
 
   it('keeps rows loaded after the request outside the covered range', () => {

@@ -11,6 +11,7 @@ import {
 import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
 import type { Surreal } from 'surrealdb';
 import {
+  afterBoundary,
   type Bindings,
   one,
   readBindings,
@@ -18,13 +19,14 @@ import {
   run,
   savedPageRepositoryError,
   savedPages,
+  throughBoundary,
   write,
 } from './reader-store-sql';
 
 const COLUMNS =
   'pageId AS id, owner AS ownerId, url, title, description, content, publishedAt, read';
 
-const ORDER = 'ORDER BY publishedAt DESC, pageId ASC';
+const ORDER = 'ORDER BY publishedAt DESC, pageId DESC';
 
 const encodeSavedPage = Schema.encodeSync(SavedPage);
 
@@ -77,12 +79,9 @@ const updateWhere = (
       ).pipe(Effect.map((rows) => rows.map((row) => row.pageId)));
 
 const afterClause = (after: SavedPageQuery['after']) =>
-  after === undefined
-    ? ''
-    : ' AND (publishedAt < $afterAt OR (publishedAt = $afterAt AND pageId > $afterId))';
+  after === undefined ? '' : afterBoundary('pageId');
 
-const THROUGH_CLAUSE =
-  ' AND (publishedAt > $throughAt OR (publishedAt = $throughAt AND pageId <= $throughId))';
+const THROUGH_CLAUSE = throughBoundary('pageId');
 
 const pageBindings = (owner: OwnerId, query: SavedPageQuery): Bindings => ({
   owner,

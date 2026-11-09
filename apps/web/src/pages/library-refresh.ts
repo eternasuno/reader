@@ -11,7 +11,7 @@ const compareArticles = (left: Article, right: Article): number => {
     return 0;
   }
 
-  return left.id < right.id ? -1 : 1;
+  return left.id > right.id ? -1 : 1;
 };
 
 const insertByOrder = (items: Array<Article>, article: Article) => {

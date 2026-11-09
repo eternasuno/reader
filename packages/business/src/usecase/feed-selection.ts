@@ -60,13 +60,15 @@ const descendingPublishedAt = Order.flip(
   )
 );
 
+const descendingId = Order.flip(Order.String);
+
 const tieBreak = (left: Candidate, right: Candidate): -1 | 0 | 1 => {
   if (left.existing !== right.existing) {
     return left.existing ? -1 : 1;
   }
 
   return left.existing
-    ? Order.String(left.id, right.id)
+    ? descendingId(left.id, right.id)
     : Order.Number(left.order, right.order);
 };
 

@@ -13,11 +13,13 @@ export const readerStoreSchema = `
 DEFINE TABLE IF NOT EXISTS feed_item SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE feed_item TYPE datetime;
 DEFINE INDEX IF NOT EXISTS feed_item_feed ON feed_item FIELDS feedId;
-DEFINE INDEX IF NOT EXISTS feed_item_feed_published ON feed_item FIELDS feedId, publishedAt;
+DEFINE INDEX IF NOT EXISTS feed_item_feed_order ON feed_item FIELDS feedId, publishedAt, itemId;
+DEFINE INDEX IF NOT EXISTS feed_item_order ON feed_item FIELDS publishedAt, itemId;
+DEFINE INDEX IF NOT EXISTS feed_item_read_order ON feed_item FIELDS read, publishedAt, itemId;
 DEFINE TABLE IF NOT EXISTS saved_page SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE saved_page TYPE datetime;
 DEFINE INDEX IF NOT EXISTS saved_page_owner ON saved_page FIELDS owner;
-DEFINE INDEX IF NOT EXISTS saved_page_owner_published ON saved_page FIELDS owner, publishedAt;
+DEFINE INDEX IF NOT EXISTS saved_page_owner_order ON saved_page FIELDS owner, publishedAt, pageId;
 DEFINE TABLE IF NOT EXISTS feed SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS updatedAt ON TABLE feed TYPE datetime;
 DEFINE INDEX IF NOT EXISTS reader_feed_owner ON feed FIELDS owner;
