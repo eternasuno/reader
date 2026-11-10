@@ -13,11 +13,9 @@ export type LibraryState = {
   readonly feeds: ReadonlyArray<Feed>;
   readonly counts: Counts;
   readonly loading: boolean;
-  readonly refreshing: boolean;
   readonly initialized: boolean;
   readonly hasMore: boolean;
   readonly cursor: string | null;
-  readonly boundary: string | null;
   readonly generation: number;
   readonly cursorInvalid: boolean;
   readonly error: string | undefined;
@@ -36,11 +34,9 @@ export const initialLibraryState = (
   feeds: [],
   counts: emptyCounts,
   loading: false,
-  refreshing: false,
   initialized: false,
   hasMore: false,
   cursor: null,
-  boundary: null,
   generation: 0,
   cursorInvalid: false,
   error: undefined,

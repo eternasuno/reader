@@ -25,11 +25,6 @@ export type FeedItemQuery = {
   readonly limit: number;
 };
 
-export type FeedItemThroughQuery = {
-  readonly read?: boolean;
-  readonly through: FeedItemBoundary;
-};
-
 export const FeedItemPatch = FeedItem.mapFields((fields) =>
   Struct.map(
     Struct.pick(fields, ['read', 'extractedContent']),
@@ -56,10 +51,6 @@ export interface IFeedItemRepository {
   readonly list: (
     feedIds: ReadonlyArray<FeedId>,
     query: FeedItemQuery
-  ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
-  readonly listThrough: (
-    feedIds: ReadonlyArray<FeedId>,
-    query: FeedItemThroughQuery
   ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
   readonly create: (
     items: ReadonlyArray<FeedItem>

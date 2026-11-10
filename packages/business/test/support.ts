@@ -96,9 +96,9 @@ type Listed = { readonly id: string; readonly publishedAt: DateTime.Utc };
 
 /**
  * Fake listing store keeping `items` in list order: `list` returns the
- * exclusive suffix past `after`, `listThrough` the inclusive prefix up to
- * `through`. The boundary is matched by its (publishedAt, id) tuple, so a
- * removed boundary item still bounds the returned page.
+ * exclusive suffix past `after`. The boundary is matched by its
+ * (publishedAt, id) tuple, so a removed boundary item still bounds the
+ * returned page.
  */
 export const pagedStore = <T extends Listed>(items: ReadonlyArray<T>) => {
   const isLaterThan = (item: Listed, boundary: Listed): boolean => {
@@ -121,7 +121,5 @@ export const pagedStore = <T extends Listed>(items: ReadonlyArray<T>) => {
           )
           .slice(0, query.limit)
       ),
-    listThrough: (query: { readonly through: Listed }) =>
-      Effect.succeed(items.filter((item) => !isLaterThan(item, query.through))),
   };
 };

@@ -50,7 +50,6 @@ const page = <S extends Schema.Top>(item: S) =>
   Schema.Struct({
     items: Schema.Array(item),
     cursor: Schema.NullOr(Schema.String),
-    boundary: Schema.NullOr(Schema.String),
   });
 
 export const FeedItemPageSchema = page(FeedItemSchema);
@@ -59,19 +58,11 @@ export const SavedPagePageSchema = page(SavedPageSchema);
 
 export const FeedItemResponseSchema = Schema.Struct({ item: FeedItemSchema });
 
-export const FeedItemsResponseSchema = Schema.Struct({
-  items: Schema.Array(FeedItemSchema),
-});
-
 export const FeedItemOrNullResponseSchema = Schema.Struct({
   item: Schema.NullOr(FeedItemSchema),
 });
 
 export const SavedPageResponseSchema = Schema.Struct({ item: SavedPageSchema });
-
-export const SavedPagesResponseSchema = Schema.Struct({
-  items: Schema.Array(SavedPageSchema),
-});
 
 export const SavedPageOrNullResponseSchema = Schema.Struct({
   item: Schema.NullOr(SavedPageSchema),

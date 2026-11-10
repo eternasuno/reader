@@ -19,7 +19,6 @@ import { DuplicateSavedPage } from './saved-page-errors';
 export const SavedPageList = Schema.Struct({
   items: Schema.Array(SavedPage),
   cursor: Schema.NullOr(Schema.String),
-  boundary: Schema.NullOr(Schema.String),
 });
 
 export type SavedPageList = typeof SavedPageList.Type;
@@ -134,7 +133,6 @@ const savedPagePaging = (owner: OwnerId, filter: ReadFilter) =>
       filter,
       toId: SavedPageId.make,
       fetchPage: (query) => pages.list(owner, query),
-      fetchThrough: (query) => pages.listThrough(owner, query),
     });
   });
 
@@ -147,17 +145,6 @@ export const listSavedPages = (
     const paging = yield* savedPagePaging(owner, filter);
 
     return yield* paging.list(cursor);
-  });
-
-export const refreshSavedPages = (
-  owner: OwnerId,
-  filter: ReadFilter,
-  through: ListCursor
-) =>
-  Effect.gen(function* () {
-    const paging = yield* savedPagePaging(owner, filter);
-
-    return yield* paging.refresh(through);
   });
 
 export const findSavedPage = (owner: OwnerId, id: SavedPageId) =>

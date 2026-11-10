@@ -20,7 +20,6 @@ import type { ReadFilter } from './read-filter';
 export const FeedItemList = Schema.Struct({
   items: Schema.Array(FeedItem),
   cursor: Schema.NullOr(Schema.String),
-  boundary: Schema.NullOr(Schema.String),
 });
 
 export type FeedItemList = typeof FeedItemList.Type;
@@ -67,7 +66,6 @@ const feedItemPaging = (
       filter,
       toId: FeedItemId.make,
       fetchPage: (query) => feedItems.list(feedIds, query),
-      fetchThrough: (query) => feedItems.listThrough(feedIds, query),
     });
   });
 
@@ -81,18 +79,6 @@ export const listFeedItems = (
     const paging = yield* feedItemPaging(owner, feedId, filter);
 
     return yield* paging.list(cursor);
-  });
-
-export const refreshFeedItems = (
-  owner: OwnerId,
-  feedId: FeedId | undefined,
-  filter: ReadFilter,
-  through: ListCursor
-) =>
-  Effect.gen(function* () {
-    const paging = yield* feedItemPaging(owner, feedId, filter);
-
-    return yield* paging.refresh(through);
   });
 
 export const extractFeedItem = (

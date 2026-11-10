@@ -22,7 +22,6 @@ import {
   listSavedPages,
   markAllSavedPagesRead,
   markSavedPages,
-  refreshSavedPages,
   removeSavedPage,
   saveFeedItem,
 } from '../../src/usecase/saved-pages';
@@ -346,10 +345,6 @@ const listing = (count: number) => {
     pages: {
       list: (_owner: OwnerId, query: Parameters<typeof store.list>[0]) =>
         store.list(query),
-      listThrough: (
-        _owner: OwnerId,
-        query: Parameters<typeof store.listThrough>[0]
-      ) => store.listThrough(query),
     },
   };
 };
@@ -361,7 +356,6 @@ it.effect('pages thirty saved pages and continues from the cursor', () =>
       expect(first.items).toHaveLength(30);
       expect(first.items[0]?.id).toBe(hex(0));
       expect(first.cursor).not.toBeNull();
-      expect(first.boundary).toBe(first.cursor);
 
       const second = yield* listSavedPages(
         alice,
@@ -377,17 +371,16 @@ it.effect('pages thirty saved pages and continues from the cursor', () =>
       );
       expect(third.items).toHaveLength(5);
       expect(third.cursor).toBeNull();
-      expect(third.boundary).not.toBeNull();
     }),
     listing(65)
   )
 );
 
-it.effect('reports no boundary for an empty page', () =>
+it.effect('returns an empty page without a cursor', () =>
   provide(
     Effect.gen(function* () {
       const page = yield* listSavedPages(alice, 'all');
-      expect(page).toEqual({ items: [], cursor: null, boundary: null });
+      expect(page).toEqual({ items: [], cursor: null });
     }),
     listing(0)
   )
@@ -404,28 +397,6 @@ it.effect('binds cursors to owner, scope, and filter', () =>
       );
       expect(wrongOwner._tag).toBe('InvalidCursor');
       expect(wrongFilter._tag).toBe('InvalidCursor');
-    }),
-    listing(65)
-  )
-);
-
-it.effect('refreshes through the original boundary item inclusively', () =>
-  provide(
-    Effect.gen(function* () {
-      const first = yield* listSavedPages(alice, 'all');
-      const second = yield* listSavedPages(
-        alice,
-        'all',
-        decodeCursor(first.cursor ?? '')
-      );
-      const refreshed = yield* refreshSavedPages(
-        alice,
-        'all',
-        decodeCursor(second.boundary ?? '')
-      );
-      expect(refreshed.map((page) => page.id)).toEqual(
-        Array.from({ length: 60 }, (_, index) => hex(index))
-      );
     }),
     listing(65)
   )

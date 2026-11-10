@@ -8,7 +8,6 @@ import {
   readFeeds,
   readPage,
   readPreview,
-  readRefresh,
   readSavedPage,
   readSubscription,
   readUnreadCounts,
@@ -31,8 +30,6 @@ export const createLibraryClient = (options: LibraryClientOptions = {}) => {
   return {
     list: (scope: Scope, filter: Filter, cursor?: string) =>
       readPage(send, scope, filter, cursor),
-    refresh: (scope: Scope, filter: Filter, through: string) =>
-      readRefresh(send, scope, filter, through),
     feeds: () => readFeeds(send),
     unreadCounts: () => readUnreadCounts(send),
     article: (ref: ArticleRef) => readArticleByRef(send, ref),

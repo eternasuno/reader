@@ -40,9 +40,9 @@ Setting
 
 Input is a union by provider:
 
-| Variant | Fields |
-| --- | --- |
-| Jina | `provider: "jina"`, `key?` |
+| Variant | Fields                             |
+| ------- | ---------------------------------- |
+| Jina    | `provider: "jina"`, `key?`         |
 | Browser | `provider: "browser"`, `endpoint?` |
 
 - SET-FETCH-1 Jina variant: provider becomes `jina`. If `key` is given it replaces the stored key; if omitted the stored key is kept. The stored browser endpoint is untouched.
@@ -70,12 +70,12 @@ Input is a union by provider:
 
 Only one use case exists. The other operations call the port directly.
 
-| Operation | Implementation |
-| --- | --- |
-| Read | `SettingsRepository.get` |
-| Set retention | `SettingsRepository.update({ feed: { retention } })` |
-| Clear Jina key | `SettingsRepository.update({ fetcher: { jina: { key: none } } })` |
-| **Set fetcher** | Use case `setFetcher` (below) |
+| Operation       | Implementation                                                    |
+| --------------- | ----------------------------------------------------------------- |
+| Read            | `SettingsRepository.get`                                          |
+| Set retention   | `SettingsRepository.update({ feed: { retention } })`              |
+| Clear Jina key  | `SettingsRepository.update({ fetcher: { jina: { key: none } } })` |
+| **Set fetcher** | Use case `setFetcher` (below)                                     |
 
 ```text
 setFetcher(owner, input)
@@ -98,21 +98,21 @@ Errors: `BrowserEndpointRequired`, `SettingsRepositoryError`.
 
 ## Boundary (not business)
 
-| Concern | Where |
-| --- | --- |
-| Jina key: single line, at most 2048 characters | HTTP boundary, then converted to `JinaKey` |
-| Browser endpoint protocol | HTTP boundary, then converted to `BrowserEndpoint` |
-| Retention integer 30..300 | HTTP boundary, then converted to `Retention` |
-| Blank key or blank endpoint in the request | Treated as omitted |
+| Concern                                        | Where                                              |
+| ---------------------------------------------- | -------------------------------------------------- |
+| Jina key: single line, at most 2048 characters | HTTP boundary, then converted to `JinaKey`         |
+| Browser endpoint protocol                      | HTTP boundary, then converted to `BrowserEndpoint` |
+| Retention integer 30..300                      | HTTP boundary, then converted to `Retention`       |
+| Blank key or blank endpoint in the request     | Treated as omitted                                 |
 
 HTTP interface:
 
-| Operation | Request |
-| --- | --- |
-| Read | `GET settings` returns retention, provider, `jinaConfigured`, `browserConfigured` |
-| Set retention | `PUT settings/retention` |
-| Set fetcher | `PUT settings/fetcher` with the union above |
-| Clear Jina key | `DELETE settings/jina-key` |
+| Operation      | Request                                                                           |
+| -------------- | --------------------------------------------------------------------------------- |
+| Read           | `GET settings` returns retention, provider, `jinaConfigured`, `browserConfigured` |
+| Set retention  | `PUT settings/retention`                                                          |
+| Set fetcher    | `PUT settings/fetcher` with the union above                                       |
+| Clear Jina key | `DELETE settings/jina-key`                                                        |
 
 ## User flow
 
@@ -124,15 +124,15 @@ One form, one save:
 4. Save submits the provider and its field together (SET-FETCH).
 5. A configured Jina key has a Clear button next to it, with a confirmation (SET-KEY).
 
-| Scenario | Result |
-| --- | --- |
-| New user | Jina, no key, anonymous fetching |
-| Use Jina with a key | Jina variant with `key` |
-| First use of the browser | Browser variant must carry `endpoint` |
-| Back to Jina | Jina variant without `key`; endpoint and key are kept |
-| Browser again, endpoint already stored | Browser variant without `endpoint` succeeds |
-| Change browser endpoint | Browser variant with the new `endpoint` |
-| Remove the Jina key | Clear Jina key, after confirmation |
+| Scenario                               | Result                                                |
+| -------------------------------------- | ----------------------------------------------------- |
+| New user                               | Jina, no key, anonymous fetching                      |
+| Use Jina with a key                    | Jina variant with `key`                               |
+| First use of the browser               | Browser variant must carry `endpoint`                 |
+| Back to Jina                           | Jina variant without `key`; endpoint and key are kept |
+| Browser again, endpoint already stored | Browser variant without `endpoint` succeeds           |
+| Change browser endpoint                | Browser variant with the new `endpoint`               |
+| Remove the Jina key                    | Clear Jina key, after confirmation                    |
 
 ## Known risk
 

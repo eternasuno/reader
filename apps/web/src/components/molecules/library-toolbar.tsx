@@ -15,6 +15,7 @@ type LibraryToolbarProps = {
   readonly currentFeed: Feed | undefined;
   readonly canAddArticle: boolean;
   readonly onFilter: (filter: Filter) => void;
+  readonly onRefresh: () => void;
   readonly onMarkLoaded: () => void;
   readonly onMarkAll: () => void;
   readonly onAdd: () => void;
@@ -103,6 +104,13 @@ export const LibraryToolbar = (props: LibraryToolbarProps) => (
         <span class="sr-only"> 篇未读</span>
       </span>
     </div>
+    <IconButton
+      label="刷新文章列表"
+      disabled={props.busy}
+      onClick={props.onRefresh}
+    >
+      <ReaderIcon name="refresh" />
+    </IconButton>
     <IconButton
       label="将已加载文章标为已读"
       disabled={props.busy || !props.loadedUnread}

@@ -13,7 +13,6 @@ import {
   resetList,
   startLoadMore,
 } from '../../src/pages/library-pages';
-import { applyRefresh } from '../../src/pages/library-refresh';
 import {
   initialLibraryState,
   type LibraryState,
@@ -23,34 +22,25 @@ import { article, counts, page } from './library-fixtures';
 const loaded = () =>
   applyPage(
     { ...initialLibraryState(), loading: true },
-    page([article('a'), article('b')], 'cursor-1', 'boundary-1'),
+    page([article('a'), article('b')], 'cursor-1'),
     0
   );
 
 describe('library list transitions', () => {
-  it('advances the boundary to the tail of every loaded page', () => {
+  it('advances the cursor with every loaded page', () => {
     const first = loaded();
     expect(first.items.map((item) => item.id)).toEqual(['a', 'b']);
     expect(first.cursor).toBe('cursor-1');
-    expect(first.boundary).toBe('boundary-1');
     expect(first.hasMore).toBe(true);
 
     const next = applyPage(
       first,
-      page([article('b'), article('c')], null, 'boundary-2'),
+      page([article('b'), article('c')], null),
       first.generation
     );
     expect(next.items.map((item) => item.id)).toEqual(['a', 'b', 'c']);
-    expect(next.boundary).toBe('boundary-2');
-    expect(next.hasMore).toBe(false);
-  });
-
-  it('keeps a previous boundary when a page has no items', () => {
-    const state = loaded();
-    const next = applyPage(state, page([], null, null), state.generation);
-
-    expect(next.boundary).toBe('boundary-1');
     expect(next.cursor).toBeNull();
+    expect(next.hasMore).toBe(false);
   });
 
   it('does not re-add rows whose deletion is still pending', () => {
@@ -101,20 +91,8 @@ describe('library list failures', () => {
       loading: true,
       initialized: false,
       cursor: null,
-      boundary: null,
       generation: state.generation + 1,
     });
-  });
-});
-
-describe('library sync transitions', () => {
-  it('keeps the boundary and cursor after the tail row is deleted', () => {
-    const removed = removeItem(loaded(), article('b'));
-    const synced = applyRefresh(removed, [], removed.generation);
-
-    expect(synced.boundary).toBe('boundary-1');
-    expect(synced.cursor).toBe('cursor-1');
-    expect(synced.hasMore).toBe(true);
   });
 });
 

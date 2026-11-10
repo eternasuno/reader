@@ -4,14 +4,12 @@ import {
   FeedItemOrNullResponseSchema,
   FeedItemPageSchema,
   FeedItemResponseSchema,
-  FeedItemsResponseSchema,
   FeedResponseSchema,
   FeedsResponseSchema,
   PreviewResponseSchema,
   SavedPageOrNullResponseSchema,
   SavedPagePageSchema,
   SavedPageResponseSchema,
-  SavedPagesResponseSchema,
   UnreadCountsSchema,
 } from './library-schema';
 import { decodeBody, type Send, sendGet, sendJson } from './library-transport';
@@ -85,36 +83,6 @@ export const readPage = async (
   );
 
   return { ...page, items: page.items.map(fromFeedItem) };
-};
-
-export const readRefresh = async (
-  send: Send,
-  scope: Scope,
-  filter: Filter,
-  through: string
-): Promise<ReadonlyArray<Article>> => {
-  if (scope.kind === 'later') {
-    const response = await decodeBody(
-      SavedPagesResponseSchema,
-      await sendGet(send, '/api/library/saved-pages/refresh', {
-        filter,
-        through,
-      })
-    );
-
-    return response.items.map(fromSavedPage);
-  }
-
-  const response = await decodeBody(
-    FeedItemsResponseSchema,
-    await sendGet(send, '/api/library/feeds/items/refresh', {
-      filter,
-      through,
-      ...scopeQuery(scope),
-    })
-  );
-
-  return response.items.map(fromFeedItem);
 };
 
 export const readFeeds = async (send: Send): Promise<ReadonlyArray<Feed>> =>

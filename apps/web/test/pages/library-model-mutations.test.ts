@@ -16,7 +16,7 @@ const withRows = async (
   rows = [article('a', { feedId: 'f1' }), article('b')]
 ) => {
   const client = createStubClient();
-  client.list.mockResolvedValue(page(rows, null, 'top'));
+  client.list.mockResolvedValue(page(rows, null));
   client.unreadCounts.mockResolvedValue(counts(0, { f1: 1 }));
   const model = createLibraryModel(client);
   await model.refresh();
@@ -49,7 +49,7 @@ describe('library read marks', () => {
     });
   });
 
-  it('keeps a manual unread mark until the article is reopened', async () => {
+  it('shows the server state after a manual unread mark and refresh', async () => {
     const { client, model } = await withRows([article('a')]);
     const row = model.state().items[0] ?? article('a');
 
@@ -57,7 +57,7 @@ describe('library read marks', () => {
     expect(model.state().items[0]?.read).toBe(true);
     await model.toggleRead(model.state().items[0] ?? row);
     expect(model.state().items[0]?.read).toBe(false);
-    client.refresh.mockResolvedValue([newerArticle('n'), article('a')]);
+    client.list.mockResolvedValue(page([newerArticle('n'), article('a')]));
     await model.refresh();
 
     expect(model.state().items.map((item) => [item.id, item.read])).toEqual([
@@ -127,22 +127,20 @@ describe('library read marks', () => {
     expect(model.state().pending.has('a')).toBe(false);
   });
 
-  it('keeps an optimistic read mark through a pending refresh', async () => {
+  it('ignores a refresh while a read mark is in flight', async () => {
     const { client, model } = await withRows([article('a', { feedId: 'f1' })]);
     const mark = deferred<void>();
     client.markRead.mockReturnValue(mark.promise);
     const row = model.state().items[0] ?? article('a');
 
     const pending = model.toggleRead(row);
-    client.refresh.mockResolvedValue([
-      newerArticle('n'),
-      { ...article('a', { feedId: 'f1' }), title: 'Server a' },
-    ]);
+    const loads = client.list.mock.calls.length;
     await model.refresh();
 
+    expect(client.list).toHaveBeenCalledTimes(loads);
     const optimistic = model.state().items.find((item) => item.id === 'a');
     expect(optimistic).toMatchObject({ title: 'Article a', read: true });
-    expect(model.state().items.map((item) => item.id)).toEqual(['n', 'a']);
+    expect(model.state().items.map((item) => item.id)).toEqual(['a']);
 
     mark.resolve();
     await pending;
@@ -233,7 +231,7 @@ describe('library add and save', () => {
   it('selects an added article even when the active scope is a feed', async () => {
     const client = createStubClient();
     client.list.mockResolvedValue(
-      page([article('feed-row', { feedId: 'f1' })], null, 'top')
+      page([article('feed-row', { feedId: 'f1' })], null)
     );
     client.add.mockResolvedValue(article('added'));
     const model = createLibraryModel(client);
@@ -302,24 +300,21 @@ describe('library delete selection', () => {
     expect(model.state().items.map((item) => item.id)).toEqual(['a', 'b']);
   });
 
-  it('does not re-add a row whose deletion is still pending', async () => {
+  it('ignores a refresh while a deletion is in flight', async () => {
     const { client, model } = await withRows();
     const remove = deferred<void>();
     client.remove.mockReturnValue(remove.promise);
 
     const pending = model.remove(article('a'));
-    client.refresh.mockResolvedValue([
-      newerArticle('n'),
-      article('a', { feedId: 'f1' }),
-      article('b'),
-    ]);
+    const loads = client.list.mock.calls.length;
     await model.refresh();
 
-    expect(model.state().items.map((item) => item.id)).toEqual(['n', 'b']);
+    expect(client.list).toHaveBeenCalledTimes(loads);
+    expect(model.state().items.map((item) => item.id)).toEqual(['b']);
 
     remove.resolve();
     await pending;
 
-    expect(model.state().items.map((item) => item.id)).toEqual(['n', 'b']);
+    expect(model.state().items.map((item) => item.id)).toEqual(['b']);
   });
 });

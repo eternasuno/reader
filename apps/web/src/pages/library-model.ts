@@ -1,4 +1,4 @@
-import { type Accessor, onCleanup, onMount } from 'solid-js';
+import { type Accessor, onMount } from 'solid-js';
 import {
   type Article,
   type Filter,
@@ -47,8 +47,6 @@ export type LibraryModel = {
   readonly dismissToast: () => void;
 };
 
-const REFRESH_INTERVAL = 30_000;
-
 export const createLibraryModel = (
   client: LibraryClient = library
 ): LibraryModel => {
@@ -80,43 +78,9 @@ export const useLibraryModel = (
   client: LibraryClient = library
 ): LibraryModel => {
   const model = createLibraryModel(client);
-  let timer: ReturnType<typeof setInterval> | undefined;
-
-  const stop = () => {
-    if (timer !== undefined) {
-      clearInterval(timer);
-    }
-
-    timer = undefined;
-  };
-
-  const start = () => {
-    stop();
-    timer = setInterval(() => {
-      void model.refresh();
-    }, REFRESH_INTERVAL);
-  };
-
-  const onVisibility = () => {
-    if (document.visibilityState === 'hidden') {
-      stop();
-
-      return;
-    }
-
-    start();
-    void model.refresh();
-  };
 
   onMount(() => {
-    start();
     void model.refresh();
-    document.addEventListener('visibilitychange', onVisibility);
-  });
-
-  onCleanup(() => {
-    stop();
-    document.removeEventListener('visibilitychange', onVisibility);
   });
 
   return model;

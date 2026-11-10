@@ -185,6 +185,7 @@ export const LibraryList = (props: {
         busy={state().loading || state().pending.size > 0}
         loadedUnread={state().items.some((item) => !item.read)}
         onFilter={(filter) => void props.model.setFilter(filter)}
+        onRefresh={() => void props.model.refresh()}
         onMarkLoaded={() => void props.model.markLoaded()}
         onMarkAll={() => void props.model.markAll()}
         onAdd={props.onAdd}

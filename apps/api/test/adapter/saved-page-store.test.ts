@@ -99,76 +99,52 @@ it.effect('isolates saved pages between owners', () =>
   )
 );
 
-it.effect(
-  'orders ties by descending id with inclusive through and exclusive after',
-  () =>
-    runCheck(() =>
-      Effect.gen(function* () {
-        const pages = yield* SavedPageRepository;
-        const alice = owner('alice');
-        const hashA = hash('tie-a');
-        const hashB = hash('tie-b');
-        const lowId = hashA < hashB ? hashA : hashB;
-        const highId = hashA < hashB ? hashB : hashA;
-        const at = '2026-01-02T00:00:00.000Z';
-        const newest = savedPage('alice', 'newest', {
-          publishedAt: '2026-01-03T00:00:00.000Z',
-        });
-        const tieLow = savedPage('alice', 'low', {
-          id: lowId,
-          publishedAt: at,
-        });
-        const tieHigh = savedPage('alice', 'high', {
-          id: highId,
-          publishedAt: at,
-        });
-        const oldest = savedPage('alice', 'oldest');
-        yield* pages.create([oldest, tieHigh, newest, tieLow]);
+it.effect('orders ties by descending id with exclusive after', () =>
+  runCheck(() =>
+    Effect.gen(function* () {
+      const pages = yield* SavedPageRepository;
+      const alice = owner('alice');
+      const hashA = hash('tie-a');
+      const hashB = hash('tie-b');
+      const lowId = hashA < hashB ? hashA : hashB;
+      const highId = hashA < hashB ? hashB : hashA;
+      const at = '2026-01-02T00:00:00.000Z';
+      const newest = savedPage('alice', 'newest', {
+        publishedAt: '2026-01-03T00:00:00.000Z',
+      });
+      const tieLow = savedPage('alice', 'low', {
+        id: lowId,
+        publishedAt: at,
+      });
+      const tieHigh = savedPage('alice', 'high', {
+        id: highId,
+        publishedAt: at,
+      });
+      const oldest = savedPage('alice', 'oldest');
+      yield* pages.create([oldest, tieHigh, newest, tieLow]);
 
-        expect(yield* ids(pages.list(alice, pageQuery()))).toEqual([
-          newest.id,
-          tieHigh.id,
-          tieLow.id,
-          oldest.id,
-        ]);
-        expect(
-          yield* ids(
-            pages.list(
-              alice,
-              pageQuery({
-                after: {
-                  publishedAt: dateTime(at),
-                  id: SavedPageId.make(highId),
-                },
-              })
-            )
-          )
-        ).toEqual([tieLow.id, oldest.id]);
-        expect(
-          yield* ids(
-            pages.listThrough(alice, {
-              through: {
+      expect(yield* ids(pages.list(alice, pageQuery()))).toEqual([
+        newest.id,
+        tieHigh.id,
+        tieLow.id,
+        oldest.id,
+      ]);
+      expect(
+        yield* ids(
+          pages.list(
+            alice,
+            pageQuery({
+              after: {
                 publishedAt: dateTime(at),
                 id: SavedPageId.make(highId),
               },
             })
           )
-        ).toEqual([newest.id, tieHigh.id]);
-        expect(
-          yield* ids(
-            pages.listThrough(alice, {
-              through: {
-                publishedAt: dateTime(at),
-                id: SavedPageId.make(lowId),
-              },
-            })
-          )
-        ).toEqual([newest.id, tieHigh.id, tieLow.id]);
-        expect(yield* pages.list(alice, pageQuery({ limit: 2 }))).toHaveLength(
-          2
-        );
-      })
-    )
+        )
+      ).toEqual([tieLow.id, oldest.id]);
+      expect(yield* pages.list(alice, pageQuery({ limit: 2 }))).toHaveLength(2);
+    })
+  )
 );
 
 it.effect('filters by read state and counts unread pages per owner', () =>
@@ -190,20 +166,6 @@ it.effect('filters by read state and counts unread pages per owner', () =>
         sorted(yield* ids(pages.list(alice, pageQuery({ read: false }))))
       ).toEqual(sorted([unread.id, another.id]));
 
-      const beforeAll = {
-        publishedAt: dateTime('2000-01-01T00:00:00.000Z'),
-        id: SavedPageId.make(hash('boundary')),
-      };
-      expect(
-        yield* ids(pages.listThrough(alice, { read: true, through: beforeAll }))
-      ).toEqual([read.id]);
-      expect(
-        sorted(
-          yield* ids(
-            pages.listThrough(alice, { read: false, through: beforeAll })
-          )
-        )
-      ).toEqual(sorted([unread.id, another.id]));
       expect(yield* pages.unreadCount(alice)).toBe(2);
       expect(yield* pages.unreadCount(bob)).toBe(1);
       expect(yield* pages.unreadCount(owner('nobody'))).toBe(0);

@@ -2,20 +2,20 @@
 
 Domain: pages a user saved to read later. Saved pages are independent of feed items: saving a feed item makes a copy, after which the two never affect each other.
 
-Scope: business contract only. Front-end behavior (auto-marking a page read when opened, keeping a just-read page in the unread list, when background refresh runs, request races) is not specified here.
+Scope: business contract only. Front-end behavior (auto-marking a page read when opened, keeping a just-read page in the unread list, when the user reloads, request races) is not specified here.
 
 ## Entity
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | `SavedPageId` | `hash(owner, url)` |
-| `ownerId` | `OwnerId` | |
-| `url` | `NormalizedUrl` | Required. Tracking parameters and the fragment are removed by the entity's conversion, not by use cases |
-| `title` | `ArticleTitle` | Empty becomes "Untitled" |
-| `description` | `Option<ArticleDescription>` | |
-| `content` | `ArticleContent` | Required, non-empty |
-| `publishedAt` | `DateTimeUtc` | See SP-ADD-4 and SP-SAVE-5 |
-| `read` | `boolean` | `false` when created |
+| Field         | Type                         | Notes                                                                                                   |
+| ------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `id`          | `SavedPageId`                | `hash(owner, url)`                                                                                      |
+| `ownerId`     | `OwnerId`                    |                                                                                                         |
+| `url`         | `NormalizedUrl`              | Required. Tracking parameters and the fragment are removed by the entity's conversion, not by use cases |
+| `title`       | `ArticleTitle`               | Empty becomes "Untitled"                                                                                |
+| `description` | `Option<ArticleDescription>` |                                                                                                         |
+| `content`     | `ArticleContent`             | Required, non-empty                                                                                     |
+| `publishedAt` | `DateTimeUtc`                | See SP-ADD-4 and SP-SAVE-5                                                                              |
+| `read`        | `boolean`                    | `false` when created                                                                                    |
 
 Parsing and validation happen only at the boundary. Past it, branded values are trusted.
 
@@ -63,28 +63,25 @@ Input: `owner`, `unreadOnly`, `limit` (page size, supplied by the caller), optio
 - SP-LIST-1 Order is `publishedAt` descending, then `id` descending.
 - SP-LIST-2 `unreadOnly = true` returns only unread pages; `false` returns all pages. There is no "read only" view.
 - SP-LIST-3 The result holds at most `limit` pages. The repository is asked for `limit + 1` to learn whether a next page exists.
-- SP-LIST-4 The result carries `cursor`, which is `null` when there is no next page, and `boundary`, the position of the last returned page.
+- SP-LIST-4 The result carries `cursor`, which is `null` when there is no next page.
 - SP-LIST-5 Cursor content: `owner`, `unreadOnly`, `publishedAt`, `id`. A cursor whose `owner` or `unreadOnly` differs from the request fails `InvalidCursor`.
 - SP-LIST-6 A cursor whose page was deleted is still valid, because it holds the position, not a lookup key.
 - SP-LIST-7 Only the owner's pages are ever returned.
 
-### SP-REFRESH — Refresh the list
+### SP-RELOAD — Reloading the list
 
-Input: `owner`, `unreadOnly`, `through` (a boundary from an earlier list result).
-
-- SP-REFRESH-1 Returns every page from the top of the list through `through`, in list order, under the current `unreadOnly`.
-- SP-REFRESH-2 The filter is applied again. A page that became read since is absent under `unreadOnly = true`, and pages saved since appear at the top.
-- SP-REFRESH-3 `through` is validated like a cursor (SP-LIST-5) and fails `InvalidCursor` on mismatch.
-- SP-REFRESH-4 When to refresh is the caller's decision.
+- SP-RELOAD-1 There is no separate refresh operation and no background refresh. To see current data the caller lists again from the first page, with no cursor.
+- SP-RELOAD-2 Listing again applies `unreadOnly` afresh, so pages read since are absent under `unreadOnly = true` and pages saved since appear at the top.
+- SP-RELOAD-3 When to reload is the caller's decision.
 
 ### SP-READ — Read state
 
 Each operation is a single port call, so there is no use case. They are listed separately because callers need them distinct:
 
-| Operation | Effect |
-| --- | --- |
+| Operation               | Effect                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
 | Mark pages (by id list) | Sets `read` on exactly those pages. Used for "the pages loaded in the list" and single pages |
-| Mark all | Sets `read = true` on every page of the owner, loaded or not |
+| Mark all                | Sets `read = true` on every page of the owner, loaded or not                                 |
 
 - SP-READ-1 Marking unknown ids, or ids of another owner, succeeds and changes nothing.
 - SP-READ-2 Marking is idempotent.
@@ -110,13 +107,12 @@ Each operation is a single port call, so there is no use case. They are listed s
 
 ## Use cases
 
-| Operation | Use case? | Why |
-| --- | --- | --- |
-| Add a link | Yes | Duplicate check, fetch and extract, create |
-| Save a feed item | Yes | Reads the Feed domain through its ports, duplicate check, content choice, create |
-| List | Yes | Cursor check, unread filter, next-page detection |
-| Refresh | Yes | Cursor check, through query |
-| Find one, mark by ids, mark all, remove, unread count | No | One port call each |
+| Operation                                             | Use case? | Why                                                                              |
+| ----------------------------------------------------- | --------- | -------------------------------------------------------------------------------- |
+| Add a link                                            | Yes       | Duplicate check, fetch and extract, create                                       |
+| Save a feed item                                      | Yes       | Reads the Feed domain through its ports, duplicate check, content choice, create |
+| List                                                  | Yes       | Cursor check, unread filter, next-page detection                                 |
+| Find one, mark by ids, mark all, remove, unread count | No        | One port call each                                                               |
 
 Errors: `DuplicateSavedPage`, `FeedNotFound`, `FeedItemNotFound`, `FeedItemMissingUrl`, `ArticleEmptyContent`, webpage fetch and article extraction errors from the shared flow, `InvalidCursor`, `SavedPageRepositoryError`.
 
@@ -124,16 +120,15 @@ Errors: `DuplicateSavedPage`, `FeedNotFound`, `FeedItemNotFound`, `FeedItemMissi
 
 All methods are scoped by `ownerId`.
 
-| Method | Contract |
-| --- | --- |
-| `find(owner, id)` | `Option` of the page |
+| Method                                       | Contract                                                                                           |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `find(owner, id)`                            | `Option` of the page                                                                               |
 | `list(owner, { unreadOnly, after?, limit })` | Pages ordered by `publishedAt` desc, `id` desc; strictly after `after` when given; at most `limit` |
-| `listThrough(owner, { unreadOnly, through })` | Every page from the top through `through` inclusive, same order |
-| `create(pages)` | Returns the ids actually created. An existing id is skipped, never overwritten |
-| `update(owner, ids, patch)` | Applies `patch` to the owner's pages among `ids`; returns the ids updated; unknown ids ignored |
-| `updateAll(owner, patch)` | Applies `patch` to every page of the owner |
-| `remove(owner, ids)` | Removes the owner's pages among `ids`; unknown ids ignored |
-| `unreadCount(owner)` | Count of unread pages |
+| `create(pages)`                              | Returns the ids actually created. An existing id is skipped, never overwritten                     |
+| `update(owner, ids, patch)`                  | Applies `patch` to the owner's pages among `ids`; returns the ids updated; unknown ids ignored     |
+| `updateAll(owner, patch)`                    | Applies `patch` to every page of the owner                                                         |
+| `remove(owner, ids)`                         | Removes the owner's pages among `ids`; unknown ids ignored                                         |
+| `unreadCount(owner)`                         | Count of unread pages                                                                              |
 
 `unreadOnly` is a plain boolean parameter. There is no separate read-filter type.
 

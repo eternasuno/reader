@@ -6,7 +6,6 @@ import {
   type FeedItemQuery,
   FeedItemRepository,
   type FeedItemRepositoryError,
-  type FeedItemThroughQuery,
 } from '@reader/business';
 import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
 import { RecordId, type Surreal } from 'surrealdb';
@@ -20,7 +19,6 @@ import {
   readBindings,
   readClause,
   run,
-  throughBoundary,
   write,
 } from './reader-store-sql';
 
@@ -112,8 +110,6 @@ const updateWhere = (
 const afterClause = (after: FeedItemQuery['after']) =>
   after === undefined ? '' : afterBoundary('itemId');
 
-const THROUGH_CLAUSE = throughBoundary('itemId');
-
 const pageBindings = (
   feedIds: ReadonlyArray<FeedId>,
   query: FeedItemQuery
@@ -129,16 +125,6 @@ const pageBindings = (
       }),
 });
 
-const throughBindings = (
-  feedIds: ReadonlyArray<FeedId>,
-  query: FeedItemThroughQuery
-): Bindings => ({
-  feedIds: [...feedIds],
-  ...readBindings(query.read),
-  throughAt: DateTime.toDate(query.through.publishedAt),
-  throughId: query.through.id,
-});
-
 const listFeedItems = (
   db: Surreal,
   feedIds: ReadonlyArray<FeedId>,
@@ -150,19 +136,6 @@ const listFeedItems = (
         db,
         `SELECT ${COLUMNS} FROM feed_item WHERE feedId IN $feedIds${readClause(query.read)}${afterClause(query.after)} ${ORDER} LIMIT $limit;`,
         pageBindings(feedIds, query)
-      );
-
-const listFeedItemsThrough = (
-  db: Surreal,
-  feedIds: ReadonlyArray<FeedId>,
-  query: FeedItemThroughQuery
-) =>
-  feedIds.length === 0
-    ? Effect.succeed([] as ReadonlyArray<FeedItem>)
-    : feedItems(
-        db,
-        `SELECT ${COLUMNS} FROM feed_item WHERE feedId IN $feedIds${readClause(query.read)}${THROUGH_CLAUSE} ${ORDER};`,
-        throughBindings(feedIds, query)
       );
 
 const UnreadRow = Schema.Struct({
@@ -199,8 +172,6 @@ const readQueries = (db: Surreal) => ({
     ).pipe(Effect.map((items) => Option.fromNullishOr(items[0]))),
   list: (feedIds: ReadonlyArray<FeedId>, query: FeedItemQuery) =>
     listFeedItems(db, feedIds, query),
-  listThrough: (feedIds: ReadonlyArray<FeedId>, query: FeedItemThroughQuery) =>
-    listFeedItemsThrough(db, feedIds, query),
   unreadCounts: (feedIds: ReadonlyArray<FeedId>) =>
     readUnreadCounts(db, feedIds),
   inventory: (feedId: FeedId) =>
