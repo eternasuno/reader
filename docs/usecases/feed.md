@@ -147,11 +147,11 @@ The scheduler lives in the application, not in `packages/business`. It calls the
 - FD-SCHED-5 A failed refresh is not visible to the user. No status is stored.
 - FD-SCHED-6 The three numbers are the scheduler's own configuration, not business values:
 
-| Value              | Default    | What it is for                                                                                        |
-| ------------------ | ---------- | ----------------------------------------------------------------------------------------------------- |
-| Refresh interval   | 30 minutes | How stale a feed may get. Shorter means fresher items and more requests to the sources                |
-| Discovery interval | 1 minute   | How soon an owner who subscribes for the first time joins the periodic refresh                        |
-| Parallel jobs      | 3          | Upper bound on owners refreshed at the same time, which bounds outgoing requests and memory           |
+| Value              | Default    | What it is for                                                                              |
+| ------------------ | ---------- | ------------------------------------------------------------------------------------------- |
+| Refresh interval   | 30 minutes | How stale a feed may get. Shorter means fresher items and more requests to the sources      |
+| Discovery interval | 1 minute   | How soon an owner who subscribes for the first time joins the periodic refresh              |
+| Parallel jobs      | 3          | Upper bound on owners refreshed at the same time, which bounds outgoing requests and memory |
 
 ### FD-LIST — List items
 
