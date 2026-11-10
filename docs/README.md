@@ -62,7 +62,7 @@ Each spec states entities, numbered rules, a table of use cases with input, outp
 
 | File                     | Prefix | Content                                                                                                                                                                                            |
 | ------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `usecases/common.md`     | `CM-`  | URL normalization, article values, the id helper, fetch-and-extract, text cleaning, paging and cursors, ownership, port contracts                                                                  |
+| `usecases/common.md`     | `CM-`  | URL normalization, article values, the id helper, fetch-and-extract, text cleaning, paging and cursors, ownership, the clock, port contracts                                                       |
 | `usecases/setting.md`    | `SET-` | Setting entity grouped by category, setting the fetcher as a union by provider, clearing the Jina key, the "browser needs an address" invariant. Core logic only, no HTTP interface                |
 | `usecases/saved-page.md` | `SP-`  | Entity and id, add a link, save a feed item, listing, read state, removal, unread count, port contract                                                                                             |
 | `usecases/feed.md`       | `FD-`  | Entities and ids, fetch-and-parse helper, preview, item selection and retention, import, sync, subscribe, scheduled refresh, listing, find, extract, read state, unread counts, unsubscribe, ports |
@@ -71,7 +71,7 @@ Reading order: `common.md`, `setting.md`, `saved-page.md`, `feed.md`.
 
 ### `features/` — reference scenarios in Gherkin
 
-Scenarios written from the user's side. They are a reference and a guide for changes in the outer layers (HTTP handlers, adapters, front end). They are not the source of truth for rules: when a scenario and a spec disagree, the spec wins. A comment above a scenario gives the rule it exercises. HTTP and form behavior that the specs leave out is described only here, under `@boundary` and `@ui`.
+Scenarios written from the user's side. They are a reference and a guide for changes in the outer layers (HTTP handlers, adapters, front end). They are not the source of truth for rules: when a scenario and a spec disagree, the spec wins. A comment above a scenario gives the rule it exercises. Scenarios cover what a user or the system can observe; rules about values and helpers (`CM-URL`, `CM-ID`, `CM-HTML`, port contracts) are covered by unit and contract tests instead. HTTP and form behavior that the specs leave out is described only here, under `@boundary` and `@ui`.
 
 | File                          | Domain                                           |
 | ----------------------------- | ------------------------------------------------ |
@@ -163,15 +163,16 @@ The business core is rewritten from the specs, not migrated step by step. The cu
 
 ### Parts that already match and can be carried over
 
-| Part                           | Where                                                 | Note                                                                                      |
-| ------------------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Id hashing                     | `usecase/identity.ts`                                 | SHA-256 over `JSON.stringify(parts)` is CM-ID-2. Only the parts change (see below)        |
-| Fetch and extract              | `usecase/extract-page.ts`                             | Same flow as CM-FETCH                                                                     |
-| Extractor sanitizes its output | `apps/api` `adapter/article-extractor.ts`             | Already satisfies CM-FETCH-3                                                              |
-| Fetcher chosen by injection    | `apps/api` saved-page and feed-item handlers          | They read the setting and provide the `WebpageFetcher` layer, as CM-FETCH-2 asks          |
-| Setting entity and value types | `entity/setting/`                                     | Same grouping                                                                             |
-| Scheduler                      | `apps/api` `infrastructure/subscription-scheduler.ts` | Already outside business, with owner discovery as its own service. Same three numbers     |
-| Repository patch semantics     | `port/*-repository.ts`, the SurrealDB stores          | Missing field means no change, `Option.none` means clear; skip-existing `create`; cascade |
+| Part                           | Where                                                 | Note                                                                                                               |
+| ------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Id hashing                     | `usecase/identity.ts`                                 | SHA-256 over `JSON.stringify(parts)` is CM-ID-2. Only the parts change (see below)                                 |
+| Fetch and extract              | `usecase/extract-page.ts`                             | Same flow as CM-FETCH                                                                                              |
+| Extractor sanitizes its output | `apps/api` `adapter/article-extractor.ts`             | Already satisfies CM-FETCH-3                                                                                       |
+| Fetcher chosen by injection    | `apps/api` saved-page and feed-item handlers          | They read the setting and provide the `WebpageFetcher` layer, as CM-FETCH-2 asks                                   |
+| Setting entity and value types | `entity/setting/`                                     | Same grouping                                                                                                      |
+| Entry URLs and titles          | `apps/api` `adapter/feed-parser.ts`                   | Resolves entry URLs against the source, drops invalid ones, limits title length. Matches the `FeedParser` contract |
+| Scheduler                      | `apps/api` `infrastructure/subscription-scheduler.ts` | Already outside business, with owner discovery as its own service. Same three numbers                              |
+| Repository patch semantics     | `port/*-repository.ts`, the SurrealDB stores          | Missing field means no change, `Option.none` means clear; skip-existing `create`; cascade                          |
 
 ### Differences
 
@@ -190,6 +191,9 @@ The business core is rewritten from the specs, not migrated step by step. The cu
 | Feed use cases | Preview and unsubscribe live in the route                                                                                                                                           | Preview in business; unsubscribe is one port call with cascading removal                                 |
 | Subscribing    | Initial import fixed at 30 through its own selection function; import failure is reported as `FeedImportFailed` (mapped in the route, handled by the front end)                     | Same sync as a refresh, using the retention setting; no `FeedImportFailed`, subscribing succeeds         |
 | Selection      | Stored and new candidates are ordered by publish time and the newest N kept; a new entry older than all kept ones is not imported                                                   | The first N entries in source order are imported; publish time only orders the removal of unlisted items |
+| Bad entry      | A description or content that cannot be cleaned fails the whole import of the feed                                                                                                  | The entry is skipped and logged (FD-IMPORT-6)                                                            |
+| Feed URL error | `FeedUrlInvalid` in business                                                                                                                                                        | None. A URL is decoded into `NormalizedUrl` at the boundary                                              |
+| Clock          | Adapters read the time themselves                                                                                                                                                   | Use cases read the injected clock (CM-TIME)                                                              |
 | Missing dates  | The extractor adapter and the feed parser adapter each fall back to the current time themselves                                                                                     | They return none; the fallback is in `fetchAndExtract` and `syncItems`                                   |
 | Feed title     | Plain string, may be empty                                                                                                                                                          | `FeedTitle`; empty becomes the host                                                                      |
 | Not found      | `FeedNotFound` raised by listing one feed, refresh and several item operations                                                                                                      | No `FeedNotFound`                                                                                        |
