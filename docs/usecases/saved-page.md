@@ -64,7 +64,7 @@ Input: `owner`, `unreadOnly`, `limit` (page size, supplied by the caller), optio
 - SP-LIST-2 `unreadOnly = true` returns only unread pages; `false` returns all pages. There is no "read only" view.
 - SP-LIST-3 The result holds at most `limit` pages. The repository is asked for `limit + 1` to learn whether a next page exists.
 - SP-LIST-4 The result carries `cursor`, which is `null` when there is no next page.
-- SP-LIST-5 Cursor content: `owner`, `unreadOnly`, `publishedAt`, `id`. A cursor whose `owner` or `unreadOnly` differs from the request fails `InvalidCursor`.
+- SP-LIST-5 The cursor is a position, `{ publishedAt, id }`, as in CM-PAGE. Changing `unreadOnly` starts a new list: the caller lists again with no cursor.
 - SP-LIST-6 A cursor whose page was deleted is still valid, because it holds the position, not a lookup key.
 - SP-LIST-7 Only the owner's pages are ever returned.
 
@@ -111,10 +111,10 @@ Each operation is a single port call, so there is no use case. They are listed s
 | ----------------------------------------------------- | --------- | -------------------------------------------------------------------------------- |
 | Add a link                                            | Yes       | Duplicate check, fetch and extract, create                                       |
 | Save a feed item                                      | Yes       | Reads the Feed domain through its ports, duplicate check, content choice, create |
-| List                                                  | Yes       | Cursor check, unread filter, next-page detection                                 |
+| List                                                  | Yes       | Unread filter, next-page detection                                               |
 | Find one, mark by ids, mark all, remove, unread count | No        | One port call each                                                               |
 
-Errors: `DuplicateSavedPage`, `FeedNotFound`, `FeedItemNotFound`, `FeedItemMissingUrl`, `ArticleEmptyContent`, webpage fetch and article extraction errors from the shared flow, `InvalidCursor`, `SavedPageRepositoryError`.
+Errors: `DuplicateSavedPage`, `FeedNotFound`, `FeedItemNotFound`, `FeedItemMissingUrl`, `ArticleEmptyContent`, webpage fetch and article extraction errors from the shared flow, `SavedPageRepositoryError`.
 
 ## Port: SavedPageRepository
 
@@ -137,3 +137,5 @@ All methods are scoped by `ownerId`.
 - Fetch and extract a page from a URL: fetch through the webpage port, parse, extract the article, fail `ArticleEmptyContent` when content is empty. Also used by the Feed domain's on-demand extraction.
 - List paging helpers: cursor encoding and consistency check, `limit + 1` next-page detection. Page size is always a parameter. Feed uses the same helpers with its own cursor scope.
 - Both domains use `unreadOnly: boolean` instead of a read-filter type.
+
+The shared flows are specified in `common.md`.

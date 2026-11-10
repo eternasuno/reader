@@ -99,7 +99,7 @@ Example, N = 3, items named by publish time:
 ### FD-IMPORT — Importing entries
 
 - FD-IMPORT-1 Each imported entry becomes a `FeedItem` with `read = false`, no `extractedContent`, and the owner of the feed.
-- FD-IMPORT-2 `description` and `content` are cut to 100,000 characters, parsed as HTML and sanitized before storage.
+- FD-IMPORT-2 `description` and `content` are cleaned before storage as in CM-HTML: cut to a limit supplied by the caller, parsed as HTML and sanitized.
 - FD-IMPORT-3 An absent or empty description, content or URL is stored as none.
 - FD-IMPORT-4 `create` skips ids that already exist. A stored item is never overwritten.
 
@@ -135,7 +135,7 @@ Input: `owner`, optional `feedId`, `unreadOnly`, `limit` (page size, supplied by
 - FD-LIST-3 `unreadOnly = true` returns only unread items; `false` returns all. There is no "read only" view.
 - FD-LIST-4 The result holds at most `limit` items. The repository is asked for `limit + 1` to learn whether a next page exists.
 - FD-LIST-5 The result carries `cursor`, `null` when there is no next page.
-- FD-LIST-6 Cursor content: `owner`, scope (all feeds, or one `feedId`), `unreadOnly`, `publishedAt`, `id`. A cursor whose owner, scope or `unreadOnly` differs from the request fails `InvalidCursor`.
+- FD-LIST-6 The cursor is a position, `{ publishedAt, id }`, as in CM-PAGE. Changing the feed scope or `unreadOnly` starts a new list: the caller lists again with no cursor.
 - FD-LIST-7 A cursor whose item was deleted is still valid, because it holds the position.
 - FD-LIST-8 There is no refresh operation and no background refresh. To see current data the caller lists again from the first page.
 - FD-LIST-9 Feeds themselves are listed by title ascending, then id ascending.
@@ -191,17 +191,17 @@ Each is a single port call, so there is no use case. They are listed separately 
 
 ## Use cases
 
-| Operation                                                         | Use case? | Why                                                                       |
-| ----------------------------------------------------------------- | --------- | ------------------------------------------------------------------------- |
-| `fetchParsedFeed`                                                 | helper    | Shared by preview, subscribe and refresh                                  |
-| Preview a subscription                                            | Yes       | Helper, then project the result                                           |
-| Subscribe                                                         | Yes       | Duplicate check, helper, create, initial import                           |
-| Refresh a feed (scheduled)                                        | Yes       | Helper, selection, import, trim, update                                   |
-| List items                                                        | Yes       | Feed lookup for one feed, cursor check, `unreadOnly`, next-page detection |
-| Extract an item                                                   | Yes       | Reuse or fetch, store                                                     |
-| Find one item, mark items, mark feeds, unread counts, unsubscribe | No        | One port call each                                                        |
+| Operation                                                         | Use case? | Why                                                         |
+| ----------------------------------------------------------------- | --------- | ----------------------------------------------------------- |
+| `fetchParsedFeed`                                                 | helper    | Shared by preview, subscribe and refresh                    |
+| Preview a subscription                                            | Yes       | Helper, then project the result                             |
+| Subscribe                                                         | Yes       | Duplicate check, helper, create, initial import             |
+| Refresh a feed (scheduled)                                        | Yes       | Helper, selection, import, trim, update                     |
+| List items                                                        | Yes       | Feed lookup for one feed, `unreadOnly`, next-page detection |
+| Extract an item                                                   | Yes       | Reuse or fetch, store                                       |
+| Find one item, mark items, mark feeds, unread counts, unsubscribe | No        | One port call each                                          |
 
-Errors: `FeedExists`, `FeedNotFound`, `FeedItemNotFound`, `FeedItemMissingUrl`, `FeedImportFailed`, `FetchFeedError`, `FeedParserError`, `ArticleEmptyContent`, webpage fetch and article extraction errors from the shared flow, `InvalidCursor`, `FeedRepositoryError`, `FeedItemRepositoryError`.
+Errors: `FeedExists`, `FeedNotFound`, `FeedItemNotFound`, `FeedItemMissingUrl`, `FeedImportFailed`, `FetchFeedError`, `FeedParserError`, `ArticleEmptyContent`, webpage fetch and article extraction errors from the shared flow, `FeedRepositoryError`, `FeedItemRepositoryError`.
 
 ## Ports
 
@@ -237,3 +237,5 @@ All methods are scoped by `ownerId`.
 - Fetch and extract a page from a URL: fetch through the webpage port, parse, extract the article, fail `ArticleEmptyContent` when content is empty. Used by FD-EXTRACT and by the SavedPage domain.
 - List paging helpers: cursor encoding and consistency check, `limit + 1` next-page detection. Page size is always a parameter.
 - Both domains use `unreadOnly: boolean` instead of a read-filter type.
+
+The shared flows are specified in `common.md`.
