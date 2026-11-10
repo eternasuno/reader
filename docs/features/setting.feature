@@ -16,7 +16,8 @@ Feature: Settings
     And no Jina key is configured
     And no browser service address is configured
 
-  # SET-GET-3
+  # Decided at the boundary: the API reports only whether each value is configured
+  @boundary
   Scenario: Secrets are never shown
     Given I saved a Jina key and a browser service address
     When I open the settings page
@@ -93,7 +94,7 @@ Feature: Settings
   Scenario: The browser provider always has an address
     Then the provider is never "browser" while no address is stored
 
-  # SET-KEY-1, SET-KEY-3
+  # SET-KEY-1; the confirmation is front-end behavior
   @ui
   Scenario: Clear the Jina key
     Given a Jina key is configured
@@ -103,6 +104,7 @@ Feature: Settings
     Then no key is configured
     And the provider is unchanged
 
+  @ui
   Scenario: Cancel clearing the key
     Given a Jina key is configured
     When I choose to clear the key and then cancel
@@ -113,7 +115,7 @@ Feature: Settings
     Then there is no way to remove a stored browser address
     But I can replace it
 
-  # SET-FETCH, boundary
+  # Value types of the Setting entity, decoded at the edge
   @boundary
   Scenario Outline: Value formats are checked at the edge
     When I submit <input>
@@ -126,6 +128,11 @@ Feature: Settings
       | the browser address "ws://host:9222" | it is accepted          |
       | the browser address "ftp://host"     | the request is rejected |
       | the browser address "not a url"      | the request is rejected |
+
+  @boundary
+  Scenario: A blank key or address counts as not given
+    When I save with a field that holds only spaces
+    Then it is handled as if the field was left empty
 
   # SET-OWN-1
   Scenario: Settings are per user

@@ -2,7 +2,7 @@
 
 Domain: per-user settings. Settings are grouped by category so that new categories never collide with existing fields.
 
-Principle: parsing and validation happen only at the boundary (HTTP). Past the boundary, brand types are trusted and never re-validated. Use cases exist only where a rule needs more than a single port call.
+Scope: business contract only. The HTTP interface, how values are written in a request, and the settings form are not specified here; `features/setting.feature` has reference scenarios for them.
 
 ## Entity
 
@@ -19,8 +19,10 @@ Setting
       endpoint       Option<BrowserEndpoint>     default none
 ```
 
-- `JinaKey`: trimmed, non-empty, redacted.
+- `Retention`: integer from 30 to 300.
+- `JinaKey`: trimmed, non-empty, a single line of at most 2048 characters, redacted.
 - `BrowserEndpoint`: URL with protocol http, https, ws or wss.
+- These are the rules of the value types. Values are decoded into them at the boundary.
 - Both providers' configuration is stored at the same time.
 
 ## Rules
@@ -28,8 +30,7 @@ Setting
 ### SET-GET — Read
 
 - SET-GET-1 A user without stored settings reads the defaults above.
-- SET-GET-2 `get` returns the full `Setting`.
-- SET-GET-3 The API never sends the Jina key or the browser endpoint to the browser. It sends only whether each is configured.
+- SET-GET-2 `get` returns the full `Setting`. What of it is shown to the user is decided at the boundary.
 
 ### SET-FEED — Retention
 
@@ -48,14 +49,14 @@ Input is a union by provider:
 - SET-FETCH-1 Jina variant: provider becomes `jina`. If `key` is given it replaces the stored key; if omitted the stored key is kept. The stored browser endpoint is untouched.
 - SET-FETCH-2 Browser variant: provider becomes `browser`. If `endpoint` is given it replaces the stored endpoint; if omitted the stored endpoint is kept. The stored Jina key is untouched.
 - SET-FETCH-3 Browser variant with no `endpoint` and no stored endpoint fails with `BrowserEndpointRequired`. Nothing is stored.
-- SET-FETCH-4 Invariant: provider is `browser` only if an endpoint is stored. It is enforced when writing, never at extraction time.
+- SET-FETCH-4 Invariant: provider is `browser` only if an endpoint is stored. It is enforced when writing, never at extraction time. The outer layer that builds the `WebpageFetcher` from the setting (CM-FETCH-2) relies on it.
 - SET-FETCH-5 Switching provider never discards the other provider's configuration.
 
 ### SET-KEY — Clear Jina key
 
 - SET-KEY-1 Clearing removes the stored key. The provider is unchanged.
 - SET-KEY-2 Clearing when no key is stored succeeds and changes nothing.
-- SET-KEY-3 The user interface asks for confirmation before calling it.
+- SET-KEY-3 The key can be cleared and the endpoint cannot (SET-ENDPOINT-1), because Jina works without a key while the browser provider cannot work without an endpoint.
 
 ### SET-ENDPOINT — Browser endpoint
 
@@ -70,12 +71,12 @@ Input is a union by provider:
 
 Only one use case exists. The other operations call the port directly.
 
-| Operation       | Implementation                                                    |
-| --------------- | ----------------------------------------------------------------- |
-| Read            | `SettingsRepository.get`                                          |
-| Set retention   | `SettingsRepository.update({ feed: { retention } })`              |
-| Clear Jina key  | `SettingsRepository.update({ fetcher: { jina: { key: none } } })` |
-| **Set fetcher** | Use case `setFetcher` (below)                                     |
+| Operation       | Implementation                                                   |
+| --------------- | ---------------------------------------------------------------- |
+| Read            | `SettingRepository.get`                                          |
+| Set retention   | `SettingRepository.update({ feed: { retention } })`              |
+| Clear Jina key  | `SettingRepository.update({ fetcher: { jina: { key: none } } })` |
+| **Set fetcher** | Use case `setFetcher` (below)                                    |
 
 ```text
 setFetcher(owner, input)
@@ -88,51 +89,18 @@ setFetcher(owner, input)
     update { fetcher: { provider: "browser", browser?: { endpoint: some(endpoint) } } }
 ```
 
-Errors: `BrowserEndpointRequired`, `SettingsRepositoryError`.
+## Errors
 
-## Port: SettingsRepository
+| Error                     | Carries | Meaning                                                            | Raised by                |
+| ------------------------- | ------- | ------------------------------------------------------------------ | ------------------------ |
+| `BrowserEndpointRequired` | nothing | The browser provider was chosen and no endpoint is given or stored | SET-FETCH-3              |
+| `SettingRepositoryError`  | message | Storage failure                                                    | `SettingRepository` port |
+
+## Port: SettingRepository
 
 - `get(owner)`: returns the stored `Setting` with defaults filled in for anything not stored.
 - `update(owner, patch)`: `patch` mirrors `Setting` by group. A missing field means no change; `Option.none` means clear. An empty patch writes nothing.
 - The patch type is defined by hand per group (`feed`, `fetcher`) with all fields optional.
-
-## Boundary (not business)
-
-| Concern                                        | Where                                              |
-| ---------------------------------------------- | -------------------------------------------------- |
-| Jina key: single line, at most 2048 characters | HTTP boundary, then converted to `JinaKey`         |
-| Browser endpoint protocol                      | HTTP boundary, then converted to `BrowserEndpoint` |
-| Retention integer 30..300                      | HTTP boundary, then converted to `Retention`       |
-| Blank key or blank endpoint in the request     | Treated as omitted                                 |
-
-HTTP interface:
-
-| Operation      | Request                                                                           |
-| -------------- | --------------------------------------------------------------------------------- |
-| Read           | `GET settings` returns retention, provider, `jinaConfigured`, `browserConfigured` |
-| Set retention  | `PUT settings/retention`                                                          |
-| Set fetcher    | `PUT settings/fetcher` with the union above                                       |
-| Clear Jina key | `DELETE settings/jina-key`                                                        |
-
-## User flow
-
-One form, one save:
-
-1. The user picks a provider. This only changes the draft and shows that provider's fields.
-2. The user fills that provider's field. A configured key or endpoint shows "configured"; leaving it empty keeps the stored value.
-3. For the browser with no stored endpoint the field is required.
-4. Save submits the provider and its field together (SET-FETCH).
-5. A configured Jina key has a Clear button next to it, with a confirmation (SET-KEY).
-
-| Scenario                               | Result                                                |
-| -------------------------------------- | ----------------------------------------------------- |
-| New user                               | Jina, no key, anonymous fetching                      |
-| Use Jina with a key                    | Jina variant with `key`                               |
-| First use of the browser               | Browser variant must carry `endpoint`                 |
-| Back to Jina                           | Jina variant without `key`; endpoint and key are kept |
-| Browser again, endpoint already stored | Browser variant without `endpoint` succeeds           |
-| Change browser endpoint                | Browser variant with the new `endpoint`               |
-| Remove the Jina key                    | Clear Jina key, after confirmation                    |
 
 ## Known risk
 

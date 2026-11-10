@@ -11,7 +11,12 @@ Feature: Saved pages (read later)
     Then the page is fetched and its article is extracted
     And it is saved with the address "https://example.com/post"
     And it is unread
-    And it appears at the position of its publish time
+    And it is at the top of the list
+
+  # SP-LIST-1
+  Scenario: An old article saved now is at the top
+    When I add a link to an article published years ago
+    Then it is at the top of the list, above pages saved earlier
 
   # SP-ADD-4
   Scenario: A page without a publish time
@@ -52,7 +57,7 @@ Feature: Saved pages (read later)
     And the copy keeps the article's title, description and publish time
     And the feed article is unchanged
 
-  # SP-SAVE-5
+  # SP-SAVE step 4, SP-SAVE-6
   Scenario Outline: Which content the copy uses
     Given a feed article <has>
     When I save it
@@ -71,6 +76,12 @@ Feature: Saved pages (read later)
     Then I am told it has no original URL
     And nothing is saved
 
+  # SP-SAVE step 1
+  Scenario: Save a feed article that no longer exists
+    When I save a feed article that is gone or not mine
+    Then I am told the article was not found
+    And nothing is saved
+
   # SP-SAVE-3
   Scenario: Save a feed article already saved
     Given the article's URL is already in my read-later list
@@ -84,13 +95,14 @@ Feature: Saved pages (read later)
     When I mark the saved page read
     Then the feed article stays unread
 
-  # SP-LIST
-  Scenario: List newest published first
+  # SP-LIST-1
+  Scenario: List newest saved first
     Given I have saved pages
     When I open the read-later list
-    Then pages are ordered by publish time, newest first
+    Then pages are ordered by the time they were saved, newest first
     And pages with the same time are ordered by id, larger first
 
+  # CM-PAGE-8
   Scenario: Show only unread
     Given I have read and unread pages
     When I show only unread
@@ -98,7 +110,7 @@ Feature: Saved pages (read later)
     When I show all
     Then I see every page
 
-  # SP-LIST-4, CM-PAGE
+  # CM-PAGE-4
   Scenario: Page through the list
     Given I have more pages than one page holds
     When I list with a page size of 30
@@ -114,18 +126,18 @@ Feature: Saved pages (read later)
     And I list with the cursor
     Then I get the pages after that position
 
-  # SP-RELOAD, CM-PAGE-7
+  # CM-PAGE-7
   Scenario: Changing the filter starts over
     Given I am paging through all pages
     When I show only unread
     Then I list again from the first page without a cursor
 
-  # SP-RELOAD-2
+  # SP-LIST-3
   Scenario: Reload shows the current state
     Given I listed unread pages and then read one and saved another
     When I list again from the first page
     Then the page I read is gone
-    And the new page is at its position
+    And the new page is at the top
 
   # SP-OPEN
   Scenario: Open a saved page
@@ -141,10 +153,12 @@ Feature: Saved pages (read later)
     When I mark them unread
     Then they are unread again
 
+  # SP-READ-1
   Scenario: Marking unknown ids changes nothing
     When I mark ids that do not exist or are not mine
     Then nothing changes and there is no error
 
+  # SP-READ
   Scenario: Mark all saved pages read
     When I mark all saved pages read
     Then every saved page of mine is read, loaded or not
@@ -160,6 +174,7 @@ Feature: Saved pages (read later)
     Then it is gone from the list
     And the unread count updates
 
+  # SP-REMOVE-1
   Scenario: Remove is idempotent
     When I remove a page that does not exist
     Then nothing changes and there is no error

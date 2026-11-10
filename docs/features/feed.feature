@@ -11,6 +11,7 @@ Feature: Feeds and their items
     Then I see the feed title, its description if any, and the titles of its entries
     And nothing is subscribed or stored
 
+  # FD-PREVIEW-2
   Scenario Outline: A preview that fails
     When I preview an address and <problem>
     Then I see the reason
@@ -35,6 +36,7 @@ Feature: Feeds and their items
     When I subscribe
     Then the 30 most recently published entries are imported
 
+  # FD-SEL-2
   Scenario: Duplicate entries in the source are imported once
     Given a feed lists the same article twice
     When I subscribe
@@ -55,11 +57,16 @@ Feature: Feeds and their items
   # FD-SUB-3
   Scenario: Importing fails after the feed is created
     When the feed is valid but storing its articles fails
-    Then I am told the import failed, with the id of the feed
-    And the subscription is kept with no articles
+    Then the subscription succeeds with no articles
     And the next scheduled refresh fills it
 
-  # FD-ID
+  # FD-SUB-2
+  Scenario: Two requests subscribe to the same feed at once
+    When two requests subscribe to the same address at the same moment
+    Then one feed is created
+    And the other request is told the feed exists
+
+  # FD-ID-2
   Scenario: Items are identified by URL when they have one
     Given a feed item with a URL was imported and I read it
     When the source changes its title
@@ -67,13 +74,30 @@ Feature: Feeds and their items
     Then there is still one item
     And it is still read
 
+  # FD-ID-3
   Scenario: Items without a URL are identified by title and description
     Given a feed item without a URL was imported
     When the source changes its title
     And the feed is refreshed
     Then the changed entry is a new item
 
-  # FD-REFRESH, FD-SEL
+  # FD-ID-4
+  Scenario: The same article in two feeds
+    Given two of my feeds list the same article
+    Then I have two items, one in each feed
+    And reading one leaves the other unread
+
+  # FD-IMPORT-5
+  Scenario: An entry without a publish time
+    When an entry that carries no publish time is imported
+    Then its publish time is the time the source was parsed
+
+  # FD-IMPORT-6
+  Scenario: An entry dated in the future
+    When an entry dated later than now is imported
+    Then its publish time is the time of the import
+
+  # FD-SEL, same rows as the table in the spec
   @system
   Scenario Outline: Refreshing keeps the newest articles
     Given my retention setting is 3
@@ -82,12 +106,14 @@ Feature: Feeds and their items
     Then the feed stores <after>
 
     Examples:
-      | stored   | source      | after    |
-      | t5 t4 t3 | t6 t5 t4 t3 | t6 t5 t4 |
-      | t5 t4 t3 | t5 t4       | t5 t4 t3 |
-      | t5 t4 t3 | t2 t5 t4 t3 | t5 t4 t3 |
+      | stored          | source         | after          |
+      | nothing         | t6 t5 t4 t3    | t6 t5 t4       |
+      | t5 t4 t3        | t6 t5 t4 t3    | t6 t5 t4       |
+      | t5 t4 t3        | t5 t4          | t5 t4 t3       |
+      | a@t5 c@t4 d@t3  | b@t5 c@t4 d@t3 | a@t5 b@t5 c@t4 |
+      | t5 t4 t3        | t2 t5 t4 t3    | t5 t4 t3       |
 
-  # FD-SEL-5
+  # FD-SEL-4
   @system
   Scenario: Unread articles are not protected by retention
     Given my retention setting is 3
@@ -95,13 +121,13 @@ Feature: Feeds and their items
     When the source lists t6, t5 and t4 and the feed refreshes
     Then t3 is removed
 
-  # FD-SEL-6
+  # FD-SEL-5
   @system
   Scenario: Articles the source dropped stay until retention removes them
     When the source stops listing an article that is within retention
     Then the article stays
 
-  # FD-SEL-8
+  # FD-SEL-7
   Scenario: Lowering retention takes effect at the next refresh
     Given a feed stores 100 articles
     When I set my retention to 30
@@ -109,7 +135,7 @@ Feature: Feeds and their items
     When the feed refreshes
     Then the feed stores 30 articles
 
-  # FD-REFRESH-1
+  # FD-SYNC-1
   @system
   Scenario: Stored articles are not updated from the source
     Given an article is stored
@@ -117,7 +143,7 @@ Feature: Feeds and their items
     And the feed refreshes
     Then the stored article keeps its first content
 
-  # FD-REFRESH-2
+  # FD-SYNC-2
   @system
   Scenario: A refresh interrupted between writes
     When a refresh fails after adding new articles but before trimming
@@ -128,17 +154,20 @@ Feature: Feeds and their items
   @system
   Scenario: Feeds refresh by themselves
     Given I have feeds
-    Then each is refreshed about every 30 minutes
+    Then each is refreshed at the scheduler's interval, 30 minutes by default
     And a feed that fails to refresh does not stop the others
     And I am not shown the failure
     And there is no way to refresh a feed from its source on demand
 
+  # FD-REFRESH-1, FD-SYNC-5
   @system
   Scenario: A feed removed during a refresh run
     When a feed is unsubscribed while a refresh run is going
-    Then its refresh is skipped without error
+    Then its refresh ends without error
+    And none of its articles are left behind
 
   # FD-LIST
+  # FD-LIST-1, CM-PAGE-1
   Scenario: List articles from all my feeds
     When I open the subscription list
     Then I see articles from all my feeds, newest published first
@@ -148,15 +177,17 @@ Feature: Feeds and their items
     When I select a feed
     Then I see only its articles
 
-  # FD-LIST-1
+  # FD-LIST-2
   Scenario: Select a feed that does not exist
     When I list the articles of a feed that is gone or not mine
-    Then I am told the feed was not found
+    Then I get an empty list, and it is not an error
 
+  # CM-PAGE-8
   Scenario: Show only unread
     When I show only unread
     Then I see only unread articles
 
+  # CM-PAGE-4
   Scenario: Page through the articles
     Given I have more articles than one page holds
     When I list with a page size and then with the returned cursor
@@ -168,7 +199,7 @@ Feature: Feeds and their items
     When I select one feed
     Then I list again from the first page without a cursor
 
-  # FD-LIST-9
+  # FD-LIST-3
   Scenario: Feeds are listed by title
     Then my feeds are listed by title, then id
 
@@ -187,6 +218,7 @@ Feature: Feeds and their items
     Then the page is fetched and its article extracted
     And the content is stored on the article
 
+  # FD-EXTRACT-2
   Scenario: Reuse extracted content
     Given an article already has extracted content
     When I ask for the extracted view
@@ -217,6 +249,7 @@ Feature: Feeds and their items
     Then exactly those are read
     And the unread count of their feed follows
 
+  # FD-READ-1
   Scenario: Marking unknown ids changes nothing
     When I mark ids that do not exist or are not mine
     Then nothing changes and there is no error
@@ -227,7 +260,7 @@ Feature: Feeds and their items
 
   Scenario: Mark all subscription articles read
     When I mark all my subscription articles read
-    Then every article of every one of my feeds is read
+    Then every article of every one of my feeds is read, loaded or not
 
   # FD-READ-2
   Scenario: Feeds that are not mine are ignored
@@ -240,6 +273,7 @@ Feature: Feeds and their items
     Then feed A shows 3 and feed B shows 4
     And the total is 7
 
+  # FD-COUNT-1
   Scenario: A feed with nothing unread
     Given feed C has no unread articles
     Then feed C counts as 0
@@ -252,6 +286,7 @@ Feature: Feeds and their items
     And the unread counts no longer include it
     And the saved page stays in my read-later list
 
+  # FD-UNSUB-2
   Scenario: Unsubscribe is idempotent
     When I unsubscribe from a feed that does not exist or is not mine
     Then nothing changes and there is no error
