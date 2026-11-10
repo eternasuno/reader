@@ -33,7 +33,7 @@ Scope: business contract only. Front-end behavior (what the list shows while loa
 
 ### ParsedFeed (value, not stored)
 
-What `FeedParser` returns: the feed `title`, an optional `description`, and the entries. An entry has `title`, optional `description`, optional `content`, optional `url` and `publishedAt`. Entry text is as the source gave it, not yet cleaned.
+What `FeedParser` returns: the feed `title`, an optional `description`, and the entries. An entry has `title`, optional `description`, optional `content`, optional `url` and optional `publishedAt`. Entry text is as the source gave it, not yet cleaned.
 
 ## Rules
 
@@ -93,7 +93,7 @@ This table is the authority for the examples. `features/feed.feature` repeats th
 - FD-IMPORT-2 `description` and `content` are cleaned before storage as in CM-HTML, cut to `FeedImportConfig.maxTextLength`.
 - FD-IMPORT-3 An absent or empty description, content or URL is stored as none.
 - FD-IMPORT-4 `create` skips ids that already exist. A stored item is never overwritten.
-- FD-IMPORT-5 An entry that carries no publish time gets the time at which the source was parsed. The parser supplies it, so every entry of a `ParsedFeed` has a `publishedAt`.
+- FD-IMPORT-5 An entry that carries no publish time gets the time of the sync that first sees it. The parser reports the missing time as none and never invents one; the fallback is in `syncItems`, applied before selection, with one time for all entries of the sync.
 - FD-IMPORT-6 A publish time later than now is replaced by now before selection, so a wrongly dated entry cannot stay on top of the list and outside retention forever.
 
 ### FD-SYNC — Bring a feed's items in line with its source
@@ -140,7 +140,7 @@ Triggered only by the scheduler. There is no user operation to refresh a feed fr
 
 The scheduler lives in the application, not in `packages/business`. It calls the refresh use case. It is described here because the retention and subscribe rules rely on it. Finding the owners that have feeds is a service of the scheduler, not a business port.
 
-- FD-SCHED-1 Every owner that has at least one feed is refreshed at a fixed interval, and immediately when first discovered. Owners are rediscovered periodically; an owner without feeds stops being scheduled.
+- FD-SCHED-1 Every owner that has at least one feed is refreshed at a fixed interval, and immediately when first discovered. The scheduler looks for owners with feeds periodically, so an owner who subscribes for the first time is picked up. An owner whose feeds are all gone has nothing to refresh; no user is removed, and whether the scheduler keeps or stops that owner's timer is its own concern.
 - FD-SCHED-2 Within one owner, feeds are refreshed one after another.
 - FD-SCHED-3 At most one refresh job per owner is queued or running. A fixed number of jobs run in parallel across owners.
 - FD-SCHED-4 A feed that fails to refresh is logged and does not stop the others.
@@ -150,7 +150,7 @@ The scheduler lives in the application, not in `packages/business`. It calls the
 | Value              | Default    | What it is for                                                                                        |
 | ------------------ | ---------- | ----------------------------------------------------------------------------------------------------- |
 | Refresh interval   | 30 minutes | How stale a feed may get. Shorter means fresher items and more requests to the sources                |
-| Discovery interval | 1 minute   | How soon an owner's first feed starts being refreshed, and how soon an owner with no feeds is dropped |
+| Discovery interval | 1 minute   | How soon an owner who subscribes for the first time joins the periodic refresh                        |
 | Parallel jobs      | 3          | Upper bound on owners refreshed at the same time, which bounds outgoing requests and memory           |
 
 ### FD-LIST — List items
@@ -270,11 +270,11 @@ All methods are scoped by `ownerId`.
 ### FeedFetcher, FeedParser
 
 - `FeedFetcher.fetch(url)`: the body of the source as text, or `FetchFeedError`.
-- `FeedParser.parse(text, url)`: a `ParsedFeed`, or `FeedParserError`. Entries without a publish time get the time of parsing (FD-IMPORT-5).
+- `FeedParser.parse(text, url)`: a `ParsedFeed`, or `FeedParserError`. An entry without a publish time has none (FD-IMPORT-5).
 
 ### FeedImportConfig
 
-A configuration service provided by the application from its configuration. Business defines no default.
+A value provided from outside by injection. Business defines no number; whether the outer layer reads it from configuration or fixes it in its own code is its choice.
 
 | Field           | Meaning                                                                       |
 | --------------- | ----------------------------------------------------------------------------- |

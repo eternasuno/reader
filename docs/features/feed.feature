@@ -90,7 +90,7 @@ Feature: Feeds and their items
   # FD-IMPORT-5
   Scenario: An entry without a publish time
     When an entry that carries no publish time is imported
-    Then its publish time is the time the source was parsed
+    Then its publish time is the time of that sync
 
   # FD-IMPORT-6
   Scenario: An entry dated in the future

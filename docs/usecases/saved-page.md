@@ -36,7 +36,7 @@ Scope: business contract only. Front-end behavior (auto-marking a page read when
 - SP-ADD-1 A duplicate is detected before any fetching.
 - SP-ADD-2 The saved `url` is the submitted normalized URL, not a redirect target.
 - SP-ADD-3 Fetch, parse or extraction failure, or empty content, fails the operation and saves nothing.
-- SP-ADD-4 `publishedAt` is the extracted publish time; when the page has none it is the time of adding (CM-FETCH-1).
+- SP-ADD-4 `publishedAt` is the publish time returned by `fetchAndExtract`, which is the time of adding when the page has none (CM-FETCH-1).
 - SP-ADD-5 If two requests add the same link at once, `create` reports that nothing was created for the loser, which fails `SavedPageAlreadyExists(id)`.
 
 ### SP-SAVE — Save a feed item

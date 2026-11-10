@@ -40,11 +40,11 @@ Known limit of CM-URL-3: a site that routes by fragment (`https://site/#/post/1`
 
 1. Fetch the page text through `WebpageFetcher`, given `url.href`.
 2. Parse it through `HtmlParser`, with `url` as the base. The parsed document lives only for the duration of the call.
-3. Extract through `ArticleExtractor`: title, description, content, publish time.
+3. Extract through `ArticleExtractor`: title, description, content, and the publish time as an `Option`.
 4. If the content is empty, fail `ArticleEmptyContent`.
-5. Return title, description, non-empty content and publish time.
+5. Return title, description, non-empty content, and the publish time: the extracted one, or the current time when the page has none.
 
-- CM-FETCH-1 When the page has no publish time, the extractor returns the current time.
+- CM-FETCH-1 The extractor reports a missing publish time as none. It never invents one. The fallback to the current time is in this use case, so every caller (SP-ADD, FD-EXTRACT) shares it and every extractor adapter is free of it.
 - CM-FETCH-2 Which provider fetches the page (Jina or a browser service) depends on the owner's fetcher setting, and is decided outside business. The outer layer reads the setting and provides a `WebpageFetcher` built for it when it runs the use case. Business depends only on the port and takes no owner or provider parameter for fetching.
 - CM-FETCH-3 The `ArticleExtractor` returns sanitized description and content (CM-ART-4). Sanitizing is part of the port's contract, not a separate step in the use case.
 - CM-FETCH-4 Errors: `WebpageFetcherError`, `HtmlParserError`, `ArticleExtractorError`, `ArticleEmptyContent`. The operation stores nothing on failure.
@@ -58,7 +58,7 @@ Known limit of CM-URL-3: a site that routes by fragment (`https://site/#/post/1`
 3. Parse it through `HtmlParser`, with `url` as the base.
 4. Sanitize the document through `DocumentSanitizer`, which returns `Option<string>`.
 
-- CM-HTML-1 `maxLength` is a parameter. Business defines no number; the Feed domain reads it from `FeedImportConfig` (see `feed.md`), which the application provides from its configuration.
+- CM-HTML-1 `maxLength` is a parameter. Business defines no number; the Feed domain reads it from `FeedImportConfig` (see `feed.md`), which is provided from outside.
 - CM-HTML-2 Text that is empty after cleaning is none.
 - CM-HTML-3 Which tags, attributes and URLs survive sanitizing is decided by the sanitizer adapter, not by business.
 - CM-HTML-4 Errors: `HtmlParserError`, `DocumentSanitizerError`.
