@@ -27,16 +27,16 @@ Feature: Feeds and their items
     Given my retention setting is 100
     When I confirm a subscription to "https://example.com/feed.xml"
     Then the feed is added with the title from its source
-    And its newest 100 entries are imported as unread
+    And the first 100 entries it lists are imported as unread
 
-  # FD-SEL-3
+  # FD-SEL-1
   Scenario: The initial import follows my retention
     Given my retention setting is 30
     And a feed lists 100 entries
     When I subscribe
-    Then the 30 most recently published entries are imported
+    Then the first 30 entries it lists are imported
 
-  # FD-SEL-2
+  # FD-SEL-1
   Scenario: Duplicate entries in the source are imported once
     Given a feed lists the same article twice
     When I subscribe
@@ -92,14 +92,14 @@ Feature: Feeds and their items
     When an entry that carries no publish time is imported
     Then its publish time is the time of that sync
 
-  # FD-IMPORT-6
-  Scenario: An entry dated in the future
-    When an entry dated later than now is imported
-    Then its publish time is the time of the import
+  # FD-IMPORT-5
+  Scenario: An entry with a future or wrong publish time
+    When an entry dated in the future is imported
+    Then its publish time is kept as the source gave it
 
   # FD-SEL, same rows as the table in the spec
   @system
-  Scenario Outline: Refreshing keeps the newest articles
+  Scenario Outline: Refreshing keeps what the source lists first
     Given my retention setting is 3
     And the feed stores <stored>
     When the source lists <source> and the feed refreshes
@@ -110,8 +110,8 @@ Feature: Feeds and their items
       | nothing         | t6 t5 t4 t3    | t6 t5 t4       |
       | t5 t4 t3        | t6 t5 t4 t3    | t6 t5 t4       |
       | t5 t4 t3        | t5 t4          | t5 t4 t3       |
-      | a@t5 c@t4 d@t3  | b@t5 c@t4 d@t3 | a@t5 b@t5 c@t4 |
-      | t5 t4 t3        | t2 t5 t4 t3    | t5 t4 t3       |
+      | t4 t3 t2        | t6 t5          | t6 t5 t4       |
+      | t5 t4 t3        | t2 t5 t4 t3    | t2 t5 t4       |
 
   # FD-SEL-4
   @system

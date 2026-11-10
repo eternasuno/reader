@@ -28,7 +28,7 @@ Scope: business contract only. Front-end behavior (what the list shows while loa
 | `description`      | `Option<ArticleDescription>` | Sanitized                                                                                                |
 | `content`          | `Option<ArticleContent>`     | Sanitized                                                                                                |
 | `extractedContent` | `Option<ArticleContent>`     | Filled on demand, see FD-EXTRACT                                                                         |
-| `publishedAt`      | `DateTimeUtc`                | See FD-IMPORT-5 and FD-IMPORT-6                                                                          |
+| `publishedAt`      | `DateTimeUtc`                | See FD-IMPORT-5                                                                                          |
 | `read`             | `boolean`                    | `false` when created                                                                                     |
 
 ### ParsedFeed (value, not stored)
@@ -62,28 +62,28 @@ What `FeedParser` returns: the feed `title`, an optional `description`, and the 
 
 ### FD-SEL — Item selection and retention
 
-An entry becomes a candidate with its id (FD-ID). N is the owner's retention setting.
+N is the owner's retention setting. The source's own order decides what is imported; publish times do not.
 
-- FD-SEL-1 Candidates have one total order: `publishedAt` descending; on equal times stored items before new entries; then `id` descending. The order of entries in the source plays no role.
-- FD-SEL-2 Candidates with the same id collapse to the first one in that order.
-- FD-SEL-3 The retained set: take the stored inventory, add the de-duplicated entries whose id is not stored, order, keep the first N. For a new feed the inventory is empty, so the retained set is the N newest entries.
-- FD-SEL-4 Retention is by recency only. Read state plays no role, so unread items beyond N are removed like read ones.
+- FD-SEL-1 The listed entries are the first N distinct entries of the source, in the order of the source. Entries with the same id (FD-ID) collapse to the first one.
+- FD-SEL-2 Every listed entry is retained. One that is not stored yet is imported, whatever its publish time. One that is stored is skipped.
+- FD-SEL-3 If the feed then holds more than N items, the excess is removed from the stored items that are not listed, oldest first: `publishedAt` ascending, then `id` ascending. So the retained set is the listed entries plus the newest unlisted stored items, up to N in total.
+- FD-SEL-4 Read state plays no role, so unread items beyond N are removed like read ones.
 - FD-SEL-5 An item the source no longer lists stays until FD-SEL-3 removes it.
-- FD-SEL-6 A new entry older than all N retained candidates is not stored.
+- FD-SEL-6 An entry beyond the first N of the source is never imported.
 - FD-SEL-7 Lowering N takes effect at the next sync. Nothing is trimmed when the setting changes.
-- FD-SEL-8 Selection is a pure function of the inventory, the entries and N.
+- FD-SEL-8 Selection is a pure function of the inventory, the entries in source order and N. A new feed is the case of an empty inventory.
 
-Example, N = 3, items named by publish time:
+Example, N = 3. Items are named by publish time and the source is written in its own order:
 
-| Case                           | Stored before             | Source entries        | Stored after                |
-| ------------------------------ | ------------------------- | --------------------- | --------------------------- |
-| New feed                       | nothing                   | t6 t5 t4 t3           | t6 t5 t4                    |
-| New entry displaces the oldest | t5 t4 t3                  | t6 t5 t4 t3           | t6 t5 t4                    |
-| Unread is not protected        | t5 t4 t3 (t3 unread)      | t6 t5 t4              | t6 t5 t4                    |
-| Source dropped an entry        | t5 t4 t3                  | t5 t4                 | t5 t4 t3                    |
-| Same time, stored first        | a@t5 (stored), c@t4, d@t3 | b@t5 c@t4 d@t3        | a@t5 b@t5 c@t4              |
-| Older than everything kept     | t5 t4 t3                  | t2 t5 t4 t3           | t5 t4 t3                    |
-| Title edited, has URL          | x@t5 (read)               | x@t5 with a new title | x@t5, still read, old title |
+| Case                                | Stored before        | Source entries        | Stored after                |
+| ----------------------------------- | -------------------- | --------------------- | --------------------------- |
+| New feed                            | nothing              | t6 t5 t4 t3           | t6 t5 t4                    |
+| New entry displaces the oldest      | t5 t4 t3             | t6 t5 t4 t3           | t6 t5 t4                    |
+| Unread is not protected             | t5 t4 t3 (t3 unread) | t6 t5 t4              | t6 t5 t4                    |
+| Source dropped an entry             | t5 t4 t3             | t5 t4                 | t5 t4 t3                    |
+| Short source, newest unlisted kept  | t4 t3 t2             | t6 t5                 | t6 t5 t4                    |
+| Listed first wins over publish time | t5 t4 t3             | t2 t5 t4 t3           | t2 t5 t4                    |
+| Title edited, has URL               | x@t5 (read)          | x@t5 with a new title | x@t5, still read, old title |
 
 This table is the authority for the examples. `features/feed.feature` repeats the same rows as scenarios.
 
@@ -93,16 +93,15 @@ This table is the authority for the examples. `features/feed.feature` repeats th
 - FD-IMPORT-2 `description` and `content` are cleaned before storage as in CM-HTML, cut to `FeedImportConfig.maxTextLength`.
 - FD-IMPORT-3 An absent or empty description, content or URL is stored as none.
 - FD-IMPORT-4 `create` skips ids that already exist. A stored item is never overwritten.
-- FD-IMPORT-5 An entry that carries no publish time gets the time of the sync that first sees it. The parser reports the missing time as none and never invents one; the fallback is in `syncItems`, applied before selection, with one time for all entries of the sync.
-- FD-IMPORT-6 A publish time later than now is replaced by now before selection, so a wrongly dated entry cannot stay on top of the list and outside retention forever.
+- FD-IMPORT-5 The publish time is the one the source gives, used as given even when it lies in the future or is plainly wrong. Only an entry that carries none gets the time of the sync that first sees it. The parser reports the missing time as none and never invents one; the fallback is in `syncItems`, with one time for all entries of the sync.
 
 ### FD-SYNC — Bring a feed's items in line with its source
 
 `syncItems(feed, parsed)`. The one place where items are written from a source; used by subscribe and by refresh.
 
 1. Read the stored inventory of the feed and the owner's N.
-2. Compute the retained set (FD-SEL-3).
-3. Import the retained entries that are new (FD-IMPORT).
+2. Select (FD-SEL): the listed entries to import and the retained set.
+3. Import the listed entries that are not stored (FD-IMPORT).
 4. Delete the stored items of the feed that are not in the retained set.
 5. Update the feed's `title` and `updatedAt = now`.
 
@@ -287,5 +286,6 @@ A value provided from outside by injection. Business defines no number; whether 
 
 ## Known risks
 
-- A source whose entries carry no publish time and that lists more than N entries: an entry trimmed by retention is seen as new at the next sync, gets the current time and is imported again as unread. Such sources are rare and N is at least 30, so this is accepted.
+- Selection trusts the source to list its newest entries first. A source that lists more than N entries with the oldest first never gets past its oldest N. Almost every source lists newest first, and most list fewer than N entries, in which case all of them are taken.
 - Raising N after lowering it brings back older entries the source still lists. They come back unread.
+- The item list is ordered by `publishedAt` (FD-LIST), not by source order. An entry with a wrong or future time is imported and kept correctly but shows at the position its time gives it.
