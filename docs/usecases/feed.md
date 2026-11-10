@@ -10,7 +10,7 @@ Scope: business contract only. Front-end behavior (what the list shows while loa
 
 | Field       | Type            | Notes                                                            |
 | ----------- | --------------- | ---------------------------------------------------------------- |
-| `id`        | `FeedId`        | `hash(owner, url)`                                               |
+| `id`        | `FeedId`        | `hashId(owner, url.href)` (FD-ID-1)                              |
 | `ownerId`   | `OwnerId`       |                                                                  |
 | `url`       | `NormalizedUrl` | The submitted address after normalization, not a redirect target |
 | `title`     | `string`        | Taken from the source; updated on every refresh                  |
@@ -18,18 +18,18 @@ Scope: business contract only. Front-end behavior (what the list shows while loa
 
 ### FeedItem
 
-| Field              | Type                         | Notes                                                                               |
-| ------------------ | ---------------------------- | ----------------------------------------------------------------------------------- |
-| `id`               | `FeedItemId`                 | With a URL: `hash(feedId, url)`. Without: `hash(feedId, title, description or "")`  |
-| `ownerId`          | `OwnerId`                    | Items carry their owner, so no operation has to look up the feed to check ownership |
-| `feedId`           | `FeedId`                     |                                                                                     |
-| `url`              | `Option<NormalizedUrl>`      |                                                                                     |
-| `title`            | `ArticleTitle`               |                                                                                     |
-| `description`      | `Option<ArticleDescription>` | Sanitized                                                                           |
-| `content`          | `Option<ArticleContent>`     | Sanitized                                                                           |
-| `extractedContent` | `Option<ArticleContent>`     | Filled on demand, see FI-EXTRACT                                                    |
-| `publishedAt`      | `DateTimeUtc`                |                                                                                     |
-| `read`             | `boolean`                    | `false` when created                                                                |
+| Field              | Type                         | Notes                                                                                                    |
+| ------------------ | ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `id`               | `FeedItemId`                 | With a URL: `hashId(feedId, url.href)`. Without: `hashId(feedId, title, description)` (FD-ID-2, FD-ID-3) |
+| `ownerId`          | `OwnerId`                    | Items carry their owner, so no operation has to look up the feed to check ownership                      |
+| `feedId`           | `FeedId`                     |                                                                                                          |
+| `url`              | `Option<NormalizedUrl>`      |                                                                                                          |
+| `title`            | `ArticleTitle`               |                                                                                                          |
+| `description`      | `Option<ArticleDescription>` | Sanitized                                                                                                |
+| `content`          | `Option<ArticleContent>`     | Sanitized                                                                                                |
+| `extractedContent` | `Option<ArticleContent>`     | Filled on demand, see FI-EXTRACT                                                                         |
+| `publishedAt`      | `DateTimeUtc`                |                                                                                                          |
+| `read`             | `boolean`                    | `false` when created                                                                                     |
 
 Parsing and validation happen only at the boundary. Past it, branded values are trusted.
 
@@ -37,9 +37,9 @@ Parsing and validation happen only at the boundary. Past it, branded values are 
 
 ### FD-ID — Identity
 
-- FD-ID-1 The same normalized URL subscribed by the same owner is the same feed. Two owners subscribing to one URL get two feeds.
-- FD-ID-2 An item with a URL is identified by `hash(feedId, url)`. Title and description do not take part, so a source that edits them does not create a new item or reset its read state.
-- FD-ID-3 An item without a URL is identified by `hash(feedId, title, description or "")`.
+- FD-ID-1 A feed's id is `hashId(owner, url.href)`. The same normalized URL subscribed by the same owner is the same feed. Two owners subscribing to one URL get two feeds.
+- FD-ID-2 An item with a URL has the id `hashId(feedId, url.href)`. Title and description do not take part, so a source that edits them does not create a new item or reset its read state.
+- FD-ID-3 An item without a URL has the id `hashId(feedId, title, description)`, with an absent description passed as an empty string.
 - FD-ID-4 The same article in two feeds is two items.
 
 ### FD-FETCH — Fetch and parse (shared by preview, subscribe and refresh)
@@ -60,7 +60,7 @@ Parsing and validation happen only at the boundary. Past it, branded values are 
 
 ### FD-SUB — Subscribe
 
-1. `id = hash(owner, url)`. If the owner already has that feed, fail `FeedExists(id)`. Nothing is fetched.
+1. `id = hashId(owner, url.href)`. If the owner already has that feed, fail `FeedExists(id)`. Nothing is fetched.
 2. `fetchParsedFeed(url)`.
 3. Read the owner's retention setting N.
 4. Create the feed with the parsed title and `updatedAt = now`. If nothing was created, fail `FeedExists(id)`.

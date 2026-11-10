@@ -20,20 +20,15 @@ Parsing and validation happen only at the boundary. Past it, branded values are 
 - CM-ART-2 `ArticleDescription` and `ArticleContent`: trimmed.
 - CM-ART-3 An optional text that is absent or blank is `Option.none()`.
 
-## CM-ID — Entity ids
+## CM-ID — Id helper
 
-- CM-ID-1 Ids are deterministic: the same input always gives the same id. They are produced by a collision-resistant hash (SHA-256, hex) over the ordered input parts.
-- CM-ID-2 The inputs per entity:
+`hashId(parts)`: a helper that turns an ordered list of text parts into an id. Each domain decides which parts make up the id of its own entities (see FD-ID and SP-ID).
 
-| Entity                 | Input parts                                        |
-| ---------------------- | -------------------------------------------------- |
-| Feed                   | `owner`, `url.href`                                |
-| FeedItem with a URL    | `feedId`, `url.href`                               |
-| FeedItem without a URL | `feedId`, `title`, `description` (empty if absent) |
-| SavedPage              | `owner`, `url.href`                                |
-
-- CM-ID-3 There is no entity-type prefix. A Feed and a SavedPage with the same owner and URL get the same id. They live in different collections, so this is harmless.
+- CM-ID-1 It is deterministic: the same parts in the same order always give the same id.
+- CM-ID-2 It is collision-resistant. The hash is SHA-256, written as hex, over the ordered parts.
+- CM-ID-3 It adds no entity-type prefix. Two entities of different types built from the same parts get the same id. They live in different collections, so this is harmless.
 - CM-ID-4 Because ids are deterministic, "already exists" is decided by id. `create` skipping an existing id is what makes concurrent duplicate requests safe.
+- CM-ID-5 A part that is absent is passed as an empty string.
 
 ## CM-FETCH — Fetch and extract an article from a URL
 

@@ -8,7 +8,7 @@ Scope: business contract only. Front-end behavior (auto-marking a page read when
 
 | Field         | Type                         | Notes                                                                                                   |
 | ------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `id`          | `SavedPageId`                | `hash(owner, url)`                                                                                      |
+| `id`          | `SavedPageId`                | `hashId(owner, url.href)` (SP-ID-1)                                                                     |
 | `ownerId`     | `OwnerId`                    |                                                                                                         |
 | `url`         | `NormalizedUrl`              | Required. Tracking parameters and the fragment are removed by the entity's conversion, not by use cases |
 | `title`       | `ArticleTitle`               | Empty becomes "Untitled"                                                                                |
@@ -23,13 +23,13 @@ Parsing and validation happen only at the boundary. Past it, branded values are 
 
 ### SP-ID — Identity
 
-- SP-ID-1 Two saved pages of one owner with the same normalized URL are the same page.
+- SP-ID-1 A saved page's id is `hashId(owner, url.href)`. Two saved pages of one owner with the same normalized URL are the same page.
 - SP-ID-2 The same URL saved by two owners gives two pages.
 - SP-ID-3 Title, description and content do not take part in identity.
 
 ### SP-ADD — Add a link
 
-1. Compute `id = hash(owner, url)`.
+1. Compute `id = hashId(owner, url.href)`.
 2. If the owner already has that id, fail `DuplicateSavedPage(id)`. Nothing is fetched.
 3. Fetch and extract the page (shared flow, see Shared).
 4. Create the page and return it.
@@ -45,7 +45,7 @@ Parsing and validation happen only at the boundary. Past it, branded values are 
 1. Require the feed for this owner, else `FeedNotFound`.
 2. Find the item in the feed, else `FeedItemNotFound`.
 3. If the item has no URL, fail `FeedItemMissingUrl`.
-4. Compute `id = hash(owner, item.url)`. If the owner already has it, fail `DuplicateSavedPage(id)`. Nothing is fetched.
+4. Compute `id = hashId(owner, item.url.href)`. If the owner already has it, fail `DuplicateSavedPage(id)`. Nothing is fetched.
 5. Pick the content: the item's extracted content; else its feed content; else the content extracted from its URL (shared flow).
 6. Create the page and return it.
 
