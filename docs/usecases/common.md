@@ -79,9 +79,14 @@ Used by the SavedPage and Feed lists. The domains differ in how they select rows
 
 ## CM-OWN — Ownership
 
-- CM-OWN-1 The owner comes from the session at the boundary. Business never accepts an owner as client input.
+- CM-OWN-1 The owner comes from the session at the boundary. The scheduler, which has no session, takes it from the stored feeds. Business never accepts an owner as client input.
 - CM-OWN-2 Every repository method that reads or writes user data is scoped by `owner`.
 - CM-OWN-3 Ids or rows that do not belong to the owner are treated as absent: reads return nothing, writes change nothing.
+
+## CM-TIME — The current time
+
+- CM-TIME-1 Wherever a rule says "now" (`savedAt`, `updatedAt`, a missing publish time), the use case reads the injected clock. No adapter and no entity reads the time itself.
+- CM-TIME-2 One use case run reads the clock once and uses that value throughout, so rows written together carry the same time.
 
 ## CM-PORT — Port contracts
 

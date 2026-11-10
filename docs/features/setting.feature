@@ -104,6 +104,12 @@ Feature: Settings
     Then no key is configured
     And the provider is unchanged
 
+  # SET-KEY-2
+  Scenario: Clear a key that is not there
+    Given no Jina key is configured
+    When the key is cleared
+    Then nothing changes and there is no error
+
   @ui
   Scenario: Cancel clearing the key
     Given a Jina key is configured

@@ -94,6 +94,7 @@ This table is the authority for the examples. `features/feed.feature` repeats th
 - FD-IMPORT-3 An absent or empty description, content or URL is stored as none.
 - FD-IMPORT-4 `create` skips ids that already exist. A stored item is never overwritten.
 - FD-IMPORT-5 The publish time is the one the source gives, used as given even when it lies in the future or is plainly wrong. Only an entry that carries none gets the time of the sync that first sees it. The parser reports the missing time as none and never invents one; the fallback is in `syncItems`, with one time for all entries of the sync.
+- FD-IMPORT-6 An entry whose description or content cannot be cleaned (CM-HTML-4) is skipped and logged. The other entries are imported. The skipped entry is not stored, so the next sync tries it again. One bad entry never blocks a feed.
 
 ### FD-SYNC — Bring a feed's items in line with its source
 
@@ -110,6 +111,7 @@ This table is the authority for the examples. `features/feed.feature` repeats th
 - FD-SYNC-3 Syncing one feed never changes another feed, nor any saved page.
 - FD-SYNC-4 On failure the feed's title and `updatedAt` are not updated.
 - FD-SYNC-5 Items are created only while their feed exists (see `FeedItemRepository.create`). If the feed is removed while a sync is running, the sync leaves no items behind.
+- FD-SYNC-6 Two syncs of one feed at the same time (a subscribe and a scheduled refresh) are safe: `create` skips existing ids and both compute the retained set from the same rule.
 
 ### FD-SUB — Subscribe
 
@@ -133,7 +135,7 @@ Triggered only by the scheduler. There is no user operation to refresh a feed fr
 3. `syncItems(feed, parsed)`.
 
 - FD-REFRESH-1 A feed removed before or during the run is not an error.
-- FD-REFRESH-2 Errors are those of FD-FETCH and of the repositories and cleaning used by FD-SYNC.
+- FD-REFRESH-2 Errors are those of FD-FETCH and of the repositories used by FD-SYNC.
 
 ### FD-SCHED — Scheduled refresh (system behavior, outside business)
 
@@ -211,16 +213,16 @@ Each is a single port call, so there is no use case. They are listed separately 
 
 ## Use cases
 
-| Use case          | Input                                                | Output                                    | Errors (besides repository errors)                              |
-| ----------------- | ---------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------- |
-| `fetchParsedFeed` | `url`                                                | `ParsedFeed`                              | `FetchFeedError`, `FeedParserError`                             |
-| `selectItems`     | inventory, entries, N                                | retained ids, entries to import           | none (pure)                                                     |
-| `syncItems`       | `feed`, `ParsedFeed`                                 | nothing                                   | `HtmlParserError`, `DocumentSanitizerError`                     |
-| `previewFeed`     | `url`                                                | title, optional description, entry titles | as `fetchParsedFeed`                                            |
-| `subscribeFeed`   | `owner`, `url`                                       | `Feed`                                    | `FeedAlreadyExists`, and as `fetchParsedFeed`                   |
-| `refreshFeed`     | `owner`, `feedId`                                    | nothing                                   | as `fetchParsedFeed` and `syncItems`                            |
-| `listItems`       | `owner`, `feedId?`, `unreadOnly`, `limit`, `cursor?` | items, `cursor` or `null`                 | none                                                            |
-| `extractItem`     | `owner`, `itemId`                                    | `FeedItem`                                | `FeedItemNotFound`, `FeedItemMissingUrl`, and those of CM-FETCH |
+| Use case          | Input                                                | Output                                    | Errors (besides repository errors)                                           |
+| ----------------- | ---------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------- |
+| `fetchParsedFeed` | `url`                                                | `ParsedFeed`                              | `FetchFeedError`, `FeedParserError`                                          |
+| `selectItems`     | inventory, entries, N                                | retained ids, entries to import           | none (pure)                                                                  |
+| `syncItems`       | `feed`, `ParsedFeed`                                 | nothing                                   | none besides repository errors; cleaning errors skip the entry (FD-IMPORT-6) |
+| `previewFeed`     | `url`                                                | title, optional description, entry titles | as `fetchParsedFeed`                                                         |
+| `subscribeFeed`   | `owner`, `url`                                       | `Feed`                                    | `FeedAlreadyExists`, and as `fetchParsedFeed`                                |
+| `refreshFeed`     | `owner`, `feedId`                                    | nothing                                   | as `fetchParsedFeed` and `syncItems`                                         |
+| `listItems`       | `owner`, `feedId?`, `unreadOnly`, `limit`, `cursor?` | items, `cursor` or `null`                 | none                                                                         |
+| `extractItem`     | `owner`, `itemId`                                    | `FeedItem`                                | `FeedItemNotFound`, `FeedItemMissingUrl`, and those of CM-FETCH              |
 
 Find one item, mark items, mark feeds, mark all, unread counts, list feeds and unsubscribe are one port call each and have no use case.
 
@@ -268,8 +270,8 @@ All methods are scoped by `ownerId`.
 
 ### FeedFetcher, FeedParser
 
-- `FeedFetcher.fetch(url)`: the body of the source as text, or `FetchFeedError`.
-- `FeedParser.parse(text, url)`: a `ParsedFeed`, or `FeedParserError`. An entry without a publish time has none (FD-IMPORT-5).
+- `FeedFetcher.fetch(url)`: the body of the source as text, or `FetchFeedError`. Redirects, timeouts, size limits and which addresses may be reached are the adapter's concern; the same holds for `WebpageFetcher`.
+- `FeedParser.parse(text, url)`: a `ParsedFeed`, or `FeedParserError`. An entry without a publish time has none (FD-IMPORT-5). An entry URL is resolved against the address of the source; one that is then not a valid `NormalizedUrl` is none. Titles are plain text; any length limit on a title is the adapter's.
 
 ### FeedImportConfig
 

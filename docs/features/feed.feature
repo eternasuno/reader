@@ -87,6 +87,13 @@ Feature: Feeds and their items
     Then I have two items, one in each feed
     And reading one leaves the other unread
 
+  # FD-IMPORT-6
+  @system
+  Scenario: One entry that cannot be cleaned
+    When one entry of a source cannot be cleaned
+    Then the other entries are imported
+    And the bad entry is tried again at the next refresh
+
   # FD-IMPORT-5
   Scenario: An entry without a publish time
     When an entry that carries no publish time is imported

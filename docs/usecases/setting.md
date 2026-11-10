@@ -99,7 +99,7 @@ setFetcher(owner, input)
 ## Port: SettingRepository
 
 - `get(owner)`: returns the stored `Setting` with defaults filled in for anything not stored.
-- `update(owner, patch)`: `patch` mirrors `Setting` by group. A missing field means no change; `Option.none` means clear. An empty patch writes nothing.
+- `update(owner, patch)`: `patch` mirrors `Setting` by group. A missing field means no change; `Option.none` means clear. An empty patch writes nothing. The first write for an owner creates the stored setting.
 - The patch type is defined by hand per group (`feed`, `fetcher`) with all fields optional.
 
 ## Known risk
