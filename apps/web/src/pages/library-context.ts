@@ -14,6 +14,8 @@ import {
 } from './library-state';
 
 export type LibraryFlags = {
+  readonly isRefreshing: () => boolean;
+  readonly setRefreshing: (value: boolean) => void;
   readonly openVersion: () => number;
   readonly setOpenVersion: (value: number) => void;
 };
@@ -99,8 +101,12 @@ export const createLibraryContext = (client: LibraryClient): LibraryStore => {
   const [state, setState] = createSignal<LibraryState>(initialLibraryState());
   const notifier = createNotifier(setState);
   const reads = createReadTracker(setState);
-  const runtime = { openVersion: 0 };
+  const runtime = { refreshing: false, openVersion: 0 };
   const flags: LibraryFlags = {
+    isRefreshing: () => runtime.refreshing,
+    setRefreshing: (value) => {
+      runtime.refreshing = value;
+    },
     openVersion: () => runtime.openVersion,
     setOpenVersion: (value) => {
       runtime.openVersion = value;

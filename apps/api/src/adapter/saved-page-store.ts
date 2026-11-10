@@ -6,6 +6,7 @@ import {
   type SavedPageQuery,
   SavedPageRepository,
   type SavedPageRepositoryError,
+  type SavedPageThroughQuery,
 } from '@reader/business';
 import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
 import type { Surreal } from 'surrealdb';
@@ -18,6 +19,7 @@ import {
   run,
   savedPageRepositoryError,
   savedPages,
+  throughBoundary,
   write,
 } from './reader-store-sql';
 
@@ -79,6 +81,8 @@ const updateWhere = (
 const afterClause = (after: SavedPageQuery['after']) =>
   after === undefined ? '' : afterBoundary('pageId');
 
+const THROUGH_CLAUSE = throughBoundary('pageId');
+
 const pageBindings = (owner: OwnerId, query: SavedPageQuery): Bindings => ({
   owner,
   limit: query.limit,
@@ -89,6 +93,16 @@ const pageBindings = (owner: OwnerId, query: SavedPageQuery): Bindings => ({
         afterAt: DateTime.toDate(query.after.publishedAt),
         afterId: query.after.id,
       }),
+});
+
+const throughBindings = (
+  owner: OwnerId,
+  query: SavedPageThroughQuery
+): Bindings => ({
+  owner,
+  ...readBindings(query.read),
+  throughAt: DateTime.toDate(query.through.publishedAt),
+  throughId: query.through.id,
 });
 
 const UnreadRow = Schema.Struct({
@@ -122,6 +136,12 @@ const readQueries = (db: Surreal) => ({
       db,
       `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner${readClause(query.read)}${afterClause(query.after)} ${ORDER} LIMIT $limit;`,
       pageBindings(owner, query)
+    ),
+  listThrough: (owner: OwnerId, query: SavedPageThroughQuery) =>
+    savedPages(
+      db,
+      `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner${readClause(query.read)}${THROUGH_CLAUSE} ${ORDER};`,
+      throughBindings(owner, query)
     ),
   unreadCount: (owner: OwnerId) => unreadCount(db, owner),
 });

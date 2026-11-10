@@ -105,6 +105,11 @@ const pageQuery = {
   cursor: Schema.OptionFromOptional(Schema.String),
 };
 
+const refreshQuery = {
+  filter: Schema.OptionFromOptional(ReadFilter),
+  through: Schema.String,
+};
+
 const feedItemKey = { feedId: FeedId, id: FeedItemId };
 
 const savedPageKey = { id: SavedPageId };
@@ -139,6 +144,11 @@ const library = HttpApiGroup.make('library').add(
   HttpApiEndpoint.get('savedPages', '/api/library/saved-pages', {
     query: pageQuery,
     success: SavedPageList,
+    error: savedPageReadErrors,
+  }),
+  HttpApiEndpoint.get('savedPagesRefresh', '/api/library/saved-pages/refresh', {
+    query: refreshQuery,
+    success: Schema.Struct({ items: Schema.Array(SavedPage) }),
     error: savedPageReadErrors,
   }),
   HttpApiEndpoint.get('savedPage', '/api/library/saved-pages/item', {
@@ -204,6 +214,11 @@ const library = HttpApiGroup.make('library').add(
   HttpApiEndpoint.get('feedItems', '/api/library/feeds/items', {
     query: { ...pageQuery, feedId: Schema.OptionFromOptional(FeedId) },
     success: FeedItemList,
+    error: feedItemReadErrors,
+  }),
+  HttpApiEndpoint.get('feedItemsRefresh', '/api/library/feeds/items/refresh', {
+    query: { ...refreshQuery, feedId: Schema.OptionFromOptional(FeedId) },
+    success: Schema.Struct({ items: Schema.Array(FeedItem) }),
     error: feedItemReadErrors,
   }),
   HttpApiEndpoint.get('feedItem', '/api/library/feeds/items/item', {

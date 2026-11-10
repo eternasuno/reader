@@ -386,6 +386,7 @@ const verifySavingFeedItems = async (
   expect(await json(await call(handler, 'GET', savedList, bob))).toEqual({
     items: [],
     cursor: null,
+    boundary: null,
   });
 
   expect(
@@ -410,6 +411,7 @@ const verifySavingFeedItems = async (
   expect(await json(await call(handler, 'GET', savedList, alice))).toEqual({
     items: [],
     cursor: null,
+    boundary: null,
   });
 };
 

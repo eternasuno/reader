@@ -24,6 +24,7 @@ export type ArticleRef = {
 export type ArticlePage = {
   readonly items: ReadonlyArray<Article>;
   readonly cursor: string | null;
+  readonly boundary: string | null;
 };
 
 export type Filter = 'all' | 'unread' | 'read';

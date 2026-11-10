@@ -43,8 +43,9 @@ export const newerArticle = (
 
 export const page = (
   items: ReadonlyArray<Article>,
-  cursor: string | null = null
-): ArticlePage => ({ items, cursor });
+  cursor: string | null = null,
+  boundary: string | null = null
+): ArticlePage => ({ items, cursor, boundary });
 
 export const feed = (id: string): Feed => ({
   id,
@@ -85,6 +86,10 @@ export const deferred = <T>() => {
 export const createStubClient = () => ({
   list: vi.fn(async (_scope: Scope, _filter: Filter, _cursor?: string) =>
     page([])
+  ),
+  refresh: vi.fn(
+    async (_scope: Scope, _filter: Filter, _through: string) =>
+      [] as ReadonlyArray<Article>
   ),
   feeds: vi.fn(async () => [] as ReadonlyArray<Feed>),
   unreadCounts: vi.fn(async (): Promise<Counts> => counts()),

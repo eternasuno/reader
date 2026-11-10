@@ -4,11 +4,13 @@ import {
   listFeedItems,
   markFeedItems,
   markFeedsRead,
+  refreshFeedItems,
   SettingsRepository,
   unreadCounts,
 } from '@reader/business';
 import { Effect, Option } from 'effect';
 import {
+  cursor,
   type HandlerRequest,
   optionalCursor,
   optionToNull,
@@ -33,6 +35,23 @@ const feedItems = ({ query }: HandlerRequest<'feedItems'>) =>
         Option.getOrUndefined(query.feedId),
         Option.getOrElse(query.filter, () => 'all'),
         after
+      );
+    })
+  ).pipe(Effect.catchTags(feedItemPageFailure));
+
+const feedItemsRefresh = ({ query }: HandlerRequest<'feedItemsRefresh'>) =>
+  withSession((owner) =>
+    Effect.gen(function* () {
+      const through = yield* cursor(query.through);
+
+      return yield* Effect.map(
+        refreshFeedItems(
+          owner,
+          Option.getOrUndefined(query.feedId),
+          Option.getOrElse(query.filter, () => 'all'),
+          through
+        ),
+        (items) => ({ items })
       );
     })
   ).pipe(Effect.catchTags(feedItemPageFailure));
@@ -86,6 +105,7 @@ const unread = () =>
 
 export const feedItemHandlers = {
   feedItems,
+  feedItemsRefresh,
   feedItem,
   extractFeedItem: extract,
   markFeedItem: markOne,

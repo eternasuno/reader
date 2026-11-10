@@ -8,6 +8,7 @@ import { ArticleExtractor } from '../../src/port/article-extractor';
 import {
   type FeedItemQuery,
   FeedItemRepository,
+  type FeedItemThroughQuery,
 } from '../../src/port/feed-item-repository';
 import { FeedRepository } from '../../src/port/feed-repository';
 import { HtmlParser } from '../../src/port/html-parser';
@@ -21,6 +22,7 @@ import {
   listFeedItems,
   markFeedItems,
   markFeedsRead,
+  refreshFeedItems,
 } from '../../src/usecase/feed-items';
 import {
   alice,
@@ -76,7 +78,7 @@ it.effect('lists a scoped feed after checking it belongs to the owner', () => {
     Effect.gen(function* () {
       const page = yield* listFeedItems(alice, feedId, 'unread');
       expect(requested).toEqual([[feedId]]);
-      expect(page).toEqual({ items: [], cursor: null });
+      expect(page).toEqual({ items: [], cursor: null, boundary: null });
     }),
     {
       feeds: {
@@ -140,6 +142,8 @@ const listing = (count: number) => {
     items: {
       list: (_ids: ReadonlyArray<string>, query: FeedItemQuery) =>
         store.list(query),
+      listThrough: (_ids: ReadonlyArray<string>, query: FeedItemThroughQuery) =>
+        store.listThrough(query),
     },
   };
 };
@@ -171,6 +175,59 @@ it.effect('pages feed items and binds cursors to their feed scope', () =>
       },
     }
   )
+);
+
+it.effect(
+  'refreshes feed items through the original boundary inclusively',
+  () =>
+    provide(
+      Effect.gen(function* () {
+        const first = yield* listFeedItems(alice, feedId, 'all');
+        const refreshed = yield* refreshFeedItems(
+          alice,
+          feedId,
+          'all',
+          decodeCursor(first.boundary ?? '')
+        );
+        expect(refreshed.map((item) => item.id)).toEqual(
+          Array.from({ length: 30 }, (_, index) => hex(index))
+        );
+      }),
+      listing(65)
+    )
+);
+
+it.effect(
+  'refreshes with one unlimited query scoped to the read filter',
+  () => {
+    const queries: Array<FeedItemThroughQuery> = [];
+
+    return provide(
+      Effect.gen(function* () {
+        const first = yield* listFeedItems(alice, feedId, 'unread');
+        yield* refreshFeedItems(
+          alice,
+          feedId,
+          'unread',
+          decodeCursor(first.boundary ?? '')
+        );
+        expect(queries).toHaveLength(1);
+        expect(queries[0]?.read).toBe(false);
+        expect(queries[0]?.through.id).toBe(hex(29));
+        expect(queries[0]).not.toHaveProperty('limit');
+      }),
+      {
+        items: {
+          ...listing(65).items,
+          listThrough: (_ids, query) => {
+            queries.push(query);
+
+            return Effect.succeed([]);
+          },
+        },
+      }
+    );
+  }
 );
 
 it.effect(

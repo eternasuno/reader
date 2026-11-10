@@ -7,6 +7,7 @@ import {
 import type { LibraryStore } from './library-context';
 import { applyPage, failList, resetList, startLoadMore } from './library-pages';
 import { loadFeeds, loadReference } from './library-reference';
+import { applyRefresh, applyRefreshPage } from './library-refresh';
 import { sameScope } from './library-state';
 
 export const startLoad = async (
@@ -26,14 +27,52 @@ export const startLoad = async (
   }
 };
 
+const loadNew = async (store: LibraryStore): Promise<void> => {
+  const before = store.state();
+  const covered = new Set(before.items.map((item) => item.id));
+  store.setState((current) => ({ ...current, refreshing: true }));
+  try {
+    if (before.boundary === null) {
+      const page = await store.client.list(before.scope, before.filter);
+      store.setState((current) =>
+        applyRefreshPage(current, page, before.generation, covered)
+      );
+
+      return;
+    }
+
+    const items = await store.client.refresh(
+      before.scope,
+      before.filter,
+      before.boundary
+    );
+    store.setState((current) =>
+      applyRefresh(current, items, before.generation, covered)
+    );
+  } catch (error) {
+    store.setState((current) => ({ ...current, refreshing: false }));
+    store.notify('error', libraryErrorMessage(error));
+  }
+};
+
 export const refresh = async (store: LibraryStore): Promise<void> => {
   const current = store.state();
-  if (current.loading || current.pending.size > 0) {
+  if (store.flags.isRefreshing() || current.loading) {
     return;
   }
 
-  await startLoad(store, current.scope, current.filter);
-  await loadReference(store);
+  store.flags.setRefreshing(true);
+  try {
+    if (!current.initialized) {
+      await startLoad(store, current.scope, current.filter);
+    } else {
+      await loadNew(store);
+    }
+
+    await loadReference(store);
+  } finally {
+    store.flags.setRefreshing(false);
+  }
 };
 
 export const loadMore = async (store: LibraryStore): Promise<void> => {

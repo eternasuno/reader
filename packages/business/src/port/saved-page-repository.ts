@@ -25,6 +25,11 @@ export type SavedPageQuery = {
   readonly limit: number;
 };
 
+export type SavedPageThroughQuery = {
+  readonly read?: boolean;
+  readonly through: SavedPageBoundary;
+};
+
 export const SavedPagePatch = SavedPage.mapFields((fields) =>
   Struct.map(Struct.pick(fields, ['read']), Schema.optionalKey)
 );
@@ -39,6 +44,10 @@ export interface ISavedPageRepository {
   readonly list: (
     ownerId: OwnerId,
     query: SavedPageQuery
+  ) => Effect.Effect<ReadonlyArray<SavedPage>, SavedPageRepositoryError>;
+  readonly listThrough: (
+    ownerId: OwnerId,
+    query: SavedPageThroughQuery
   ) => Effect.Effect<ReadonlyArray<SavedPage>, SavedPageRepositoryError>;
   readonly create: (
     pages: ReadonlyArray<SavedPage>

@@ -16,7 +16,7 @@ const withRows = async (
   rows = [article('a', { feedId: 'f1' }), article('b')]
 ) => {
   const client = createStubClient();
-  client.list.mockResolvedValue(page(rows, null));
+  client.list.mockResolvedValue(page(rows, null, 'top'));
   client.unreadCounts.mockResolvedValue(counts(0, { f1: 1 }));
   const model = createLibraryModel(client);
   await model.refresh();
@@ -127,7 +127,7 @@ describe('library subscriptions', () => {
   it('selects the duplicate feed reported by the error id', async () => {
     const client = createStubClient();
     client.feeds.mockResolvedValue([feed('f-other')]);
-    client.list.mockResolvedValue(page([], null));
+    client.list.mockResolvedValue(page([], null, 'top'));
     client.subscribe.mockRejectedValue(
       new LibraryError('FeedExists', { id: 'f-existing' })
     );
@@ -151,7 +151,7 @@ describe('library subscriptions', () => {
 
   it('selects the new subscription and keeps the feeds sorted', async () => {
     const client = createStubClient();
-    client.list.mockResolvedValue(page([], null));
+    client.list.mockResolvedValue(page([], null, 'top'));
     client.feeds.mockResolvedValue([feed('f-c')]);
     client.subscribe.mockResolvedValue(feed('f-a'));
     const model = createLibraryModel(client);
@@ -173,7 +173,7 @@ describe('library subscriptions', () => {
 
   it('selects the kept feed when the initial import fails', async () => {
     const client = createStubClient();
-    client.list.mockResolvedValue(page([], null));
+    client.list.mockResolvedValue(page([], null, 'top'));
     client.feeds.mockResolvedValue([feed('kept')]);
     client.subscribe.mockRejectedValue(
       new LibraryError('FeedImportFailed', { id: 'kept' })

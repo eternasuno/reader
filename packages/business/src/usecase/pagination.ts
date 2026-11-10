@@ -21,6 +21,11 @@ type PageQuery<Id extends string> = {
   readonly limit: number;
 };
 
+type ThroughQuery<Id extends string> = {
+  readonly read?: boolean;
+  readonly through: Boundary<Id>;
+};
+
 type Paging<Item extends Boundary<Id>, Id extends string, E, R> = {
   readonly owner: OwnerId;
   readonly scope: ListCursorScope;
@@ -28,6 +33,9 @@ type Paging<Item extends Boundary<Id>, Id extends string, E, R> = {
   readonly toId: (id: string) => Id;
   readonly fetchPage: (
     query: PageQuery<Id>
+  ) => Effect.Effect<ReadonlyArray<Item>, E, R>;
+  readonly fetchThrough: (
+    query: ThroughQuery<Id>
   ) => Effect.Effect<ReadonlyArray<Item>, E, R>;
 };
 
@@ -92,11 +100,26 @@ const listPage = <Item extends Boundary<Id>, Id extends string, E, R>(
     return {
       items,
       cursor: rows.length > PAGE_SIZE ? tail : null,
+      boundary: tail,
     };
+  });
+
+const refreshPages = <Item extends Boundary<Id>, Id extends string, E, R>(
+  paging: Paging<Item, Id, E, R>,
+  through: ListCursor
+) =>
+  Effect.gen(function* () {
+    const boundary = yield* cursorBoundary(paging, through);
+
+    return yield* paging.fetchThrough({
+      ...readStateOf(paging.filter),
+      through: boundary,
+    });
   });
 
 export const makePaging = <Item extends Boundary<Id>, Id extends string, E, R>(
   paging: Paging<Item, Id, E, R>
 ) => ({
   list: (cursor?: ListCursor) => listPage(paging, cursor),
+  refresh: (through: ListCursor) => refreshPages(paging, through),
 });

@@ -132,6 +132,7 @@ describe('library list requests', () => {
       json({
         items: [savedPageJson('a')],
         cursor: 'next',
+        boundary: 'top',
       })
     );
     const page = await client.list({ kind: 'later' }, 'unread', 'cursor-1');
@@ -147,11 +148,12 @@ describe('library list requests', () => {
     expect(page).toEqual({
       items: [savedArticle('a')],
       cursor: 'next',
+      boundary: 'top',
     });
   });
 
-  it('rejects a page that omits the cursor', async () => {
-    const { client, requests } = makeClient(json({ items: [] }));
+  it('rejects a page that omits the boundary', async () => {
+    const { client, requests } = makeClient(json({ items: [], cursor: null }));
 
     expect(
       await failure(client.list({ kind: 'feeds', feedId: 'feed-1' }, 'all'))
@@ -163,11 +165,29 @@ describe('library list requests', () => {
 
 describe('library feed scope', () => {
   it('lists every subscribed feed when no feed is selected', async () => {
-    const { client, requests } = makeClient(json({ items: [], cursor: null }));
+    const { client, requests } = makeClient(
+      json({ items: [], cursor: null, boundary: null })
+    );
     await client.list({ kind: 'feeds' }, 'read');
 
     expect(requests[0]?.params.get('feedId')).toBeNull();
     expect(requests[0]?.params.get('filter')).toBe('read');
+  });
+
+  it('syncs through the stored boundary of the loaded tail', async () => {
+    const { client, requests } = makeClient(
+      json({ items: [feedItemJson('new', 'feed-1')] })
+    );
+    const items = await client.refresh(
+      { kind: 'feeds', feedId: 'feed-1' },
+      'unread',
+      'boundary-1'
+    );
+
+    expect(requests[0]?.path).toBe('/api/library/feeds/items/refresh');
+    expect(requests[0]?.params.get('through')).toBe('boundary-1');
+    expect(requests[0]?.params.get('filter')).toBe('unread');
+    expect(items).toEqual([feedArticle('new', 'feed-1')]);
   });
 });
 

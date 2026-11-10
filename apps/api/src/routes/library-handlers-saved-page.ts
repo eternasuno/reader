@@ -5,12 +5,14 @@ import {
   markAllSavedPagesRead,
   markSavedPages,
   NormalizedUrl,
+  refreshSavedPages,
   removeSavedPage,
   SettingsRepository,
   saveFeedItem,
 } from '@reader/business';
 import { Data, Effect, Option, Schema } from 'effect';
 import {
+  cursor,
   type HandlerRequest,
   optionalCursor,
   optionToNull,
@@ -37,6 +39,22 @@ const savedPages = ({ query }: HandlerRequest<'savedPages'>) =>
         owner,
         Option.getOrElse(query.filter, () => 'all'),
         after
+      );
+    })
+  ).pipe(Effect.catchTags(savedPagePageFailure));
+
+const savedPagesRefresh = ({ query }: HandlerRequest<'savedPagesRefresh'>) =>
+  withSession((owner) =>
+    Effect.gen(function* () {
+      const through = yield* cursor(query.through);
+
+      return yield* Effect.map(
+        refreshSavedPages(
+          owner,
+          Option.getOrElse(query.filter, () => 'all'),
+          through
+        ),
+        (items) => ({ items })
       );
     })
   ).pipe(Effect.catchTags(savedPagePageFailure));
@@ -110,6 +128,7 @@ const remove = ({ payload }: HandlerRequest<'removeSavedPage'>) =>
 
 export const savedPageHandlers = {
   savedPages,
+  savedPagesRefresh,
   savedPage,
   addSavedPage: add,
   saveFeedItem: saveFromFeedItem,
