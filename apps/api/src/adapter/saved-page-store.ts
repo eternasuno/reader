@@ -1,179 +1,218 @@
 import {
+  type NormalizedUrl,
   type OwnerId,
   SavedPage,
-  type SavedPageId,
+  SavedPageId,
   type SavedPagePatch,
   type SavedPageQuery,
   SavedPageRepository,
-  type SavedPageRepositoryError,
-  type SavedPageThroughQuery,
 } from '@reader/business';
-import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
-import type { Surreal } from 'surrealdb';
+import { Effect, Option, Schema, type Semaphore } from 'effect';
+import type { RecordId, Surreal } from 'surrealdb';
 import {
-  afterBoundary,
+  afterClause,
   type Bindings,
-  one,
-  readBindings,
-  readClause,
+  createdIds,
+  decodeReturned,
+  readRows,
+  recordsOf,
   run,
   savedPageRepositoryError,
-  savedPages,
-  throughBoundary,
   write,
 } from './reader-store-sql';
 
 const COLUMNS =
   'pageId AS id, owner AS ownerId, url, title, description, content, publishedAt, read';
 
-const ORDER = 'ORDER BY publishedAt DESC, pageId DESC';
+const ORDER = 'ORDER BY pageId DESC';
 
 const encodeSavedPage = Schema.encodeSync(SavedPage);
 
-const createSavedPages = (db: Surreal, pages: ReadonlyArray<SavedPage>) => {
-  if (pages.length === 0) {
+const findSavedPage = (db: Surreal, owner: OwnerId, id: SavedPageId) =>
+  readRows(
+    db,
+    `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner AND pageId = $id LIMIT 1;`,
+    { owner, id },
+    SavedPage,
+    savedPageRepositoryError
+  ).pipe(Effect.map((pages) => Option.fromUndefinedOr(pages[0])));
+
+const findSavedPageByUrl = (db: Surreal, owner: OwnerId, url: NormalizedUrl) =>
+  readRows(
+    db,
+    `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner AND url = $url LIMIT 1;`,
+    { owner, url: url.href },
+    SavedPage,
+    savedPageRepositoryError
+  ).pipe(Effect.map((pages) => Option.fromUndefinedOr(pages[0])));
+
+type QueryBindings = {
+  owner: OwnerId;
+  limit: number;
+  after?: SavedPageId;
+};
+
+const listSavedPages = (db: Surreal, owner: OwnerId, query: SavedPageQuery) => {
+  const readClause = query.unreadOnly ? ' AND read = false' : '';
+  const bindings: QueryBindings = { owner, limit: query.limit };
+
+  if (query.after !== undefined) {
+    bindings.after = query.after;
+  }
+
+  return readRows(
+    db,
+    `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner${readClause}${afterClause('pageId', query.after)} ${ORDER} LIMIT $limit;`,
+    bindings,
+    SavedPage,
+    savedPageRepositoryError
+  );
+};
+
+const insertStatement = (row: string, index: number) => `
+LET $u${index} = SELECT VALUE pageId FROM saved_page WHERE owner = $owner AND url = ${row}.url;
+LET $e${index} = SELECT VALUE id FROM saved_page WHERE id = type::record("saved_page", ${row}.id);
+LET $r${index} = IF array::len($u${index}) = 0 AND array::len($e${index}) = 0 { CREATE type::record("saved_page", ${row}.id) SET owner = $owner, pageId = ${row}.id, url = ${row}.url, title = ${row}.title, description = ${row}.description, content = ${row}.content, publishedAt = ${row}.publishedAt, read = ${row}.read } ELSE { [] };
+LET $created = array::append($created, array::len($r${index}) > 0);`;
+
+const createSavedPages = (
+  db: Surreal,
+  owner: OwnerId,
+  pages: ReadonlyArray<SavedPage>
+) => {
+  const rows = pages.filter((page) => page.ownerId === owner);
+
+  if (rows.length === 0) {
     return Effect.succeed([] as ReadonlyArray<SavedPageId>);
   }
 
-  const bindings: Bindings = {};
-  pages.forEach((page, index) => {
-    bindings[`p${index}`] = { ...encodeSavedPage(page), owner: page.ownerId };
+  const bindings: Bindings = { owner };
+  rows.forEach((page, index) => {
+    bindings[`p${index}`] = encodeSavedPage(page);
   });
-  const inserts = pages
-    .map(
-      (_, index) =>
-        `UPSERT type::record("saved_page", $p${index}.id) SET owner = $p${index}.owner, pageId = $p${index}.id, url = $p${index}.url, title = $p${index}.title, description = $p${index}.description, content = $p${index}.content, publishedAt = $p${index}.publishedAt, read = $p${index}.read WHERE owner = NONE RETURN AFTER;`
-    )
+  const statements = rows
+    .map((_, index) => insertStatement(`$p${index}`, index))
     .join(' ');
 
-  return run<unknown, SavedPageRepositoryError>(
+  return run(
     db,
-    `BEGIN TRANSACTION; ${inserts} COMMIT TRANSACTION;`,
+    `BEGIN TRANSACTION; LET $created = []; ${statements} COMMIT TRANSACTION; RETURN $created;`,
     bindings,
     savedPageRepositoryError
-  ).pipe(
-    Effect.map((results) =>
-      pages.flatMap((page, index) => {
-        const created = results[index + 1];
-
-        return Array.isArray(created) && created.length > 0 ? [page.id] : [];
-      })
-    )
-  );
+  ).pipe(Effect.map((results) => createdIds(rows, results)));
 };
+
+type Assignments = {
+  readonly clause: string;
+  readonly bindings: Bindings;
+};
+
+const assignments = (patch: SavedPagePatch): Assignments | undefined =>
+  patch.read === undefined
+    ? undefined
+    : { clause: 'read = $read', bindings: { read: patch.read } };
 
 const updateWhere = (
   db: Surreal,
   owner: OwnerId,
-  clause: string,
-  scopeBindings: Bindings,
-  patch: SavedPagePatch
-) =>
-  patch.read === undefined
-    ? Effect.succeed([] as ReadonlyArray<SavedPageId>)
-    : one<Array<{ pageId: SavedPageId }>, SavedPageRepositoryError>(
-        db,
-        `UPDATE saved_page SET read = $read WHERE owner = $owner${clause} RETURN AFTER;`,
-        { owner, read: patch.read, ...scopeBindings },
-        savedPageRepositoryError
-      ).pipe(Effect.map((rows) => rows.map((row) => row.pageId)));
+  records: ReadonlyArray<RecordId>,
+  set: Assignments | undefined
+) => {
+  const statements = [
+    'BEGIN TRANSACTION;',
+    'LET $matched = SELECT VALUE pageId FROM saved_page WHERE owner = $owner AND id IN $records;',
+  ];
 
-const afterClause = (after: SavedPageQuery['after']) =>
-  after === undefined ? '' : afterBoundary('pageId');
+  if (set !== undefined) {
+    statements.push(
+      `UPDATE saved_page SET ${set.clause} WHERE owner = $owner AND id IN $records;`
+    );
+  }
 
-const THROUGH_CLAUSE = throughBoundary('pageId');
+  statements.push('COMMIT TRANSACTION;', 'RETURN $matched;');
 
-const pageBindings = (owner: OwnerId, query: SavedPageQuery): Bindings => ({
-  owner,
-  limit: query.limit,
-  ...readBindings(query.read),
-  ...(query.after === undefined
-    ? {}
-    : {
-        afterAt: DateTime.toDate(query.after.publishedAt),
-        afterId: query.after.id,
-      }),
-});
-
-const throughBindings = (
-  owner: OwnerId,
-  query: SavedPageThroughQuery
-): Bindings => ({
-  owner,
-  ...readBindings(query.read),
-  throughAt: DateTime.toDate(query.through.publishedAt),
-  throughId: query.through.id,
-});
-
-const UnreadRow = Schema.Struct({
-  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-});
-
-const unreadCount = (db: Surreal, owner: OwnerId) =>
-  one<unknown, SavedPageRepositoryError>(
+  return run(
     db,
-    'SELECT count() AS total FROM saved_page WHERE owner = $owner AND read = false GROUP ALL;',
-    { owner },
+    statements.join(' '),
+    { owner, records, ...set?.bindings },
     savedPageRepositoryError
   ).pipe(
-    Effect.flatMap((rows) =>
-      Schema.decodeUnknownEffect(Schema.Array(UnreadRow))(rows).pipe(
-        Effect.map((decoded) => decoded[0]?.total ?? 0),
-        Effect.mapError(savedPageRepositoryError)
+    Effect.flatMap((results) =>
+      decodeReturned(
+        results,
+        Schema.Array(SavedPageId),
+        savedPageRepositoryError
       )
     )
   );
+};
 
-const readQueries = (db: Surreal) => ({
-  find: (owner: OwnerId, id: SavedPageId) =>
-    savedPages(
-      db,
-      `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner AND id = type::record("saved_page", $id);`,
-      { owner, id }
-    ).pipe(Effect.map((pages) => Option.fromNullishOr(pages[0]))),
-  list: (owner: OwnerId, query: SavedPageQuery) =>
-    savedPages(
-      db,
-      `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner${readClause(query.read)}${afterClause(query.after)} ${ORDER} LIMIT $limit;`,
-      pageBindings(owner, query)
-    ),
-  listThrough: (owner: OwnerId, query: SavedPageThroughQuery) =>
-    savedPages(
-      db,
-      `SELECT ${COLUMNS} FROM saved_page WHERE owner = $owner${readClause(query.read)}${THROUGH_CLAUSE} ${ORDER};`,
-      throughBindings(owner, query)
-    ),
-  unreadCount: (owner: OwnerId) => unreadCount(db, owner),
+const updateSavedPages = (
+  db: Surreal,
+  owner: OwnerId,
+  ids: ReadonlyArray<SavedPageId>,
+  patch: SavedPagePatch
+) =>
+  ids.length === 0
+    ? Effect.succeed([] as ReadonlyArray<SavedPageId>)
+    : updateWhere(db, owner, recordsOf('saved_page', ids), assignments(patch));
+
+const updateAllSavedPages = (
+  db: Surreal,
+  owner: OwnerId,
+  patch: SavedPagePatch
+) => {
+  const set = assignments(patch);
+
+  return set === undefined
+    ? Effect.void
+    : write(
+        db,
+        `UPDATE saved_page SET ${set.clause} WHERE owner = $owner;`,
+        { owner, ...set.bindings },
+        savedPageRepositoryError
+      );
+};
+
+const removeSavedPages = (
+  db: Surreal,
+  owner: OwnerId,
+  ids: ReadonlyArray<SavedPageId>
+) =>
+  ids.length === 0
+    ? Effect.void
+    : write(
+        db,
+        'DELETE saved_page WHERE owner = $owner AND id IN $records;',
+        { owner, records: recordsOf('saved_page', ids) },
+        savedPageRepositoryError
+      );
+
+const UnreadCountRow = Schema.Struct({
+  total: Schema.Int,
 });
 
-const writeCommands = (db: Surreal, lock: Semaphore.Semaphore) => ({
-  create: (pages: ReadonlyArray<SavedPage>) =>
-    createSavedPages(db, pages).pipe(lock.withPermit),
-  update: (
-    owner: OwnerId,
-    ids: ReadonlyArray<SavedPageId>,
-    patch: SavedPagePatch
-  ) =>
-    (ids.length === 0
-      ? Effect.succeed([] as ReadonlyArray<SavedPageId>)
-      : updateWhere(db, owner, ' AND pageId IN $ids', { ids }, patch)
-    ).pipe(lock.withPermit),
-  updateAll: (owner: OwnerId, patch: SavedPagePatch) =>
-    updateWhere(db, owner, '', {}, patch).pipe(lock.withPermit),
-  remove: (owner: OwnerId, ids: ReadonlyArray<SavedPageId>) =>
-    (ids.length === 0
-      ? Effect.void
-      : write(
-          db,
-          'DELETE saved_page WHERE owner = $owner AND pageId IN $ids;',
-          { owner, ids },
-          savedPageRepositoryError
-        )
-    ).pipe(lock.withPermit),
-});
+const readUnreadCount = (db: Surreal, owner: OwnerId) =>
+  readRows(
+    db,
+    'SELECT count() AS total FROM saved_page WHERE owner = $owner AND read = false GROUP ALL;',
+    { owner },
+    UnreadCountRow,
+    savedPageRepositoryError
+  ).pipe(Effect.map((rows) => rows[0]?.total ?? 0));
 
 export const makeSavedPages = (db: Surreal, lock: Semaphore.Semaphore) =>
   SavedPageRepository.of({
-    ...readQueries(db),
-    ...writeCommands(db, lock),
+    find: (owner, id) => findSavedPage(db, owner, id),
+    findByUrl: (owner, url) => findSavedPageByUrl(db, owner, url),
+    list: (owner, query) => listSavedPages(db, owner, query),
+    create: (owner, pages) =>
+      createSavedPages(db, owner, pages).pipe(lock.withPermit),
+    update: (owner, ids, patch) =>
+      updateSavedPages(db, owner, ids, patch).pipe(lock.withPermit),
+    updateAll: (owner, patch) =>
+      updateAllSavedPages(db, owner, patch).pipe(lock.withPermit),
+    remove: (owner, ids) =>
+      removeSavedPages(db, owner, ids).pipe(lock.withPermit),
+    unreadCount: (owner) => readUnreadCount(db, owner),
   });

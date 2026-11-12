@@ -1,17 +1,16 @@
 import type { LibraryApi } from '@reader/api';
 import {
-  InvalidCursor,
-  type ListCursor,
-  ListCursorFromString,
   OwnerId,
   type Setting,
+  SettingRepository,
+  type WebpageFetcher,
 } from '@reader/business';
-import { Effect, Option, Schema } from 'effect';
-import type { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import {
-  browserWebpageFetcherLive,
-  jinaWebpageFetcherLive,
-} from '../adapter/webpage-fetcher';
+  BrowserWebpageFetcherLive,
+  JinaWebpageFetcherLive,
+} from '@reader/webpage';
+import { Effect, type Layer, Option, Redacted } from 'effect';
+import type { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { Session } from '../middleware/session';
 
 type Groups =
@@ -19,7 +18,7 @@ type Groups =
 
 type Group = HttpApiGroup.WithIdentifier<Groups, 'library'>;
 
-export type LibraryEndpoints = Group['endpoints'];
+type LibraryEndpoints = Group['endpoints'];
 
 export type HandlerRequest<Identifier extends keyof LibraryEndpoints> =
   Parameters<
@@ -36,27 +35,20 @@ export const optionToNull = <A>(value: Option.Option<A>): A | null =>
     onSome: (item) => item,
   });
 
-const invalidCursor = () =>
-  new InvalidCursor({ message: 'Invalid pagination cursor' });
+const webpageFetcherLayerFor = (
+  setting: Setting
+): Layer.Layer<WebpageFetcher> => {
+  const endpoint = setting.fetcher.browser.endpoint;
 
-export const cursor = (
-  value: string
-): Effect.Effect<ListCursor, InvalidCursor> =>
-  Schema.decodeEffect(ListCursorFromString)(value).pipe(
-    Effect.mapError(invalidCursor)
-  );
+  return setting.fetcher.provider === 'browser' && Option.isSome(endpoint)
+    ? BrowserWebpageFetcherLive(Redacted.value(endpoint.value).href)
+    : JinaWebpageFetcherLive(Option.getOrUndefined(setting.fetcher.jina.key));
+};
 
-export const optionalCursor = (
-  value: Option.Option<string>
-): Effect.Effect<ListCursor | undefined, InvalidCursor> =>
-  Option.match(value, {
-    onNone: () => Effect.succeed(undefined),
-    onSome: cursor,
+export const fetcherFor = (owner: OwnerId) =>
+  Effect.gen(function* () {
+    const settings = yield* SettingRepository;
+    const setting = yield* settings.get(owner);
+
+    return webpageFetcherLayerFor(setting);
   });
-
-export const webpageFetcherLayerFor = (config: Setting) =>
-  config.fetcher.provider === 'jina'
-    ? jinaWebpageFetcherLive(Option.getOrUndefined(config.fetcher.jina.key))
-    : browserWebpageFetcherLive(
-        Option.getOrUndefined(config.fetcher.browser.endpoint)
-      );

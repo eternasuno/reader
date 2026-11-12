@@ -30,22 +30,15 @@ const descriptionOf = (
   return Option.some(escapeText(document, text));
 };
 
-const publishedAtOf = (
-  publishedTime: string | null | undefined,
-  now: DateTime.Utc
-): DateTime.Utc => {
-  const publishedAt = decodePublishedAt(publishedTime ?? '');
+const publishedDateOf = (
+  publishedTime: string | null | undefined
+): Date | undefined =>
+  Option.getOrUndefined(
+    Option.map(decodePublishedAt(publishedTime ?? ''), DateTime.toDateUtc)
+  );
 
-  return Option.isSome(publishedAt) ? publishedAt.value : now;
-};
-
-const readArticle = (
-  document: Document,
-  now: DateTime.Utc
-): ExtractedArticle => {
-  const result = new Readability(document, {
-    maxElemsToParse: 50_000,
-  }).parse();
+const readArticle = (document: Document): ExtractedArticle => {
+  const result = new Readability(document).parse();
   if (!result?.content) {
     throw new Error('No article content found');
   }
@@ -56,20 +49,17 @@ const readArticle = (
     title: result.title ?? '',
     description: Option.getOrUndefined(descriptionOf(document, result.excerpt)),
     content: document.body.innerHTML,
-    publishedAt: DateTime.toDateUtc(publishedAtOf(result.publishedTime, now)),
+    publishedAt: publishedDateOf(result.publishedTime),
   });
 };
 
 export const ArticleExtractorLive = Layer.succeed(ArticleExtractor, {
   extract: (document) =>
-    Effect.flatMap(DateTime.now, (now) =>
-      Effect.try({
-        try: () => readArticle(document, now),
-        catch: () =>
-          new ArticleExtractorError({
-            message:
-              'Unable to extract article content; open the original page',
-          }),
-      })
-    ),
+    Effect.try({
+      try: () => readArticle(document),
+      catch: () =>
+        new ArticleExtractorError({
+          message: 'Unable to extract article content; open the original page',
+        }),
+    }),
 });

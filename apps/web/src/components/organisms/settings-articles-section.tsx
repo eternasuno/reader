@@ -35,12 +35,11 @@ export const ArticlesSection = (props: ArticlesSectionProps) => (
         id="settings-retention"
         name="retention"
         type="number"
-        min={30}
-        max={300}
+        min={1}
         step={1}
         required
         label="每个订阅源保留文章数"
-        hint="请输入 30 到 300 之间的整数。"
+        hint="请输入正整数。"
         value={props.retention}
         disabled={props.busy}
         onInput={(event) => props.onChange(event.currentTarget.value)}

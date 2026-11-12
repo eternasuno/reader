@@ -67,7 +67,7 @@ const responseError = async (response: Response): Promise<LibraryError> => {
   const tag = responseTag(body) ?? statusTag(response.status);
   const detail =
     typeof body === 'object' && body !== null
-      ? { id: textField(body, 'id') }
+      ? { id: textField(body, 'id'), url: textField(body, 'url') }
       : {};
 
   return new LibraryError(

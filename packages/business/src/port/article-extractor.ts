@@ -3,8 +3,8 @@ import {
   ArticleContent,
   ArticleDescription,
   ArticleTitle,
-} from '../entity/object-value/article';
-import { OptionFromOptionalNonEmpty } from '../entity/object-value/option-from-optional-non-empty';
+} from '../entity/common/article';
+import { OptionFromOptionalNonEmpty } from '../entity/common/option-from-optional-non-empty';
 
 export class ArticleExtractorError extends Data.TaggedError(
   'ArticleExtractorError'
@@ -16,7 +16,7 @@ export const ExtractedArticle = Schema.Struct({
   title: ArticleTitle,
   description: OptionFromOptionalNonEmpty(ArticleDescription),
   content: OptionFromOptionalNonEmpty(ArticleContent),
-  publishedAt: Schema.DateTimeUtcFromDate,
+  publishedAt: Schema.OptionFromOptional(Schema.DateTimeUtcFromDate),
 });
 
 export type ExtractedArticle = typeof ExtractedArticle.Type;
@@ -30,4 +30,4 @@ export interface IArticleExtractor {
 export class ArticleExtractor extends Context.Service<
   ArticleExtractor,
   IArticleExtractor
->()('ArticleExtractor') {}
+>()('@reader/business/ArticleExtractor') {}

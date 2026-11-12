@@ -1,19 +1,19 @@
 import { Show } from 'solid-js';
-import type { Article, Feed, Filter, Scope } from '../../lib/library';
-import { type LibraryModel, unreadCount } from '../../pages/library-model';
+import type { Article, Feed, Scope } from '../../lib/library';
+import { unreadCount } from '../../pages/library-counts';
+import type { LibraryModel } from '../../pages/library-model';
+import { isBusy } from '../../pages/library-state';
 import { Button } from '../atoms/button';
 import { LibraryEntry } from '../molecules/library-entry';
 import { LibraryToolbar } from '../molecules/library-toolbar';
 import { VirtualScroller } from '../molecules/virtual-scroller';
 
 const emptyCopy = (
-  filter: Filter,
+  unreadOnly: boolean,
   scope: Scope
 ): { readonly title: string; readonly hint: string } => {
-  if (filter === 'unread')
+  if (unreadOnly)
     return { title: '没有未读文章', hint: '所有文章都已读过了。' };
-  if (filter === 'read')
-    return { title: '还没有已读文章', hint: '打开一篇文章后，会出现在这里。' };
 
   return scope.kind === 'later'
     ? {
@@ -89,18 +89,18 @@ const ListEmpty = (props: {
   const state = () => props.model.state();
   const copy = () =>
     state().error === undefined
-      ? emptyCopy(state().filter, state().scope)
+      ? emptyCopy(state().unreadOnly, state().scope)
       : { title: '暂时无法加载文章', hint: '请点击上方重试。' };
   const action = () => {
     if (state().error !== undefined) return undefined;
 
-    if (state().filter !== 'all') return '查看全部文章';
+    if (state().unreadOnly) return '查看全部文章';
 
     return state().scope.kind === 'later' ? '新增文章链接' : undefined;
   };
   const onAction = () => {
-    if (state().filter === 'all') props.onAdd();
-    else void props.model.setFilter('all');
+    if (state().unreadOnly) void props.model.setFilter(false);
+    else props.onAdd();
   };
 
   return (
@@ -174,7 +174,7 @@ export const LibraryList = (props: {
       <LibraryToolbar
         title={props.title}
         unread={unreadCount(state().counts, state().scope)}
-        filter={state().filter}
+        unreadOnly={state().unreadOnly}
         canAddArticle={state().scope.kind === 'later'}
         currentFeed={state().feeds.find((feed) => {
           const scope = state().scope;
@@ -182,11 +182,12 @@ export const LibraryList = (props: {
           return scope.kind === 'feeds' && scope.feedId === feed.id;
         })}
         onUnsubscribe={props.onUnsubscribe}
-        busy={state().loading || state().pending.size > 0}
+        busy={isBusy(state())}
         loadedUnread={state().items.some((item) => !item.read)}
-        onFilter={(filter) => void props.model.setFilter(filter)}
+        onFilter={(unreadOnly) => void props.model.setFilter(unreadOnly)}
         onMarkLoaded={() => void props.model.markLoaded()}
         onMarkAll={() => void props.model.markAll()}
+        onRefresh={() => void props.model.refresh()}
         onAdd={props.onAdd}
       />
       <ListBody model={props.model} onOpen={props.onOpen} onAdd={props.onAdd} />

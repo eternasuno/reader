@@ -9,16 +9,13 @@ import { feedItemHandlers } from './library-handlers-feed-item';
 import { savedPageHandlers } from './library-handlers-saved-page';
 import { settingsHandlers } from './library-handlers-settings';
 
-export const libraryHandlers = HttpApiBuilder.group(
-  LibraryApi,
-  'library',
-  (group) =>
-    group.handleAll({
-      ...savedPageHandlers,
-      ...feedItemHandlers,
-      ...feedHandlers,
-      ...settingsHandlers,
-    })
+const libraryHandlers = HttpApiBuilder.group(LibraryApi, 'library', (group) =>
+  group.handleAll({
+    ...savedPageHandlers,
+    ...feedItemHandlers,
+    ...feedHandlers,
+    ...settingsHandlers,
+  })
 );
 
 export const libraryRoutes = HttpApiBuilder.layer(LibraryApi).pipe(

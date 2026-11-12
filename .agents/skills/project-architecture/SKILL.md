@@ -10,18 +10,20 @@ description: Follow the client architecture and resource-lifecycle constraints w
 - Keep `apps/web` limited to browser routes, components, the Better Auth client, and the API client; preserve client rendering.
 - Do not introduce `apps/api`, Effect server modules, database clients, embedded engines, secrets, or Better Auth server configuration into web; do not add SSR or server functions.
 - API HTTP routes belong in `apps/api/src/routes`, runtime Layers and database capabilities in `apps/api/src/infrastructure`, and request middleware in `apps/api/src/middleware`; place server capabilities according to these responsibilities and do not move them into web.
-- Use `type` aliases for ordinary TypeScript data shapes and contracts. Preserve Effect Service classes and runtime classes such as `Data.TaggedError` constructors. The one exception is the shape of an Effect service: declare it as `interface I<Service>` next to its `Context.Service` class (ports in `packages/business/src/port`, `ISubscriptionSchedules`), and keep every such shape an `interface`, not a `type`.
-- Keep shared Effect language-service settings in the root `tsconfig.json`; let app configs inherit them rather than duplicate the plugin array. Use app overrides only for genuinely app-specific settings. Its `allowedUnstableApis` allows whole modules or packages (`effect/http`, `effect/http-api`, `@effect/platform-node`, `@effect/vitest`): Effect marks every package other than `effect` as `@stability unstable`, and an unlisted unstable API makes `pnpm typecheck` exit non-zero, so allow the package rather than individual exports.
+
+- Use `type` aliases for ordinary TypeScript data shapes and contracts instead of hand-written JavaScript classes; the rule targets native object-oriented style only. Class forms that Effect provides are allowed and preserved, such as `Context.Service`, `Schema.Class`, `Model.Class` and `Data.TaggedError`. The one exception is the shape of an Effect service: declare it as `interface I<Service>` next to its `Context.Service` class (ports in `packages/business/src/port/`, `IFeedRefreshQueue` in `apps/api`), and keep every such shape an `interface`, not a `type`.
+- Keep shared Effect language-service settings in the root `tsconfig.json`; let app configs inherit them rather than duplicate the plugin array. Use app overrides only for genuinely app-specific settings. Its `allowedUnstableApis` lists the unstable APIs the code may use: Effect tags modules and exports `@stability unstable` inside `effect` as well as in other packages, and an unlisted one makes `pnpm typecheck` exit non-zero. Allow whole modules or packages rather than individual exports (`effect/http`, `effect/http-api`, `@effect/platform-node`, `@effect/vitest`; the business rewrite adds `effect/schema/Model`).
 
 ## Web Layers
 
 - `apps/web/src/lib` owns ordinary async operations and their parameter types; it must not import Solid APIs or router hooks, handle `FormData`, or perform UI navigation.
+- Reload a list by listing again from the first page with no cursor: no polling, no refresh-through request, and no in-place merge of rows. Fetch feed unread counts and the saved-page unread count from their separate endpoints.
 - Components and `src/pages` own presentation, native form validation, conversion from `FormData` to logic-layer parameters, submission state, and navigation. Organize components into `atoms`, `molecules`, `organisms`, and `templates`.
 - `src/lib/auth.ts` initializes the single official Better Auth Solid client and exports authentication operations using that client directly. Adapter initialization and inferred session types are allowed here; invoke reactive hooks only in the presentation layer.
 
 ## UI Styling and Focus
 
-When changing reader layout, sidebar/list menus, article modes, creation flows, or shared menu/status icons, read [Reader layout and interactions](reader-ui.md). It records the agreed control placement, scope behavior, and state transitions; preserve these unless the current user request changes them.
+When changing reader layout, sidebar/list menus, list reloading and read state, article modes, subscribe and add-link flows, the settings page, or shared menu/status icons, read [Reader layout and interactions](reader-ui.md). It records the agreed control placement, scope behavior, and state transitions; preserve these unless the current user request changes them.
 
 - Use Tailwind for all expressible presentation; keep `index.css` limited to Tailwind/daisyUI configuration and theme tokens. Do not reintroduce component CSS, `@apply`, giant class constants, or sprawling descendant selectors; simplify utilities and extract cohesive repeated UI components.
 - Prefer built-in sizing and breakpoint scales over incidental precision. Necessary custom fixed dimensions use rem except thin borders. Dynamic iframe height and generated anchor names may be passed as runtime CSS values.
@@ -33,6 +35,12 @@ When changing reader layout, sidebar/list menus, article modes, creation flows, 
 - Keep responsive layout in Tailwind. Recover focus from actual visibility and current focus, not JavaScript media queries mirroring CSS breakpoints; preserve valid focus and open dialogs.
 - Keep article content isolated inside its sandboxed iframe. Sharing compiled Tailwind must preserve CSP, sandboxing, content isolation, and resize-message authentication; verify stylesheet loading and typography in a real browser.
 - Verify relevant hover, focus, selected, and disabled states. Full-width list surfaces must contain unread-button hit areas, and unread controls must not activate article links. Confirm actual browser viewport dimensions before claiming mobile verification.
+
+## Accounts
+
+- Accounts are Better Auth email/password accounts; its defaults decide password rules (8 to 128 characters). Registration does not sign in: show errors for a taken email or a short password, otherwise go to the login page. Signing in with the right credentials opens the library; wrong credentials show an error and stay on the login page.
+- `/`, `/rss` and `/settings` need a session and redirect to the login page without one. Signing out ends the session and goes to the login page. Changing the password needs the current password: on success the new password is the one to sign in with; a wrong current password changes nothing and shows an error.
+- There is no password recovery, email verification, or account deletion.
 
 ## Solid Session Subscription
 

@@ -3,15 +3,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./http": "./src/http.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-node": "4.1.2",
     "@reader/business": "workspace:*",
     "effect": "4.1.2",
     "puppeteer-core": "25.16.0",

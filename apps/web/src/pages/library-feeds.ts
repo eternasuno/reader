@@ -45,3 +45,8 @@ export const upsertFeed = (
       ? left.id.localeCompare(right.id)
       : left.title.localeCompare(right.title)
   );
+
+export const selectFeedByUrl = (
+  feeds: ReadonlyArray<Feed>,
+  url: string
+): Feed | undefined => feeds.find((feed) => feed.url === url);

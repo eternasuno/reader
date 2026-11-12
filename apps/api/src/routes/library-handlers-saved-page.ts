@@ -1,87 +1,64 @@
 import {
-  addSavedPage,
-  findSavedPage,
+  addSavedPage as addSavedPageUseCase,
   listSavedPages,
-  markAllSavedPagesRead,
-  markSavedPages,
-  NormalizedUrl,
-  refreshSavedPages,
-  removeSavedPage,
-  SettingsRepository,
+  type SavedPageId,
+  SavedPageRepository,
   saveFeedItem,
 } from '@reader/business';
-import { Data, Effect, Option, Schema } from 'effect';
+import { Effect } from 'effect';
 import {
-  cursor,
+  fetcherFor,
   type HandlerRequest,
-  optionalCursor,
   optionToNull,
-  webpageFetcherLayerFor,
   withSession,
 } from './library-contract';
 import {
   addSavedPageFailure,
-  savedPageFailure,
-  savedPagePageFailure,
+  savedPageRepositoryFailure,
   saveFeedItemFailure,
 } from './library-failures';
-
-class InvalidPageUrl extends Data.TaggedError('InvalidPageUrl')<{
-  readonly message: string;
-}> {}
+import { decodePageUrl } from './library-input';
 
 const savedPages = ({ query }: HandlerRequest<'savedPages'>) =>
   withSession((owner) =>
-    Effect.gen(function* () {
-      const after = yield* optionalCursor(query.cursor);
-
-      return yield* listSavedPages(
-        owner,
-        Option.getOrElse(query.filter, () => 'all'),
-        after
-      );
+    listSavedPages(owner, {
+      unreadOnly: query.unreadOnly,
+      limit: query.limit,
+      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
     })
-  ).pipe(Effect.catchTags(savedPagePageFailure));
-
-const savedPagesRefresh = ({ query }: HandlerRequest<'savedPagesRefresh'>) =>
-  withSession((owner) =>
-    Effect.gen(function* () {
-      const through = yield* cursor(query.through);
-
-      return yield* Effect.map(
-        refreshSavedPages(
-          owner,
-          Option.getOrElse(query.filter, () => 'all'),
-          through
-        ),
-        (items) => ({ items })
-      );
-    })
-  ).pipe(Effect.catchTags(savedPagePageFailure));
+  ).pipe(Effect.catchTags(savedPageRepositoryFailure));
 
 const savedPage = ({ query }: HandlerRequest<'savedPage'>) =>
   withSession((owner) =>
-    Effect.map(findSavedPage(owner, query.id), (found) => ({
-      item: optionToNull(found),
-    }))
-  ).pipe(Effect.catchTags(savedPageFailure));
+    Effect.gen(function* () {
+      const repository = yield* SavedPageRepository;
+      const found = yield* repository.find(owner, query.id);
+
+      return { item: optionToNull(found) };
+    })
+  ).pipe(Effect.catchTags(savedPageRepositoryFailure));
+
+const savedPageByUrl = ({ query }: HandlerRequest<'savedPageByUrl'>) =>
+  withSession((owner) =>
+    Effect.matchEffect(decodePageUrl(query.url), {
+      onFailure: () => Effect.succeed({ item: null }),
+      onSuccess: (url) =>
+        Effect.gen(function* () {
+          const repository = yield* SavedPageRepository;
+          const found = yield* repository.findByUrl(owner, url);
+
+          return { item: optionToNull(found) };
+        }),
+    })
+  ).pipe(Effect.catchTags(savedPageRepositoryFailure));
 
 const add = ({ payload }: HandlerRequest<'addSavedPage'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const url = yield* Schema.decodeEffect(NormalizedUrl)(payload.url).pipe(
-        Effect.mapError(
-          () =>
-            new InvalidPageUrl({
-              message: 'Page URL must use HTTP or HTTPS',
-            })
-        )
-      );
-      const settings = yield* SettingsRepository;
-      const config = yield* settings.get(owner);
-
-      const item = yield* addSavedPage(owner, url).pipe(
-        Effect.provide(webpageFetcherLayerFor(config))
+      const url = yield* decodePageUrl(payload.url);
+      const fetcher = yield* fetcherFor(owner);
+      const item = yield* addSavedPageUseCase(owner, url).pipe(
+        Effect.provide(fetcher)
       );
 
       return { item };
@@ -91,49 +68,69 @@ const add = ({ payload }: HandlerRequest<'addSavedPage'>) =>
 const saveFromFeedItem = ({ payload }: HandlerRequest<'saveFeedItem'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const settings = yield* SettingsRepository;
-      const config = yield* settings.get(owner);
-
-      const item = yield* saveFeedItem(owner, payload.feedId, payload.id).pipe(
-        Effect.provide(webpageFetcherLayerFor(config))
+      const fetcher = yield* fetcherFor(owner);
+      const item = yield* saveFeedItem(owner, payload.id).pipe(
+        Effect.provide(fetcher)
       );
 
       return { item };
     })
   ).pipe(Effect.catchTags(saveFeedItemFailure));
 
-const markOne = ({ payload }: HandlerRequest<'markSavedPage'>) =>
+const updateRead = (ids: ReadonlyArray<SavedPageId>, read: boolean) =>
   withSession((owner) =>
-    markSavedPages(owner, [payload.id], payload.read).pipe(
-      Effect.as({ ok: true as const })
-    )
-  ).pipe(Effect.catchTags(savedPageFailure));
+    Effect.gen(function* () {
+      const repository = yield* SavedPageRepository;
+      yield* repository.update(owner, ids, { read });
+
+      return { ok: true as const };
+    })
+  ).pipe(Effect.catchTags(savedPageRepositoryFailure));
+
+const markOne = ({ payload }: HandlerRequest<'markSavedPage'>) =>
+  updateRead([payload.id], payload.read);
 
 const markMany = ({ payload }: HandlerRequest<'markSavedPages'>) =>
-  withSession((owner) =>
-    markSavedPages(owner, payload.ids, true).pipe(
-      Effect.as({ ok: true as const })
-    )
-  ).pipe(Effect.catchTags(savedPageFailure));
+  updateRead(payload.ids, true);
 
 const markAll = () =>
   withSession((owner) =>
-    markAllSavedPagesRead(owner).pipe(Effect.as({ ok: true as const }))
-  ).pipe(Effect.catchTags(savedPageFailure));
+    Effect.gen(function* () {
+      const repository = yield* SavedPageRepository;
+      yield* repository.updateAll(owner, { read: true });
+
+      return { ok: true as const };
+    })
+  ).pipe(Effect.catchTags(savedPageRepositoryFailure));
 
 const remove = ({ payload }: HandlerRequest<'removeSavedPage'>) =>
   withSession((owner) =>
-    removeSavedPage(owner, payload.id).pipe(Effect.as({ ok: true as const }))
-  ).pipe(Effect.catchTags(savedPageFailure));
+    Effect.gen(function* () {
+      const repository = yield* SavedPageRepository;
+      yield* repository.remove(owner, [payload.id]);
+
+      return { ok: true as const };
+    })
+  ).pipe(Effect.catchTags(savedPageRepositoryFailure));
+
+const unread = () =>
+  withSession((owner) =>
+    Effect.gen(function* () {
+      const repository = yield* SavedPageRepository;
+
+      return { count: yield* repository.unreadCount(owner) };
+    })
+  ).pipe(Effect.catchTags(savedPageRepositoryFailure));
 
 export const savedPageHandlers = {
   savedPages,
-  savedPagesRefresh,
   savedPage,
+  savedPageByUrl,
   addSavedPage: add,
   saveFeedItem: saveFromFeedItem,
   markSavedPage: markOne,
   markSavedPages: markMany,
   markAllSavedPages: markAll,
   removeSavedPage: remove,
+  savedPageUnread: unread,
 };

@@ -1,11 +1,11 @@
 import {
   type Article,
   type ArticleRef,
+  LibraryError,
   libraryErrorMessage,
   refOf,
 } from '../lib/library';
 import { selectSnapshot, upsertItem } from './library-articles';
-import { duplicateId } from './library-commands';
 import type { LibraryStore } from './library-context';
 import { writeRead } from './library-read';
 
@@ -88,18 +88,58 @@ export const openArticle = async (
   return finishOpen(store, version, id, item);
 };
 
-export const openDuplicate = async (
+const isSavedPageDuplicate = (error: unknown): error is LibraryError =>
+  error instanceof LibraryError && error.tag === 'SavedPageAlreadyExists';
+
+type SavedPageLookup =
+  | { readonly kind: 'found'; readonly page: Article }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'unavailable'; readonly error: unknown };
+
+export type DuplicateOutcome =
+  | { readonly kind: 'unrelated' }
+  | { readonly kind: 'opened' }
+  | SavedPageLookup;
+
+const lookupSavedPage = async (
   store: LibraryStore,
-  error: unknown
-): Promise<boolean> => {
-  const id = duplicateId(error);
-  if (id === undefined) {
-    return false;
+  url: string
+): Promise<SavedPageLookup> => {
+  try {
+    const page = await store.client.findSavedPageByUrl(url);
+
+    return page === null ? { kind: 'missing' } : { kind: 'found', page };
+  } catch (error) {
+    return { kind: 'unavailable', error };
+  }
+};
+
+/**
+ * A saved page that already exists is opened instead of reported: the client
+ * asks the server which page owns the submitted URL and selects it. A failed
+ * lookup is returned so the caller reports it at the operation boundary.
+ */
+export const openSavedPageDuplicate = async (
+  store: LibraryStore,
+  error: unknown,
+  submittedUrl: string
+): Promise<DuplicateOutcome> => {
+  if (!isSavedPageDuplicate(error)) {
+    return { kind: 'unrelated' };
   }
 
-  await openArticle(store, id);
+  const lookup = await lookupSavedPage(store, error.url ?? submittedUrl);
+  if (lookup.kind !== 'found') {
+    return lookup;
+  }
 
-  return true;
+  store.flags.setOpenVersion(store.flags.openVersion() + 1);
+  store.setState((current) => ({
+    ...upsertItem(current, lookup.page),
+    selected: lookup.page,
+  }));
+
+  return { kind: 'opened' };
 };
 
 export const clearSelection = (store: LibraryStore) => {

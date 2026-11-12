@@ -9,16 +9,15 @@ type ExtractionSectionProps = {
   readonly busy: boolean;
   readonly pending: boolean;
   readonly provider: FetcherProvider;
-  readonly jinaConfigured: boolean;
+  readonly jinaKeyConfigured: boolean;
+  readonly browserEndpointConfigured: boolean;
   readonly jinaKey: string;
   readonly browserEndpoint: string;
-  readonly browserConfigured: boolean;
   readonly onProviderChange: (provider: FetcherProvider) => void;
   readonly onJinaKeyChange: (value: string) => void;
   readonly onBrowserEndpointChange: (value: string) => void;
   readonly onSubmit: (form: HTMLFormElement) => void;
   readonly onClearKey: () => void;
-  readonly onClearBrowser: () => void;
 };
 
 const ExtractionProvider = (props: {
@@ -48,29 +47,69 @@ const ExtractionProvider = (props: {
   </div>
 );
 
-const ExtractionStatus = (props: {
-  readonly provider: FetcherProvider;
-  readonly jinaConfigured: boolean;
-  readonly browserEndpoint: string;
+const ExtractionFlags = (props: {
+  readonly jinaKeyConfigured: boolean;
+  readonly browserEndpointConfigured: boolean;
 }) => (
-  <p class="text-xs leading-5 break-all text-base-content/60">
-    <Show
-      when={props.provider === 'browser'}
-      fallback={
-        props.jinaConfigured ? '已保存 Key。' : '未保存 Key，使用匿名访问。'
-      }
-    >
-      {props.browserEndpoint.trim() === ''
-        ? '尚未保存地址。'
-        : `地址：${props.browserEndpoint.trim()}`}
-    </Show>
+  <p class="text-xs leading-5 text-base-content/60">
+    Jina Key：{props.jinaKeyConfigured ? '已保存' : '未保存'}
+    <span aria-hidden="true"> · </span>
+    浏览器服务地址：{props.browserEndpointConfigured ? '已保存' : '未保存'}
   </p>
+);
+
+const JinaKeyField = (props: {
+  readonly configured: boolean;
+  readonly busy: boolean;
+  readonly value: string;
+  readonly onInput: (value: string) => void;
+}) => (
+  <FormInput
+    id="settings-jina-key"
+    name="jinaKey"
+    type="password"
+    autocomplete="off"
+    label="Jina API Key"
+    hint={
+      props.configured
+        ? '已保存 Key，留空保持不变。'
+        : '留空则使用 Jina 匿名访问。'
+    }
+    value={props.value}
+    disabled={props.busy}
+    onInput={(event) => props.onInput(event.currentTarget.value)}
+  />
+);
+
+const BrowserEndpointField = (props: {
+  readonly configured: boolean;
+  readonly busy: boolean;
+  readonly value: string;
+  readonly onInput: (value: string) => void;
+}) => (
+  <FormInput
+    id="settings-browser-endpoint"
+    name="browserEndpoint"
+    type="url"
+    autocomplete="off"
+    spellcheck={false}
+    label="浏览器服务地址"
+    hint={
+      props.configured
+        ? '已保存地址，留空保持不变。'
+        : '支持 http、https、ws 或 wss。'
+    }
+    value={props.value}
+    disabled={props.busy}
+    onInput={(event) => props.onInput(event.currentTarget.value)}
+  />
 );
 
 const ExtractionFields = (props: {
   readonly provider: FetcherProvider;
   readonly busy: boolean;
-  readonly jinaConfigured: boolean;
+  readonly jinaKeyConfigured: boolean;
+  readonly browserEndpointConfigured: boolean;
   readonly jinaKey: string;
   readonly browserEndpoint: string;
   readonly onJinaKeyChange: (value: string) => void;
@@ -79,89 +118,91 @@ const ExtractionFields = (props: {
   <Show
     when={props.provider === 'browser'}
     fallback={
-      <FormInput
-        id="settings-jina-key"
-        name="jinaKey"
-        type="password"
-        autocomplete="off"
-        maxlength={2048}
-        label="Jina API Key"
-        hint={
-          props.jinaConfigured
-            ? '已保存 Key，留空保持不变。'
-            : '留空则使用 Jina 匿名访问。'
-        }
+      <JinaKeyField
+        configured={props.jinaKeyConfigured}
+        busy={props.busy}
         value={props.jinaKey}
-        disabled={props.busy}
-        onInput={(event) => props.onJinaKeyChange(event.currentTarget.value)}
+        onInput={props.onJinaKeyChange}
       />
     }
   >
-    <FormInput
-      id="settings-browser-endpoint"
-      name="browserEndpoint"
-      type="url"
-      pattern="(?:https?|wss?)://.+"
-      maxlength={2048}
-      autocomplete="off"
-      spellcheck={false}
-      required
-      label="浏览器服务地址"
-      hint="支持 http、https、ws 或 wss。"
+    <BrowserEndpointField
+      configured={props.browserEndpointConfigured}
+      busy={props.busy}
       value={props.browserEndpoint}
-      disabled={props.busy}
-      onInput={(event) =>
-        props.onBrowserEndpointChange(event.currentTarget.value)
-      }
+      onInput={props.onBrowserEndpointChange}
     />
   </Show>
 );
 
-const ExtractionClearActions = (props: {
-  readonly provider: FetcherProvider;
+const JinaKeyClearAction = (props: {
   readonly busy: boolean;
-  readonly jinaConfigured: boolean;
-  readonly browserConfigured: boolean;
   readonly onClearKey: () => void;
-  readonly onClearBrowser: () => void;
-}) => {
-  const available = () =>
-    props.provider === 'jina' ? props.jinaConfigured : props.browserConfigured;
+}) => (
+  <div class="mt-5 flex items-center justify-between gap-3 border-t border-base-300 pt-4">
+    <p class="text-xs leading-5 text-base-content/50">
+      删除已保存的 Jina Key 后，Jina 提取使用匿名访问。
+    </p>
+    <Button
+      class="btn btn-sm shrink-0"
+      type="button"
+      disabled={props.busy}
+      onClick={props.onClearKey}
+    >
+      删除 Key
+    </Button>
+  </div>
+);
 
-  return (
-    <Show when={available()}>
-      <div class="mt-5 flex items-center justify-between gap-3 border-t border-base-300 pt-4">
-        <p class="text-xs leading-5 text-base-content/50">
-          {props.provider === 'jina'
-            ? '删除已保存的 Jina Key 后，Jina 提取使用匿名访问。'
-            : '清除正在使用的地址时将切换至 Jina。'}
-        </p>
-        <Show
-          when={props.provider === 'jina'}
-          fallback={
-            <Button
-              class="btn btn-sm shrink-0"
-              type="button"
-              disabled={props.busy}
-              onClick={props.onClearBrowser}
-            >
-              清除地址
-            </Button>
-          }
-        >
-          <Button
-            class="btn btn-sm shrink-0"
-            type="button"
-            disabled={props.busy}
-            onClick={props.onClearKey}
-          >
-            删除 Key
-          </Button>
-        </Show>
-      </div>
-    </Show>
-  );
-};
+const ExtractionHeader = (props: {
+  readonly jinaKeyConfigured: boolean;
+  readonly browserEndpointConfigured: boolean;
+}) => (
+  <div class="mt-1 flex flex-col gap-1">
+    <p class="text-sm leading-6 text-base-content/60">
+      Jina 会把文章地址发送给 Jina 并消耗额度，未保存 Key
+      时使用匿名访问；服务器提取服务使用你填写的浏览器服务地址。
+    </p>
+    <ExtractionFlags
+      jinaKeyConfigured={props.jinaKeyConfigured}
+      browserEndpointConfigured={props.browserEndpointConfigured}
+    />
+  </div>
+);
+
+const ExtractionForm = (props: ExtractionSectionProps) => (
+  <form
+    class="mt-5 flex flex-col gap-4"
+    novalidate
+    onSubmit={(event) => {
+      event.preventDefault();
+      props.onSubmit(event.currentTarget);
+    }}
+  >
+    <ExtractionProvider
+      provider={props.provider}
+      busy={props.busy}
+      onChange={props.onProviderChange}
+    />
+    <ExtractionFields
+      provider={props.provider}
+      busy={props.busy}
+      jinaKeyConfigured={props.jinaKeyConfigured}
+      browserEndpointConfigured={props.browserEndpointConfigured}
+      jinaKey={props.jinaKey}
+      browserEndpoint={props.browserEndpoint}
+      onJinaKeyChange={props.onJinaKeyChange}
+      onBrowserEndpointChange={props.onBrowserEndpointChange}
+    />
+    <div>
+      <SubmitButton
+        pending={props.pending}
+        label="保存提取设置"
+        pendingLabel="保存中…"
+      />
+    </div>
+  </form>
+);
 
 export const ExtractionSection = (props: ExtractionSectionProps) => (
   <section
@@ -172,52 +213,13 @@ export const ExtractionSection = (props: ExtractionSectionProps) => (
     <h2 id="settings-extraction-title" class="text-lg font-semibold">
       提取
     </h2>
-    <p class="mt-1 text-sm leading-6 text-base-content/60">
-      Jina 会把文章地址发送给 Jina 并消耗额度，未保存 Key
-      时使用匿名访问；服务器提取服务使用你填写的浏览器服务地址。
-    </p>
-    <form
-      class="mt-5 flex flex-col gap-4"
-      novalidate
-      onSubmit={(event) => {
-        event.preventDefault();
-        props.onSubmit(event.currentTarget);
-      }}
-    >
-      <ExtractionProvider
-        provider={props.provider}
-        busy={props.busy}
-        onChange={props.onProviderChange}
-      />
-      <ExtractionStatus
-        provider={props.provider}
-        jinaConfigured={props.jinaConfigured}
-        browserEndpoint={props.browserEndpoint}
-      />
-      <ExtractionFields
-        provider={props.provider}
-        busy={props.busy}
-        jinaConfigured={props.jinaConfigured}
-        jinaKey={props.jinaKey}
-        browserEndpoint={props.browserEndpoint}
-        onJinaKeyChange={props.onJinaKeyChange}
-        onBrowserEndpointChange={props.onBrowserEndpointChange}
-      />
-      <div>
-        <SubmitButton
-          pending={props.pending}
-          label="保存提取设置"
-          pendingLabel="保存中…"
-        />
-      </div>
-    </form>
-    <ExtractionClearActions
-      provider={props.provider}
-      busy={props.busy}
-      jinaConfigured={props.jinaConfigured}
-      browserConfigured={props.browserConfigured}
-      onClearKey={props.onClearKey}
-      onClearBrowser={props.onClearBrowser}
+    <ExtractionHeader
+      jinaKeyConfigured={props.jinaKeyConfigured}
+      browserEndpointConfigured={props.browserEndpointConfigured}
     />
+    <ExtractionForm {...props} />
+    <Show when={props.jinaKeyConfigured}>
+      <JinaKeyClearAction busy={props.busy} onClearKey={props.onClearKey} />
+    </Show>
   </section>
 );

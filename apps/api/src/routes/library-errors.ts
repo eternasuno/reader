@@ -1,100 +1,72 @@
-import { Effect, Option } from 'effect';
+import type { NormalizedUrl } from '@reader/business';
 
 const failure = <Tag extends string>(tag: Tag, message: string) =>
-  Effect.fail({
-    _tag: tag,
-    message,
-    id: Option.none(),
-  } as const);
-
-const identifiedFailure = <Tag extends string>(
-  tag: Tag,
-  message: string,
-  id: string
-) =>
-  Effect.fail({
-    _tag: tag,
-    message,
-    id: Option.some(id),
-  } as const);
-
-export const invalidCursor = () =>
-  failure('InvalidCursor', 'Invalid pagination cursor');
-
-export const feedItemRepositoryError = () =>
-  failure('FeedItemRepositoryError', 'Unable to access feed items');
-
-export const savedPageRepositoryError = () =>
-  failure('SavedPageRepositoryError', 'Unable to access saved pages');
+  ({ _tag: tag, message }) as const;
 
 export const invalidPageUrl = () =>
-  failure(
-    'InvalidPageUrl',
-    'Page URL must use HTTP or HTTPS without credentials'
-  );
-
-export const feedItemNotFound = (error: { readonly id: string }) =>
-  identifiedFailure('FeedItemNotFound', 'Feed item not found', error.id);
-
-export const feedItemMissingUrl = () =>
-  failure('FeedItemMissingUrl', 'Feed item has no original URL');
-
-export const articleEmptyContent = () =>
-  failure('ArticleEmptyContent', 'Extracted article content is empty');
-
-export const duplicateSavedPage = (error: { readonly id: string }) =>
-  identifiedFailure('DuplicateSavedPage', 'Page is already saved', error.id);
-
-export const settingsRepositoryError = () =>
-  failure('SettingsRepositoryError', 'Unable to access extraction settings');
-
-export const webpageFetchError = () =>
-  failure('WebpageFetcherError', 'Unable to fetch the article page');
-
-export const articleExtractError = () =>
-  failure('ArticleExtractorError', 'Unable to extract article content');
+  failure('InvalidPageUrl', '请输入有效的 http 或 https 链接');
 
 export const feedUrlInvalid = () =>
-  failure('FeedUrlInvalid', 'Feed URL must use HTTP or HTTPS');
+  failure('FeedUrlInvalid', '请输入有效的订阅地址');
 
-export const feedExists = (error: { readonly id: string }) =>
-  identifiedFailure('FeedExists', 'Feed already exists', error.id);
+export const feedItemNotFound = (error: { readonly id: string }) =>
+  ({
+    ...failure('FeedItemNotFound', '文章不存在，可能已被删除'),
+    id: error.id,
+  }) as const;
 
-export const feedNotFound = () => failure('FeedNotFound', 'Feed not found');
+export const savedPageAlreadyExists = (error: {
+  readonly url: NormalizedUrl;
+}) =>
+  ({
+    ...failure('SavedPageAlreadyExists', '该文章已在稍后阅读中'),
+    url: error.url.href,
+  }) as const;
 
-export const feedImportFailed = (error: { readonly id: string }) =>
-  identifiedFailure(
-    'FeedImportFailed',
-    'Failed to import feed articles',
-    error.id
-  );
+export const feedAlreadyExists = (error: { readonly url: NormalizedUrl }) =>
+  ({
+    ...failure('FeedAlreadyExists', '该订阅已存在'),
+    url: error.url.href,
+  }) as const;
+
+export const articleEmptyContent = () =>
+  failure('ArticleEmptyContent', '未能提取到文章内容');
+
+export const webpageFetchError = () =>
+  failure('WebpageFetcherError', '网页抓取失败，请稍后重试');
+
+export const articleExtractError = () =>
+  failure('ArticleExtractorError', '正文提取失败，请稍后重试');
 
 export const fetchFeedError = () =>
-  failure('FetchFeedError', 'Unable to fetch the feed');
+  failure('FetchFeedError', '无法获取订阅内容，请稍后重试');
 
 export const parseFeedError = () =>
-  failure('FeedParserError', 'Unable to parse the feed');
+  failure('FeedParserError', '无法解析订阅源，请确认地址正确');
+
+export const feedItemRepositoryError = () =>
+  failure('FeedItemRepositoryError', '暂时无法访问订阅文章，请稍后重试');
+
+export const savedPageRepositoryError = () =>
+  failure('SavedPageRepositoryError', '暂时无法访问稍后阅读，请稍后重试');
 
 export const feedRepositoryError = () =>
-  failure('FeedRepositoryError', 'Unable to access feeds');
+  failure('FeedRepositoryError', '暂时无法访问订阅，请稍后重试');
 
-export const settingsReadError = () =>
-  failure('SettingsReadError', 'Unable to read settings');
-
-export const settingsSaveError = () =>
-  failure('SettingsSaveError', 'Unable to save settings');
+export const settingRepositoryError = () =>
+  failure('SettingRepositoryError', '暂时无法访问设置，请稍后重试');
 
 export const invalidRetention = () =>
-  failure(
-    'InvalidRetention',
-    'Retention must be an integer between 30 and 300'
-  );
-
-export const invalidKey = () =>
-  failure('InvalidKey', 'Enter a valid Jina API key');
-
-export const invalidEndpoint = () =>
-  failure('InvalidEndpoint', 'Enter a valid browser service address');
+  failure('InvalidRetention', '保留数量必须是正整数');
 
 export const invalidProvider = () =>
-  failure('InvalidProvider', 'Choose a valid extraction provider');
+  failure('InvalidProvider', '请选择有效的文章提取方式');
+
+export const invalidKey = () =>
+  failure('InvalidKey', '请输入有效的 Jina API Key');
+
+export const invalidEndpoint = () =>
+  failure('InvalidEndpoint', '请输入有效的浏览器服务地址');
+
+export const browserEndpointRequired = () =>
+  failure('BrowserEndpointRequired', '请填写浏览器服务地址');

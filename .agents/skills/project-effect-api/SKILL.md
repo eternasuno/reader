@@ -1,15 +1,18 @@
 ---
 name: project-effect-api
-description: Follow the server API constraints when working on this repository's Better Auth paths, session identity, protected APIs, business ports and use cases, repository and paging contracts, Effect Services, or Layer composition.
+description: Follow the server API constraints when working on this repository's Better Auth paths, session identity, protected APIs, HTTP handlers and the library HTTP contract, error mapping, the feed refresh queue and scheduler, adapters, Effect Services, or Layer composition.
 ---
 
 # Effect API
 
+Business rules (entities, use cases, ports, repository contracts) are in the `project-business` skill. This skill covers the server around them.
+
 ## Authentication and Identity
 
 - Better Auth exclusively owns `/api/auth/*`; do not reimplement the Better Auth protocol in application routes. Use Effect HTTP routes for other business operations.
-- Derive identity only from the Better Auth session cookie in the backend request; never accept or trust a user ID submitted by the client.
-- APIs requiring authentication must use `sessionMiddleware` and obtain identity from `Session`; do not pass identity as a business parameter instead of validating the session.
+- Derive identity only from the Better Auth session cookie in the backend request; never accept or trust a user ID submitted by the client. A request naming another owner is still handled as the session's user.
+- APIs requiring authentication must use `sessionMiddleware` and obtain identity from `Session`; every library endpoint rejects a request without a session with 401.
+- Keep the Origin check (`apps/api/src/middleware/origin.ts`): a non-GET library request whose `Origin` differs from the auth base URL gets 403.
 
 ## Shared Effect Services
 
@@ -20,27 +23,31 @@ description: Follow the server API constraints when working on this repository's
 - Keep route composition separate from runtime dependency provision in `server.ts`. Merge independent dependencies into one named Layer; retain provider nesting for real dependencies such as AuthLive requiring DatabaseLive, not for one-use category groups.
 - Prefer framework-provided route Layers over manually constructing equivalent handlers.
 - After composing multiple dependency Layers, call `Effect.provide` only once on the target Effect.
+- The app provides Effect's plain `FetchHttpClient.layer` as the `HttpClient` business uses for feeds. Add no transport policy (address checks, redirect handling, size caps, timeouts) without a requirement.
 
-## Business Data and Use Cases
+## HTTP boundary
 
-- Use entities as shared data types across ports and use cases. Reuse their schemas and fields; do not introduce repository-value or input variants merely to omit fields or rename the same data. Derive writable patches from entity fields when partial updates require different omission semantics.
-- Decode, normalize, and validate external input once with Effect Schema at user-input, network, or database boundaries. Use brands for established normalized formats; do not decode or normalize these values again in use cases. Retain context-dependent business checks such as ownership, cursor scope, missing records, and duplicates.
-- Define effectful use cases as ordinary functions returning `Effect.gen`, rather than `Effect.fn`. Propagate port errors unchanged; map them to public HTTP errors in route handlers.
-- Return domain entities and meaningful business results from use cases. Build HTTP wrappers such as `{ item }` and `{ ok: true }` at the API boundary; avoid manual entity projections and patch conversion chains.
-- Do not add a repository read after a successful write solely to construct a return value. Use the known entity and patch, or an entity returned by the mutation when that is its existing contract.
-- Keep value objects in `entity/object-value`, one file each; entities live next to their aggregate (`entity/feed`, `entity/saved-page`) and settings groups in `entity/setting`. Ports carry only external capabilities; ID derivation, cursor codecs, `ReadFilter` and other policies live in `usecase`. `ExtractedArticle` is the extractor port's own result, consumed by both feed items and saved pages, so `port/article-extractor.ts` defines it from `entity/object-value` value objects instead of deriving it from `FeedItem` or `SavedPage`; its `content` stays an `Option` so empty pages still raise `ArticleEmptyContent`.
+The endpoint contract lives in `packages/api`; handlers live in `apps/api/src/routes`.
 
-## Reader Repository Contracts
+- Decode request input into the business types once in the handler (`routes/library-input.ts`): a page URL into `NormalizedUrl` (failure `InvalidPageUrl`), a feed URL into `NormalizedUrl` (`FeedUrlInvalid`), the subscribe title with `makeFeedTitle(title ?? '', url)` so a blank title becomes the host, the retention into `Retention` (`InvalidRetention`, a positive integer), the fetcher provider into `jina` or `browser` (`InvalidProvider`), a given browser endpoint into `BrowserEndpoint` (`InvalidEndpoint`: http, https, ws or wss).
+- For the fetcher input, an omitted, empty or blank key or endpoint counts as not given, so the stored value is kept (SET-VAL-6). The browser provider with no endpoint given or stored fails `BrowserEndpointRequired`.
+- `GET /settings` returns only `retention`, `provider`, `jinaKeyConfigured` and `browserEndpointConfigured`. Never put the Jina key or the browser endpoint in a response, error message or log.
+- For extraction (add a saved page, save a feed item, extract a feed item) read the owner's setting first and provide `BrowserWebpageFetcherLive(endpoint)` when the provider is `browser` and an endpoint is stored, else `JinaWebpageFetcherLive(key)`. Layer factories never query the database.
+- Subscribe enqueues the new feed in `FeedRefreshQueue` after `subscribeFeed` succeeds and returns 201 at once; no user operation refreshes a feed from its source.
+- Lists take `limit` (a positive integer, no maximum), `unreadOnly` and an optional `cursor` (the row id); the feed counts and the saved-page count are two separate endpoints.
+- Map business errors to failures with the same `_tag` and a Chinese user message (`routes/library-errors.ts`, `library-failures.ts`): input decoding failures 400; `FeedItemNotFound` 404 with `id`; `FeedAlreadyExists` and `SavedPageAlreadyExists` 409 with the normalized `url`; fetch, parse and extraction failures and `BrowserEndpointRequired` 422 (`HtmlParserError` maps to `ArticleExtractorError`); repository errors 500 with their own tags. The webpage-fetch failure message stays generic: `网页抓取失败，请稍后重试`. Keep the web client's tag whitelist (`apps/web/src/lib/library-error.ts`) in step with these tags.
+- A request that fails schema decoding (malformed `limit` or `cursor`, missing payload field) gets 400 with an empty body; only handler failures carry `{ _tag, message }`.
 
-- `FeedItem` belongs to a `Feed` and carries no owner. `FeedItemRepository` is keyed by feed ids only; use cases resolve ownership first with `FeedRepository.find(owner, feedId)` or `list(owner)` and then pass feed ids. Never call it with ids the owner has not been checked against. `SavedPage` is an owner-scoped root: `SavedPageRepository` takes an explicit owner, its content is required, and its URL is optional.
-- Selecting feeds is a plain `ReadonlyArray<FeedId>`; an empty array returns no rows or performs no update. Empty id selections also perform no update.
-- List queries take a plain `read?: boolean` (absent means all); ports never import `ReadFilter`, and `usecase/pagination.ts` maps it with `readStateOf`. Paging is two operations: `list(…, { read?, after?, limit })` returns one keyset page, and `listThrough(…, { read?, through })` returns the inclusive prefix up to a boundary without `limit`, which refresh uses as a single query. List endpoints accept `cursor` only and refresh endpoints take `through`; do not merge them back into one query type with optional `after` and `through`.
-- List order is `publishedAt` then id, both descending. The store `ORDER`, the retention tie-break in `usecase/feed-selection.ts` (the lowest id among tied existing articles is evicted first, matching what is displayed last) and `compareArticles` in `apps/web/src/pages/library-refresh.ts` must agree; change them together.
-- Derive `FeedItemPatch`, `SavedPagePatch`, `FeedPatch`, and `SettingsPatch` from entity fields with `Schema.optionalKey`; omit identity and ownership fields. Omitted fields preserve values, `Option.none()` clears optional values, and `Option.some(value)` sets them. Name mutation parameters `patch` or `feedPatch`.
-- Settings are grouped (`feed`, `fetcher`) and the fetcher keeps `jina` and `browser` configuration side by side with a `provider` selector. `SettingsRepository` exposes `get` and `update`; patches are applied per field. Validate that the browser provider has an endpoint in `updateSettings`, not in the repository. Derive `jinaConfigured` in the HTTP handler and omit the secret from public responses. Empty patches must not create rows.
-- Unread counts return `{ saved, feedsTotal, feeds }` from the `unreadCounts` use case, which lists the owner's feeds once and groups feed items by feed id.
-- Discover subscription schedule owners through separate infrastructure, then list and refresh subscriptions within each owner. Keep timers and queue deduplication scoped; prevent overlapping work for one owner and isolate individual feed failures. Do not add refresh-frequency settings without a product requirement.
-- Keep adapter failures in typed Effect errors with a message. The webpage-fetch failure shown to the user remains generic: `网页抓取失败，请稍后重试`.
+## Adapters
+
+- Keep adapter failures in typed Effect errors with a message.
+- The feed parser reads RSS, Atom, RDF and JSON Feed. It escapes plain-text Atom fields and JSON `content_text` once, resolves entry URLs against the final URL of the fetch, drops entries without a valid URL, reports a missing publish time as none, and turns an empty feed title into the host.
+- The article extractor reports a missing publish time as none and returns sanitized content. The sanitizer uses DOMPurify's defaults, resolves relative `href` and `src` against the article URL, and sets `target="_blank"` on links so they leave the sandboxed reader frame.
+
+## Feed refresh queue and scheduler
+
+- The queue and scheduler live in `apps/api/src/infrastructure`, not in the packages (FD-SCHED). `FeedRefreshQueue.enqueue(owner, feedId)` drops a request for a feed that already has a refresh running, otherwise runs business `refreshFeed(owner, feedId)` in the queue's scope. Refreshes of different feeds run at the same time without a bound; a failure or defect is logged with owner and feed id and never stops the others.
+- The scheduler lists every feed with its own query at start and every 30 minutes and enqueues each; a listing failure is logged and retried at the next interval.
 
 ## API Details
 

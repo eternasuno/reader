@@ -13,4 +13,4 @@ export interface IWebpageFetcher {
 export class WebpageFetcher extends Context.Service<
   WebpageFetcher,
   IWebpageFetcher
->()('WebpageFetcher') {}
+>()('@reader/business/WebpageFetcher') {}

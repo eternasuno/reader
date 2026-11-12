@@ -1,26 +1,32 @@
 import { Schema } from 'effect';
+import { Model } from 'effect/schema';
 import {
   ArticleContent,
   ArticleDescription,
   ArticleTitle,
-} from '../object-value/article';
-import { NormalizedUrl } from '../object-value/normalized-url';
-import { OptionFromOptionalNonEmpty } from '../object-value/option-from-optional-non-empty';
+} from '../common/article';
+import { NormalizedUrl } from '../common/normalized-url';
+import { OptionFromOptionalNonEmpty } from '../common/option-from-optional-non-empty';
+import { OwnerId } from '../common/owner-id';
 import { FeedId } from './feed';
 
-export const FeedItemId = Schema.String.pipe(Schema.brand('FeedItemId'));
+export const FeedItemId = Schema.String.pipe(
+  Schema.check(Schema.isUUID(7), Schema.isLowercased()),
+  Schema.brand('FeedItemId')
+);
 
 export type FeedItemId = typeof FeedItemId.Type;
 
 export const FeedItem = Schema.Struct({
-  id: FeedItemId,
+  id: Model.UuidV7WithGenerate(FeedItemId),
+  ownerId: OwnerId,
   feedId: FeedId,
-  url: OptionFromOptionalNonEmpty(NormalizedUrl),
+  url: NormalizedUrl,
   title: ArticleTitle,
   description: OptionFromOptionalNonEmpty(ArticleDescription),
   content: OptionFromOptionalNonEmpty(ArticleContent),
   extractedContent: OptionFromOptionalNonEmpty(ArticleContent),
-  publishedAt: Schema.DateTimeUtcFromDate,
+  publishedAt: Schema.OptionFromOptional(Schema.DateTimeUtcFromDate),
   read: Schema.Boolean,
 });
 

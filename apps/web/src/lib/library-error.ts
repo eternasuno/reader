@@ -1,24 +1,25 @@
 export type LibraryErrorTag =
   | 'Unauthorized'
   | 'Forbidden'
-  | 'InvalidCursor'
-  | 'FeedItemRepositoryError'
-  | 'SavedPageRepositoryError'
   | 'InvalidPageUrl'
+  | 'FeedUrlInvalid'
   | 'FeedItemNotFound'
-  | 'FeedItemMissingUrl'
+  | 'SavedPageAlreadyExists'
+  | 'FeedAlreadyExists'
   | 'ArticleEmptyContent'
-  | 'DuplicateSavedPage'
-  | 'SettingsRepositoryError'
   | 'WebpageFetcherError'
   | 'ArticleExtractorError'
-  | 'FeedUrlInvalid'
-  | 'FeedExists'
-  | 'FeedNotFound'
-  | 'FeedImportFailed'
   | 'FetchFeedError'
   | 'FeedParserError'
+  | 'FeedItemRepositoryError'
+  | 'SavedPageRepositoryError'
   | 'FeedRepositoryError'
+  | 'InvalidRetention'
+  | 'InvalidProvider'
+  | 'InvalidKey'
+  | 'InvalidEndpoint'
+  | 'BrowserEndpointRequired'
+  | 'SettingRepositoryError'
   | 'RequestFailed'
   | 'NetworkError'
   | 'InvalidResponse';
@@ -26,24 +27,25 @@ export type LibraryErrorTag =
 const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   Unauthorized: '登录状态已失效，请重新登录',
   Forbidden: '不允许跨站修改',
-  InvalidCursor: '列表已更新，请刷新后重试',
-  FeedItemRepositoryError: '暂时无法访问订阅文章，请稍后重试',
-  SavedPageRepositoryError: '暂时无法访问稍后阅读，请稍后重试',
   InvalidPageUrl: '请输入有效的 http 或 https 链接',
+  FeedUrlInvalid: '请输入有效的订阅地址',
   FeedItemNotFound: '文章不存在，可能已被删除',
-  FeedItemMissingUrl: '该文章没有原始链接',
+  SavedPageAlreadyExists: '该文章已在稍后阅读中',
+  FeedAlreadyExists: '该订阅已存在',
   ArticleEmptyContent: '未能提取到文章内容',
-  DuplicateSavedPage: '该文章已在稍后阅读中',
-  SettingsRepositoryError: '正文提取设置暂时不可用，请稍后重试',
   WebpageFetcherError: '网页抓取失败，请稍后重试',
   ArticleExtractorError: '正文提取失败，请稍后重试',
-  FeedUrlInvalid: '请输入有效的订阅地址',
-  FeedExists: '该订阅已存在',
-  FeedNotFound: '订阅不存在，可能已被删除',
-  FeedImportFailed: '订阅文章导入失败，请稍后重试',
   FetchFeedError: '无法获取订阅内容，请稍后重试',
   FeedParserError: '无法解析订阅源，请确认地址正确',
+  FeedItemRepositoryError: '暂时无法访问订阅文章，请稍后重试',
+  SavedPageRepositoryError: '暂时无法访问稍后阅读，请稍后重试',
   FeedRepositoryError: '暂时无法访问订阅，请稍后重试',
+  InvalidRetention: '保留数量必须是正整数',
+  InvalidProvider: '请选择有效的文章提取方式',
+  InvalidKey: '请输入有效的 Jina API Key',
+  InvalidEndpoint: '请输入有效的浏览器服务地址',
+  BrowserEndpointRequired: '请填写浏览器服务地址',
+  SettingRepositoryError: '暂时无法访问设置，请稍后重试',
   RequestFailed: '请求失败，请稍后重试',
   NetworkError: '网络连接失败，请检查网络后重试',
   InvalidResponse: '响应数据格式不正确，请稍后重试',
@@ -52,17 +54,20 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
 export class LibraryError extends Error {
   readonly tag: LibraryErrorTag;
   readonly id: string | undefined;
+  readonly url: string | undefined;
 
   constructor(
     tag: LibraryErrorTag,
     detail: {
       readonly id?: string | undefined;
+      readonly url?: string | undefined;
     } = {}
   ) {
     super(libraryErrorMessages[tag]);
     this.name = 'LibraryError';
     this.tag = tag;
     this.id = detail.id;
+    this.url = detail.url;
   }
 }
 

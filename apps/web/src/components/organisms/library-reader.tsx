@@ -13,8 +13,6 @@ import { ArticleFrame, WebpageFrame } from '../molecules/article-frame';
 import { PopoverMenu } from '../molecules/popover-menu';
 import { ReaderSourceLink, ReaderTitle } from './article-reader-actions';
 
-export type { LibraryReaderMode } from '../../pages/library-reader-mode';
-
 type ReaderModeView = ReturnType<typeof useReaderMode>;
 
 const WebpageOption = (props: {

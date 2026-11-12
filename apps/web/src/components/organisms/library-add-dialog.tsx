@@ -1,7 +1,7 @@
 import { Option } from 'effect';
 import { createEffect, createSignal, For, Show } from 'solid-js';
 import type { Preview } from '../../lib/library';
-import type { PreviewResult } from '../../pages/library-model';
+import type { PreviewResult } from '../../pages/library-mutations';
 import { Button } from '../atoms/button';
 import { SubmitButton } from '../atoms/submit-button';
 import { Dialog } from '../molecules/dialog';
@@ -15,7 +15,7 @@ type AddFlowProps = {
   readonly onClose: () => void;
   readonly onAdd: (url: string) => Promise<boolean>;
   readonly onPreview: (url: string) => Promise<PreviewResult>;
-  readonly onSubscribe: (url: string) => Promise<boolean>;
+  readonly onSubscribe: (url: string, title: string) => Promise<boolean>;
 };
 
 const submittedUrl = (form: HTMLFormElement): string =>
@@ -24,46 +24,34 @@ const submittedUrl = (form: HTMLFormElement): string =>
 const requestPreview = async (
   props: AddFlowProps,
   form: HTMLFormElement | undefined
-): Promise<
-  { readonly result: PreviewResult; readonly url: string } | undefined
-> => {
+): Promise<Preview | undefined> => {
   if (form === undefined) return undefined;
 
-  const url = submittedUrl(form);
-  const result = await props.onPreview(url);
+  const result = await props.onPreview(submittedUrl(form));
 
-  return result.kind === 'failed' ? undefined : { result, url };
+  return result.kind === 'preview' ? result.preview : undefined;
 };
 
 const useAddPreview = (props: AddFlowProps) => {
   let form: HTMLFormElement | undefined;
   const [preview, setPreview] = createSignal<Preview>();
-  const [url, setUrl] = createSignal('');
   const [busy, setBusy] = createSignal(false);
   const reset = () => {
     setPreview(undefined);
-    setUrl('');
   };
   const resetForm = () => {
     reset();
     form?.reset();
   };
   const request = async () => {
-    const request = requestPreview(props, form);
     setBusy(true);
-    const requested = await request;
+    const requested = await requestPreview(props, form);
     setBusy(false);
-    if (requested === undefined) return;
-
-    if (requested.result.kind !== 'preview') return;
-
-    setPreview(requested.result.preview);
-    setUrl(requested.url);
+    if (requested !== undefined) setPreview(requested);
   };
 
   return {
     preview,
-    url,
     busy,
     reset,
     resetForm,
@@ -82,15 +70,17 @@ const useAddSubmit = (
   const [busy, setBusy] = createSignal<AddBusy>();
   const run = async (kind: AddBusy, task: () => Promise<boolean>) => {
     setBusy(kind);
-    const ok = await task();
-    setBusy(undefined);
-    if (ok) close();
+    try {
+      if (await task()) close();
+    } finally {
+      setBusy(undefined);
+    }
   };
   const add = async (value: string) => {
     await run('add', () => props.onAdd(value));
   };
-  const subscribe = async (value: string) => {
-    await run('subscribe', () => props.onSubscribe(value));
+  const subscribe = async (url: string, title: string) => {
+    await run('subscribe', () => props.onSubscribe(url, title));
   };
   const edit = () => {
     resetPreview();
@@ -165,7 +155,6 @@ const AddForm = (props: {
       hint="请输入有效的 http 或 https 链接"
       type="url"
       required
-      maxLength={4096}
       placeholder={
         props.mode === 'article' ? '粘贴文章链接…' : '粘贴 RSS / Atom 链接…'
       }
@@ -227,7 +216,7 @@ export const LibraryAddDialog = (props: AddFlowProps) => {
             <PreviewPanel
               preview={item}
               busy={submit.busy() === 'subscribe'}
-              onConfirm={() => void submit.subscribe(preview.url())}
+              onConfirm={() => void submit.subscribe(item.url, item.title)}
               onCancel={submit.edit}
             />
           )}

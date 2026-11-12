@@ -15,7 +15,7 @@ const withRows = async (
   rows = [article('a', { feedId: 'f1' }), article('b')]
 ) => {
   const client = createStubClient();
-  client.list.mockResolvedValue(page(rows, null, 'top'));
+  client.list.mockResolvedValue(page(rows, null));
   client.unreadCounts.mockResolvedValue(counts(0, { f1: 1 }));
   const model = createLibraryModel(client);
   await model.refresh();
@@ -24,7 +24,7 @@ const withRows = async (
 };
 
 describe('library bulk read marks', () => {
-  it('keeps bulk-marked rows pending through a refresh', async () => {
+  it('keeps bulk-marked rows pending until the write settles', async () => {
     const { client, model } = await withRows();
     const mark = deferred<void>();
     client.markArticles.mockReturnValue(mark.promise);
@@ -33,14 +33,10 @@ describe('library bulk read marks', () => {
     expect(model.state().pending.has('a')).toBe(true);
     expect(model.state().pending.has('b')).toBe(true);
 
-    client.refresh.mockResolvedValue([
-      article('a', { feedId: 'f1' }),
-      article('b'),
-    ]);
     await model.refresh();
 
+    expect(client.list).toHaveBeenCalledTimes(1);
     expect(model.state().items.every((item) => item.read)).toBe(true);
-    expect(model.state().pending.has('a')).toBe(true);
 
     mark.resolve();
     await pending;
@@ -66,7 +62,7 @@ describe('library bulk read marks', () => {
     client.feeds.mockResolvedValue([feed('f1')]);
     await model.setScope({ kind: 'feeds' });
     const mark = deferred<void>();
-    client.markFeeds.mockReturnValue(mark.promise);
+    client.markAllFeeds.mockReturnValue(mark.promise);
 
     const pending = model.markAll();
     expect(model.state().pending.has('a')).toBe(true);

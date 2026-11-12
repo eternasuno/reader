@@ -5,13 +5,17 @@ import {
   type Preview,
 } from '../lib/library';
 import { removeItem, restoreItem, upsertItem } from './library-articles';
-import { errorFeedId } from './library-commands';
 import type { LibraryStore } from './library-context';
-import { removeFeed, restoreFeed, upsertFeed } from './library-feeds';
-import { reloadFeed, selectFeed, startLoad } from './library-loading';
+import {
+  removeFeed,
+  restoreFeed,
+  selectFeedByUrl,
+  upsertFeed,
+} from './library-feeds';
+import { selectFeed, startLoad } from './library-loading';
 import { writeRead } from './library-read';
-import { loadCounts } from './library-reference';
-import { openDuplicate } from './library-selection';
+import { loadCounts, loadFeeds } from './library-reference';
+import { openSavedPageDuplicate } from './library-selection';
 
 export type PreviewResult =
   | { readonly kind: 'preview'; readonly preview: Preview }
@@ -20,34 +24,26 @@ export type PreviewResult =
 const reloadAfterRemoval = async (store: LibraryStore, id: string) => {
   const scope = store.state().scope;
   if (scope.kind === 'feeds' && scope.feedId === id) {
-    await startLoad(store, { kind: 'feeds' }, store.state().filter);
+    await startLoad(store, { kind: 'feeds' }, store.state().unreadOnly);
   }
 };
 
-const subscribeFailure = async (
+const isExistingFeed = (error: unknown): error is LibraryError =>
+  error instanceof LibraryError && error.tag === 'FeedAlreadyExists';
+
+const selectExistingFeed = async (
   store: LibraryStore,
-  error: unknown
-): Promise<boolean> => {
-  if (error instanceof LibraryError && error.tag === 'FeedExists') {
-    store.notify('success', '该订阅已存在');
-    if (error.id !== undefined) {
-      await reloadFeed(store, error.id);
-    }
-
-    return true;
+  url: string
+): Promise<void> => {
+  let found = selectFeedByUrl(store.state().feeds, url);
+  if (found === undefined) {
+    await loadFeeds(store);
+    found = selectFeedByUrl(store.state().feeds, url);
   }
 
-  const kept = errorFeedId(error, 'FeedImportFailed');
-  if (kept !== undefined) {
-    store.notify('error', libraryErrorMessage(error));
-    await reloadFeed(store, kept);
-
-    return true;
+  if (found !== undefined) {
+    await selectFeed(store, found.id);
   }
-
-  store.notify('error', libraryErrorMessage(error));
-
-  return false;
 };
 
 export const toggleRead = async (
@@ -112,10 +108,6 @@ export const saveArticle = async (
     return true;
   } catch (error) {
     store.end(article.id, token);
-    if (await openDuplicate(store, error)) {
-      return true;
-    }
-
     store.notify('error', libraryErrorMessage(error));
 
     return false;
@@ -137,11 +129,17 @@ export const addArticle = async (
 
     return true;
   } catch (error) {
-    if (await openDuplicate(store, error)) {
+    const outcome = await openSavedPageDuplicate(store, error, url);
+    if (outcome.kind === 'opened') {
       return true;
     }
 
-    store.notify('error', libraryErrorMessage(error));
+    store.notify(
+      'error',
+      libraryErrorMessage(
+        outcome.kind === 'unavailable' ? outcome.error : error
+      )
+    );
 
     return false;
   }
@@ -162,10 +160,11 @@ export const previewUrl = async (
 
 export const subscribeFeed = async (
   store: LibraryStore,
-  url: string
+  url: string,
+  title: string
 ): Promise<boolean> => {
   try {
-    const feed = await store.client.subscribe(url);
+    const feed = await store.client.subscribe(url, title);
     store.setState((current) => ({
       ...current,
       feeds: upsertFeed(current.feeds, feed),
@@ -176,7 +175,16 @@ export const subscribeFeed = async (
 
     return true;
   } catch (error) {
-    return subscribeFailure(store, error);
+    if (isExistingFeed(error) && error.url !== undefined) {
+      store.notify('success', '该订阅已存在');
+      await selectExistingFeed(store, error.url);
+
+      return true;
+    }
+
+    store.notify('error', libraryErrorMessage(error));
+
+    return false;
   }
 };
 

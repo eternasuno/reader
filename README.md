@@ -32,9 +32,9 @@ Both applications run as independent Turborepo tasks. Vite proxies `/api` to the
 
 Jina is the default extraction provider and supports anonymous access; an API key is optional. To use browser extraction, install and start a CDP-compatible browser service separately, such as Obscura with `obscura serve --port 9222`, then save its address in the standalone settings page. Switching providers preserves their saved configuration and extracted articles.
 
-The server uses `puppeteer-core` to connect to the configured browser, creates an isolated context for each extraction, and permits two concurrent browser extractions. Both providers return HTML to the same local Readability extraction and sanitization pipeline. The implementations live in `packages/webpage`. Browser extraction waits for network activity to settle; pages with long polling or delayed rendering can still time out or need the original site.
+The server uses `puppeteer-core` to connect to the configured browser and opens a page for each extraction. Both providers return HTML to the same local Readability extraction and sanitization pipeline. The implementations live in `packages/webpage`. Browser extraction waits for network activity to settle; pages with long polling or delayed rendering can still time out or need the original site.
 
-Production browser extraction requires a separately running CDP-compatible browser service such as Obscura, Lightpanda, or Chromium. The API image does not install or launch a browser. Each user saves their browser service address in the reader settings, using an HTTP discovery URL or a full WebSocket endpoint. The API connects to that address; in Docker, localhost refers to the API container, so use the browser service's reachable address. Keep browser services private and expose this self-hosted application only to trusted users who may configure endpoints reachable from the API. Browser engines must enforce outbound network restrictions: request interception is used where supported, but Obscura 0.2.2 requires its own default private-network blocking because its interception support prevents JavaScript subresources from loading. API-side DNS validation cannot pin a remote browser's DNS resolution.
+Production browser extraction requires a separately running CDP-compatible browser service such as Obscura, Lightpanda, or Chromium. The API image does not install or launch a browser. Each user saves their browser service address in the reader settings, using an HTTP discovery URL or a full WebSocket endpoint. The API connects to that address; in Docker, localhost refers to the API container, so use the browser service's reachable address. Keep browser services private and expose this self-hosted application only to trusted users who may configure endpoints reachable from the API. The API adds no address, size, time or concurrency limits to page or feed fetching.
 
 ## Commands
 
@@ -52,8 +52,9 @@ pnpm typecheck  # run TypeScript checks for both applications
 
 Maintainers should read [`AGENTS.md`](AGENTS.md) first, then read the relevant project skill for the task:
 
-- [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — architecture, browser/API boundaries, session subscriptions, or deployment topology.
-- [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, sessions, protected APIs, business ports and use cases, repository and paging contracts, Effect services, or Layer composition.
+- [`project-business`](.agents/skills/project-business/SKILL.md) — business rules: feeds, feed items, saved pages, settings, ids, paging, refresh and retention, with numbered rules that tests refer to.
+- [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — architecture, reader and settings UI behavior, browser/API boundaries, session subscriptions, or deployment topology.
+- [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, sessions, protected APIs, HTTP handlers and error mapping, the feed refresh queue, Effect services, or Layer composition.
 - [`project-database`](.agents/skills/project-database/SKILL.md) — SurrealDB/SurrealKV connections, queries, schema migrations, or database deployment configuration.
 - [`project-testing`](.agents/skills/project-testing/SKILL.md) — tests, test doubles, Effect Layers, or in-memory database schema setup.
 
@@ -129,14 +130,15 @@ Deploy the frontend and `/api` on the same public origin. In development and pre
 ### API
 
 - `/api/auth/*` — Better Auth protocol
-- `/api/library/saved-pages*` — authenticated read-later pages: list, refresh, add a link, save a feed item, mark read, remove
-- `/api/library/feeds*` — subscriptions and their feed items; item operations carry `feedId`
-- `/api/library/unread` — saved and per-feed unread counts
-- `/api/library/settings*` — reading and extraction settings
+- `/api/library/saved-pages*` — authenticated read-later pages: list, find by id or URL, add a link, save a feed item, mark read, mark all read, remove, unread count
+- `/api/library/feeds*` — subscriptions: list, preview, subscribe, unsubscribe, mark feeds read, mark all read, per-feed unread counts; `/api/library/feeds/items*` — feed items addressed by item id: list, find, extract, mark read
+- `/api/library/settings*` — read the settings (only whether the Jina key and the browser address are configured), set retention, set the fetcher (`jina` or `browser`), clear the Jina key
 
-List endpoints page with an opaque `cursor`. Refresh endpoints take the `through` token returned by a list response and return everything from the top of the list through that item.
+The endpoint contract lives in `packages/api`. List endpoints take `limit` (a positive integer), `unreadOnly` and an optional `cursor`, which is the id of the last row of the previous page; feed items and saved pages are listed newest first by id. There is no background reload: clients list again from the first page to see new rows.
 
-Business storage keeps `feed_item` (owned through its feed) and `saved_page` (owned by the user) separately. Existing records from the previous unified article model are not migrated; use a fresh database for this version. Run `pnpm db:migrate` before starting against a new persistent database.
+Subscribing creates the feed with the previewed title and queues its first refresh; items arrive with that refresh. The API process refreshes every feed through one queue at start and every 30 minutes, at most 3 feeds at a time, and drops a request for a feed that already has a refresh queued or running.
+
+Business storage keeps `feed`, `feed_item` and `saved_page` scoped by owner, with version-7 UUID ids and a unique URL per owner (feeds, saved pages) or per feed (items). Stored data is not migrated between schema changes; delete the database and run `pnpm db:migrate` against a fresh one.
 
 ## Production
 

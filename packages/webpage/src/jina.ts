@@ -1,74 +1,50 @@
 import { Effect, Redacted } from 'effect';
-import { FetchFailure, fetchPublicText } from './http';
+import {
+  FetchHttpClient,
+  HttpClient,
+  type HttpClientResponse,
+} from 'effect/http';
+import { FetchFailure } from './failure';
 
 const JINA_ENDPOINT = 'https://r.jina.ai/';
 
-const MAX_BYTES = 5 * 1024 * 1024;
-
-const parseTarget = (url: string): Effect.Effect<URL, FetchFailure> =>
-  Effect.try({
-    try: () => {
-      const address = new URL(url);
-
-      if (
-        !['http:', 'https:'].includes(address.protocol) ||
-        address.username ||
-        address.password
-      ) {
-        throw new Error('Invalid URL');
-      }
-
-      return address;
-    },
-    catch: (cause) =>
-      new FetchFailure({ message: 'Invalid article URL', cause }),
-  });
-
-const failureForStatus = (status: number): FetchFailure => {
-  if (status === 429) {
-    return new FetchFailure({ message: 'Jina rate limit exceeded' });
-  }
-
-  if (status === 401 || status === 403) {
-    return new FetchFailure({ message: 'Jina API key rejected' });
-  }
-
-  return new FetchFailure({
-    message: `Jina request failed with status ${status}`,
-  });
-};
-
 const requestPage = (
-  address: URL,
+  url: string,
   key: Redacted.Redacted<string> | undefined
-): Effect.Effect<string, FetchFailure> =>
-  Effect.flatMap(
-    fetchPublicText({
-      url: `${JINA_ENDPOINT}${address.href}`,
-      headers: {
-        Accept: 'text/html',
-        ...(key ? { Authorization: `Bearer ${Redacted.value(key)}` } : {}),
-        'X-Return-Format': 'html',
-        'X-Timeout': '30',
-      },
-      maxBytes: MAX_BYTES,
-      maxRedirects: 0,
-      redirect: 'error',
-    }),
-    (page) =>
-      page.ok
-        ? Effect.succeed(page.body)
-        : Effect.fail(failureForStatus(page.status))
+): Effect.Effect<
+  HttpClientResponse.HttpClientResponse,
+  FetchFailure,
+  HttpClient.HttpClient
+> =>
+  HttpClient.get(`${JINA_ENDPOINT}${url}`, {
+    headers: {
+      Accept: 'text/html',
+      ...(key ? { Authorization: `Bearer ${Redacted.value(key)}` } : {}),
+      'X-Return-Format': 'html',
+    },
+  }).pipe(
+    Effect.mapError(
+      (cause) => new FetchFailure({ message: 'Jina request failed', cause })
+    )
   );
 
 export const fetchJina = (
   url: string,
   key: Redacted.Redacted<string> | undefined
 ): Effect.Effect<string, FetchFailure> =>
-  Effect.flatMap(parseTarget(url), (address) => requestPage(address, key)).pipe(
-    Effect.timeoutOrElse({
-      duration: '40 seconds',
-      orElse: () =>
-        Effect.fail(new FetchFailure({ message: 'Jina request timed out' })),
-    })
-  );
+  Effect.gen(function* () {
+    const response = yield* requestPage(url, key);
+
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new FetchFailure({
+        message: `Jina request failed with status ${response.status}`,
+      });
+    }
+
+    return yield* response.text.pipe(
+      Effect.mapError(
+        (cause) =>
+          new FetchFailure({ message: 'Jina response read failed', cause })
+      )
+    );
+  }).pipe(Effect.provide(FetchHttpClient.layer));

@@ -2,21 +2,22 @@ import {
   ArticleTitle,
   FeedParser,
   FeedParserError,
+  type FeedTitle,
+  makeFeedTitle,
   NormalizedUrl,
-  type ParsedFeed,
-  ParsedFeedItem,
+  ParsedFeed,
+  ParsedFeedEntry,
 } from '@reader/business';
-import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import {
+  Array as Arr,
+  DateTime,
+  Effect,
+  Layer,
+  Match,
+  Option,
+  Schema,
+} from 'effect';
 import { type AnyFeed, parseFeed as parseSyndication } from 'feedsmith';
-
-const MAX_TITLE_LENGTH = 500;
-
-const MAX_FIELD_LENGTH = 100_000;
-
-const UNSUPPORTED_DECLARATION = /<!(?:DOCTYPE|ENTITY)\b/i;
-
-const SKIPPED_XML_MARKUP =
-  /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>/gi;
 
 type RawEntry = {
   readonly title: string | undefined;
@@ -53,24 +54,8 @@ const HTML_MEDIA_TYPES = new Set([
   'application/xhtml+xml',
 ]);
 
-const hasUnsupportedDeclaration = (content: string) => {
-  let index = 0;
-
-  for (const skipped of content.matchAll(SKIPPED_XML_MARKUP)) {
-    if (UNSUPPORTED_DECLARATION.test(content.slice(index, skipped.index))) {
-      return true;
-    }
-
-    index = skipped.index + skipped[0].length;
-  }
-
-  return UNSUPPORTED_DECLARATION.test(content.slice(index));
-};
-
 const stripByteOrderMark = (content: string) =>
   content.startsWith('\uFEFF') ? content.slice(1) : content;
-
-const isJsonContent = (content: string) => content.trimStart().startsWith('{');
 
 const mediaType = (type: string | undefined) =>
   type?.split(';')[0]?.trim().toLowerCase() ?? '';
@@ -171,62 +156,61 @@ const rawEntries = (parsed: AnyFeed): ReadonlyArray<RawEntry> =>
     Match.exhaustive
   );
 
-const toUrl = (
-  value: string | undefined,
-  sourceUrl: URL
-): string | undefined => {
-  if (value === undefined || value.trim() === '') {
-    return undefined;
-  }
-
+const resolveUrl = (value: string, baseUrl: URL): string | undefined => {
   try {
-    return new URL(value, sourceUrl).href;
+    return new URL(value, baseUrl).href;
   } catch {
     return undefined;
   }
 };
 
-const toPublishedAt = (value: string | undefined) => {
+const entryUrl = (
+  value: string | undefined,
+  baseUrl: URL
+): Option.Option<NormalizedUrl> => {
+  if (value === undefined || value.trim() === '') {
+    return Option.none();
+  }
+
+  const resolved = resolveUrl(value, baseUrl);
+
+  return resolved === undefined
+    ? Option.none()
+    : Schema.decodeOption(NormalizedUrl)(resolved);
+};
+
+const toPublishedAt = (
+  value: string | undefined
+): Option.Option<DateTime.Utc> => {
   const millis = Date.parse(value ?? '');
 
   return Number.isNaN(millis)
-    ? undefined
-    : DateTime.fromDateUnsafe(new Date(millis));
+    ? Option.none()
+    : Option.some(DateTime.fromDateUnsafe(new Date(millis)));
 };
 
 const cleanTitle = (title: string | undefined) =>
-  Schema.decodeSync(ArticleTitle)(
-    (title ?? '').trim().slice(0, MAX_TITLE_LENGTH)
-  );
+  Schema.decodeSync(ArticleTitle)((title ?? '').trim());
 
 const toEntry = (
   item: RawEntry,
-  sourceUrl: URL,
-  now: DateTime.Utc
-): ParsedFeedItem => {
-  const url = toUrl(item.url, sourceUrl);
-  const description = item.description?.slice(0, MAX_FIELD_LENGTH);
-  const content = item.content?.slice(0, MAX_FIELD_LENGTH);
-
-  return {
+  baseUrl: URL
+): Option.Option<ParsedFeedEntry> =>
+  Option.map(entryUrl(item.url, baseUrl), (url) => ({
     title: cleanTitle(item.title),
-    publishedAt: toPublishedAt(item.date) ?? now,
-    url:
-      url === undefined
-        ? Option.none()
-        : Schema.decodeOption(NormalizedUrl)(url),
-    description: Schema.decodeSync(ParsedFeedItem.fields.description)(
-      description
+    url,
+    publishedAt: toPublishedAt(item.date),
+    description: Schema.decodeSync(ParsedFeedEntry.fields.description)(
+      item.description
     ),
-    content: Schema.decodeSync(ParsedFeedItem.fields.content)(content),
-  };
-};
+    content: Schema.decodeSync(ParsedFeedEntry.fields.content)(item.content),
+  }));
 
-const feedTitle = (parsed: AnyFeed) => {
+const feedTitle = (parsed: AnyFeed, baseUrl: URL): FeedTitle => {
   const title =
     parsed.format === 'atom' ? parsed.feed.title?.value : parsed.feed.title;
 
-  return cleanTitle(title);
+  return makeFeedTitle(title ?? '', baseUrl);
 };
 
 const feedDescription = (parsed: AnyFeed): Option.Option<string> => {
@@ -235,43 +219,32 @@ const feedDescription = (parsed: AnyFeed): Option.Option<string> => {
       ? parsed.feed.subtitle?.value
       : parsed.feed.description;
 
-  return Option.fromUndefinedOr(description?.slice(0, MAX_TITLE_LENGTH));
+  return Schema.decodeSync(ParsedFeed.fields.description)(description);
 };
 
-const feedEntries = (parsed: AnyFeed, sourceUrl: URL, now: DateTime.Utc) =>
-  rawEntries(parsed).map((item) => toEntry(item, sourceUrl, now));
+const feedEntries = (
+  parsed: AnyFeed,
+  baseUrl: URL
+): ReadonlyArray<ParsedFeedEntry> =>
+  Arr.getSomes(rawEntries(parsed).map((item) => toEntry(item, baseUrl)));
 
-export const parseFeed = (
-  content: string,
-  sourceUrl: URL,
-  now: DateTime.Utc
-): ParsedFeed => {
-  const document = stripByteOrderMark(content);
-
-  if (!isJsonContent(document) && hasUnsupportedDeclaration(document)) {
-    throw new Error('Unsupported XML declarations');
-  }
-
-  const parsed = parseSyndication(document);
-  const description = feedDescription(parsed);
+export const parseFeed = (content: string, baseUrl: URL): ParsedFeed => {
+  const parsed = parseSyndication(stripByteOrderMark(content));
 
   return {
-    title: feedTitle(parsed),
-    url: Schema.decodeSync(NormalizedUrl)(sourceUrl.href),
-    description,
-    items: feedEntries(parsed, sourceUrl, now),
+    title: feedTitle(parsed, baseUrl),
+    description: feedDescription(parsed),
+    entries: feedEntries(parsed, baseUrl),
   };
 };
 
-const parse = (content: string, sourceUrl: URL) =>
-  Effect.flatMap(DateTime.now, (now) =>
-    Effect.try({
-      try: () => parseFeed(content, sourceUrl, now),
-      catch: () =>
-        new FeedParserError({
-          message: 'Failed to parse the subscription feed',
-        }),
-    })
-  );
+const parse = (content: string, baseUrl: URL) =>
+  Effect.try({
+    try: () => parseFeed(content, baseUrl),
+    catch: () =>
+      new FeedParserError({
+        message: 'Failed to parse the subscription feed',
+      }),
+  });
 
 export const FeedParserLive = Layer.succeed(FeedParser, { parse });

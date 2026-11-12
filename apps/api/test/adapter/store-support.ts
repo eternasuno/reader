@@ -1,88 +1,97 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
-  Feed,
-  FeedItem,
   type FeedItemRepository,
   type FeedRepository,
+  NormalizedUrl,
   OwnerId,
-  SavedPage,
   type SavedPageRepository,
+  type SettingRepository,
 } from '@reader/business';
+import type {
+  FeedStoreLayer,
+  SavedPageStoreLayer,
+} from '@reader/business/testing';
 import { Effect, Layer, Schema } from 'effect';
 import type { Surreal } from 'surrealdb';
 import {
-  ReaderStoreLive,
+  FeedItemRepositoryLive,
+  FeedRepositoryLive,
+  ReaderStoreConcurrencyLive,
   readerStoreSchema,
+  SavedPageRepositoryLive,
 } from '../../src/adapter/reader-store';
+import { SettingRepositoryLive } from '../../src/adapter/setting-repository';
 import { createSurreal, Database } from '../../src/infrastructure/db';
 
-export type Store =
-  | FeedItemRepository
-  | SavedPageRepository
-  | FeedRepository
-  | Database;
+const databaseLayer = (): Layer.Layer<Database> =>
+  Layer.effect(
+    Database,
+    Effect.acquireRelease(
+      Effect.promise(async () => {
+        const db = await createSurreal({
+          endpoint: 'mem://',
+          namespace: `reader-store-${randomUUID()}`,
+          database: 'test',
+        });
+        await db.query(readerStoreSchema);
 
-export const hash = (...values: Array<string>) =>
-  createHash('sha256').update(JSON.stringify(values)).digest('hex');
+        return db;
+      }),
+      (db) => Effect.promise(() => db.close())
+    )
+  );
 
-export const owner = (value: string) => Schema.decodeSync(OwnerId)(value);
+const readerDatabase = databaseLayer();
 
-export const dateTime = (value: string) =>
-  Schema.decodeSync(Schema.DateTimeUtcFromString)(value);
+const readerDependencies = Layer.merge(
+  readerDatabase,
+  ReaderStoreConcurrencyLive
+);
 
-export const feed = (
-  ownerId: string,
-  url: string,
-  updatedAt: string,
-  id?: string
-) =>
-  Schema.decodeSync(Feed)({
-    id: id ?? hash(ownerId, url),
-    ownerId,
-    url,
-    title: url,
-    updatedAt: new Date(updatedAt),
-  });
+const feedRepositoryLayer = FeedRepositoryLive.pipe(
+  Layer.provide(readerDependencies)
+);
 
-type ItemOptions = {
-  readonly id?: string;
-  readonly publishedAt?: string;
-  readonly read?: boolean;
-  readonly title?: string;
-};
+const feedItemRepositoryLayer = FeedItemRepositoryLive.pipe(
+  Layer.provide(readerDependencies)
+);
 
-export const feedItem = (
-  feedId: string,
-  seed: string,
-  options: ItemOptions = {}
-) =>
-  Schema.decodeSync(FeedItem)({
-    id: options.id ?? hash(feedId, seed),
-    feedId,
-    title: options.title ?? seed,
-    publishedAt: new Date(options.publishedAt ?? '2026-01-01T00:00:00.000Z'),
-    read: options.read ?? false,
-  });
+const savedPageRepositoryLayer = SavedPageRepositoryLive.pipe(
+  Layer.provide(readerDependencies)
+);
 
-export const savedPage = (
-  ownerId: string,
-  seed: string,
-  options: ItemOptions = {}
-) =>
-  Schema.decodeSync(SavedPage)({
-    id: options.id ?? hash(ownerId, seed),
-    ownerId,
-    title: options.title ?? seed,
-    content: `<p>${seed}</p>`,
-    publishedAt: new Date(options.publishedAt ?? '2026-01-01T00:00:00.000Z'),
-    read: options.read ?? false,
-  });
+export const feedStoreLayer: FeedStoreLayer = Layer.merge(
+  feedRepositoryLayer,
+  feedItemRepositoryLayer
+);
 
-export const sorted = (values: ReadonlyArray<string>) => [...values].sort();
+export const savedPageStoreLayer: SavedPageStoreLayer =
+  savedPageRepositoryLayer;
 
-export const ids = <A extends { readonly id: string }, E, R>(
-  effect: Effect.Effect<ReadonlyArray<A>, E, R>
-) => effect.pipe(Effect.map((items) => items.map((item) => item.id)));
+const readerStoreLayer: Layer.Layer<
+  FeedRepository | FeedItemRepository | SavedPageRepository
+> = Layer.mergeAll(
+  feedRepositoryLayer,
+  feedItemRepositoryLayer,
+  savedPageRepositoryLayer
+);
+
+export const readerStoreDatabaseLayer: Layer.Layer<
+  FeedRepository | FeedItemRepository | SavedPageRepository | Database
+> = Layer.merge(readerStoreLayer, readerDatabase);
+
+const settingDatabase = databaseLayer();
+
+export const settingStoreLayer: Layer.Layer<SettingRepository> =
+  SettingRepositoryLive.pipe(Layer.provide(settingDatabase));
+
+export const settingStoreDatabaseLayer: Layer.Layer<
+  SettingRepository | Database
+> = Layer.merge(settingStoreLayer, settingDatabase);
+
+export const owner = Schema.decodeSync(OwnerId);
+
+export const url = Schema.decodeSync(NormalizedUrl);
 
 export const query = <A>(
   db: Surreal,
@@ -90,31 +99,7 @@ export const query = <A>(
   bindings: Record<string, unknown> = {}
 ) =>
   Effect.promise(async () => {
-    const [rows] = await db.query<[Array<A>]>(sql, bindings);
+    const [rows] = await db.query<[A]>(sql, bindings);
 
     return rows;
   });
-
-export const runCheck = <A, E>(
-  check: (db: Surreal) => Effect.Effect<A, E, Store>
-) =>
-  Effect.acquireUseRelease(
-    Effect.promise(() =>
-      createSurreal({
-        endpoint: 'mem://',
-        namespace: `reader-store-${randomUUID()}`,
-        database: 'test',
-      })
-    ),
-    (db) =>
-      Effect.promise(() => db.query(readerStoreSchema)).pipe(
-        Effect.andThen(check(db)),
-        Effect.provide(
-          Layer.merge(
-            ReaderStoreLive.pipe(Layer.provide(Layer.succeed(Database, db))),
-            Layer.succeed(Database, db)
-          )
-        )
-      ),
-    (db) => Effect.promise(() => db.close())
-  );

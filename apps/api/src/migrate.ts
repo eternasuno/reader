@@ -4,7 +4,7 @@ import { readerStoreSchema } from './adapter/reader-store';
 import { authOptions } from './infrastructure/auth.ts';
 import { Database, DatabaseLive } from './infrastructure/db';
 
-export class SchemaUnsupported extends Data.TaggedError('SchemaUnsupported')<{
+class SchemaUnsupported extends Data.TaggedError('SchemaUnsupported')<{
   message: string;
 }> {}
 

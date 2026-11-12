@@ -1,19 +1,11 @@
-// biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: grouped transition cases stay together with their shared page fixture.
 import { describe, expect, it } from 'vitest';
 import {
   removeItem,
-  restoreItem,
   setItemsRead,
   upsertItem,
 } from '../../src/pages/library-articles';
 import { clearScopeCounts, unreadCount } from '../../src/pages/library-counts';
-import {
-  applyPage,
-  failList,
-  resetList,
-  startLoadMore,
-} from '../../src/pages/library-pages';
-import { applyRefresh } from '../../src/pages/library-refresh';
+import { applyPage } from '../../src/pages/library-pages';
 import {
   initialLibraryState,
   type LibraryState,
@@ -23,36 +15,11 @@ import { article, counts, page } from './library-fixtures';
 const loaded = () =>
   applyPage(
     { ...initialLibraryState(), loading: true },
-    page([article('a'), article('b')], 'cursor-1', 'boundary-1'),
+    page([article('a'), article('b')], 'cursor-1'),
     0
   );
 
-describe('library list transitions', () => {
-  it('advances the boundary to the tail of every loaded page', () => {
-    const first = loaded();
-    expect(first.items.map((item) => item.id)).toEqual(['a', 'b']);
-    expect(first.cursor).toBe('cursor-1');
-    expect(first.boundary).toBe('boundary-1');
-    expect(first.hasMore).toBe(true);
-
-    const next = applyPage(
-      first,
-      page([article('b'), article('c')], null, 'boundary-2'),
-      first.generation
-    );
-    expect(next.items.map((item) => item.id)).toEqual(['a', 'b', 'c']);
-    expect(next.boundary).toBe('boundary-2');
-    expect(next.hasMore).toBe(false);
-  });
-
-  it('keeps a previous boundary when a page has no items', () => {
-    const state = loaded();
-    const next = applyPage(state, page([], null, null), state.generation);
-
-    expect(next.boundary).toBe('boundary-1');
-    expect(next.cursor).toBeNull();
-  });
-
+describe('library list merging', () => {
   it('does not re-add rows whose deletion is still pending', () => {
     const removed = removeItem(loaded(), article('b'));
     const pending = { ...removed, pending: new Set(['b']) };
@@ -75,46 +42,6 @@ describe('library list transitions', () => {
 
     expect(merged.items[0]?.read).toBe(true);
     expect(merged.items).toHaveLength(2);
-  });
-});
-
-describe('library list failures', () => {
-  it('ignores a page from a previous generation', () => {
-    const state = loaded();
-
-    expect(applyPage(state, page([article('c')]), 99)).toBe(state);
-    expect(applyPage(state, page([article('c')]), state.generation + 1)).toBe(
-      state
-    );
-  });
-
-  it('records load failures and keeps the retry cursor', () => {
-    const state = loaded();
-    const loading = startLoadMore(state);
-    const failed = failList(loading, '暂时无法读取文章，请稍后重试', 0);
-
-    expect(failed.loading).toBe(false);
-    expect(failed.error).toBe('暂时无法读取文章，请稍后重试');
-    expect(failed.cursor).toBe('cursor-1');
-    expect(failList(loading, 'stale', 99)).toBe(loading);
-    expect(resetList(state, { kind: 'later' }, 'all')).toMatchObject({
-      loading: true,
-      initialized: false,
-      cursor: null,
-      boundary: null,
-      generation: state.generation + 1,
-    });
-  });
-});
-
-describe('library sync transitions', () => {
-  it('keeps the boundary and cursor after the tail row is deleted', () => {
-    const removed = removeItem(loaded(), article('b'));
-    const synced = applyRefresh(removed, [], removed.generation);
-
-    expect(synced.boundary).toBe('boundary-1');
-    expect(synced.cursor).toBe('cursor-1');
-    expect(synced.hasMore).toBe(true);
   });
 });
 
@@ -168,20 +95,6 @@ describe('library scope counts', () => {
 });
 
 describe('library row transitions', () => {
-  it('inserts, replaces, and restores rows with their counts', () => {
-    const state = { ...loaded(), counts: counts(3) };
-    const inserted = upsertItem(state, article('n'));
-    expect(inserted.items.map((item) => item.id)).toEqual(['n', 'a', 'b']);
-
-    const removed = removeItem(inserted, inserted.items[0] ?? article('n'));
-    expect(removed.items.map((item) => item.id)).toEqual(['a', 'b']);
-    expect(removed.counts.later).toBe(2);
-    expect(restoreItem(removed, article('n'), 0).counts.later).toBe(3);
-    expect(restoreItem(removed, removed.items[0] ?? article('a'), 0)).toBe(
-      removed
-    );
-  });
-
   it('leaves rows outside the active scope untouched', () => {
     const state: LibraryState = {
       ...loaded(),

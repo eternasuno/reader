@@ -1,4 +1,4 @@
-import type { Article, Counts, Feed, Filter, Scope } from '../lib/library';
+import type { Article, Counts, Feed, Scope } from '../lib/library';
 import { emptyCounts } from './library-counts';
 
 export type LibraryToast = {
@@ -8,46 +8,44 @@ export type LibraryToast = {
 
 export type LibraryState = {
   readonly scope: Scope;
-  readonly filter: Filter;
+  readonly unreadOnly: boolean;
   readonly items: ReadonlyArray<Article>;
   readonly feeds: ReadonlyArray<Feed>;
   readonly counts: Counts;
   readonly loading: boolean;
-  readonly refreshing: boolean;
   readonly initialized: boolean;
-  readonly hasMore: boolean;
   readonly cursor: string | null;
-  readonly boundary: string | null;
   readonly generation: number;
-  readonly cursorInvalid: boolean;
   readonly error: string | undefined;
   readonly toast: LibraryToast | undefined;
   readonly selected: Article | undefined;
   readonly pending: ReadonlySet<string>;
+  /** True while a scope-wide mark-all write is in flight. */
+  readonly pendingScopeWrite: boolean;
 };
 
 export const initialLibraryState = (
   scope: Scope = { kind: 'later' },
-  filter: Filter = 'all'
+  unreadOnly = false
 ): LibraryState => ({
   scope,
-  filter,
+  unreadOnly,
   items: [],
   feeds: [],
   counts: emptyCounts,
   loading: false,
-  refreshing: false,
   initialized: false,
-  hasMore: false,
   cursor: null,
-  boundary: null,
   generation: 0,
-  cursorInvalid: false,
   error: undefined,
   toast: undefined,
   selected: undefined,
   pending: new Set(),
+  pendingScopeWrite: false,
 });
+
+export const isBusy = (state: LibraryState): boolean =>
+  state.loading || state.pending.size > 0 || state.pendingScopeWrite;
 
 export const sameScope = (left: Scope, right: Scope): boolean => {
   if (left.kind === 'later') {

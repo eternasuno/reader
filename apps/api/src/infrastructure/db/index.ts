@@ -3,7 +3,7 @@ import { Config, Context, Data, Effect, Layer } from 'effect';
 import { Surreal } from 'surrealdb';
 import { codecOptions } from './codec.ts';
 
-export type DbConfig = {
+type DbConfig = {
   endpoint: string;
   namespace: string;
   database: string;
@@ -13,9 +13,7 @@ export class Database extends Context.Service<Database, Surreal>()(
   'Database'
 ) {}
 
-export class DatabaseConnectError extends Data.TaggedError(
-  'DatabaseConnectError'
-)<{
+class DatabaseConnectError extends Data.TaggedError('DatabaseConnectError')<{
   readonly endpoint: string;
   readonly cause: unknown;
 }> {}
