@@ -15,6 +15,7 @@ import {
   extractFeedItemFailure,
   feedItemRepositoryFailure,
 } from './library-failures';
+import { decodeItemScope } from './library-input';
 
 const unread = () =>
   withSession((owner) =>
@@ -48,11 +49,15 @@ const markAll = () =>
 
 const items = ({ query }: HandlerRequest<'feedItems'>) =>
   withSession((owner) =>
-    listItems(owner, {
-      unreadOnly: query.unreadOnly,
-      limit: query.limit,
-      ...(query.feedId === undefined ? {} : { feedId: query.feedId }),
-      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+    Effect.gen(function* () {
+      const scope = yield* decodeItemScope(query);
+
+      return yield* listItems(owner, {
+        scope,
+        unreadOnly: query.unreadOnly,
+        limit: query.limit,
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      });
     })
   ).pipe(Effect.catchTags(feedItemRepositoryFailure));
 

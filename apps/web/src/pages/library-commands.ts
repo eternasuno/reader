@@ -19,6 +19,12 @@ export const markScope = async (client: LibraryClient, scope: Scope) => {
     return;
   }
 
+  if (scope.kind === 'folder') {
+    await client.markFolders([scope.folderId]);
+
+    return;
+  }
+
   if (scope.feedId === undefined) {
     await client.markAllFeeds();
 

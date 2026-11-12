@@ -6,6 +6,7 @@ import type {
   ArticleRef,
   Counts,
   Feed,
+  Folder,
   Preview,
   Scope,
 } from '../../src/lib/library';
@@ -40,13 +41,21 @@ export const page = (
 
 export const feed = (
   id: string,
-  url = `https://example.com/${id}.xml`
+  url = `https://example.com/${id}.xml`,
+  folderId?: string
 ): Feed => ({
   id,
   ownerId: 'owner',
   url,
   title: `Feed ${id}`,
   updatedAt: Option.some('2026-01-01T00:00:00.000Z'),
+  folderId: Option.fromUndefinedOr(folderId),
+});
+
+export const folder = (id: string, name = `Folder ${id}`): Folder => ({
+  id,
+  ownerId: 'owner',
+  name,
 });
 
 export const counts = (
@@ -82,6 +91,19 @@ export const createStubClient = () => ({
     page([])
   ),
   feeds: vi.fn(async () => [] as ReadonlyArray<Feed>),
+  folders: vi.fn(async () => [] as ReadonlyArray<Folder>),
+  createFolder: vi.fn(async (_name: string) => folder('folder-1')),
+  renameFolder: vi.fn(
+    async (_id: string, _name: string): Promise<void> => undefined
+  ),
+  removeFolder: vi.fn(async (_id: string): Promise<void> => undefined),
+  moveFeed: vi.fn(
+    async (_feedId: string, _folderId: string | undefined): Promise<void> =>
+      undefined
+  ),
+  markFolders: vi.fn(
+    async (_folderIds: ReadonlyArray<string>): Promise<void> => undefined
+  ),
   unreadCounts: vi.fn(async (): Promise<Counts> => counts()),
   article: vi.fn(async (_ref: ArticleRef) => null as Article | null),
   findSavedPageByUrl: vi.fn(async (_url: string) => null as Article | null),
@@ -101,6 +123,8 @@ export const createStubClient = () => ({
   add: vi.fn(async (_url: string) => article('added')),
   extract: vi.fn(async (_article: Article) => article('extracted')),
   preview: vi.fn(async (_url: string) => preview),
-  subscribe: vi.fn(async (_url: string, _title: string) => feed('f1')),
+  subscribe: vi.fn(async (_url: string, _title: string, _folderId?: string) =>
+    feed('f1')
+  ),
   unsubscribe: vi.fn(async (_id: string): Promise<void> => undefined),
 });

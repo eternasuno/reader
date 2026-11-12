@@ -1,5 +1,5 @@
 import { Option } from 'effect';
-import type { Article, Scope } from '../lib/library';
+import type { Article } from '../lib/library';
 import { withReadCount } from './library-counts';
 import type { LibraryState } from './library-state';
 
@@ -39,11 +39,20 @@ export const setItemsRead = (
   return changed ? { ...state, items, counts, selected } : state;
 };
 
-const inScope = (scope: Scope, article: Article): boolean => {
+const inScope = (state: LibraryState, article: Article): boolean => {
+  const { scope } = state;
   const feedId = Option.getOrUndefined(article.feedId);
 
   if (scope.kind === 'later') {
     return feedId === undefined;
+  }
+
+  if (scope.kind === 'folder') {
+    return state.feeds.some(
+      (feed) =>
+        feed.id === feedId &&
+        Option.getOrUndefined(feed.folderId) === scope.folderId
+    );
   }
 
   return scope.feedId === undefined || scope.feedId === feedId;
@@ -55,7 +64,7 @@ export const upsertItem = (
 ): LibraryState => {
   const index = state.items.findIndex((item) => item.id === article.id);
   const previous = index < 0 ? undefined : state.items[index];
-  if (previous === undefined && !inScope(state.scope, article)) {
+  if (previous === undefined && !inScope(state, article)) {
     return state.selected?.id === article.id
       ? { ...state, selected: article }
       : state;

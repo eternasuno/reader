@@ -242,7 +242,7 @@ it.effect('maps a feed item repository failure to a server error', () =>
       const harness = yield* makeHarness();
       const session = yield* sessionFor(harness, 'alice@example.com');
       Object.assign(harness.repositories.feedItem, {
-        list: () =>
+        listAll: () =>
           Effect.fail(new FeedItemRepositoryError({ message: 'down' })),
       });
 

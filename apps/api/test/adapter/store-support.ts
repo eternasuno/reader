@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   type FeedItemRepository,
   type FeedRepository,
+  type FolderRepository,
   NormalizedUrl,
   OwnerId,
   type SavedPageRepository,
@@ -16,6 +17,7 @@ import type { Surreal } from 'surrealdb';
 import {
   FeedItemRepositoryLive,
   FeedRepositoryLive,
+  FolderRepositoryLive,
   ReaderStoreConcurrencyLive,
   readerStoreSchema,
   SavedPageRepositoryLive,
@@ -60,24 +62,34 @@ const savedPageRepositoryLayer = SavedPageRepositoryLive.pipe(
   Layer.provide(readerDependencies)
 );
 
-export const feedStoreLayer: FeedStoreLayer = Layer.merge(
+const folderRepositoryLayer = FolderRepositoryLive.pipe(
+  Layer.provide(readerDependencies)
+);
+
+export const feedStoreLayer: FeedStoreLayer = Layer.mergeAll(
   feedRepositoryLayer,
-  feedItemRepositoryLayer
+  feedItemRepositoryLayer,
+  folderRepositoryLayer
 );
 
 export const savedPageStoreLayer: SavedPageStoreLayer =
   savedPageRepositoryLayer;
 
 const readerStoreLayer: Layer.Layer<
-  FeedRepository | FeedItemRepository | SavedPageRepository
+  FeedRepository | FeedItemRepository | FolderRepository | SavedPageRepository
 > = Layer.mergeAll(
   feedRepositoryLayer,
   feedItemRepositoryLayer,
+  folderRepositoryLayer,
   savedPageRepositoryLayer
 );
 
 export const readerStoreDatabaseLayer: Layer.Layer<
-  FeedRepository | FeedItemRepository | SavedPageRepository | Database
+  | FeedRepository
+  | FeedItemRepository
+  | FolderRepository
+  | SavedPageRepository
+  | Database
 > = Layer.merge(readerStoreLayer, readerDatabase);
 
 const settingDatabase = databaseLayer();

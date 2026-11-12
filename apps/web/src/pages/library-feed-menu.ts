@@ -1,4 +1,5 @@
-import type { Feed, Scope } from '../lib/library';
+import type { Feed, Folder, Scope } from '../lib/library';
+import { feedsInFolder } from './library-folders';
 import type { LibraryModel } from './library-model';
 import { sameScope } from './library-state';
 
@@ -7,6 +8,18 @@ export const confirmUnsubscribe = (model: LibraryModel, feed: Feed) => {
     return;
 
   void model.unsubscribe(feed.id);
+};
+
+export const confirmRemoveFolder = (model: LibraryModel, folder: Folder) => {
+  const count = feedsInFolder(model.state().feeds, folder.id).length;
+  const message =
+    count > 0
+      ? `删除目录「${folder.name}」并取消订阅其中的 ${count} 个订阅源？这些源的文章会被删除，已保存的稍后阅读不会删除。`
+      : `删除目录「${folder.name}」？`;
+
+  if (!window.confirm(message)) return;
+
+  void model.removeFolder(folder.id);
 };
 
 export const createFeedMenu = (

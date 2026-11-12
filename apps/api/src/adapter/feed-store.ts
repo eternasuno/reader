@@ -4,6 +4,7 @@ import {
   type FeedPatch,
   FeedRepository,
   type FeedTitle,
+  type FolderId,
   type OwnerId,
 } from '@reader/business';
 import { DateTime, Effect, Option, Schema, type Semaphore } from 'effect';
@@ -19,7 +20,7 @@ import {
   write,
 } from './reader-store-sql';
 
-const COLUMNS = 'id, owner AS ownerId, url, title, updatedAt';
+const COLUMNS = 'id, owner AS ownerId, url, title, folderId, updatedAt';
 
 const encodeFeed = Schema.encodeSync(Feed);
 
@@ -46,7 +47,8 @@ const listFeeds = (db: Surreal, owner: OwnerId) =>
 const insertStatement = (row: string, index: number) => `
 LET $u${index} = SELECT VALUE feedId FROM feed WHERE owner = $owner AND url = ${row}.url;
 LET $e${index} = SELECT VALUE id FROM feed WHERE id = type::record("feed", ${row}.id);
-LET $r${index} = IF array::len($u${index}) = 0 AND array::len($e${index}) = 0 { CREATE type::record("feed", ${row}.id) SET owner = $owner, feedId = ${row}.id, url = ${row}.url, title = ${row}.title, updatedAt = ${row}.updatedAt } ELSE { [] };
+LET $g${index} = IF ${row}.folderId = NONE { [true] } ELSE { SELECT VALUE id FROM folder WHERE owner = $owner AND id = type::record("folder", ${row}.folderId) };
+LET $r${index} = IF array::len($u${index}) = 0 AND array::len($e${index}) = 0 AND array::len($g${index}) > 0 { CREATE type::record("feed", ${row}.id) SET owner = $owner, feedId = ${row}.id, url = ${row}.url, title = ${row}.title, folderId = ${row}.folderId, updatedAt = ${row}.updatedAt } ELSE { [] };
 LET $created = array::append($created, array::len($r${index}) > 0);`;
 
 const createFeeds = (
@@ -83,32 +85,90 @@ type Assignments = {
 
 type FeedBindings = {
   title?: FeedTitle;
+  folderId?: FolderId;
   updatedAt?: Date;
 };
 
+const optionClause = (column: string, value: Option.Option<unknown>) =>
+  Option.isNone(value) ? `${column} = NONE` : `${column} = $${column}`;
+
+const titleBinding = (title: FeedTitle | undefined): FeedBindings =>
+  title === undefined ? {} : { title };
+
+const folderBinding = (
+  folderId: Option.Option<FolderId> | undefined
+): FeedBindings =>
+  folderId === undefined || Option.isNone(folderId)
+    ? {}
+    : { folderId: folderId.value };
+
+const updatedAtBinding = (
+  updatedAt: Option.Option<DateTime.Utc> | undefined
+): FeedBindings =>
+  updatedAt === undefined || Option.isNone(updatedAt)
+    ? {}
+    : { updatedAt: DateTime.toDateUtc(updatedAt.value) };
+
 const assignments = (patch: FeedPatch): Assignments | undefined => {
   const clauses: Array<string> = [];
-  const bindings: FeedBindings = {};
 
   if (patch.title !== undefined) {
     clauses.push('title = $title');
-    bindings.title = patch.title;
+  }
+
+  if (patch.folderId !== undefined) {
+    clauses.push(optionClause('folderId', patch.folderId));
   }
 
   if (patch.updatedAt !== undefined) {
-    const { updatedAt } = patch;
-    clauses.push(
-      Option.isNone(updatedAt) ? 'updatedAt = NONE' : 'updatedAt = $updatedAt'
-    );
-
-    if (Option.isSome(updatedAt)) {
-      bindings.updatedAt = DateTime.toDateUtc(updatedAt.value);
-    }
+    clauses.push(optionClause('updatedAt', patch.updatedAt));
   }
 
-  return clauses.length === 0
-    ? undefined
-    : { clause: clauses.join(', '), bindings };
+  if (clauses.length === 0) {
+    return undefined;
+  }
+
+  return {
+    clause: clauses.join(', '),
+    bindings: {
+      ...titleBinding(patch.title),
+      ...folderBinding(patch.folderId),
+      ...updatedAtBinding(patch.updatedAt),
+    },
+  };
+};
+
+const MATCH =
+  'SELECT VALUE feedId FROM feed WHERE owner = $owner AND id IN $records';
+
+const guarded = (guard: boolean, statement: string) =>
+  guard ? `IF array::len($folder) = 0 { [] } ELSE { ${statement} }` : statement;
+
+const updateStatements = (
+  set: Assignments | undefined,
+  checksFolder: boolean
+) => {
+  const statements = ['BEGIN TRANSACTION;'];
+
+  if (checksFolder) {
+    statements.push(
+      'LET $folder = SELECT VALUE folderId FROM folder WHERE owner = $owner AND id = $folderRecord;'
+    );
+  }
+
+  statements.push(`LET $matched = ${guarded(checksFolder, MATCH)};`);
+
+  if (set !== undefined) {
+    const update = `UPDATE feed SET ${set.clause} WHERE owner = $owner AND id IN $records`;
+
+    statements.push(
+      checksFolder ? `LET $updated = ${guarded(true, update)};` : `${update};`
+    );
+  }
+
+  statements.push('COMMIT TRANSACTION;', 'RETURN $matched;');
+
+  return statements;
 };
 
 const updateFeeds = (
@@ -122,23 +182,21 @@ const updateFeeds = (
   }
 
   const set = assignments(patch);
-  const statements = [
-    'BEGIN TRANSACTION;',
-    'LET $matched = SELECT VALUE feedId FROM feed WHERE owner = $owner AND id IN $records;',
-  ];
-
-  if (set !== undefined) {
-    statements.push(
-      `UPDATE feed SET ${set.clause} WHERE owner = $owner AND id IN $records;`
-    );
-  }
-
-  statements.push('COMMIT TRANSACTION;', 'RETURN $matched;');
+  const folder = patch.folderId ?? Option.none<FolderId>();
+  const checksFolder = Option.isSome(folder);
+  const bindings: Bindings = {
+    owner,
+    records: recordsOf('feed', ids),
+    ...set?.bindings,
+    ...(Option.isSome(folder)
+      ? { folderRecord: new RecordId('folder', folder.value) }
+      : {}),
+  };
 
   return run(
     db,
-    statements.join(' '),
-    { owner, records: recordsOf('feed', ids), ...set?.bindings },
+    updateStatements(set, checksFolder).join(' '),
+    bindings,
     feedRepositoryError
   ).pipe(
     Effect.flatMap((results) =>

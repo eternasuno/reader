@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest';
 import { Option, Result, Schema } from 'effect';
 import { Feed, FeedTitle, makeFeedTitle } from '../../../src/entity/feed/feed';
 import { FeedItem } from '../../../src/entity/feed/feed-item';
-import { makeFeed, makeFeedItem } from '../../support';
+import { makeFeed, makeFeedItem, makeFolder } from '../../support';
 
 describe('FeedTitle', () => {
   it('trims the title and rejects a blank one', () => {
@@ -33,11 +33,24 @@ describe('Feed', () => {
     const encoded = Schema.encodeSync(Feed)(feed);
 
     expect(encoded.updatedAt).toBeUndefined();
+    expect(encoded.folderId).toBeUndefined();
 
     const decoded = Schema.decodeSync(Feed)(encoded);
 
     expect(decoded.id).toBe(feed.id);
     expect(Option.isNone(decoded.updatedAt)).toBe(true);
+    expect(Option.isNone(decoded.folderId)).toBe(true);
+  });
+
+  it('decodes a stored folder id', () => {
+    const folderId = makeFolder().id;
+    const encoded = {
+      ...Schema.encodeSync(Feed)(makeFeed()),
+      folderId,
+    };
+    const feed = Schema.decodeSync(Feed)(encoded);
+
+    expect(Option.getOrThrow(feed.folderId)).toBe(folderId);
   });
 
   it('decodes a stored updated time', () => {

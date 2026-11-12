@@ -1,10 +1,11 @@
 import { Option } from 'effect';
 import { createEffect, createSignal, For, Show } from 'solid-js';
-import type { Preview } from '../../lib/library';
+import type { Folder, Preview } from '../../lib/library';
 import type { PreviewResult } from '../../pages/library-mutations';
 import { Button } from '../atoms/button';
 import { SubmitButton } from '../atoms/submit-button';
 import { Dialog } from '../molecules/dialog';
+import { FolderSelect } from '../molecules/folder-select';
 import { FormInput } from '../molecules/form-input';
 
 type AddBusy = 'add' | 'preview' | 'subscribe';
@@ -12,27 +13,24 @@ type AddBusy = 'add' | 'preview' | 'subscribe';
 type AddFlowProps = {
   readonly open: boolean;
   readonly mode: 'article' | 'feed';
+  readonly folders: ReadonlyArray<Folder>;
   readonly onClose: () => void;
   readonly onAdd: (url: string) => Promise<boolean>;
   readonly onPreview: (url: string) => Promise<PreviewResult>;
-  readonly onSubscribe: (url: string, title: string) => Promise<boolean>;
+  readonly onSubscribe: (
+    url: string,
+    title: string,
+    folderId?: string
+  ) => Promise<boolean>;
 };
 
 const submittedUrl = (form: HTMLFormElement): string =>
   String(new FormData(form).get('url') ?? '').trim();
 
-const requestPreview = async (
+const useAddPreview = (
   props: AddFlowProps,
-  form: HTMLFormElement | undefined
-): Promise<Preview | undefined> => {
-  if (form === undefined) return undefined;
-
-  const result = await props.onPreview(submittedUrl(form));
-
-  return result.kind === 'preview' ? result.preview : undefined;
-};
-
-const useAddPreview = (props: AddFlowProps) => {
+  remember: (url: string) => void
+) => {
   let form: HTMLFormElement | undefined;
   const [preview, setPreview] = createSignal<Preview>();
   const [busy, setBusy] = createSignal(false);
@@ -44,10 +42,14 @@ const useAddPreview = (props: AddFlowProps) => {
     form?.reset();
   };
   const request = async () => {
+    if (form === undefined) return;
+
+    const url = submittedUrl(form);
+    remember(url);
     setBusy(true);
-    const requested = await requestPreview(props, form);
+    const result = await props.onPreview(url);
     setBusy(false);
-    if (requested !== undefined) setPreview(requested);
+    if (result.kind === 'preview') setPreview(result.preview);
   };
 
   return {
@@ -65,7 +67,8 @@ const useAddPreview = (props: AddFlowProps) => {
 const useAddSubmit = (
   props: AddFlowProps,
   close: () => void,
-  resetPreview: () => void
+  resetPreview: () => void,
+  folderId: () => string | undefined
 ) => {
   const [busy, setBusy] = createSignal<AddBusy>();
   const run = async (kind: AddBusy, task: () => Promise<boolean>) => {
@@ -80,7 +83,7 @@ const useAddSubmit = (
     await run('add', () => props.onAdd(value));
   };
   const subscribe = async (url: string, title: string) => {
-    await run('subscribe', () => props.onSubscribe(url, title));
+    await run('subscribe', () => props.onSubscribe(url, title, folderId()));
   };
   const edit = () => {
     resetPreview();
@@ -90,16 +93,8 @@ const useAddSubmit = (
   return { busy, add, subscribe, edit };
 };
 
-const PreviewPanel = (props: {
-  readonly preview: Preview;
-  readonly busy: boolean;
-  readonly onConfirm: () => void;
-  readonly onCancel: () => void;
-}) => (
-  <section
-    aria-label="订阅预览"
-    class="mt-2 rounded-box border border-base-content/20 p-3"
-  >
+const PreviewSummary = (props: { readonly preview: Preview }) => (
+  <>
     <h3 class="font-semibold tracking-tight">{props.preview.title}</h3>
     <Show when={Option.getOrUndefined(props.preview.description)}>
       {(text) => (
@@ -116,6 +111,32 @@ const PreviewPanel = (props: {
         {(title) => <li class="truncate">{title}</li>}
       </For>
     </ul>
+  </>
+);
+
+const PreviewPanel = (props: {
+  readonly preview: Preview;
+  readonly busy: boolean;
+  readonly folders: ReadonlyArray<Folder>;
+  readonly folderId: string | undefined;
+  readonly onFolderChange: (value: string | undefined) => void;
+  readonly onConfirm: () => void;
+  readonly onCancel: () => void;
+}) => (
+  <section
+    aria-label="订阅预览"
+    class="mt-2 rounded-box border border-base-content/20 p-3"
+  >
+    <PreviewSummary preview={props.preview} />
+    <Show when={props.folders.length > 0}>
+      <FolderSelect
+        id="library-add-folder"
+        folders={props.folders}
+        value={props.folderId}
+        disabled={props.busy}
+        onChange={props.onFolderChange}
+      />
+    </Show>
     <div class="mt-3 flex flex-wrap gap-2">
       <SubmitButton
         type="button"
@@ -135,6 +156,7 @@ const AddForm = (props: {
   readonly preview: ReturnType<typeof useAddPreview>;
   readonly submit: ReturnType<typeof useAddSubmit>;
   readonly mode: 'article' | 'feed';
+  readonly url: string;
 }) => (
   <form
     ref={props.preview.formRef}
@@ -158,6 +180,7 @@ const AddForm = (props: {
       placeholder={
         props.mode === 'article' ? '粘贴文章链接…' : '粘贴 RSS / Atom 链接…'
       }
+      value={props.url}
       disabled={props.preview.busy() || props.submit.busy() !== undefined}
     />
     <div class="flex flex-wrap gap-2">
@@ -182,10 +205,16 @@ const AddForm = (props: {
 );
 
 export const LibraryAddDialog = (props: AddFlowProps) => {
-  const preview = useAddPreview(props);
-  const submit = useAddSubmit(props, props.onClose, preview.reset);
+  const [feedUrl, setFeedUrl] = createSignal('');
+  const preview = useAddPreview(props, setFeedUrl);
+  const [folderId, setFolderId] = createSignal<string>();
+  const submit = useAddSubmit(props, props.onClose, preview.reset, folderId);
   createEffect(() => {
-    if (props.open) preview.resetForm();
+    if (props.open) {
+      preview.resetForm();
+      setFolderId(undefined);
+      setFeedUrl('');
+    }
   });
 
   const title = () =>
@@ -209,13 +238,21 @@ export const LibraryAddDialog = (props: AddFlowProps) => {
           when={preview.preview()}
           keyed
           fallback={
-            <AddForm preview={preview} submit={submit} mode={props.mode} />
+            <AddForm
+              preview={preview}
+              submit={submit}
+              mode={props.mode}
+              url={feedUrl()}
+            />
           }
         >
           {(item) => (
             <PreviewPanel
               preview={item}
               busy={submit.busy() === 'subscribe'}
+              folders={props.folders}
+              folderId={folderId()}
+              onFolderChange={(value) => setFolderId(value)}
               onConfirm={() => void submit.subscribe(item.url, item.title)}
               onCancel={submit.edit}
             />

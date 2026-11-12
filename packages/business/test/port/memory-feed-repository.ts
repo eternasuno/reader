@@ -1,14 +1,29 @@
 import { Effect, Option, Ref } from 'effect';
 import type { OwnerId } from '../../src/entity/common/owner-id';
 import type { Feed, FeedId } from '../../src/entity/feed/feed';
+import type { Folder, FolderId } from '../../src/entity/feed/folder';
 import type {
   FeedPatch,
   IFeedRepository,
 } from '../../src/port/feed-repository';
 import { byTitleThenId, type Ref_ } from './memory-feed-state';
 
+const hasFolder = (
+  folders: ReadonlyArray<Folder>,
+  owner: OwnerId,
+  id: FolderId
+): boolean =>
+  folders.some((folder) => folder.ownerId === owner && folder.id === id);
+
+const isFolderMissing = (
+  folders: ReadonlyArray<Folder>,
+  owner: OwnerId,
+  folderId: Option.Option<FolderId>
+): boolean => Option.exists(folderId, (id) => !hasFolder(folders, owner, id));
+
 const isFeedTaken = (
   feeds: ReadonlyArray<Feed>,
+  folders: ReadonlyArray<Folder>,
   owner: OwnerId,
   row: Feed
 ): boolean =>
@@ -17,10 +32,12 @@ const isFeedTaken = (
     (feed) =>
       feed.id === row.id ||
       (feed.ownerId === row.ownerId && feed.url.href === row.url.href)
-  );
+  ) ||
+  isFolderMissing(folders, owner, row.folderId);
 
 const insertFeeds = (
   feeds: ReadonlyArray<Feed>,
+  folders: ReadonlyArray<Folder>,
   owner: OwnerId,
   rows: ReadonlyArray<Feed>
 ) => {
@@ -28,7 +45,7 @@ const insertFeeds = (
   const created: Array<FeedId> = [];
 
   for (const row of rows) {
-    if (isFeedTaken(stored, owner, row)) {
+    if (isFeedTaken(stored, folders, owner, row)) {
       continue;
     }
 
@@ -42,6 +59,7 @@ const insertFeeds = (
 const patchFeed = (feed: Feed, patch: FeedPatch): Feed => ({
   ...feed,
   title: patch.title ?? feed.title,
+  folderId: patch.folderId ?? feed.folderId,
   updatedAt: patch.updatedAt ?? feed.updatedAt,
 });
 
@@ -68,7 +86,7 @@ const createFeeds =
     feeds: ReadonlyArray<Feed>
   ): Effect.Effect<ReadonlyArray<FeedId>> =>
     Ref.modify(state, (store) => {
-      const inserted = insertFeeds(store.feeds, owner, feeds);
+      const inserted = insertFeeds(store.feeds, store.folders, owner, feeds);
 
       return [inserted.created, { ...store, feeds: inserted.feeds }];
     });
@@ -81,8 +99,16 @@ const updateFeeds =
     patch: FeedPatch
   ): Effect.Effect<ReadonlyArray<FeedId>> =>
     Ref.modify(state, (store) => {
-      const wanted = new Set<string>(ids);
       const matched: Array<FeedId> = [];
+
+      if (
+        patch.folderId !== undefined &&
+        isFolderMissing(store.folders, owner, patch.folderId)
+      ) {
+        return [matched, store];
+      }
+
+      const wanted = new Set<string>(ids);
       const feeds = store.feeds.map((feed) => {
         if (feed.ownerId !== owner || !wanted.has(feed.id)) {
           return feed;
@@ -108,6 +134,7 @@ const removeFeeds =
       );
 
       return {
+        ...store,
         feeds: store.feeds.filter((feed) => !removed.has(feed.id)),
         items: store.items.filter((item) => !removed.has(item.feedId)),
       };

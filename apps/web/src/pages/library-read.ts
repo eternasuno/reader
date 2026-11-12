@@ -1,3 +1,4 @@
+import { Option } from 'effect';
 import {
   type Article,
   type Counts,
@@ -8,7 +9,9 @@ import { setItemsRead, upsertItem } from './library-articles';
 import { markArticleRefs, markScope } from './library-commands';
 import type { LibraryStore } from './library-context';
 import { clearScopeCounts, unreadCount } from './library-counts';
+import { feedsInFolder } from './library-folders';
 import { loadCounts } from './library-reference';
+import type { LibraryState } from './library-state';
 
 const reconcileRead = async (
   store: LibraryStore,
@@ -109,6 +112,28 @@ export const markLoaded = async (store: LibraryStore): Promise<void> => {
   }
 };
 
+const folderFeedIds = (
+  state: LibraryState,
+  folderId: string
+): ReadonlySet<string> =>
+  new Set(feedsInFolder(state.feeds, folderId).map((feed) => feed.id));
+
+const markTargets = (state: LibraryState): ReadonlyArray<Article> => {
+  const { scope, items, pending } = state;
+  const feedIds =
+    scope.kind === 'folder' ? folderFeedIds(state, scope.folderId) : undefined;
+
+  return items.filter((item) => {
+    const feedId = Option.getOrUndefined(item.feedId);
+
+    return (
+      !item.read &&
+      !pending.has(item.id) &&
+      (feedIds === undefined || (feedId !== undefined && feedIds.has(feedId)))
+    );
+  });
+};
+
 const failMarkAll = async (
   store: LibraryStore,
   entries: ReadonlyArray<readonly [string, number]>,
@@ -130,11 +155,12 @@ export const markAll = async (store: LibraryStore): Promise<void> => {
     return;
   }
 
-  const targets = current.items.filter(
-    (item) => !item.read && !current.pending.has(item.id)
-  );
+  const targets = markTargets(current);
   const ids = targets.map((item) => item.id);
-  if (ids.length === 0 && unreadCount(current.counts, scope) === 0) {
+  if (
+    ids.length === 0 &&
+    unreadCount(current.counts, scope, current.feeds) === 0
+  ) {
     return;
   }
 
@@ -142,7 +168,7 @@ export const markAll = async (store: LibraryStore): Promise<void> => {
   const entries = ids.map((id) => [id, store.begin(id)] as const);
   store.setState((value) => ({
     ...setItemsRead(value, new Set(ids), true),
-    counts: clearScopeCounts(value.counts, scope),
+    counts: clearScopeCounts(value.counts, scope, value.feeds),
     pendingScopeWrite: true,
   }));
   try {

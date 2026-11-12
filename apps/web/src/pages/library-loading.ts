@@ -1,7 +1,7 @@
 import { libraryErrorMessage, type Scope } from '../lib/library';
 import type { LibraryStore } from './library-context';
 import { applyPage, failList, resetList, startLoadMore } from './library-pages';
-import { loadFeeds, loadReference } from './library-reference';
+import { loadFeeds, loadFolders, loadReference } from './library-reference';
 import { isBusy, sameScope } from './library-state';
 
 export const startLoad = async (
@@ -85,9 +85,12 @@ export const setScope = async (
 
   store.setState((current) => ({ ...current, scope }));
   const feeds = store.state().feeds.length === 0 ? loadFeeds(store) : undefined;
+  const folders =
+    store.state().folders.length === 0 ? loadFolders(store) : undefined;
   await Promise.all([
     startLoad(store, scope, store.state().unreadOnly),
     ...(feeds === undefined ? [] : [feeds]),
+    ...(folders === undefined ? [] : [folders]),
   ]);
 };
 

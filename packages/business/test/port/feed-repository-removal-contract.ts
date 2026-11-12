@@ -34,16 +34,14 @@ const removeCascadeCases = (layer: FeedStoreLayer) => (): void => {
 
       expect(Option.isNone(yield* feeds.find(alice, removed.id))).toBe(true);
       expect(
-        yield* items.list(alice, {
-          feedId: removed.id,
+        yield* items.listByFeed(alice, removed.id, {
           unreadOnly: false,
           limit: 10,
         })
       ).toEqual([]);
       expect(yield* items.inventory(alice, removed.id)).toEqual([]);
       expect(
-        yield* items.list(alice, {
-          feedId: kept.id,
+        yield* items.listByFeed(alice, kept.id, {
           unreadOnly: false,
           limit: 10,
         })
@@ -100,8 +98,7 @@ const raceOnce = (): Effect.Effect<
 
     expect(Option.isNone(yield* feeds.find(alice, feed.id))).toBe(true);
     expect(
-      yield* items.list(alice, {
-        feedId: feed.id,
+      yield* items.listByFeed(alice, feed.id, {
         unreadOnly: false,
         limit: 10,
       })

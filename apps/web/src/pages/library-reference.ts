@@ -7,6 +7,13 @@ export const loadFeeds = async (store: LibraryStore): Promise<void> => {
   } catch {}
 };
 
+export const loadFolders = async (store: LibraryStore): Promise<void> => {
+  try {
+    const folders = await store.client.folders();
+    store.setState((current) => ({ ...current, folders }));
+  } catch {}
+};
+
 export const loadCounts = async (store: LibraryStore): Promise<void> => {
   try {
     const counts = await store.client.unreadCounts();
@@ -18,5 +25,5 @@ export const loadCounts = async (store: LibraryStore): Promise<void> => {
 };
 
 export const loadReference = async (store: LibraryStore): Promise<void> => {
-  await Promise.all([loadFeeds(store), loadCounts(store)]);
+  await Promise.all([loadFeeds(store), loadFolders(store), loadCounts(store)]);
 };

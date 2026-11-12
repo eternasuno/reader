@@ -11,28 +11,32 @@ Read this reference when changing the reader workspace, sidebar navigation, list
 
 ## Sidebar navigation and menus
 
-- Later reading (`稍后阅读`), all subscriptions (`全部订阅`), and each RSS source share the same row/menu component and behavior.
+- Later reading (`稍后阅读`), all subscriptions (`全部订阅`), each folder (`目录`) and each RSS source share the same row/menu component and behavior. The folder acceptance scenarios are in [feed-folders.feature](feed-folders.feature).
+- The `订阅源` section lists folders first by name, then top-level feeds by title. A folder's feeds are listed under it by title, indented. A folder's count is the sum of its feeds' unread counts.
+- A chevron button at the start of a folder row toggles collapse and exposes `aria-expanded`; it never changes the scope. Clicking the folder name selects the folder scope. Collapse state is kept per browser in `localStorage` (`reader.collapsedFolders`); a folder without stored state is expanded; selecting a feed inside a collapsed folder expands it. A collapsed folder still shows its count.
 - Default state shows an unread count on the right. Hover or keyboard focus replaces it with the overflow trigger in the same position. Keep the trigger visible while its popover is open; coarse-pointer devices keep it visible without requiring hover.
 - Count and trigger must use equal-size, equally centered slots and identical right offsets. Remove the count atom's auto margin inside this slot. Align the RSS-add button with these triggers, including coarse-pointer sizing.
 - Every scope menu contains `只显示未读` and `全部标记为已读`. Invoke these against the clicked scope, even when another scope is selected. Select/navigate to that scope before acting; guard against asynchronous scope changes so a delayed action cannot target a different scope.
 - Filtering currently uses one shared model filter (`unreadOnly`), retained across scope navigation. Checked means unread only; unchecked means all. Do not create independent per-source checkbox state without a new requirement.
-- `稍后阅读` additionally offers `新增文章链接`. Individual RSS-source menus additionally offer `删除 RSS 源`; aggregate scopes have no delete-source option.
-- Put an always-available plus icon to the right of the `订阅源` section label. It opens the RSS-only add flow.
+- `稍后阅读` additionally offers `新增文章链接`. Individual RSS-source menus additionally offer `移动到目录` (only when at least one folder exists) and then `删除 RSS 源`; aggregate scopes have no delete-source option. Folder menus additionally offer `重命名目录` and, separated and in the destructive color, `删除目录`; rename and delete do not change the selected scope.
+- Put an always-available plus icon to the right of the `订阅源` section label. It opens a menu with `新增 RSS 订阅` (the RSS-only add flow) and `新建目录`.
 
 ## Article-list overflow menu
 
 - Offer `只显示未读` with the shared icon checkbox, and `全部标记为已读` for the current list scope.
 - `稍后阅读` offers `新增文章链接`, which opens only the article form. All-subscription and single-source lists have no add option; RSS creation belongs beside the sidebar section label.
-- For a single selected RSS source, `删除 RSS 源` directly targets that source. Do not show a source picker. Hide deletion for all-subscription and later-reading scopes.
+- For a single selected RSS source, `删除 RSS 源` directly targets that source. Do not show a source picker. Hide deletion for all-subscription, folder and later-reading scopes. A folder scope offers only `只显示未读` and `全部标记为已读`; folder rename and delete live only in the sidebar folder menu.
 - Keep the existing deletion confirmation: unsubscribing removes source articles but preserves saved later-reading items.
+- Deleting a folder unsubscribes its feeds. Confirm with `删除目录「name」并取消订阅其中的 N 个订阅源？这些源的文章会被删除，已保存的稍后阅读不会删除。`, or `删除目录「name」？` for an empty folder. Deleting the selected folder, or the folder of the selected feed, goes to `全部订阅` and reloads; deleting another folder leaves the list alone.
 - Mark-loaded affects loaded unread articles; mark-all affects the entire scope, including unloaded articles. A zero/stale unread counter must not disable mark-all when loaded unread articles exist.
-- Empty states explain the current scope/filter and recovery. Later-reading can add an article; filtered emptiness can restore all articles. RSS emptiness directs users to the sidebar plus rather than adding a list creation control.
+- Empty states explain the current scope/filter and recovery. Later-reading can add an article; filtered emptiness can restore all articles. RSS emptiness directs users to the sidebar plus rather than adding a list creation control. An empty folder explains that feeds can be moved into it from a feed's menu.
 
 ## List reloading and read state
 
 - A list reloads, from the first page, only when the user enters it, selects a feed, changes the filter, or presses the toolbar refresh button. It never reloads in the background or when the user comes back from reading.
 - Refresh is ignored while a read mark, a delete, or a whole-scope mark is in flight; the refresh button is disabled then.
 - Opening an article from the unread list marks it read but keeps it listed, shown as read, until the list reloads.
+- Moving a feed, creating a folder or renaming a folder never reloads the list; counts and the sidebar update at once.
 - Read-state changes are optimistic and roll back with an error toast when the request fails.
 
 ## Creation dialogs
@@ -40,6 +44,8 @@ Read this reference when changing the reader workspace, sidebar navigation, list
 - Reuse the shared controlled native `Dialog`. Keep article and RSS modes explicit and distinct.
 - Article mode: `新增文章链接`, article URL field, and article submit only. No RSS preview or subscribe actions.
 - RSS mode: `新增 RSS 订阅`, RSS/Atom URL field, preview submit, then confirmation and return-to-edit. No add-article action. Enter submits the action appropriate to the mode. Confirming subscribes with the previewed URL and title and lands on the new feed, which stays empty until its first refresh.
+- The folder is chosen at the final step, not in the address form: when folders exist, the preview confirmation shows a folder select below the feed details and above `确认订阅` / `返回修改`, with `不放入目录` first and preselected, then folders by name; it is disabled while subscribing. The choice survives return-to-edit and a new preview, and resets when the dialog opens. Without folders the confirmation shows no select. Subscribing into a collapsed folder expands it.
+- `新建目录` and `重命名目录` use the shared `Dialog` with one required name field; rename is prefilled with the current name. `移动到目录` uses the shared `Dialog` with a select listing `不放入目录` then folders by name, preselecting the feed's current folder. These dialogs close on success and stay open, with the error toast, on failure (for example a taken name).
 - Adding a link that is already saved opens the existing page (looked up by the URL the error names) instead of showing an error. Subscribing to a feed already followed opens the feed in the list with the URL the error names.
 - Reset form/preview on opening. Close on successful completion; preserve the open form on failure. Retain native validation, Esc, close button, and focus return. Close the invoking popover before opening a dialog.
 

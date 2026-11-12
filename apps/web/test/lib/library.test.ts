@@ -89,6 +89,7 @@ const feed = (id: string): Feed => ({
   url: `https://example.com/${id}.xml`,
   title: `Feed ${id}`,
   updatedAt: Option.none(),
+  folderId: Option.none(),
 });
 
 const feedJson = (id: string) => Schema.encodeUnknownSync(FeedSchema)(feed(id));

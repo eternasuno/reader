@@ -14,6 +14,11 @@ export type LibraryErrorTag =
   | 'FeedItemRepositoryError'
   | 'SavedPageRepositoryError'
   | 'FeedRepositoryError'
+  | 'InvalidFolderName'
+  | 'InvalidScope'
+  | 'FolderAlreadyExists'
+  | 'FolderNotFound'
+  | 'FolderRepositoryError'
   | 'InvalidRetention'
   | 'InvalidProvider'
   | 'InvalidKey'
@@ -40,6 +45,11 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   FeedItemRepositoryError: '暂时无法访问订阅文章，请稍后重试',
   SavedPageRepositoryError: '暂时无法访问稍后阅读，请稍后重试',
   FeedRepositoryError: '暂时无法访问订阅，请稍后重试',
+  InvalidFolderName: '请输入目录名称',
+  InvalidScope: '只能按一个订阅源或一个目录列出文章',
+  FolderAlreadyExists: '该目录名称已存在',
+  FolderNotFound: '目录不存在，可能已被删除',
+  FolderRepositoryError: '暂时无法访问目录，请稍后重试',
   InvalidRetention: '保留数量必须是正整数',
   InvalidProvider: '请选择有效的文章提取方式',
   InvalidKey: '请输入有效的 Jina API Key',

@@ -1,20 +1,26 @@
 import {
   addSavedPage,
+  createFolder,
   extractFeedItem,
   markAllFeeds,
   markArticles,
   markFeeds,
+  markFolders,
   markLater,
   markRead,
+  moveFeed,
   readArticle,
   readFeeds,
+  readFolders,
   readPage,
   readPreview,
   readSavedPageByUrl,
   readSubscription,
   readUnreadCounts,
+  removeFolder,
   removeSavedPage,
   removeSubscription,
+  renameFolder,
   saveFeedItem,
 } from './library-requests';
 import { createSend, type LibraryClientOptions } from './library-transport';
@@ -33,6 +39,14 @@ export const createLibraryClient = (options: LibraryClientOptions = {}) => {
     list: (scope: Scope, unreadOnly: boolean, cursor?: string) =>
       readPage(send, scope, unreadOnly, cursor),
     feeds: () => readFeeds(send),
+    folders: () => readFolders(send),
+    createFolder: (name: string) => createFolder(send, name),
+    renameFolder: (id: string, name: string) => renameFolder(send, id, name),
+    removeFolder: (id: string) => removeFolder(send, id),
+    moveFeed: (feedId: string, folderId: string | undefined) =>
+      moveFeed(send, feedId, folderId),
+    markFolders: (folderIds: ReadonlyArray<string>) =>
+      markFolders(send, folderIds),
     unreadCounts: () => readUnreadCounts(send),
     article: (ref: ArticleRef) => readArticle(send, ref),
     findSavedPageByUrl: (url: string) => readSavedPageByUrl(send, url),
@@ -46,8 +60,8 @@ export const createLibraryClient = (options: LibraryClientOptions = {}) => {
     add: (url: string) => addSavedPage(send, url),
     extract: (article: Article) => extractFeedItem(send, article),
     preview: (url: string) => readPreview(send, url),
-    subscribe: (url: string, title: string) =>
-      readSubscription(send, url, title),
+    subscribe: (url: string, title: string, folderId?: string) =>
+      readSubscription(send, url, title, folderId),
     unsubscribe: (id: string) => removeSubscription(send, id),
   };
 };

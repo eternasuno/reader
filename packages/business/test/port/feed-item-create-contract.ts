@@ -48,7 +48,7 @@ const createResultCases = (layer: FeedStoreLayer) => (): void => {
         item
       );
       expect(
-        yield* items.list(alice, { limit: 10, unreadOnly: false })
+        yield* items.listAll(alice, { limit: 10, unreadOnly: false })
       ).toEqual([item]);
     }).pipe(Effect.provide(layer))
   );
@@ -78,7 +78,7 @@ const createSkipCases = (layer: FeedStoreLayer) => (): void => {
         stored
       );
       expect(
-        yield* items.list(alice, { limit: 10, unreadOnly: false })
+        yield* items.listAll(alice, { limit: 10, unreadOnly: false })
       ).toEqual([stored]);
     }).pipe(Effect.provide(layer))
   );
@@ -98,7 +98,7 @@ const createSkipCases = (layer: FeedStoreLayer) => (): void => {
 
         expect(yield* items.create(alice, rows)).toEqual([]);
         expect(
-          yield* items.list(alice, { limit: 10, unreadOnly: false })
+          yield* items.listAll(alice, { limit: 10, unreadOnly: false })
         ).toEqual([]);
       }).pipe(Effect.provide(layer))
   );
@@ -118,8 +118,7 @@ const createUniqueCases = (layer: FeedStoreLayer) => (): void => {
 
       expect(created).toHaveLength(2);
       expect(
-        yield* items.list(alice, {
-          feedId: secondFeed.id,
+        yield* items.listByFeed(alice, secondFeed.id, {
           limit: 10,
           unreadOnly: false,
         })
@@ -142,7 +141,7 @@ const createUniqueCases = (layer: FeedStoreLayer) => (): void => {
 
       expect(created[0].length + created[1].length).toBe(1);
       expect(
-        yield* items.list(alice, { limit: 10, unreadOnly: false })
+        yield* items.listAll(alice, { limit: 10, unreadOnly: false })
       ).toHaveLength(1);
     }).pipe(Effect.provide(layer))
   );

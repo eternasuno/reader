@@ -28,7 +28,8 @@ export type ArticlePage = {
 
 export type Scope =
   | { readonly kind: 'later' }
-  | { readonly kind: 'feeds'; readonly feedId?: string };
+  | { readonly kind: 'feeds'; readonly feedId?: string }
+  | { readonly kind: 'folder'; readonly folderId: string };
 
 export type Counts = {
   readonly later: number;

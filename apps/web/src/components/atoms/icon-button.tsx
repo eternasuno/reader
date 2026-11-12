@@ -7,6 +7,7 @@ export const IconButton = (props: {
   disabled?: boolean | undefined;
   busy?: boolean | undefined;
   pressed?: boolean | undefined;
+  expanded?: boolean | undefined;
   popoverTarget?: string | undefined;
   ref?: ((element: HTMLButtonElement) => void) | undefined;
   onClick?: (() => void) | undefined;
@@ -22,6 +23,7 @@ export const IconButton = (props: {
     title={props.title ?? props.label}
     aria-busy={props.busy}
     aria-pressed={props.pressed}
+    aria-expanded={props.expanded}
     onClick={props.onClick}
   >
     {props.children}

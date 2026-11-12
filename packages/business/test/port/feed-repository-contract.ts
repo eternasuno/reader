@@ -4,12 +4,14 @@ import type { FeedId } from '../../src/entity/feed/feed';
 import { FeedTitle } from '../../src/entity/feed/feed';
 import type { FeedItemRepository } from '../../src/port/feed-item-repository';
 import { FeedRepository } from '../../src/port/feed-repository';
+import type { FolderRepository } from '../../src/port/folder-repository';
 import { alice, bob, makeFeed, makeUniqueFeed, uniqueUrl } from '../support';
+import { folderCases } from './feed-repository-folder-contract';
 import { removalCases } from './feed-repository-removal-contract';
 import { feedRow, updatedTime } from './feed-store-row';
 
 export type FeedStoreLayer = Layer.Layer<
-  FeedRepository | FeedItemRepository,
+  FeedRepository | FeedItemRepository | FolderRepository,
   unknown
 >;
 
@@ -298,6 +300,7 @@ export const feedRepositoryContract = (
       describe('repeated and empty patch', updateRepeatedCases(layer));
       describe('patch', updatePatchCases(layer));
     });
+    describe('folder', folderCases(layer));
     describe('remove', removalCases(layer));
   });
 };

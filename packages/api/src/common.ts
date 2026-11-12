@@ -1,3 +1,4 @@
+import { FolderId } from '@reader/business';
 import { Effect, Schema } from 'effect';
 import { HttpApiSchema } from 'effect/http-api';
 
@@ -25,7 +26,13 @@ export const InvalidKeySchema = failure('InvalidKey', 400);
 
 export const InvalidEndpointSchema = failure('InvalidEndpoint', 400);
 
+export const InvalidFolderNameSchema = failure('InvalidFolderName', 400);
+
+export const InvalidScopeSchema = failure('InvalidScope', 400);
+
 export const FeedItemNotFoundSchema = failure('FeedItemNotFound', 404);
+
+export const FolderNotFoundSchema = failure('FolderNotFound', 404);
 
 export const SavedPageAlreadyExistsSchema = failure(
   'SavedPageAlreadyExists',
@@ -33,6 +40,8 @@ export const SavedPageAlreadyExistsSchema = failure(
 );
 
 export const FeedAlreadyExistsSchema = failure('FeedAlreadyExists', 409);
+
+export const FolderAlreadyExistsSchema = failure('FolderAlreadyExists', 409);
 
 const ArticleEmptyContentSchema = failure('ArticleEmptyContent', 422);
 
@@ -53,6 +62,11 @@ const FeedItemRepositoryErrorSchema = failure('FeedItemRepositoryError', 500);
 
 export const FeedRepositoryErrorSchema = failure('FeedRepositoryError', 500);
 
+export const FolderRepositoryErrorSchema = failure(
+  'FolderRepositoryError',
+  500
+);
+
 const SavedPageRepositoryErrorSchema = failure('SavedPageRepositoryError', 500);
 
 const SettingRepositoryErrorSchema = failure('SettingRepositoryError', 500);
@@ -62,6 +76,8 @@ export const authErrors = [UnauthorizedSchema, ForbiddenSchema];
 export const savedPageErrors = [SavedPageRepositoryErrorSchema, ...authErrors];
 
 export const feedItemErrors = [FeedItemRepositoryErrorSchema, ...authErrors];
+
+export const folderErrors = [FolderRepositoryErrorSchema, ...authErrors];
 
 export const settingErrors = [SettingRepositoryErrorSchema, ...authErrors];
 
@@ -87,6 +103,7 @@ export const urlPayload = Schema.Struct({
 export const subscribePayload = Schema.Struct({
   url: Schema.String,
   title: Schema.optionalKey(Schema.String),
+  folderId: Schema.optionalKey(FolderId),
 });
 
 export const ok = Schema.Struct({ ok: Schema.Boolean });
