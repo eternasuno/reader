@@ -1,6 +1,7 @@
 import {
   FeedRepository,
   makeFeedTitle,
+  moveFeed,
   previewFeed,
   subscribeFeed,
 } from '@reader/business';
@@ -9,6 +10,7 @@ import { FeedRefreshQueue } from '../infrastructure/feed-refresh-queue';
 import { type HandlerRequest, withSession } from './library-contract';
 import {
   feedRepositoryFailure,
+  moveFeedFailure,
   previewFailure,
   subscribeFailure,
 } from './library-failures';
@@ -53,7 +55,8 @@ const subscribe = ({ payload }: HandlerRequest<'subscribe'>) =>
       const item = yield* subscribeFeed(
         owner,
         url,
-        makeFeedTitle(payload.title ?? '', url)
+        makeFeedTitle(payload.title ?? '', url),
+        Option.fromUndefinedOr(payload.folderId)
       );
       const queue = yield* FeedRefreshQueue;
       yield* queue.enqueue(owner, item.id);
@@ -72,4 +75,23 @@ const unsubscribe = ({ payload }: HandlerRequest<'unsubscribe'>) =>
     })
   ).pipe(Effect.catchTags(feedRepositoryFailure));
 
-export const feedHandlers = { feeds, preview, subscribe, unsubscribe };
+const move = ({ payload }: HandlerRequest<'moveFeed'>) =>
+  withSession((owner) =>
+    Effect.gen(function* () {
+      yield* moveFeed(
+        owner,
+        payload.id,
+        Option.fromNullishOr(payload.folderId)
+      );
+
+      return { ok: true as const };
+    })
+  ).pipe(Effect.catchTags(moveFeedFailure));
+
+export const feedHandlers = {
+  feeds,
+  preview,
+  subscribe,
+  unsubscribe,
+  moveFeed: move,
+};

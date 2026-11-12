@@ -1,4 +1,4 @@
-import { Feed, FeedId, FeedItem, FeedItemId } from '@reader/business';
+import { Feed, FeedId, FeedItem, FeedItemId, FolderId } from '@reader/business';
 import { Schema } from 'effect';
 import { HttpApiEndpoint } from 'effect/http-api';
 import {
@@ -11,7 +11,10 @@ import {
   FeedRepositoryErrorSchema,
   FeedUrlInvalidSchema,
   FetchFeedErrorSchema,
+  FolderNotFoundSchema,
+  FolderRepositoryErrorSchema,
   feedItemErrors,
+  InvalidScopeSchema,
   limit,
   ok,
   subscribePayload,
@@ -23,6 +26,7 @@ const listResponse = Schema.Struct({ items: Schema.Array(Feed) });
 
 const listQuery = {
   feedId: Schema.optionalKey(FeedId),
+  folderId: Schema.optionalKey(FolderId),
   unreadOnly,
   limit,
   cursor: Schema.optionalKey(FeedItemId),
@@ -63,6 +67,8 @@ export const feedEndpoints = [
       FeedUrlInvalidSchema,
       FeedAlreadyExistsSchema,
       FeedRepositoryErrorSchema,
+      FolderNotFoundSchema,
+      FolderRepositoryErrorSchema,
       ...authErrors,
     ],
   }),
@@ -70,6 +76,16 @@ export const feedEndpoints = [
     payload: Schema.Struct({ id: FeedId }),
     success: ok,
     error: [FeedRepositoryErrorSchema, ...authErrors],
+  }),
+  HttpApiEndpoint.patch('moveFeed', '/api/library/feeds', {
+    payload: Schema.Struct({ id: FeedId, folderId: Schema.NullOr(FolderId) }),
+    success: ok,
+    error: [
+      FolderNotFoundSchema,
+      FeedRepositoryErrorSchema,
+      FolderRepositoryErrorSchema,
+      ...authErrors,
+    ],
   }),
   HttpApiEndpoint.get('feedUnread', '/api/library/feeds/unread', {
     success: unreadCounts,
@@ -93,7 +109,7 @@ export const feedEndpoints = [
       items: Schema.Array(FeedItem),
       cursor: Schema.NullOr(FeedItemId),
     }),
-    error: feedItemErrors,
+    error: [InvalidScopeSchema, ...feedItemErrors],
   }),
   HttpApiEndpoint.get('feedItem', '/api/library/feeds/items/item', {
     query: itemQuery,

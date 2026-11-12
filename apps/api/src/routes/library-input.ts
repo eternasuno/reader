@@ -1,6 +1,10 @@
 import {
   BrowserEndpoint,
+  type FeedId,
+  FeedItemScope,
   type FetcherInput,
+  type FolderId,
+  FolderName,
   JinaKey,
   NormalizedUrl,
   Retention,
@@ -9,10 +13,12 @@ import { Effect, Schema } from 'effect';
 import {
   feedUrlInvalid,
   invalidEndpoint,
+  invalidFolderName,
   invalidKey,
   invalidPageUrl,
   invalidProvider,
   invalidRetention,
+  invalidScope,
 } from './library-errors';
 
 export const decodePageUrl = (
@@ -35,6 +41,34 @@ export const decodeRetention = (
   Schema.decodeEffect(Retention)(value).pipe(
     Effect.mapError(() => invalidRetention())
   );
+
+export const decodeFolderName = (
+  text: string
+): Effect.Effect<FolderName, ReturnType<typeof invalidFolderName>> =>
+  Schema.decodeEffect(FolderName)(text).pipe(
+    Effect.mapError(() => invalidFolderName())
+  );
+
+export const decodeItemScope = (query: {
+  readonly feedId?: FeedId;
+  readonly folderId?: FolderId;
+}): Effect.Effect<FeedItemScope, ReturnType<typeof invalidScope>> => {
+  const { feedId, folderId } = query;
+
+  if (feedId !== undefined && folderId !== undefined) {
+    return Effect.fail(invalidScope());
+  }
+
+  if (folderId !== undefined) {
+    return Effect.succeed(FeedItemScope.cases.Folder.make({ folderId }));
+  }
+
+  if (feedId !== undefined) {
+    return Effect.succeed(FeedItemScope.cases.Feed.make({ feedId }));
+  }
+
+  return Effect.succeed(FeedItemScope.cases.All.make({}));
+};
 
 const givenText = (text: string | undefined) => {
   const trimmed = text?.trim() ?? '';

@@ -1,18 +1,23 @@
 import {
   FeedItemRepository,
   FeedRepository,
+  FolderRepository,
   SavedPageRepository,
 } from '@reader/business';
 import { Context, Effect, Layer, Semaphore } from 'effect';
 import { Database } from '../infrastructure/db';
 import { makeFeedItems } from './feed-item-store';
 import { makeFeedRepository } from './feed-store';
+import { makeFolderRepository } from './folder-store';
 import { makeSavedPages } from './saved-page-store';
 
 export const readerStoreSchema = `
+DEFINE TABLE IF NOT EXISTS folder SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS folder_owner_name ON folder FIELDS owner, name UNIQUE;
 DEFINE TABLE IF NOT EXISTS feed SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS updatedAt ON TABLE feed TYPE option<datetime>;
 DEFINE INDEX IF NOT EXISTS feed_owner_url ON feed FIELDS owner, url UNIQUE;
+DEFINE INDEX IF NOT EXISTS feed_owner_folder ON feed FIELDS owner, folderId;
 DEFINE TABLE IF NOT EXISTS feed_item SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE feed_item TYPE option<datetime>;
 DEFINE INDEX IF NOT EXISTS feed_item_feed_url ON feed_item FIELDS feedId, url UNIQUE;
@@ -67,8 +72,19 @@ export const FeedRepositoryLive = Layer.effect(
   })
 );
 
+export const FolderRepositoryLive = Layer.effect(
+  FolderRepository,
+  Effect.gen(function* () {
+    const db = yield* Database;
+    const lock = yield* ReaderStoreConcurrency;
+
+    return makeFolderRepository(db, lock);
+  })
+);
+
 export const ReaderStoreLive = Layer.mergeAll(
   FeedItemRepositoryLive,
   SavedPageRepositoryLive,
-  FeedRepositoryLive
+  FeedRepositoryLive,
+  FolderRepositoryLive
 ).pipe(Layer.provide(ReaderStoreConcurrencyLive));

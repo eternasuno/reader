@@ -9,6 +9,7 @@ import { OptionFromOptionalNonEmpty } from '../src/entity/common/option-from-opt
 import { OwnerId } from '../src/entity/common/owner-id';
 import { Feed, type FeedId, FeedTitle } from '../src/entity/feed/feed';
 import { FeedItem, type FeedItemId } from '../src/entity/feed/feed-item';
+import { Folder, type FolderId, FolderName } from '../src/entity/feed/folder';
 import {
   SavedPage,
   type SavedPageId,
@@ -19,6 +20,10 @@ import {
   FeedRepository,
   type FeedRepositoryError,
 } from '../src/port/feed-repository';
+import {
+  FolderRepository,
+  type FolderRepositoryError,
+} from '../src/port/folder-repository';
 
 export const alice = OwnerId.make('alice');
 
@@ -46,6 +51,7 @@ export type FeedOverrides = {
   readonly ownerId?: OwnerId;
   readonly url?: NormalizedUrl;
   readonly title?: FeedTitle;
+  readonly folderId?: Option.Option<FolderId>;
   readonly updatedAt?: Option.Option<DateTime.Utc>;
 };
 
@@ -54,6 +60,7 @@ export const makeFeed = (overrides: FeedOverrides = {}): Feed =>
     ownerId: alice,
     url: defaultFeedUrl,
     title: FeedTitle.make('Feed'),
+    folderId: Option.none(),
     updatedAt: Option.none(),
     ...overrides,
   });
@@ -110,6 +117,19 @@ export const makeSavedPage = (overrides: SavedPageOverrides = {}): SavedPage =>
     ...overrides,
   });
 
+export type FolderOverrides = {
+  readonly id?: FolderId;
+  readonly ownerId?: OwnerId;
+  readonly name?: FolderName;
+};
+
+export const makeFolder = (overrides: FolderOverrides = {}): Folder =>
+  Folder.make({
+    ownerId: alice,
+    name: FolderName.make('Folder'),
+    ...overrides,
+  });
+
 let urlCounter = 0;
 
 export const uniqueUrl = (path: string): NormalizedUrl => {
@@ -120,6 +140,15 @@ export const uniqueUrl = (path: string): NormalizedUrl => {
 
 export const makeUniqueFeed = (overrides: FeedOverrides = {}): Feed =>
   makeFeed({ url: uniqueUrl('feed'), ...overrides });
+
+export const makeUniqueFolder = (overrides: FolderOverrides = {}): Folder => {
+  urlCounter += 1;
+
+  return makeFolder({
+    name: FolderName.make(`Folder ${urlCounter}`),
+    ...overrides,
+  });
+};
 
 export const makeUniqueFeedItem = (
   overrides: FeedItemOverrides = {}
@@ -142,6 +171,17 @@ export const storedFeed = (
     yield* feeds.create(owner, [feed]);
 
     return feed;
+  });
+
+export const storedFolder = (
+  owner: OwnerId = alice
+): Effect.Effect<Folder, FolderRepositoryError, FolderRepository> =>
+  Effect.gen(function* () {
+    const folders = yield* FolderRepository;
+    const folder = makeUniqueFolder({ ownerId: owner });
+    yield* folders.create(owner, [folder]);
+
+    return folder;
   });
 
 export const decodeRetention = Schema.decodeSync(Retention);

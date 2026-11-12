@@ -15,6 +15,12 @@ export const feedItemNotFound = (error: { readonly id: string }) =>
     id: error.id,
   }) as const;
 
+export const folderNotFound = (error: { readonly id: string }) =>
+  ({
+    ...failure('FolderNotFound', '目录不存在，可能已被删除'),
+    id: error.id,
+  }) as const;
+
 export const savedPageAlreadyExists = (error: {
   readonly url: NormalizedUrl;
 }) =>
@@ -53,11 +59,23 @@ export const savedPageRepositoryError = () =>
 export const feedRepositoryError = () =>
   failure('FeedRepositoryError', '暂时无法访问订阅，请稍后重试');
 
+export const folderRepositoryError = () =>
+  failure('FolderRepositoryError', '暂时无法访问目录，请稍后重试');
+
 export const settingRepositoryError = () =>
   failure('SettingRepositoryError', '暂时无法访问设置，请稍后重试');
 
 export const invalidRetention = () =>
   failure('InvalidRetention', '保留数量必须是正整数');
+
+export const invalidFolderName = () =>
+  failure('InvalidFolderName', '请输入目录名称');
+
+export const invalidScope = () =>
+  failure('InvalidScope', '只能按一个订阅源或一个目录列出文章');
+
+export const folderAlreadyExists = () =>
+  failure('FolderAlreadyExists', '该目录名称已存在');
 
 export const invalidProvider = () =>
   failure('InvalidProvider', '请选择有效的文章提取方式');

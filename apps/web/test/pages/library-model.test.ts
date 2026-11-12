@@ -10,7 +10,7 @@ import {
   initialLibraryState,
   type LibraryState,
 } from '../../src/pages/library-state';
-import { article, counts, page } from './library-fixtures';
+import { article, counts, feed, page } from './library-fixtures';
 
 const loaded = () =>
   applyPage(
@@ -81,16 +81,22 @@ describe('library scope counts', () => {
       counts: counts(2, { f1: 1, f2: 3 }),
     };
 
-    expect(unreadCount(state.counts, { kind: 'later' })).toBe(2);
-    expect(unreadCount(state.counts, { kind: 'feeds' })).toBe(4);
-    expect(unreadCount(state.counts, { kind: 'feeds', feedId: 'f1' })).toBe(1);
-    expect(clearScopeCounts(state.counts, { kind: 'feeds' })).toEqual(
+    const feeds = [feed('f1'), feed('f2')];
+
+    expect(unreadCount(state.counts, { kind: 'later' }, feeds)).toBe(2);
+    expect(unreadCount(state.counts, { kind: 'feeds' }, feeds)).toBe(4);
+    expect(
+      unreadCount(state.counts, { kind: 'feeds', feedId: 'f1' }, feeds)
+    ).toBe(1);
+    expect(clearScopeCounts(state.counts, { kind: 'feeds' }, feeds)).toEqual(
       counts(2)
     );
     expect(
-      clearScopeCounts(state.counts, { kind: 'feeds', feedId: 'f1' })
+      clearScopeCounts(state.counts, { kind: 'feeds', feedId: 'f1' }, feeds)
     ).toEqual({ later: 2, feeds: { f1: 0, f2: 3 }, feedsTotal: 3 });
-    expect(clearScopeCounts(state.counts, { kind: 'later' }).later).toBe(0);
+    expect(clearScopeCounts(state.counts, { kind: 'later' }, feeds).later).toBe(
+      0
+    );
   });
 });
 

@@ -35,6 +35,7 @@ import {
   FeedRepository,
   type FeedRepositoryError,
 } from '../../../src/port/feed-repository';
+import type { FolderRepository } from '../../../src/port/folder-repository';
 import { HtmlParser, type IHtmlParser } from '../../../src/port/html-parser';
 import type { SettingRepository } from '../../../src/port/setting-repository';
 import {
@@ -162,6 +163,7 @@ export type Doubles = {
 export type TestEnv =
   | FeedRepository
   | FeedItemRepository
+  | FolderRepository
   | SettingRepository
   | HttpClient.HttpClient
   | FeedParser
@@ -252,7 +254,7 @@ export const storedItems = (
   FeedItemRepository
 > =>
   Effect.flatMap(FeedItemRepository, (store) =>
-    store.list(owner, { feedId, unreadOnly: false, limit: 1000 })
+    store.listByFeed(owner, feedId, { unreadOnly: false, limit: 1000 })
   );
 
 export const allItems = (
@@ -263,7 +265,7 @@ export const allItems = (
   FeedItemRepository
 > =>
   Effect.flatMap(FeedItemRepository, (store) =>
-    store.list(owner, { unreadOnly: false, limit: 1000 })
+    store.listAll(owner, { unreadOnly: false, limit: 1000 })
   );
 
 export const storedFeeds = (

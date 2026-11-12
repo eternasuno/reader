@@ -1,4 +1,4 @@
-import type { Article, Counts, Feed, Scope } from '../lib/library';
+import type { Article, Counts, Feed, Folder, Scope } from '../lib/library';
 import { emptyCounts } from './library-counts';
 
 export type LibraryToast = {
@@ -11,6 +11,7 @@ export type LibraryState = {
   readonly unreadOnly: boolean;
   readonly items: ReadonlyArray<Article>;
   readonly feeds: ReadonlyArray<Feed>;
+  readonly folders: ReadonlyArray<Folder>;
   readonly counts: Counts;
   readonly loading: boolean;
   readonly initialized: boolean;
@@ -32,6 +33,7 @@ export const initialLibraryState = (
   unreadOnly,
   items: [],
   feeds: [],
+  folders: [],
   counts: emptyCounts,
   loading: false,
   initialized: false,
@@ -50,6 +52,10 @@ export const isBusy = (state: LibraryState): boolean =>
 export const sameScope = (left: Scope, right: Scope): boolean => {
   if (left.kind === 'later') {
     return right.kind === 'later';
+  }
+
+  if (left.kind === 'folder') {
+    return right.kind === 'folder' && left.folderId === right.folderId;
   }
 
   return right.kind === 'feeds' && left.feedId === right.feedId;

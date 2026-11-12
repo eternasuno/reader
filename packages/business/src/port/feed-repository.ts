@@ -14,7 +14,10 @@ export class FeedRepositoryError extends Data.TaggedError(
 )<{ readonly message: string }> {}
 
 export const FeedPatch = Feed.mapFields((fields) =>
-  Struct.map(Struct.pick(fields, ['title', 'updatedAt']), Schema.optionalKey)
+  Struct.map(
+    Struct.pick(fields, ['title', 'folderId', 'updatedAt']),
+    Schema.optionalKey
+  )
 );
 
 export type FeedPatch = typeof FeedPatch.Type;

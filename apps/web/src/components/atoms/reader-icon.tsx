@@ -4,6 +4,8 @@ const paths = {
   bookmark: 'M7 3.5h10a1 1 0 0 1 1 1v16L12 17l-6 3.5v-16a1 1 0 0 1 1-1Z',
   all: 'M8.5 8.5c-2-2-5.5-.5-5.5 3.5s3.5 5.5 5.5 3.5l7-7c2-2 5.5-.5 5.5 3.5s-3.5 5.5-5.5 3.5Z',
   feed: 'M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16M6 19a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z',
+  folder:
+    'M4 7.5a2 2 0 0 1 2-2h3.2l2 2.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z',
   plus: 'M12 5v14M5 12h14',
   settings: 'M4 7h16M4 17h16M8 4v6M16 14v6',
   user: 'M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM15 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM6.5 18a5.5 5.5 0 0 1 11 0',
@@ -32,6 +34,8 @@ const paths = {
   delete: 'M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14M10 10v6m4-6v6',
 } as const;
 
+export type ReaderIconName = keyof typeof paths;
+
 export const ReadStatusIcon = (props: {
   readonly read: boolean;
   readonly class?: string;
@@ -52,7 +56,7 @@ export const ReadStatusIcon = (props: {
 );
 
 export const ReaderIcon = (props: {
-  name: keyof typeof paths;
+  name: ReaderIconName;
   class?: string;
 }): JSX.Element => (
   <svg

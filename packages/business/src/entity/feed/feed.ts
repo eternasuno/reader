@@ -2,6 +2,7 @@ import { Schema } from 'effect';
 import { Model } from 'effect/schema';
 import { NormalizedUrl } from '../common/normalized-url';
 import { OwnerId } from '../common/owner-id';
+import { FolderId } from './folder';
 
 export const FeedId = Schema.String.pipe(
   Schema.check(Schema.isUUID(7), Schema.isLowercased()),
@@ -28,6 +29,7 @@ export const Feed = Schema.Struct({
   ownerId: OwnerId,
   url: NormalizedUrl,
   title: FeedTitle,
+  folderId: Schema.OptionFromOptional(FolderId),
   updatedAt: Schema.OptionFromOptional(Schema.DateTimeUtcFromDate),
 });
 

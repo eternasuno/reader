@@ -1,5 +1,11 @@
 import { Option } from 'effect';
-import type { Feed, FeedItem, Preview, SavedPage } from './library-schema';
+import type {
+  Feed,
+  FeedItem,
+  Folder,
+  Preview,
+  SavedPage,
+} from './library-schema';
 import {
   FeedItemOrNullResponseSchema,
   FeedItemPageSchema,
@@ -7,6 +13,8 @@ import {
   FeedResponseSchema,
   FeedsResponseSchema,
   FeedUnreadSchema,
+  FolderResponseSchema,
+  FoldersResponseSchema,
   PreviewResponseSchema,
   SavedPageOrNullResponseSchema,
   SavedPagePageSchema,
@@ -27,6 +35,8 @@ const PAGE_SIZE = 30;
 const savedPagesPath = '/api/library/saved-pages';
 
 const feedItemsPath = '/api/library/feeds/items';
+
+const foldersPath = '/api/library/folders';
 
 const savedPageArticle = (page: SavedPage): Article => ({
   id: page.id,
@@ -63,12 +73,14 @@ const listQuery = (
   cursor: string | undefined
 ): Readonly<Record<string, string | undefined>> => {
   const feedId = scope.kind === 'feeds' ? scope.feedId : undefined;
+  const folderId = scope.kind === 'folder' ? scope.folderId : undefined;
 
   return {
     unreadOnly: String(unreadOnly),
     limit: String(PAGE_SIZE),
     cursor,
     feedId,
+    folderId,
   };
 };
 
@@ -206,12 +218,17 @@ export const readPreview = async (send: Send, url: string): Promise<Preview> =>
 export const readSubscription = async (
   send: Send,
   url: string,
-  title: string
+  title: string,
+  folderId?: string
 ): Promise<Feed> =>
   (
     await decodeBody(
       FeedResponseSchema,
-      await sendJson(send, '/api/library/feeds', { url, title })
+      await sendJson(send, '/api/library/feeds', {
+        url,
+        title,
+        ...(folderId === undefined ? {} : { folderId }),
+      })
     )
   ).item;
 
@@ -265,4 +282,42 @@ export const removeSavedPage = async (send: Send, id: string) => {
 
 export const removeSubscription = async (send: Send, id: string) => {
   await send('/api/library/feeds', { method: 'DELETE', body: { id } });
+};
+
+export const readFolders = async (send: Send): Promise<ReadonlyArray<Folder>> =>
+  (await decodeBody(FoldersResponseSchema, await sendGet(send, foldersPath)))
+    .items;
+
+export const createFolder = async (send: Send, name: string): Promise<Folder> =>
+  (
+    await decodeBody(
+      FolderResponseSchema,
+      await sendJson(send, foldersPath, { name })
+    )
+  ).item;
+
+export const renameFolder = async (send: Send, id: string, name: string) => {
+  await send(foldersPath, { method: 'PATCH', body: { id, name } });
+};
+
+export const removeFolder = async (send: Send, id: string) => {
+  await send(foldersPath, { method: 'DELETE', body: { id } });
+};
+
+export const moveFeed = async (
+  send: Send,
+  feedId: string,
+  folderId: string | undefined
+) => {
+  await send('/api/library/feeds', {
+    method: 'PATCH',
+    body: { id: feedId, folderId: folderId ?? null },
+  });
+};
+
+export const markFolders = async (
+  send: Send,
+  folderIds: ReadonlyArray<string>
+) => {
+  await sendJson(send, `${foldersPath}/mark-read`, { folderIds });
 };

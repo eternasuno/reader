@@ -131,14 +131,15 @@ Deploy the frontend and `/api` on the same public origin. In development and pre
 
 - `/api/auth/*` — Better Auth protocol
 - `/api/library/saved-pages*` — authenticated read-later pages: list, find by id or URL, add a link, save a feed item, mark read, mark all read, remove, unread count
-- `/api/library/feeds*` — subscriptions: list, preview, subscribe, unsubscribe, mark feeds read, mark all read, per-feed unread counts; `/api/library/feeds/items*` — feed items addressed by item id: list, find, extract, mark read
+- `/api/library/feeds*` — subscriptions: list, preview, subscribe (optionally into a folder), unsubscribe, move to a folder or the top level, mark feeds read, mark all read, per-feed unread counts; `/api/library/feeds/items*` — feed items addressed by item id: list (all, one feed or one folder), find, extract, mark read
+- `/api/library/folders*` — folders grouping feeds: list, create, rename, remove (unsubscribes its feeds), mark folders read
 - `/api/library/settings*` — read the settings (only whether the Jina key and the browser address are configured), set retention, set the fetcher (`jina` or `browser`), clear the Jina key
 
 The endpoint contract lives in `packages/api`. List endpoints take `limit` (a positive integer), `unreadOnly` and an optional `cursor`, which is the id of the last row of the previous page; feed items and saved pages are listed newest first by id. There is no background reload: clients list again from the first page to see new rows.
 
 Subscribing creates the feed with the previewed title and queues its first refresh; items arrive with that refresh. The API process refreshes every feed through one queue at start and every 30 minutes, at most 3 feeds at a time, and drops a request for a feed that already has a refresh queued or running.
 
-Business storage keeps `feed`, `feed_item` and `saved_page` scoped by owner, with version-7 UUID ids and a unique URL per owner (feeds, saved pages) or per feed (items). Stored data is not migrated between schema changes; delete the database and run `pnpm db:migrate` against a fresh one.
+Business storage keeps `feed`, `folder`, `feed_item` and `saved_page` scoped by owner, with version-7 UUID ids and a unique URL per owner (feeds, saved pages) or per feed (items); folder names are unique per owner, and removing a folder removes its feeds and their items. Stored data is not migrated between schema changes; delete the database and run `pnpm db:migrate` against a fresh one.
 
 ## Production
 

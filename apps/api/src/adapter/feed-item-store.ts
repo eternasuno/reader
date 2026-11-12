@@ -6,6 +6,7 @@ import {
   type FeedItemPatch,
   type FeedItemQuery,
   FeedItemRepository,
+  type FolderId,
   NormalizedUrl,
   type OwnerId,
 } from '@reader/business';
@@ -43,17 +44,27 @@ type QueryBindings = {
   owner: OwnerId;
   limit: number;
   feedId?: FeedId;
+  folderId?: FolderId;
   after?: FeedItemId;
 };
 
-const listFeedItems = (db: Surreal, owner: OwnerId, query: FeedItemQuery) => {
-  const feedClause = query.feedId === undefined ? '' : ' AND feedId = $feedId';
-  const readClause = query.unreadOnly ? ' AND read = false' : '';
-  const bindings: QueryBindings = { owner, limit: query.limit };
+type Scope = {
+  readonly clause: string;
+  readonly bindings: Bindings;
+};
 
-  if (query.feedId !== undefined) {
-    bindings.feedId = query.feedId;
-  }
+const listFeedItems = (
+  db: Surreal,
+  owner: OwnerId,
+  query: FeedItemQuery,
+  scope: Scope
+) => {
+  const readClause = query.unreadOnly ? ' AND read = false' : '';
+  const bindings: QueryBindings = {
+    ...scope.bindings,
+    owner,
+    limit: query.limit,
+  };
 
   if (query.after !== undefined) {
     bindings.after = query.after;
@@ -61,12 +72,38 @@ const listFeedItems = (db: Surreal, owner: OwnerId, query: FeedItemQuery) => {
 
   return readRows(
     db,
-    `SELECT ${COLUMNS} FROM feed_item WHERE owner = $owner${feedClause}${readClause}${afterClause('itemId', query.after)} ${ORDER} LIMIT $limit;`,
+    `SELECT ${COLUMNS} FROM feed_item WHERE owner = $owner${scope.clause}${readClause}${afterClause('itemId', query.after)} ${ORDER} LIMIT $limit;`,
     bindings,
     FeedItem,
     feedItemRepositoryError
   );
 };
+
+const listAll = (db: Surreal, owner: OwnerId, query: FeedItemQuery) =>
+  listFeedItems(db, owner, query, { clause: '', bindings: {} });
+
+const listByFeed = (
+  db: Surreal,
+  owner: OwnerId,
+  feedId: FeedId,
+  query: FeedItemQuery
+) =>
+  listFeedItems(db, owner, query, {
+    clause: ' AND feedId = $feedId',
+    bindings: { feedId },
+  });
+
+const listByFolder = (
+  db: Surreal,
+  owner: OwnerId,
+  folderId: FolderId,
+  query: FeedItemQuery
+) =>
+  listFeedItems(db, owner, query, {
+    clause:
+      ' AND feedId IN (SELECT VALUE feedId FROM feed WHERE owner = $owner AND folderId = $folderId)',
+    bindings: { folderId },
+  });
 
 const insertStatement = (row: string, index: number) => `
 LET $f${index} = SELECT VALUE id FROM feed WHERE owner = $owner AND id = type::record("feed", ${row}.feedId);
@@ -195,6 +232,26 @@ const updateFeedItemsByFeeds = (
   );
 };
 
+const updateFeedItemsByFolders = (
+  db: Surreal,
+  owner: OwnerId,
+  folderIds: ReadonlyArray<FolderId>,
+  patch: FeedItemPatch
+) => {
+  const set = assignments(patch);
+
+  if (folderIds.length === 0 || set === undefined) {
+    return Effect.void;
+  }
+
+  return write(
+    db,
+    `UPDATE feed_item SET ${set.clause} WHERE owner = $owner AND feedId IN (SELECT VALUE feedId FROM feed WHERE owner = $owner AND folderId IN $folderIds);`,
+    { owner, folderIds: [...folderIds], ...set.bindings },
+    feedItemRepositoryError
+  );
+};
+
 const updateAllFeedItems = (
   db: Surreal,
   owner: OwnerId,
@@ -261,13 +318,20 @@ const removeFeedItems = (
 export const makeFeedItems = (db: Surreal, lock: Semaphore.Semaphore) =>
   FeedItemRepository.of({
     find: (owner, id) => findFeedItem(db, owner, id),
-    list: (owner, query) => listFeedItems(db, owner, query),
+    listAll: (owner, query) => listAll(db, owner, query),
+    listByFeed: (owner, feedId, query) => listByFeed(db, owner, feedId, query),
+    listByFolder: (owner, folderId, query) =>
+      listByFolder(db, owner, folderId, query),
     create: (owner, items) =>
       createFeedItems(db, owner, items).pipe(lock.withPermit),
     update: (owner, ids, patch) =>
       updateFeedItems(db, owner, ids, patch).pipe(lock.withPermit),
     updateByFeeds: (owner, feedIds, patch) =>
       updateFeedItemsByFeeds(db, owner, feedIds, patch).pipe(lock.withPermit),
+    updateByFolders: (owner, folderIds, patch) =>
+      updateFeedItemsByFolders(db, owner, folderIds, patch).pipe(
+        lock.withPermit
+      ),
     updateAll: (owner, patch) =>
       updateAllFeedItems(db, owner, patch).pipe(lock.withPermit),
     unreadCounts: (owner) => readUnreadCounts(db, owner),

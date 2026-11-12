@@ -6,6 +6,7 @@ import { checkOrigin } from '../middleware/origin';
 import { sessionMiddleware } from '../middleware/session';
 import { feedHandlers } from './library-handlers-feed';
 import { feedItemHandlers } from './library-handlers-feed-item';
+import { folderHandlers } from './library-handlers-folder';
 import { savedPageHandlers } from './library-handlers-saved-page';
 import { settingsHandlers } from './library-handlers-settings';
 
@@ -14,6 +15,7 @@ const libraryHandlers = HttpApiBuilder.group(LibraryApi, 'library', (group) =>
     ...savedPageHandlers,
     ...feedItemHandlers,
     ...feedHandlers,
+    ...folderHandlers,
     ...settingsHandlers,
   })
 );

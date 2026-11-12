@@ -1,6 +1,7 @@
 import { Show } from 'solid-js';
 import type { Article, Feed, Scope } from '../../lib/library';
 import { unreadCount } from '../../pages/library-counts';
+import { feedsInFolder } from '../../pages/library-folders';
 import type { LibraryModel } from '../../pages/library-model';
 import { isBusy } from '../../pages/library-state';
 import { Button } from '../atoms/button';
@@ -8,12 +9,28 @@ import { LibraryEntry } from '../molecules/library-entry';
 import { LibraryToolbar } from '../molecules/library-toolbar';
 import { VirtualScroller } from '../molecules/virtual-scroller';
 
+type EmptyCopy = { readonly title: string; readonly hint: string };
+
+const folderCopy = (feeds: ReadonlyArray<Feed>, folderId: string): EmptyCopy =>
+  feedsInFolder(feeds, folderId).length > 0
+    ? {
+        title: '这个目录还没有文章',
+        hint: '订阅源刷新后，新的文章会出现在这里。',
+      }
+    : {
+        title: '这个目录还没有订阅源',
+        hint: '可以从订阅源的菜单把订阅源移动到这里。',
+      };
+
 const emptyCopy = (
   unreadOnly: boolean,
-  scope: Scope
-): { readonly title: string; readonly hint: string } => {
+  scope: Scope,
+  feeds: ReadonlyArray<Feed>
+): EmptyCopy => {
   if (unreadOnly)
     return { title: '没有未读文章', hint: '所有文章都已读过了。' };
+
+  if (scope.kind === 'folder') return folderCopy(feeds, scope.folderId);
 
   return scope.kind === 'later'
     ? {
@@ -89,7 +106,7 @@ const ListEmpty = (props: {
   const state = () => props.model.state();
   const copy = () =>
     state().error === undefined
-      ? emptyCopy(state().unreadOnly, state().scope)
+      ? emptyCopy(state().unreadOnly, state().scope, state().feeds)
       : { title: '暂时无法加载文章', hint: '请点击上方重试。' };
   const action = () => {
     if (state().error !== undefined) return undefined;
@@ -173,7 +190,7 @@ export const LibraryList = (props: {
     <div class="flex h-full min-h-0 flex-col">
       <LibraryToolbar
         title={props.title}
-        unread={unreadCount(state().counts, state().scope)}
+        unread={unreadCount(state().counts, state().scope, state().feeds)}
         unreadOnly={state().unreadOnly}
         canAddArticle={state().scope.kind === 'later'}
         currentFeed={state().feeds.find((feed) => {

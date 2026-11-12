@@ -2,11 +2,11 @@
 
 ## Purpose
 
-A self-hosted read-later and feed reader: a user saves web pages to read later, subscribes to feeds, and reads the articles in one place. It is a pnpm workspace managed with Turborepo:
+A self-hosted read-later and feed reader: a user saves web pages to read later, subscribes to feeds and groups them into folders, and reads the articles in one place. It is a pnpm workspace managed with Turborepo:
 
 - `apps/web` — a pure SolidJS 1 SPA.
 - `apps/api` — an Effect HttpServer API with Better Auth and embedded SurrealDB/SurrealKV; it also runs the feed refresh queue and scheduler.
-- `packages/business` — the business core: entities, ports and use cases for feeds, saved pages and settings.
+- `packages/business` — the business core: entities, ports and use cases for feeds, feed folders, saved pages and settings.
 - `packages/api` — the library HTTP contract shared by the API and the web client.
 - `packages/webpage` — page fetching through Jina or a browser service.
 
@@ -14,8 +14,8 @@ A self-hosted read-later and feed reader: a user saves web pages to read later, 
 
 Read the relevant skill first when the task involves:
 
-- [`project-business`](.agents/skills/project-business/SKILL.md) — business behavior: entities, ports, use cases and repository contracts for feeds, feed items, saved pages and settings; ids, URL normalization, paging, read state, unread counts, refresh, retention and extraction.
-- [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — SolidJS routes or components, reader and settings UI behavior, accounts in the browser, browser/API boundaries, frontend session subscriptions, or deployment topology.
+- [`project-business`](.agents/skills/project-business/SKILL.md) — business behavior: entities, ports, use cases and repository contracts for feeds, feed folders, feed items, saved pages and settings; ids, URL normalization, paging, read state, unread counts, refresh, retention and extraction.
+- [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — SolidJS routes or components, reader and settings UI behavior (including feed folders and their Gherkin acceptance scenarios), accounts in the browser, browser/API boundaries, frontend session subscriptions, or deployment topology.
 - [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth paths, session identity, protected APIs, HTTP handlers and error mapping, adapters, the feed refresh queue and scheduler, Effect services, or Layer composition.
 - [`project-database`](.agents/skills/project-database/SKILL.md) — SurrealDB/SurrealKV runtime connections, queries, Better Auth schema migrations, or database deployment configuration.
 - [`project-testing`](.agents/skills/project-testing/SKILL.md) — tests, test doubles, Effect Layer assembly, or in-memory database schema initialization.

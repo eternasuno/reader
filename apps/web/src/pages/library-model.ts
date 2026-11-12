@@ -7,6 +7,12 @@ import {
 } from '../lib/library';
 import { createLibraryContext, dismissToast } from './library-context';
 import {
+  createFolder,
+  moveFeed,
+  removeFolder,
+  renameFolder,
+} from './library-folder-mutations';
+import {
   enter,
   loadMore,
   refresh,
@@ -47,8 +53,19 @@ export type LibraryModel = {
   readonly save: (article: Article) => Promise<boolean>;
   readonly add: (url: string) => Promise<boolean>;
   readonly preview: (url: string) => Promise<PreviewResult>;
-  readonly subscribe: (url: string, title: string) => Promise<boolean>;
+  readonly subscribe: (
+    url: string,
+    title: string,
+    folderId?: string
+  ) => Promise<boolean>;
   readonly unsubscribe: (id: string) => Promise<boolean>;
+  readonly createFolder: (name: string) => Promise<boolean>;
+  readonly renameFolder: (id: string, name: string) => Promise<boolean>;
+  readonly removeFolder: (id: string) => Promise<boolean>;
+  readonly moveFeed: (
+    feedId: string,
+    folderId: string | undefined
+  ) => Promise<boolean>;
   readonly extract: (article: Article) => Promise<Article | undefined>;
   readonly dismissToast: () => void;
 };
@@ -74,8 +91,13 @@ export const createLibraryModel = (
     save: (article) => saveArticle(store, article),
     add: (url) => addArticle(store, url),
     preview: (url) => previewUrl(store, url),
-    subscribe: (url, title) => subscribeFeed(store, url, title),
+    subscribe: (url, title, folderId) =>
+      subscribeFeed(store, url, title, folderId),
     unsubscribe: (id) => unsubscribeFeed(store, id),
+    createFolder: (name) => createFolder(store, name),
+    renameFolder: (id, name) => renameFolder(store, id, name),
+    removeFolder: (id) => removeFolder(store, id),
+    moveFeed: (feedId, folderId) => moveFeed(store, feedId, folderId),
     extract: (article) => extractArticle(store, article),
     dismissToast: () => dismissToast(store),
   };

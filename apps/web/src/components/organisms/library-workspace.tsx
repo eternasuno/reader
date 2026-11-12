@@ -1,17 +1,18 @@
 import { useLocation, useNavigate, useParams } from '@solidjs/router';
 import { Option } from 'effect';
 import { createEffect, createMemo, createSignal, on, onMount } from 'solid-js';
-import type { Article, Feed, Scope } from '../../lib/library';
+import type { Article, Feed, Folder, Scope } from '../../lib/library';
 import { articlePath } from '../../lib/library-path';
 import {
+  confirmRemoveFolder,
   confirmUnsubscribe,
   createFeedMenu,
 } from '../../pages/library-feed-menu';
 import { type LibraryModel, useLibraryModel } from '../../pages/library-model';
-import { sameScope } from '../../pages/library-state';
+import { type LibraryState, sameScope } from '../../pages/library-state';
 import { LibraryMobileBar } from '../molecules/library-mobile-bar';
 import { LibraryToastView } from '../molecules/library-toast';
-import { LibraryAddDialog } from './library-add-dialog';
+import { LibraryDialogs, useLibraryDialogs } from './library-dialogs';
 import { LibraryList } from './library-list';
 import { LibraryReader } from './library-reader';
 import { LibrarySidebar } from './library-sidebar';
@@ -29,11 +30,18 @@ const enteredScope = (path: string): Scope =>
     ? { kind: 'feeds' }
     : { kind: 'later' };
 
-const scopeLabel = (scope: Scope, feeds: ReadonlyArray<Feed>): string => {
+const scopeLabel = (state: LibraryState): string => {
+  const { scope } = state;
   if (scope.kind === 'later') return '稍后阅读';
+  if (scope.kind === 'folder') {
+    const name = state.folders.find((item) => item.id === scope.folderId)?.name;
+
+    return name ?? '目录';
+  }
+
   if (scope.feedId === undefined) return '全部订阅';
 
-  return feeds.find((feed) => feed.id === scope.feedId)?.title ?? '订阅';
+  return state.feeds.find((feed) => feed.id === scope.feedId)?.title ?? '订阅';
 };
 
 const useLibraryRoute = (model: LibraryModel) => {
@@ -94,33 +102,6 @@ const pickScope = (model: LibraryModel, route: RouteState, scope: Scope) => {
   if (route.location.pathname !== path) route.navigate(path);
 };
 
-const addArticle = async (
-  model: LibraryModel,
-  route: RouteState,
-  url: string
-): Promise<boolean> => {
-  if (!(await model.add(url))) return false;
-
-  const added = model.state().selected;
-  if (added === undefined) route.back();
-  else route.open(added);
-
-  return true;
-};
-
-const subscribeFeed = async (
-  model: LibraryModel,
-  route: RouteState,
-  url: string,
-  title: string
-): Promise<boolean> => {
-  if (!(await model.subscribe(url, title))) return false;
-
-  route.back();
-
-  return true;
-};
-
 const removeArticle = async (
   model: LibraryModel,
   route: RouteState,
@@ -148,6 +129,9 @@ const SidebarColumn = (props: {
   readonly route: RouteState;
   readonly onNavigate: () => void;
   readonly onAdd: (mode: 'article' | 'feed') => void;
+  readonly onCreateFolder: () => void;
+  readonly onRenameFolder: (folder: Folder) => void;
+  readonly onMoveFeed: (feed: Feed) => void;
 }) => {
   const menu = createFeedMenu(props.model, (scope) => {
     props.onNavigate();
@@ -160,12 +144,17 @@ const SidebarColumn = (props: {
         scope={props.model.state().scope}
         counts={props.model.state().counts}
         feeds={props.model.state().feeds}
+        folders={props.model.state().folders}
         pending={props.model.state().pending}
         unreadOnly={props.model.state().unreadOnly}
         onAdd={props.onAdd}
         onFilterScope={(scope, checked) => void menu.filter(scope, checked)}
         onMarkScope={(scope) => void menu.markAll(scope)}
         onUnsubscribe={(feed) => confirmUnsubscribe(props.model, feed)}
+        onCreateFolder={props.onCreateFolder}
+        onRenameFolder={props.onRenameFolder}
+        onRemoveFolder={(folder) => confirmRemoveFolder(props.model, folder)}
+        onMoveFeed={props.onMoveFeed}
         onPickScope={(scope) => {
           props.onNavigate();
           pickScope(props.model, props.route, scope);
@@ -269,34 +258,16 @@ const useLibraryView = (model: LibraryModel, route: RouteState) => {
     article,
     previous: () => neighbours().previous,
     next: () => neighbours().next,
-    title: () => scopeLabel(model.state().scope, model.state().feeds),
+    title: () => scopeLabel(model.state()),
   };
 };
-
-const AddDialog = (props: {
-  readonly model: LibraryModel;
-  readonly route: RouteState;
-  readonly mode: 'article' | 'feed' | undefined;
-  readonly onClose: () => void;
-}) => (
-  <LibraryAddDialog
-    open={props.mode !== undefined}
-    mode={props.mode ?? 'article'}
-    onClose={props.onClose}
-    onAdd={(url) => addArticle(props.model, props.route, url)}
-    onPreview={props.model.preview}
-    onSubscribe={(url, title) =>
-      subscribeFeed(props.model, props.route, url, title)
-    }
-  />
-);
 
 export const LibraryWorkspace = () => {
   const model = useLibraryModel();
   const route = useLibraryRoute(model);
   const view = useLibraryView(model, route);
+  const dialogs = useLibraryDialogs();
   const [navOpen, setNavOpen] = createSignal(false);
-  const [addMode, setAddMode] = createSignal<'article' | 'feed'>();
 
   return (
     <>
@@ -314,13 +285,16 @@ export const LibraryWorkspace = () => {
           model={model}
           route={route}
           onNavigate={() => setNavOpen(false)}
-          onAdd={setAddMode}
+          onAdd={dialogs.openAdd}
+          onCreateFolder={dialogs.createFolder}
+          onRenameFolder={dialogs.renameFolder}
+          onMoveFeed={dialogs.moveFeed}
         />
         <ListColumn
           model={model}
           route={route}
           title={view.title()}
-          onAdd={() => setAddMode('article')}
+          onAdd={() => dialogs.openAdd('article')}
         />
         <ReaderColumn
           model={model}
@@ -330,12 +304,7 @@ export const LibraryWorkspace = () => {
           next={view.next()}
         />
       </div>
-      <AddDialog
-        model={model}
-        route={route}
-        mode={addMode()}
-        onClose={() => setAddMode(undefined)}
-      />
+      <LibraryDialogs model={model} route={route} dialogs={dialogs} />
       <LibraryToastView
         toast={model.state().toast}
         onDismiss={model.dismissToast}

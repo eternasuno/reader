@@ -9,6 +9,9 @@ import {
   feedItemRepositoryError,
   feedRepositoryError,
   fetchFeedError,
+  folderAlreadyExists,
+  folderNotFound,
+  folderRepositoryError,
   invalidEndpoint,
   invalidKey,
   invalidProvider,
@@ -33,6 +36,10 @@ export const feedRepositoryFailure = {
 
 export const feedItemRepositoryFailure = {
   FeedItemRepositoryError: failed(feedItemRepositoryError),
+};
+
+export const folderRepositoryFailure = {
+  FolderRepositoryError: failed(folderRepositoryError),
 };
 
 export const savedPageRepositoryFailure = {
@@ -83,7 +90,29 @@ export const extractFeedItemFailure = {
 export const subscribeFailure = {
   FeedAlreadyExists: (error: { readonly url: NormalizedUrl }) =>
     Effect.fail(feedAlreadyExists(error)),
+  FolderNotFound: (error: { readonly id: string }) =>
+    Effect.fail(folderNotFound(error)),
   ...feedRepositoryFailure,
+  ...folderRepositoryFailure,
+};
+
+export const createFolderFailure = {
+  FolderAlreadyExists: failed(folderAlreadyExists),
+  ...folderRepositoryFailure,
+};
+
+export const renameFolderFailure = {
+  FolderAlreadyExists: failed(folderAlreadyExists),
+  FolderNotFound: (error: { readonly id: string }) =>
+    Effect.fail(folderNotFound(error)),
+  ...folderRepositoryFailure,
+};
+
+export const moveFeedFailure = {
+  FolderNotFound: (error: { readonly id: string }) =>
+    Effect.fail(folderNotFound(error)),
+  ...feedRepositoryFailure,
+  ...folderRepositoryFailure,
 };
 
 export const retentionFailure = {

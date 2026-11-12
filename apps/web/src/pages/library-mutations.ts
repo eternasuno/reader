@@ -161,10 +161,14 @@ export const previewUrl = async (
 export const subscribeFeed = async (
   store: LibraryStore,
   url: string,
-  title: string
+  title: string,
+  folderId?: string
 ): Promise<boolean> => {
   try {
-    const feed = await store.client.subscribe(url, title);
+    const feed =
+      folderId === undefined
+        ? await store.client.subscribe(url, title)
+        : await store.client.subscribe(url, title, folderId);
     store.setState((current) => ({
       ...current,
       feeds: upsertFeed(current.feeds, feed),

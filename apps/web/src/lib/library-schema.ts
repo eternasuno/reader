@@ -34,9 +34,18 @@ export const FeedSchema = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
   updatedAt: Schema.OptionFromOptional(Schema.String),
+  folderId: Schema.OptionFromOptional(Schema.String),
 });
 
 export type Feed = typeof FeedSchema.Type;
+
+export const FolderSchema = Schema.Struct({
+  id: Schema.String,
+  ownerId: Schema.String,
+  name: Schema.String,
+});
+
+export type Folder = typeof FolderSchema.Type;
 
 export const PreviewSchema = Schema.Struct({
   url: Schema.String,
@@ -76,6 +85,12 @@ export const FeedsResponseSchema = Schema.Struct({
 });
 
 export const PreviewResponseSchema = Schema.Struct({ preview: PreviewSchema });
+
+export const FolderResponseSchema = Schema.Struct({ item: FolderSchema });
+
+export const FoldersResponseSchema = Schema.Struct({
+  items: Schema.Array(FolderSchema),
+});
 
 export const FeedUnreadSchema = Schema.Struct({
   feeds: Schema.Array(

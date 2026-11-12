@@ -29,14 +29,14 @@ Known limit of CM-URL-3: a site that routes by fragment (`https://site/#/post/1`
 
 ## CM-ID — Ids
 
-Every id (`FeedId`, `FeedItemId`, `SavedPageId`) is a branded string checked as a lower-case version-7 UUID (`Schema.isUUID(7)` and `Schema.isLowercased()`). The entity schema gives its `id` field a constructor default with `Model.UuidV7WithGenerate` (module `effect/schema`), so building a new row without an id makes one. There is no id port and no id helper. Duplicates are caught by URL, not by id (CM-ID-6, CM-PORT-6).
+Every id (`FeedId`, `FeedItemId`, `FolderId`, `SavedPageId`) is a branded string checked as a lower-case version-7 UUID (`Schema.isUUID(7)` and `Schema.isLowercased()`). The entity schema gives its `id` field a constructor default with `Model.UuidV7WithGenerate` (module `effect/schema`), so building a new row without an id makes one. There is no id port and no id helper. Duplicates are caught by URL or folder name, not by id (CM-ID-6, CM-PORT-6).
 
 - CM-ID-1 Within one JS realm (one process without worker threads) every id is greater than every id made before it, comparing the lower-case string, which equals byte order.
 - CM-ID-2 This holds when several ids are made in the same millisecond (a 42-bit counter orders them) and when the system clock stalls or goes back (the last timestamp is kept and the counter increases; on counter overflow the timestamp advances by 1 ms).
 - CM-ID-3 Use cases build a new row with the entity schema's `makeEffect` inside their own fiber and leave `id` out; nothing else makes new ids, and none is made through the `SecureRandom` service's `uuidV7`, whose counter is separate. The default therefore takes its timestamp from the injected `Clock` and its random bits from `globalThis.crypto`. The input of a construction is already typed, so a construction failure is a defect (`Effect.orDie`), not a business error. It never changes the clock and nothing else in the system is affected. The default applies only when constructing: a row decoded from storage or from a request keeps its id, and decoding rejects anything but a lower-case version-7 UUID.
 - CM-ID-4 The ordering state lives in the realm and is not persisted, and there is no ordering between processes or workers: after a restart with the system clock set back, new ids may be smaller than older ones. Accepted.
-- CM-ID-5 Tests rely on the uniqueness and order of ids, never on exact id values or on a time read out of an id. Under a test clock that is behind the latest timestamp already used in the realm, a new id carries that latest timestamp instead of the test time. Effect marks `Model` unstable, so `effect/schema/Model` is listed in the type checker's `allowedUnstableApis`; if `UuidV7WithGenerate` changes, only the three `id` fields change.
-- CM-ID-6 Uniqueness is by URL, enforced by the repository with a unique index in SurrealDB and covered by the contract suite: one feed per `(ownerId, url)`, one feed item per `(feedId, url)`, one saved page per `(ownerId, url)`. The same URL in two feeds is two items. A duplicate is reported as `FeedAlreadyExists(url)` or `SavedPageAlreadyExists(url)`; the error carries the normalized URL, so nothing is looked up when a concurrent create wins.
+- CM-ID-5 Tests rely on the uniqueness and order of ids, never on exact id values or on a time read out of an id. Under a test clock that is behind the latest timestamp already used in the realm, a new id carries that latest timestamp instead of the test time. Effect marks `Model` unstable, so `effect/schema/Model` is listed in the type checker's `allowedUnstableApis`; if `UuidV7WithGenerate` changes, only the entity `id` fields change.
+- CM-ID-6 Uniqueness is by URL, or by name for folders, enforced by the repository with a unique index in SurrealDB and covered by the contract suite: one feed per `(ownerId, url)`, one feed item per `(feedId, url)`, one saved page per `(ownerId, url)`, one folder per `(ownerId, name)` with the name compared exactly as stored, so case-sensitively (FD-FOLDER-2). The same URL in two feeds is two items. A duplicate is reported as `FeedAlreadyExists(url)`, `SavedPageAlreadyExists(url)` or `FolderAlreadyExists(folderName)`; the error carries the key, so nothing is looked up when a concurrent create wins.
 - CM-ID-7 `SavedPageRepository.findByUrl(owner, url)` returns an `Option`; adding a link and saving a feed item use it to refuse a duplicate before fetching (SP-ID-4). It is the only lookup by URL. Feeds have none: subscribing fetches nothing, so the unique key inside `create` is enough (FD-SUB-1), and the client finds the existing feed in its own list of feeds by the URL that `FeedAlreadyExists` carries.
 
 ## CM-FETCH — Fetch and extract an article from a URL
@@ -70,7 +70,7 @@ A step of the feed refresh (`refreshFeed`, see `feed.md`), not a function of its
 
 Used by the SavedPage and Feed item lists. Both lists are ordered by `id` descending, so the newest row is on top: ids are made in creation order (CM-ID-1). The list of feeds themselves is not paged this way; it is ordered by title, then `id` (FD-LIST-3).
 
-- CM-PAGE-1 Order: `id` descending. A single-feed list is the all-feeds list restricted to one `feedId`: same order, same cursor shape.
+- CM-PAGE-1 Order: `id` descending. A single-feed or single-folder list is the all-feeds list restricted to that scope: same order, same cursor shape.
 - CM-PAGE-2 `limit` is a positive integer supplied by the caller. Business defines no page size. The boundary rejects zero, negative and non-integer values; there is no upper bound.
 - CM-PAGE-3 A cursor is the `id` of a row. It carries no owner, scope or filter.
 - CM-PAGE-4 Given an optional cursor, the list use case asks the repository for `limit + 1` rows strictly after the cursor (CM-PAGE-1), which are the rows with a smaller id. It returns the first `limit` rows. If more than `limit` rows came back, the result's cursor is the id of the last returned row; otherwise it is `null`.
@@ -96,14 +96,14 @@ Readers of the clock: `refreshFeed` (`updatedAt`). `fetchAndExtract` and `subscr
 
 ## CM-PORT — Port contracts
 
-An operation that only forwards one port call gets no use case. So part of the business behavior (skipping existing ids, owner scoping, unique URLs, removing a feed together with its items) is stated as port contracts in the domain rule files.
+An operation that only forwards one port call gets no use case. So part of the business behavior (skipping existing ids, owner scoping, unique URLs and folder names, a feed's folder belonging to its owner, removing a feed together with its items and a folder together with its feeds) is stated as port contracts in the domain rule files.
 
 - CM-PORT-1 A port contract is a business rule. Every implementation of a port, including a test double, must satisfy it.
 - CM-PORT-2 Each repository port has one contract test suite, written against the port. It runs against every implementation.
 - CM-PORT-3 Repository methods take generic patches (`update`, `updateAll`) rather than one method per intention. Which fields a caller may patch is limited at the boundary, not by the port.
 - CM-PORT-4 A patch type is derived from the entity fields a caller may write. Immutable fields (`id`, `ownerId`, `feedId`, `url`, `publishedAt`) are never in a patch. In a patch, a missing field means no change and `Option.none` means clear.
-- CM-PORT-5 `update(owner, ids, patch)` returns the ids among `ids` that exist for the owner, whether or not a value changed; each id appears at most once. An empty `ids` changes nothing and returns nothing.
-- CM-PORT-6 `create(owner, rows)` returns the ids actually created. A row is skipped, never overwritten, when its id exists, when its unique URL key exists (CM-ID-6), when its `ownerId` differs from `owner`, and (for feed items) when its feed does not exist for the owner. Concurrent creates of the same URL key: exactly one succeeds.
+- CM-PORT-5 `update(owner, ids, patch)` returns the ids among `ids` that exist for the owner, whether or not a value changed; each id appears at most once. An empty `ids` changes nothing and returns nothing. Two updates refuse a write and return only the ids written: `FeedRepository.update` with a `folderId` that is not a folder of the owner, and `FolderRepository.update` with a name another folder of the owner has (`feed.md` Ports).
+- CM-PORT-6 `create(owner, rows)` returns the ids actually created. A row is skipped, never overwritten, when its id exists, when its unique URL key exists (CM-ID-6), when its `ownerId` differs from `owner`, (for feed items) when its feed does not exist for the owner, and (for feeds) when its `folderId` is a folder that does not exist for the owner. Concurrent creates of the same URL key: exactly one succeeds.
 
 ## Functions
 

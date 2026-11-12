@@ -1,10 +1,13 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option, Ref, Result } from 'effect';
 import { FeedTitle } from '../../../src/entity/feed/feed';
-import { FeedAlreadyExists } from '../../../src/usecase/feed/errors';
+import {
+  FeedAlreadyExists,
+  FolderNotFound,
+} from '../../../src/usecase/feed/errors';
 import { subscribeFeed } from '../../../src/usecase/feed/subscribe-feed';
-import { alice, decodeUrl } from '../../support';
-import { feedResponse, run, storedFeeds } from './support';
+import { alice, bob, decodeUrl, makeFolder, storedFolder } from '../../support';
+import { feedResponse, findFeed, run, storedFeeds } from './support';
 
 const url = decodeUrl('https://example.com/feed.xml');
 
@@ -16,7 +19,12 @@ describe('subscribeFeed', () => {
       const fetched = yield* Ref.make(0);
       const result = yield* run(
         Effect.gen(function* () {
-          const created = yield* subscribeFeed(alice, url, title);
+          const created = yield* subscribeFeed(
+            alice,
+            url,
+            title,
+            Option.none()
+          );
 
           return { created, feeds: yield* storedFeeds(alice) };
         }),
@@ -31,6 +39,7 @@ describe('subscribeFeed', () => {
       expect(result.created.url.href).toBe(url.href);
       expect(result.created.ownerId).toBe(alice);
       expect(result.created.title).toBe('My feed');
+      expect(Option.isNone(result.created.folderId)).toBe(true);
       expect(Option.isNone(result.created.updatedAt)).toBe(true);
       expect(result.feeds.map((feed) => feed.id)).toEqual([result.created.id]);
       expect(yield* Ref.get(fetched)).toBe(0);
@@ -43,11 +52,12 @@ describe('subscribeFeed duplicates', () => {
     Effect.gen(function* () {
       const result = yield* run(
         Effect.gen(function* () {
-          yield* subscribeFeed(alice, url, title);
+          yield* subscribeFeed(alice, url, title, Option.none());
           const error = yield* subscribeFeed(
             alice,
             url,
-            FeedTitle.make('Another title')
+            FeedTitle.make('Another title'),
+            Option.none()
           ).pipe(Effect.flip);
 
           return { error, feeds: yield* storedFeeds(alice) };
@@ -60,6 +70,128 @@ describe('subscribeFeed duplicates', () => {
   );
 });
 
+describe('subscribeFeed folders', () => {
+  it.effect('FD-SUB-6 creates the feed in the given folder', () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        Effect.gen(function* () {
+          const folder = yield* storedFolder(alice);
+          const created = yield* subscribeFeed(
+            alice,
+            url,
+            title,
+            Option.some(folder.id)
+          );
+
+          return { created, feeds: yield* storedFeeds(alice) };
+        })
+      );
+
+      const folderId = Option.getOrThrow(result.created.folderId);
+
+      expect(result.feeds.map((feed) => feed.id)).toEqual([result.created.id]);
+      expect(
+        result.feeds.map((feed) => Option.getOrThrow(feed.folderId))
+      ).toEqual([folderId]);
+    })
+  );
+
+  it.effect('FD-SUB-6 fails an unknown folder and creates no feed', () =>
+    Effect.gen(function* () {
+      const unknown = makeFolder({ ownerId: alice }).id;
+      const result = yield* run(
+        Effect.gen(function* () {
+          const error = yield* subscribeFeed(
+            alice,
+            url,
+            title,
+            Option.some(unknown)
+          ).pipe(Effect.flip);
+
+          return { error, feeds: yield* storedFeeds(alice) };
+        })
+      );
+
+      expect(result.error).toStrictEqual(new FolderNotFound({ id: unknown }));
+      expect(result.feeds).toHaveLength(0);
+    })
+  );
+});
+
+describe('subscribeFeed foreign folders', () => {
+  it.effect("FD-SUB-6 fails another owner's folder and creates no feed", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        Effect.gen(function* () {
+          const folder = yield* storedFolder(bob);
+          const error = yield* subscribeFeed(
+            alice,
+            url,
+            title,
+            Option.some(folder.id)
+          ).pipe(Effect.flip);
+
+          return { error, folder, feeds: yield* storedFeeds(alice) };
+        })
+      );
+
+      expect(result.error).toStrictEqual(
+        new FolderNotFound({ id: result.folder.id })
+      );
+      expect(result.feeds).toHaveLength(0);
+    })
+  );
+});
+
+describe('subscribeFeed folders duplicates', () => {
+  it.effect('FD-SUB-7 a duplicate with a folder keeps the folder none', () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        Effect.gen(function* () {
+          const folder = yield* storedFolder(alice);
+          const first = yield* subscribeFeed(alice, url, title, Option.none());
+          const error = yield* subscribeFeed(
+            alice,
+            url,
+            title,
+            Option.some(folder.id)
+          ).pipe(Effect.flip);
+
+          return { error, stored: yield* findFeed(alice, first.id) };
+        })
+      );
+      const stored = Option.getOrThrow(result.stored);
+
+      expect(result.error).toStrictEqual(new FeedAlreadyExists({ url }));
+      expect(Option.isNone(stored.folderId)).toBe(true);
+    })
+  );
+});
+
+describe('subscribeFeed duplicates with a missing folder', () => {
+  it.effect('FD-SUB-7 a missing folder takes precedence over a duplicate', () =>
+    Effect.gen(function* () {
+      const unknown = makeFolder({ ownerId: alice }).id;
+      const result = yield* run(
+        Effect.gen(function* () {
+          const first = yield* subscribeFeed(alice, url, title, Option.none());
+          const error = yield* subscribeFeed(
+            alice,
+            url,
+            title,
+            Option.some(unknown)
+          ).pipe(Effect.flip);
+
+          return { error, first, feeds: yield* storedFeeds(alice) };
+        })
+      );
+
+      expect(result.error).toStrictEqual(new FolderNotFound({ id: unknown }));
+      expect(result.feeds).toStrictEqual([result.first]);
+    })
+  );
+});
+
 describe('subscribeFeed races', () => {
   it.effect('creates exactly one feed for two concurrent subscriptions', () =>
     Effect.gen(function* () {
@@ -67,8 +199,8 @@ describe('subscribeFeed races', () => {
         Effect.gen(function* () {
           const results = yield* Effect.all(
             [
-              subscribeFeed(alice, url, title),
-              subscribeFeed(alice, url, title),
+              subscribeFeed(alice, url, title, Option.none()),
+              subscribeFeed(alice, url, title, Option.none()),
             ],
             { concurrency: 'unbounded', mode: 'result' }
           );

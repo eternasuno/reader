@@ -9,6 +9,7 @@ import {
 import type { OwnerId } from '../entity/common/owner-id';
 import type { FeedId } from '../entity/feed/feed';
 import { FeedItem, type FeedItemId } from '../entity/feed/feed-item';
+import type { FolderId } from '../entity/feed/folder';
 
 export class FeedItemRepositoryError extends Data.TaggedError(
   'FeedItemRepositoryError'
@@ -24,7 +25,6 @@ export const FeedItemPatch = FeedItem.mapFields((fields) =>
 export type FeedItemPatch = typeof FeedItemPatch.Type;
 
 export type FeedItemQuery = {
-  readonly feedId?: FeedId;
   readonly unreadOnly: boolean;
   readonly after?: FeedItemId;
   readonly limit: number;
@@ -42,8 +42,18 @@ export interface IFeedItemRepository {
     owner: OwnerId,
     id: FeedItemId
   ) => Effect.Effect<Option.Option<FeedItem>, FeedItemRepositoryError>;
-  readonly list: (
+  readonly listAll: (
     owner: OwnerId,
+    query: FeedItemQuery
+  ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
+  readonly listByFeed: (
+    owner: OwnerId,
+    feedId: FeedId,
+    query: FeedItemQuery
+  ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
+  readonly listByFolder: (
+    owner: OwnerId,
+    folderId: FolderId,
     query: FeedItemQuery
   ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
   readonly create: (
@@ -58,6 +68,11 @@ export interface IFeedItemRepository {
   readonly updateByFeeds: (
     owner: OwnerId,
     feedIds: ReadonlyArray<FeedId>,
+    patch: FeedItemPatch
+  ) => Effect.Effect<void, FeedItemRepositoryError>;
+  readonly updateByFolders: (
+    owner: OwnerId,
+    folderIds: ReadonlyArray<FolderId>,
     patch: FeedItemPatch
   ) => Effect.Effect<void, FeedItemRepositoryError>;
   readonly updateAll: (

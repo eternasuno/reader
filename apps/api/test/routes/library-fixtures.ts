@@ -27,7 +27,25 @@ import {
   SavedPageResponseSchema,
   SavedPageUnreadSchema,
 } from '../../../web/src/lib/library-schema.ts';
-import type { CallOptions, Harness } from './library-support';
+import type { CallOptions, Harness, TestSession } from './library-support';
+
+const FOLDERS = '/api/library/folders';
+
+const FEEDS = '/api/library/feeds';
+
+const FolderSchema = Schema.Struct({
+  id: Schema.String,
+  ownerId: Schema.String,
+  name: Schema.String,
+});
+
+export type FolderJson = typeof FolderSchema.Type;
+
+const FoldersResponseSchema = Schema.Struct({
+  items: Schema.Array(FolderSchema),
+});
+
+const FolderResponseSchema = Schema.Struct({ item: FolderSchema });
 
 const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
@@ -117,6 +135,7 @@ export const seedFeed = (
       ownerId: owner,
       url: decodeUrl(uniqueUrl('feed')),
       title: FeedTitle.make(seed.title ?? 'Example feed'),
+      folderId: Option.none(),
       updatedAt: Option.none(),
     });
 
@@ -154,6 +173,19 @@ export const sessionFor = (harness: Harness, email: string) =>
 
 export const call = (harness: Harness, options: CallOptions) =>
   Effect.promise(() => harness.call(options));
+
+export const groupFeed = (
+  harness: Harness,
+  session: TestSession,
+  feedId: string,
+  folderId: string
+) =>
+  call(harness, {
+    method: 'PATCH',
+    path: FEEDS,
+    cookie: session.cookie,
+    body: { id: feedId, folderId },
+  });
 
 export const itemAt = <A>(items: ReadonlyArray<A>, index: number): A => {
   const item = items[index];
@@ -245,6 +277,36 @@ export const readPreview = async (response: Response) =>
 
 export const readUnreadFeeds = async (response: Response) =>
   Schema.decodeUnknownPromise(FeedUnreadSchema)(await response.json());
+
+export const seedFolder = (
+  harness: Harness,
+  session: TestSession,
+  name: string
+): Effect.Effect<FolderJson> =>
+  Effect.gen(function* () {
+    const response = yield* call(harness, {
+      method: 'POST',
+      path: FOLDERS,
+      cookie: session.cookie,
+      body: { name },
+    });
+
+    return yield* Effect.promise(() => readFolder(response));
+  });
+
+export const readFolders = async (response: Response) =>
+  (
+    await Schema.decodeUnknownPromise(FoldersResponseSchema)(
+      await response.json()
+    )
+  ).items;
+
+export const readFolder = async (response: Response) =>
+  (
+    await Schema.decodeUnknownPromise(FolderResponseSchema)(
+      await response.json()
+    )
+  ).item;
 
 export const storedFetcher = (harness: Harness, owner: OwnerId) =>
   Effect.map(harness.repositories.setting.get(owner), (setting) => ({

@@ -18,6 +18,7 @@ const feedRow = (path: string) =>
     ownerId: alice,
     url: url(path),
     title: FeedTitle.make('Feed'),
+    folderId: Option.none(),
     updatedAt: Option.none(),
   });
 

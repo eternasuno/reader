@@ -38,6 +38,7 @@ const storedFeed = () =>
       ownerId: alice,
       url: url(uniquePath('feed')),
       title: FeedTitle.make('Feed'),
+      folderId: Option.none(),
       updatedAt: Option.none(),
     });
     yield* feeds.create(alice, [feed]);

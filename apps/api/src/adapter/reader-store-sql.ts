@@ -1,6 +1,7 @@
 import {
   FeedItemRepositoryError,
   FeedRepositoryError,
+  FolderRepositoryError,
   SavedPageRepositoryError,
 } from '@reader/business';
 import { Effect, Schema } from 'effect';
@@ -13,6 +14,9 @@ export const feedRepositoryError = () =>
 
 export const feedItemRepositoryError = () =>
   new FeedItemRepositoryError({ message: 'Failed to access feed items' });
+
+export const folderRepositoryError = () =>
+  new FolderRepositoryError({ message: 'Failed to access folders' });
 
 export const savedPageRepositoryError = () =>
   new SavedPageRepositoryError({ message: 'Failed to access saved pages' });
