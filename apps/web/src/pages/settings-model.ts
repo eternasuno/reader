@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, onMount } from 'solid-js';
 import { changePassword } from '../lib/auth';
+import { libraryErrorMessage } from '../lib/library-error';
 import {
   clearJinaKey,
   type FetcherInput,
@@ -20,7 +21,7 @@ export type SettingsToast = {
 type PendingAction = 'password' | 'retention' | 'extraction' | 'key';
 
 const failureMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : '操作失败，请稍后重试';
+  error instanceof Error ? error.message : libraryErrorMessage(error);
 
 const createDraftStore = () => {
   const [settings, setSettings] = createSignal<LibrarySettings>();

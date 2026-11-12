@@ -1,5 +1,6 @@
 import type { Feed, Scope } from '../lib/library';
-import { type LibraryModel, sameScope } from './library-model';
+import type { LibraryModel } from './library-model';
+import { sameScope } from './library-state';
 
 export const confirmUnsubscribe = (model: LibraryModel, feed: Feed) => {
   if (!window.confirm('取消订阅并删除该源的文章？已保存的稍后阅读不会删除。'))

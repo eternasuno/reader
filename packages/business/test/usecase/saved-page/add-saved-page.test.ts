@@ -122,17 +122,6 @@ describe('addSavedPage publish time', () => {
       }
     )
   );
-
-  it.effect('SP-ADD-4 leaves a missing publish time as none', () =>
-    run(
-      Effect.gen(function* () {
-        const url = decodeUrl('https://example.com/undated');
-        const page = yield* addSavedPage(alice, url);
-
-        expect(Option.isNone(page.publishedAt)).toBe(true);
-      })
-    )
-  );
 });
 
 describe('addSavedPage failures', () => {

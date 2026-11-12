@@ -22,9 +22,7 @@ import type {
   Scope,
 } from './library-types';
 
-export const PAGE_SIZE = 30;
-
-const MARK_CHUNK = 5000;
+const PAGE_SIZE = 30;
 
 const savedPagesPath = '/api/library/saved-pages';
 
@@ -248,8 +246,8 @@ const postIds = async (
   path: string,
   ids: ReadonlyArray<string>
 ) => {
-  for (let index = 0; index < ids.length; index += MARK_CHUNK) {
-    await sendJson(send, path, { ids: ids.slice(index, index + MARK_CHUNK) });
+  if (ids.length > 0) {
+    await sendJson(send, path, { ids });
   }
 };
 

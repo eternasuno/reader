@@ -84,6 +84,7 @@ it('drops RSS items without a valid URL and resolves relative links', () => {
   expect(isoOf(first)).toBe('2026-01-01T00:00:00.000Z');
   expectLink(second, 'https://example.com/b');
   expectNoPublishedAt(second);
+  expect(parseFeed(`\uFEFF${rss}`, base).title).toBe('News');
 });
 
 it('resolves relative links against the redirected feed url and preserves credentials', () => {
@@ -139,28 +140,6 @@ it('falls back to Untitled for missing entry titles and the host for a missing f
   const feed = parseFeed(untitled, base);
   expect(feed.title).toBe('example.com');
   expect(feed.entries[0]).toMatchObject({ title: 'Untitled' });
-});
-
-it('limits entry titles but keeps long descriptions and content', () => {
-  const longTitle = 'x'.repeat(600);
-  const longText = 'y'.repeat(120_000);
-  const xml = `<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
-    <channel>
-      <title>Long</title>
-      <item>
-        <title>${longTitle}</title>
-        <link>https://example.com/long</link>
-        <description>${longText}</description>
-        <content:encoded><![CDATA[${longText}]]></content:encoded>
-      </item>
-    </channel>
-  </rss>`;
-  const [entry] = parseFeed(xml, base).entries;
-  const description = Option.getOrThrow(entry?.description ?? Option.none());
-  const content = Option.getOrThrow(entry?.content ?? Option.none());
-  expect(entry?.title).toHaveLength(500);
-  expect(description).toHaveLength(120_000);
-  expect(content).toHaveLength(120_000);
 });
 
 it('maps Atom entries and normalizes plain summaries and content', () => {
@@ -387,101 +366,6 @@ it('maps RDF items to raw entries', () => {
   expect(feed.entries[0]?.title).toBe('R');
   expectDescription(feed.entries[0], 'rdf summary');
   expect(isoOf(feed.entries[0])).toBe('2026-01-04T00:00:00.000Z');
-});
-
-it('rejects declarations and unparseable documents', () => {
-  expect(() => parseFeed('<!DOCTYPE rss><rss/>', base)).toThrow(
-    'Unsupported XML declarations'
-  );
-  expect(() => parseFeed('<html></html>', base)).toThrow();
-});
-
-it('rejects document type and entity declarations outside skipped markup', () => {
-  const internalSubset = `<?xml version="1.0"?>
-<!DOCTYPE rss [
-  <!ENTITY author "Example">
-]>
-<rss version="2.0"/>`;
-  const comment = `<!-- comment -->
-<!doctype rss>
-<rss version="2.0"/>`;
-  const bareEntity = `<rss version="2.0"><!ENTITY author "Example"></rss>`;
-
-  expect(() => parseFeed(internalSubset, base)).toThrow(
-    'Unsupported XML declarations'
-  );
-  expect(() => parseFeed(comment, base)).toThrow(
-    'Unsupported XML declarations'
-  );
-  expect(() => parseFeed(bareEntity, base)).toThrow(
-    'Unsupported XML declarations'
-  );
-});
-
-it('allows declaration literals inside comments, CDATA and processing instructions', () => {
-  const xml = `<?xml version="1.0"?>
-<!-- <!DOCTYPE html> is documentation here -->
-<?xml-stylesheet href="<!DOCTYPE html>" type="text/css"?>
-<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
-  <channel>
-    <title>Literals</title>
-    <item>
-      <title>Markup</title>
-      <link>https://example.com/markup</link>
-      <description><![CDATA[<!DOCTYPE html> <!ENTITY author "Example"> <![CDATA[ nested ]]>]]></description>
-      <content:encoded><![CDATA[<p>Body</p>]]></content:encoded>
-    </item>
-  </channel>
-</rss>`;
-  const feed = parseFeed(xml, base);
-  expect(feed.title).toBe('Literals');
-  expect(feed.entries[0]?.title).toBe('Markup');
-  expectDescription(
-    feed.entries[0],
-    '<!DOCTYPE html> <!ENTITY author "Example"> <![CDATA[ nested ]]>'
-  );
-  expectContent(feed.entries[0], '<p>Body</p>');
-});
-
-it('parses JSON feeds whose text contains declaration literals', () => {
-  const json = JSON.stringify({
-    version: 'https://jsonfeed.org/version/1.1',
-    title: 'Literals',
-    items: [
-      {
-        id: '1',
-        url: 'https://example.com/1',
-        title: 'Document type',
-        content_text: '<!DOCTYPE html><p>Body</p>',
-      },
-      {
-        id: '2',
-        url: 'https://example.com/2',
-        title: 'Entity',
-        content_text: '<!ENTITY author "Example">',
-      },
-      {
-        id: '3',
-        url: 'https://example.com/3',
-        title: 'CDATA',
-        content_text: '<![CDATA[<!DOCTYPE html>]]>',
-      },
-      {
-        id: '4',
-        url: 'https://example.com/4',
-        title: 'Comment',
-        content_text: '<!-- <!DOCTYPE html> -->',
-      },
-    ],
-  });
-  const feed = parseFeed(json, base);
-  expect(feed.title).toBe('Literals');
-  const [doctype, entity, cdata, comment] = feed.entries;
-  expectContent(doctype, '&lt;!DOCTYPE html&gt;&lt;p&gt;Body&lt;/p&gt;');
-  expectContent(entity, '&lt;!ENTITY author "Example"&gt;');
-  expectContent(cdata, '&lt;![CDATA[&lt;!DOCTYPE html&gt;]]&gt;');
-  expectContent(comment, '&lt;!-- &lt;!DOCTYPE html&gt; --&gt;');
-  expect(parseFeed(`\uFEFF${json}`, base).title).toBe('Literals');
 });
 
 it.effect('parses feed content through the FeedParser service', () =>

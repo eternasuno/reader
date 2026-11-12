@@ -5,7 +5,6 @@ import { FetchFeedError } from '../../../src/usecase/feed/errors';
 import { refreshFeed } from '../../../src/usecase/feed/refresh-feed';
 import { alice, bob, makeUniqueFeed } from '../../support';
 import {
-  defaultMaxTextLength,
   feedResponse,
   findFeed,
   parsedEntry,
@@ -35,7 +34,7 @@ describe('refreshFeed without a feed', () => {
       const missing = makeUniqueFeed({ ownerId: alice });
       const fetched = yield* Ref.make(0);
 
-      yield* run(refreshFeed(alice, missing.id, defaultMaxTextLength), {
+      yield* run(refreshFeed(alice, missing.id), {
         fetchFeed: recordFetch(fetched),
       });
 
@@ -51,7 +50,7 @@ describe('refreshFeed without a feed', () => {
       yield* run(
         Effect.gen(function* () {
           yield* storeFeed(foreign);
-          yield* refreshFeed(alice, foreign.id, defaultMaxTextLength);
+          yield* refreshFeed(alice, foreign.id);
         }),
         { fetchFeed: recordFetch(fetched) }
       );
@@ -70,7 +69,7 @@ describe('refreshFeed success', () => {
       const result = yield* run(
         Effect.gen(function* () {
           yield* storeFeed(feed);
-          yield* refreshFeed(alice, feed.id, defaultMaxTextLength);
+          yield* refreshFeed(alice, feed.id);
 
           return {
             items: yield* storedItems(alice, feed.id),
@@ -107,11 +106,7 @@ describe('refreshFeed fetch failure', () => {
           yield* storeFeed(feed);
 
           return {
-            error: yield* refreshFeed(
-              alice,
-              feed.id,
-              defaultMaxTextLength
-            ).pipe(Effect.flip),
+            error: yield* refreshFeed(alice, feed.id).pipe(Effect.flip),
             feed: yield* findFeed(alice, feed.id),
           };
         }),
@@ -136,11 +131,7 @@ describe('refreshFeed parse failure', () => {
         Effect.gen(function* () {
           yield* storeFeed(feed);
 
-          const error = yield* refreshFeed(
-            alice,
-            feed.id,
-            defaultMaxTextLength
-          ).pipe(Effect.flip);
+          const error = yield* refreshFeed(alice, feed.id).pipe(Effect.flip);
 
           return { error, feed: yield* findFeed(alice, feed.id) };
         }),

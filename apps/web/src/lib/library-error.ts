@@ -14,6 +14,11 @@ export type LibraryErrorTag =
   | 'FeedItemRepositoryError'
   | 'SavedPageRepositoryError'
   | 'FeedRepositoryError'
+  | 'InvalidRetention'
+  | 'InvalidProvider'
+  | 'InvalidKey'
+  | 'InvalidEndpoint'
+  | 'BrowserEndpointRequired'
   | 'SettingRepositoryError'
   | 'RequestFailed'
   | 'NetworkError'
@@ -35,6 +40,11 @@ const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   FeedItemRepositoryError: '暂时无法访问订阅文章，请稍后重试',
   SavedPageRepositoryError: '暂时无法访问稍后阅读，请稍后重试',
   FeedRepositoryError: '暂时无法访问订阅，请稍后重试',
+  InvalidRetention: '保留数量必须是正整数',
+  InvalidProvider: '请选择有效的文章提取方式',
+  InvalidKey: '请输入有效的 Jina API Key',
+  InvalidEndpoint: '请输入有效的浏览器服务地址',
+  BrowserEndpointRequired: '请填写浏览器服务地址',
   SettingRepositoryError: '暂时无法访问设置，请稍后重试',
   RequestFailed: '请求失败，请稍后重试',
   NetworkError: '网络连接失败，请检查网络后重试',

@@ -1,5 +1,3 @@
-import { BrowserConcurrencyLive } from '@reader/webpage';
-import { HttpFetchLive } from '@reader/webpage/http';
 import { Effect, Layer } from 'effect';
 import { FetchHttpClient, HttpRouter } from 'effect/http';
 import { ArticleExtractorLive } from './adapter/article-extractor';
@@ -13,21 +11,17 @@ import type { FeedRefreshQueue } from './infrastructure/feed-refresh-queue';
 import { authRoutes } from './routes/auth';
 import { libraryRoutes } from './routes/library';
 
-export const FEED_IMPORT_MAX_TEXT_LENGTH = 100_000;
-
 export const LibraryServicesLive = Layer.mergeAll(
   ReaderStoreLive,
   SettingRepositoryLive,
   ArticleExtractorLive,
-  BrowserConcurrencyLive,
   HtmlParserLive,
   FetchHttpClient.layer,
   FeedParserLive,
-  DocumentSanitizerLive,
-  HttpFetchLive
+  DocumentSanitizerLive
 );
 
-export type LibraryServices = Layer.Success<typeof LibraryServicesLive>;
+type LibraryServices = Layer.Success<typeof LibraryServicesLive>;
 
 export const AppLive = Layer.unwrap(
   Effect.gen(function* () {

@@ -27,7 +27,7 @@ DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS setting_owner ON setting FIELDS owner UNIQUE;
 `;
 
-export class ReaderStoreConcurrency extends Context.Service<
+class ReaderStoreConcurrency extends Context.Service<
   ReaderStoreConcurrency,
   Semaphore.Semaphore
 >()('reader/ReaderStoreConcurrency') {}

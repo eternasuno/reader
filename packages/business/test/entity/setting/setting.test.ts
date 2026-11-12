@@ -17,28 +17,20 @@ const decodeKey = Schema.decodeUnknownResult(JinaKey);
 
 const decodeEndpoint = Schema.decodeUnknownResult(BrowserEndpoint);
 
-const encodeKey = Schema.encodeSync(JinaKey);
-
-const encodeEndpoint = Schema.encodeSync(BrowserEndpoint);
-
 const decodeSetting = Schema.decodeUnknownResult(Setting);
 
 const isFailure = (result: Result.Result<unknown, unknown>): boolean =>
   Result.isFailure(result);
 
 describe('Retention', () => {
-  it('accepts integers from 30 to 300 and defaults to 100', () => {
-    for (const value of [30, 100, 300]) {
+  it('accepts any positive integer and defaults to 100', () => {
+    for (const value of [1, 30, 100, 500]) {
       expect(Result.getOrThrow(decodeRetention(value))).toBe(value);
     }
 
     expect(Result.getOrThrow(decodeRetention(undefined))).toBe(100);
-  });
-
-  it('rejects values outside the supported integer range', () => {
-    for (const value of [29, 301, 50.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(isFailure(decodeRetention(value))).toBe(true);
-    }
+    expect(isFailure(decodeRetention(0))).toBe(true);
+    expect(isFailure(decodeRetention(2.5))).toBe(true);
   });
 });
 
@@ -52,28 +44,18 @@ describe('FetcherProvider', () => {
 });
 
 describe('JinaKey', () => {
-  it('trims leading and trailing whitespace and keeps the key redacted', () => {
+  it('trims the key and keeps it redacted', () => {
     for (const value of ['  secret  ', '\tsecret ', ' secret\n']) {
       const key = Result.getOrThrow(decodeKey(value));
 
       expect(Redacted.value(key)).toBe('secret');
-      expect(`${key}`).not.toContain('secret');
-      expect(encodeKey(key)).toBe('secret');
     }
   });
 
-  it('accepts a key of exactly 2048 characters after trimming', () => {
-    expect(isFailure(decodeKey('a'.repeat(2048)))).toBe(false);
-    expect(isFailure(decodeKey(` ${'a'.repeat(2048)} `))).toBe(false);
-  });
-
-  it('rejects blank, multiline and oversized keys', () => {
-    for (const value of ['', '   ', 'line\nbreak', 'line\rbreak']) {
+  it('rejects blank keys', () => {
+    for (const value of ['', '   ']) {
       expect(isFailure(decodeKey(value))).toBe(true);
     }
-
-    expect(isFailure(decodeKey('a'.repeat(2049)))).toBe(true);
-    expect(isFailure(decodeKey(` ${'a'.repeat(2049)} `))).toBe(true);
   });
 });
 
@@ -112,13 +94,6 @@ describe('BrowserEndpoint', () => {
     ]) {
       expect(isFailure(decodeEndpoint(value))).toBe(true);
     }
-  });
-
-  it('is redacted and encodes back to the url string', () => {
-    const endpoint = Result.getOrThrow(decodeEndpoint('ws://10.0.0.5:9222'));
-
-    expect(`${endpoint}`).not.toContain('10.0.0.5');
-    expect(encodeEndpoint(endpoint)).toBe('ws://10.0.0.5:9222/');
   });
 });
 

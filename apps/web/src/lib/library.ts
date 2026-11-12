@@ -21,7 +21,7 @@ import { createSend, type LibraryClientOptions } from './library-transport';
 import type { Article, ArticleRef, Scope } from './library-types';
 
 export * from './library-error';
-export { PAGE_SIZE, refOf } from './library-requests';
+export { refOf } from './library-requests';
 export * from './library-schema';
 export type { FetchLike, LibraryClientOptions } from './library-transport';
 export * from './library-types';

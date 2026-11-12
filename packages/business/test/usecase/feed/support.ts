@@ -53,8 +53,6 @@ import {
   parsedDocument,
 } from '../../support';
 
-export const defaultMaxTextLength = 100_000;
-
 export type EntryOverrides = {
   readonly title?: string;
   readonly description?: Option.Option<string>;

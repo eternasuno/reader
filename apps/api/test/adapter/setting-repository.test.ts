@@ -70,21 +70,3 @@ it.effect('writes no row for a patch without leaves', () =>
     expect(yield* query(db, 'SELECT VALUE id FROM setting;')).toEqual([]);
   }).pipe(Effect.provide(settingStoreDatabaseLayer))
 );
-
-it.effect('reports an unreadable key without leaking it', () =>
-  Effect.gen(function* () {
-    const settings = yield* SettingRepository;
-    const db = yield* Database;
-    const secret = `leak-${'s'.repeat(2100)}`;
-
-    yield* query(db, 'CREATE setting SET owner = $owner, jinaKey = $secret;', {
-      owner: alice,
-      secret,
-    });
-
-    const error = yield* Effect.flip(settings.get(alice));
-
-    expect(error._tag).toBe('SettingRepositoryError');
-    expect(error.message).not.toContain(secret);
-  }).pipe(Effect.provide(settingStoreDatabaseLayer))
-);

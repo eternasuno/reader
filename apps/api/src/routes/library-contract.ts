@@ -5,13 +5,12 @@ import {
   SettingRepository,
   type WebpageFetcher,
 } from '@reader/business';
-import type { BrowserConcurrency } from '@reader/webpage';
-import { Effect, type Layer, Option } from 'effect';
-import type { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import {
-  browserWebpageFetcherLive,
-  jinaWebpageFetcherLive,
-} from '../adapter/webpage-fetcher';
+  BrowserWebpageFetcherLive,
+  JinaWebpageFetcherLive,
+} from '@reader/webpage';
+import { Effect, type Layer, Option, Redacted } from 'effect';
+import type { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { Session } from '../middleware/session';
 
 type Groups =
@@ -19,7 +18,7 @@ type Groups =
 
 type Group = HttpApiGroup.WithIdentifier<Groups, 'library'>;
 
-export type LibraryEndpoints = Group['endpoints'];
+type LibraryEndpoints = Group['endpoints'];
 
 export type HandlerRequest<Identifier extends keyof LibraryEndpoints> =
   Parameters<
@@ -36,17 +35,14 @@ export const optionToNull = <A>(value: Option.Option<A>): A | null =>
     onSome: (item) => item,
   });
 
-const jinaFetcher = (setting: Setting) =>
-  jinaWebpageFetcherLive(Option.getOrUndefined(setting.fetcher.jina.key));
-
-export const webpageFetcherLayerFor = (
+const webpageFetcherLayerFor = (
   setting: Setting
-): Layer.Layer<WebpageFetcher, never, BrowserConcurrency> => {
+): Layer.Layer<WebpageFetcher> => {
   const endpoint = setting.fetcher.browser.endpoint;
 
   return setting.fetcher.provider === 'browser' && Option.isSome(endpoint)
-    ? browserWebpageFetcherLive(endpoint.value)
-    : jinaFetcher(setting);
+    ? BrowserWebpageFetcherLive(Redacted.value(endpoint.value).href)
+    : JinaWebpageFetcherLive(Option.getOrUndefined(setting.fetcher.jina.key));
 };
 
 export const fetcherFor = (owner: OwnerId) =>

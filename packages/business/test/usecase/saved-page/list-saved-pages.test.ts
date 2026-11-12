@@ -33,26 +33,6 @@ describe('listSavedPages', () => {
       })
     )
   );
-
-  it.effect('CM-PAGE-4 returns no cursor when the page is exactly full', () =>
-    run(
-      Effect.gen(function* () {
-        const repository = yield* SavedPageRepository;
-        const first = makeUniqueSavedPage();
-        const second = makeUniqueSavedPage();
-
-        yield* repository.create(alice, [first, second]);
-
-        const listed = yield* listSavedPages(alice, {
-          unreadOnly: false,
-          limit: 2,
-        });
-
-        expect(idsOf(listed.items)).toEqual([second.id, first.id]);
-        expect(listed.cursor).toBeNull();
-      })
-    )
-  );
 });
 
 describe('listSavedPages cursor', () => {

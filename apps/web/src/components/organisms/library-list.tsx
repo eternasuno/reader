@@ -1,10 +1,8 @@
 import { Show } from 'solid-js';
 import type { Article, Feed, Scope } from '../../lib/library';
-import {
-  isBusy,
-  type LibraryModel,
-  unreadCount,
-} from '../../pages/library-model';
+import { unreadCount } from '../../pages/library-counts';
+import type { LibraryModel } from '../../pages/library-model';
+import { isBusy } from '../../pages/library-state';
 import { Button } from '../atoms/button';
 import { LibraryEntry } from '../molecules/library-entry';
 import { LibraryToolbar } from '../molecules/library-toolbar';

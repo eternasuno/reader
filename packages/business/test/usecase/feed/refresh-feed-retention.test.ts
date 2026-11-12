@@ -17,7 +17,6 @@ import { memoryFeedStoreLayer } from '../../port/memory-feed-store';
 import { MemorySettingRepositoryLive } from '../../port/memory-setting-repository';
 import { alice, decodeUrl, makeFeedItem, makeUniqueFeed } from '../../support';
 import {
-  defaultMaxTextLength,
   defaultParseHtml,
   defaultSanitize,
   feedResponse,
@@ -61,7 +60,7 @@ describe('refreshFeed retention', () => {
           yield* settings.update(alice, {
             feed: { retention: Retention.make(30) },
           });
-          yield* refreshFeed(alice, feed.id, defaultMaxTextLength);
+          yield* refreshFeed(alice, feed.id);
 
           return yield* storedItems(alice, feed.id);
         }),
@@ -109,9 +108,7 @@ describe('refreshFeed write failures', () => {
         yield* storeFeed(feed);
 
         return {
-          error: yield* refreshFeed(alice, feed.id, defaultMaxTextLength).pipe(
-            Effect.flip
-          ),
+          error: yield* refreshFeed(alice, feed.id).pipe(Effect.flip),
           stored: yield* findFeed(alice, feed.id),
         };
       }).pipe(Effect.provide(failingCreateLayer));
@@ -132,7 +129,7 @@ describe('refreshFeed write failures', () => {
         Effect.gen(function* () {
           repository = yield* FeedRepository;
           yield* storeFeed(feed);
-          yield* refreshFeed(alice, feed.id, defaultMaxTextLength);
+          yield* refreshFeed(alice, feed.id);
 
           return {
             items: yield* storedItems(alice, feed.id),

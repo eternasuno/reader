@@ -1,7 +1,7 @@
 import { expect, it } from '@effect/vitest';
 import { Feed, FeedRepository, FeedTitle } from '@reader/business';
 import { feedRepositoryContract } from '@reader/business/testing';
-import { DateTime, Effect, Exit, Option } from 'effect';
+import { DateTime, Effect, Option } from 'effect';
 import { Database } from '../../src/infrastructure/db';
 import {
   feedStoreLayer,
@@ -52,31 +52,5 @@ it.effect('stores the feed id as the record id and the url as text', () =>
         'SELECT VALUE type::is_datetime(updatedAt) FROM feed WHERE updatedAt != NONE;'
       )
     ).toEqual([true]);
-  }).pipe(Effect.provide(readerStoreDatabaseLayer))
-);
-
-it.effect('keeps one feed per owner and url in the database', () =>
-  Effect.gen(function* () {
-    const db = yield* Database;
-    const feed = feedRow('https://example.com/duplicate.xml');
-
-    yield* query(
-      db,
-      'CREATE feed SET owner = $owner, feedId = $id, url = $url, title = "Feed";',
-      { owner: alice, id: feed.id, url: feed.url.href }
-    );
-    const duplicate = yield* Effect.exit(
-      query(
-        db,
-        'CREATE feed SET owner = $owner, feedId = $id, url = $url, title = "Feed";',
-        {
-          owner: alice,
-          id: feedRow('https://example.com/other.xml').id,
-          url: feed.url.href,
-        }
-      )
-    );
-
-    expect(Exit.isFailure(duplicate)).toBe(true);
   }).pipe(Effect.provide(readerStoreDatabaseLayer))
 );

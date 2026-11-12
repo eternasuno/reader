@@ -2,7 +2,6 @@ import { FeedItemId, SavedPage, SavedPageId } from '@reader/business';
 import { Schema } from 'effect';
 import { HttpApiEndpoint } from 'effect/http-api';
 import {
-  batchIds,
   created,
   extractionErrors,
   FeedItemNotFoundSchema,
@@ -47,7 +46,7 @@ export const savedPageEndpoints = [
     error: savedPageErrors,
   }),
   HttpApiEndpoint.get('savedPageByUrl', '/api/library/saved-pages/by-url', {
-    query: { url: Schema.String.check(Schema.isMaxLength(4096)) },
+    query: { url: Schema.String },
     success: NullableItemResponse,
     error: savedPageErrors,
   }),
@@ -82,7 +81,7 @@ export const savedPageEndpoints = [
     error: savedPageErrors,
   }),
   HttpApiEndpoint.post('markSavedPages', '/api/library/saved-pages/mark-read', {
-    payload: batchIds(SavedPageId),
+    payload: Schema.Struct({ ids: Schema.Array(SavedPageId) }),
     success: ok,
     error: savedPageErrors,
   }),

@@ -189,7 +189,7 @@ const removeSavedPages = (
       );
 
 const UnreadCountRow = Schema.Struct({
-  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  total: Schema.Int,
 });
 
 const readUnreadCount = (db: Surreal, owner: OwnerId) =>

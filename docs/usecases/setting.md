@@ -10,7 +10,7 @@ Scope: business contract only. The HTTP interface, how values are written in a r
 Setting
   ownerId
   feed
-    retention        Retention        integer 30..300, default 100
+    retention        Retention        positive integer, default 100
   fetcher
     provider         FetcherProvider  "jina" | "browser", default "jina"
     jina
@@ -25,8 +25,8 @@ The rules of the value types are in SET-VAL. Values are decoded into them at the
 
 ### SET-VAL — Value types
 
-- SET-VAL-1 `Retention`: an integer from 30 to 300, default 100.
-- SET-VAL-2 `JinaKey`: trimmed, non-empty, a single line of at most 2048 characters, redacted.
+- SET-VAL-1 `Retention`: a positive integer, default 100.
+- SET-VAL-2 `JinaKey`: trimmed, non-empty, redacted.
 - SET-VAL-3 `BrowserEndpoint`: a URL with protocol http, https, ws or wss, redacted.
 - SET-VAL-4 Redacted means never written to logs, error messages or debug output. Neither the key nor the endpoint is ever sent to the browser; the boundary returns only whether each is configured.
 - SET-VAL-5 The range and the default of a business value belong to its entity type, not to a use case or to the deployment.

@@ -4,7 +4,7 @@ Rules shared by more than one domain. Each rule says where it lives. Entity-leve
 
 Parsing and validation happen where outside data enters: HTTP input, adapter outputs (the fetchers, the feed parser, the article extractor, the sanitizer) and configuration. Past those boundaries, branded values are trusted and never re-validated. This holds for every domain and is not repeated in the other specs.
 
-The dependency direction `SavedPage -> Feed -> Setting -> Common` constrains code imports, not specs: a spec may mention another domain to explain a rule. This spec mentions the `maxTextLength` parameter of `refreshFeed` (`feed.md`); Common itself only receives `maxLength`.
+The dependency direction `SavedPage -> Feed -> Setting -> Common` constrains code imports, not specs: a spec may mention another domain to explain a rule.
 
 ## CM-URL — Normalized URL (entity schema)
 
@@ -56,14 +56,12 @@ Every id (`FeedId`, `FeedItemId`, `SavedPageId`) is a branded string checked as 
 
 ## CM-HTML — Clean feed text before storing
 
-A step of the feed refresh (`refreshFeed`, see `feed.md`), not a function of its own: it cleans the description and content of each imported entry. Input: the text, the item's URL as the base for relative links, and `maxLength`.
+A step of the feed refresh (`refreshFeed`, see `feed.md`), not a function of its own: it cleans the description and content of each imported entry. Input: the text and the item's URL as the base for relative links.
 
 1. If `text` is absent, the result is none.
-2. Cut `text` to `maxLength` Unicode code points. A cut never splits one.
-3. Parse it through `HtmlParser`, with `url` as the base.
-4. Sanitize the document through `DocumentSanitizer`, which returns `Option<string>`.
+2. Parse it through `HtmlParser`, with `url` as the base.
+3. Sanitize the document through `DocumentSanitizer`, which returns `Option<string>`.
 
-- CM-HTML-1 `maxLength` is a positive integer chosen by the application. Business defines no number; the Feed domain receives it as the `maxTextLength` parameter of `refreshFeed` (see `feed.md`).
 - CM-HTML-2 Text that is empty after cleaning (CM-ART-5) is none.
 - CM-HTML-3 Which tags, attributes and URLs survive sanitizing is decided by the sanitizer adapter, not by business.
 - CM-HTML-4 Errors: `HtmlParserError`, `DocumentSanitizerError`.
@@ -73,7 +71,7 @@ A step of the feed refresh (`refreshFeed`, see `feed.md`), not a function of its
 Used by the SavedPage and Feed item lists. Both lists are ordered by `id` descending, so the newest row is on top: ids are made in creation order (CM-ID-1). The list of feeds themselves is not paged this way; it is ordered by title, then `id` (FD-LIST-3).
 
 - CM-PAGE-1 Order: `id` descending. A single-feed list is the all-feeds list restricted to one `feedId`: same order, same cursor shape.
-- CM-PAGE-2 `limit` is a positive integer supplied by the caller. Business defines no page size. The boundary rejects zero, negative, non-integer and too-large values.
+- CM-PAGE-2 `limit` is a positive integer supplied by the caller. Business defines no page size. The boundary rejects zero, negative and non-integer values; there is no upper bound.
 - CM-PAGE-3 A cursor is the `id` of a row. It carries no owner, scope or filter.
 - CM-PAGE-4 Given an optional cursor, the list use case asks the repository for `limit + 1` rows strictly after the cursor (CM-PAGE-1), which are the rows with a smaller id. It returns the first `limit` rows. If more than `limit` rows came back, the result's cursor is the id of the last returned row; otherwise it is `null`.
 - CM-PAGE-5 Business reads and returns the cursor as a structured value, the id of a row. How it is written into a request or response is decided at the boundary. A malformed cursor, including one that is not a lower-case version-7 UUID, is rejected there, so business has no cursor error.

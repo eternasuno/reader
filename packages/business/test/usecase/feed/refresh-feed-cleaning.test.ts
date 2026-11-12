@@ -11,7 +11,6 @@ import { refreshFeed } from '../../../src/usecase/feed/refresh-feed';
 import { alice, makeUniqueFeed, parsedDocument } from '../../support';
 import {
   type Doubles,
-  defaultMaxTextLength,
   defaultParseHtml,
   defaultSanitize,
   parsedEntry,
@@ -29,16 +28,11 @@ const badHtml = '<p>bad</p>';
 
 const feedOf = (): Feed => makeUniqueFeed({ ownerId: alice });
 
-const refreshOnce = (
-  feed: Feed,
-  parsed: ParsedFeed,
-  doubles: Doubles = {},
-  maxTextLength = defaultMaxTextLength
-) =>
+const refreshOnce = (feed: Feed, parsed: ParsedFeed, doubles: Doubles = {}) =>
   run(
     Effect.gen(function* () {
       yield* storeFeed(feed);
-      yield* refreshFeed(alice, feed.id, maxTextLength);
+      yield* refreshFeed(alice, feed.id);
 
       return yield* storedItems(alice, feed.id);
     }),
@@ -54,11 +48,11 @@ const retryScenario = (feed: Feed, failing: Ref.Ref<boolean>) =>
   run(
     Effect.gen(function* () {
       yield* storeFeed(feed);
-      yield* refreshFeed(alice, feed.id, defaultMaxTextLength);
+      yield* refreshFeed(alice, feed.id);
       const afterFirst = yield* storedItems(alice, feed.id);
 
       yield* Ref.set(failing, false);
-      yield* refreshFeed(alice, feed.id, defaultMaxTextLength);
+      yield* refreshFeed(alice, feed.id);
 
       return { afterFirst, afterSecond: yield* storedItems(alice, feed.id) };
     }),
@@ -105,40 +99,10 @@ describe('refreshFeed cleaning failures', () => {
         {
           sanitize: () =>
             Effect.fail(new DocumentSanitizerError({ message: 'sanitize' })),
-        },
-        defaultMaxTextLength
+        }
       );
 
       expect(items).toEqual([]);
-    })
-  );
-});
-
-describe('refreshFeed text length', () => {
-  it.effect('cuts the text to maxTextLength code points', () =>
-    Effect.gen(function* () {
-      const parsedHtml: Array<readonly [string, string]> = [];
-      const items = yield* refreshOnce(
-        feedOf(),
-        parsedFeed({
-          entries: [
-            parsedEntry(`${base}/a`, {
-              description: Option.some('ab😀😀'),
-            }),
-          ],
-        }),
-        {
-          parseHtml: (html, url) => {
-            parsedHtml.push([html, url.href]);
-
-            return Effect.succeed(parsedDocument(html));
-          },
-        },
-        3
-      );
-
-      expect(Option.getOrThrow(rowAt(items, 0).description)).toBe('ab😀');
-      expect(parsedHtml).toEqual([['ab😀', `${base}/a`]]);
     })
   );
 });
@@ -203,32 +167,6 @@ describe('refreshFeed absent text', () => {
       expect(yield* Ref.get(calls)).toBe(0);
       expect(Option.isNone(item.description)).toBe(true);
       expect(Option.isNone(item.content)).toBe(true);
-    })
-  );
-});
-
-describe('refreshFeed cleaning scope', () => {
-  it.effect('releases the parsed document before returning', () =>
-    Effect.gen(function* () {
-      const released = yield* Ref.make(false);
-
-      yield* refreshOnce(
-        feedOf(),
-        parsedFeed({
-          entries: [
-            parsedEntry(`${base}/a`, { description: Option.some('<p>x</p>') }),
-          ],
-        }),
-        {
-          parseHtml: () =>
-            Effect.acquireRelease(
-              Effect.succeed(parsedDocument('<p>x</p>')),
-              () => Ref.set(released, true)
-            ),
-        }
-      );
-
-      expect(yield* Ref.get(released)).toBe(true);
     })
   );
 });

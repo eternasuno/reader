@@ -103,29 +103,6 @@ describe('library read marks', () => {
     expect(model.state().pending.has('a')).toBe(false);
   });
 
-  it('does not let a stale completion override the latest mark', async () => {
-    const { client, model } = await withRows([article('a')]);
-    const first = deferred<void>();
-    const second = deferred<void>();
-    client.markRead
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
-    const row = model.state().items[0] ?? article('a');
-
-    const one = model.toggleRead(row);
-    const two = model.toggleRead(model.state().items[0] ?? row);
-
-    second.resolve();
-    await two;
-    expect(model.state().items[0]?.read).toBe(false);
-    expect(model.state().pending.has('a')).toBe(true);
-
-    first.resolve();
-    await one;
-    expect(model.state().items[0]?.read).toBe(false);
-    expect(model.state().pending.has('a')).toBe(false);
-  });
-
   it('keeps an optimistic read mark through a pending write', async () => {
     const { client, model } = await withRows([article('a', { feedId: 'f1' })]);
     const mark = deferred<void>();

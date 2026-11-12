@@ -8,11 +8,7 @@ export const FetcherProvider = Schema.Literals(['jina', 'browser']).pipe(
 export type FetcherProvider = typeof FetcherProvider.Type;
 
 export const JinaKey = Schema.Trim.pipe(
-  Schema.check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(2048),
-    Schema.isPattern(/^[^\r\n]*$/)
-  ),
+  Schema.check(Schema.isMinLength(1)),
   Schema.brand('JinaKey'),
   Schema.RedactedFromValue
 );

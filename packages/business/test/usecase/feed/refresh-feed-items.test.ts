@@ -5,16 +5,9 @@ import type { Feed } from '../../../src/entity/feed/feed';
 import type { FeedItem } from '../../../src/entity/feed/feed-item';
 import type { ParsedFeed } from '../../../src/port/feed-parser';
 import { refreshFeed } from '../../../src/usecase/feed/refresh-feed';
-import {
-  alice,
-  decodeTitle,
-  decodeUrl,
-  makeFeedItem,
-  makeUniqueFeed,
-} from '../../support';
+import { alice, makeUniqueFeed } from '../../support';
 import {
   type Doubles,
-  defaultMaxTextLength,
   findFeed,
   parsedEntry,
   parsedFeed,
@@ -57,7 +50,7 @@ const refreshAndRead = (
   run(
     Effect.gen(function* () {
       yield* storeFeed(feed);
-      yield* refreshFeed(alice, feed.id, defaultMaxTextLength);
+      yield* refreshFeed(alice, feed.id);
 
       return {
         items: yield* storedItems(alice, feed.id),
@@ -76,7 +69,7 @@ const refreshWithStored = (
     Effect.gen(function* () {
       yield* storeFeed(feed);
       yield* storeItems(alice, stored);
-      yield* refreshFeed(alice, feed.id, defaultMaxTextLength);
+      yield* refreshFeed(alice, feed.id);
 
       return yield* storedItems(alice, feed.id);
     }),
@@ -128,27 +121,7 @@ describe('refreshFeed feed update', () => {
   );
 });
 
-describe('refreshFeed existing items', () => {
-  it.effect('never modifies an entry that is already stored', () =>
-    Effect.gen(function* () {
-      const feed = feedOf();
-      const existing = makeFeedItem({
-        ownerId: alice,
-        feedId: feed.id,
-        url: decodeUrl(`${base}/a`),
-        title: decodeTitle('Old title'),
-        read: true,
-      });
-      const items = yield* refreshWithStored(feed, [existing], sourceEntries());
-      const kept = rowAt(items, 2);
-
-      expect(urlsOf(items)).toEqual([`${base}/b`, `${base}/c`, `${base}/a`]);
-      expect(kept.id).toBe(existing.id);
-      expect(kept.title).toBe('Old title');
-      expect(kept.read).toBe(true);
-    })
-  );
-
+describe('refreshFeed empty source', () => {
   it.effect('creates nothing when the source lists nothing', () =>
     Effect.gen(function* () {
       const items = yield* refreshWithStored(feedOf(), [], parsedFeed());

@@ -57,7 +57,7 @@ export const settingRepositoryError = () =>
   failure('SettingRepositoryError', '暂时无法访问设置，请稍后重试');
 
 export const invalidRetention = () =>
-  failure('InvalidRetention', '保留数量必须是 30 到 300 之间的整数');
+  failure('InvalidRetention', '保留数量必须是正整数');
 
 export const invalidProvider = () =>
   failure('InvalidProvider', '请选择有效的文章提取方式');

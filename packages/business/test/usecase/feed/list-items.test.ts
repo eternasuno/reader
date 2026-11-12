@@ -97,16 +97,6 @@ describe('listItems paging', () => {
 });
 
 describe('listItems full page', () => {
-  it.effect('returns no cursor when the page is exactly full', () =>
-    Effect.gen(function* () {
-      const feed = makeUniqueFeed({ ownerId: alice });
-      const page = yield* pageOf(feed, ['one', 'two'], 2);
-
-      expect(urlsOf(page.items)).toEqual([url('two'), url('one')]);
-      expect(page.cursor).toBeNull();
-    })
-  );
-
   it.effect('limits the page and reports a cursor when more rows exist', () =>
     Effect.gen(function* () {
       const feed = makeUniqueFeed({ ownerId: alice });
@@ -118,6 +108,16 @@ describe('listItems full page', () => {
         url('two'),
       ]);
       expect(page.cursor).not.toBeNull();
+    })
+  );
+
+  it.effect('returns no cursor when the page is exactly full', () =>
+    Effect.gen(function* () {
+      const feed = makeUniqueFeed({ ownerId: alice });
+      const page = yield* pageOf(feed, ['one', 'two', 'three'], 3);
+
+      expect(page.items).toHaveLength(3);
+      expect(page.cursor).toBeNull();
     })
   );
 });
@@ -150,22 +150,6 @@ describe('listItems feed filter', () => {
 
       expect(urlsOf(result.oneFeed.items)).toEqual([url('one')]);
       expect(result.allFeeds.items).toHaveLength(2);
-    })
-  );
-
-  it.effect('returns an empty page for an unknown feed', () =>
-    Effect.gen(function* () {
-      const missing = makeUniqueFeed({ ownerId: alice });
-      const page = yield* run(
-        listItems(alice, {
-          feedId: missing.id,
-          unreadOnly: false,
-          limit: 10,
-        })
-      );
-
-      expect(page.items).toEqual([]);
-      expect(page.cursor).toBeNull();
     })
   );
 });

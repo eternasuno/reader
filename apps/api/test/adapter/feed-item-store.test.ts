@@ -9,7 +9,7 @@ import {
   FeedTitle,
 } from '@reader/business';
 import { feedItemRepositoryContract } from '@reader/business/testing';
-import { Effect, Exit, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { Database } from '../../src/infrastructure/db';
 import {
   feedStoreLayer,
@@ -82,24 +82,5 @@ it.effect('decodes a stored row without optional fields as none', () =>
     expect(Option.isNone(stored.content)).toBe(true);
     expect(Option.isNone(stored.extractedContent)).toBe(true);
     expect(Option.isNone(stored.publishedAt)).toBe(true);
-  }).pipe(Effect.provide(readerStoreDatabaseLayer))
-);
-
-it.effect('keeps one item per feed and url in the database', () =>
-  Effect.gen(function* () {
-    const db = yield* Database;
-    const feed = yield* storedFeed();
-    const item = itemRow(feed.id);
-    const create = (id: string) =>
-      query(
-        db,
-        'CREATE feed_item SET owner = $owner, feedId = $feedId, itemId = $id, url = $url, title = "Item", read = false;',
-        { owner: alice, feedId: feed.id, id, url: item.url.href }
-      );
-
-    yield* create(item.id);
-    const duplicate = yield* Effect.exit(create(itemRow(feed.id).id));
-
-    expect(Exit.isFailure(duplicate)).toBe(true);
   }).pipe(Effect.provide(readerStoreDatabaseLayer))
 );

@@ -43,7 +43,7 @@ export const settingRepositoryFailure = {
   SettingRepositoryError: failed(settingRepositoryError),
 };
 
-export const extractionFailure = {
+const extractionFailure = {
   ArticleEmptyContent: failed(articleEmptyContent),
   WebpageFetcherError: failed(webpageFetchError),
   ArticleExtractorError: failed(articleExtractError),

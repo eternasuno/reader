@@ -207,7 +207,7 @@ Feature: Feeds and their items
     Given I have feeds
     Then every feed is enqueued every refresh interval, 30 minutes by default
     And every feed is enqueued once at process start
-    And each run is subject to the refresh queue and the parallel limit
+    And each run is subject to the refresh queue
 
   # FD-SCHED-2
   @system
@@ -225,15 +225,9 @@ Feature: Feeds and their items
   # FD-SCHED-3
   @system
   Scenario: Feeds of one owner refresh at the same time
-    Given I have two feeds that are due and at least 2 parallel slots are free
+    Given I have two feeds that are due
     When the first feed's fetch is still in progress
     Then the second feed of mine starts its fetch
-
-  # FD-SCHED-3
-  @system
-  Scenario: The number of parallel refreshes is bounded
-    Given many feeds are due
-    Then at most 3 of them refresh at the same time by default
 
   # FD-SCHED-4, FD-SCHED-5
   @system

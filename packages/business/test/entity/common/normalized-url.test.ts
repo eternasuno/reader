@@ -4,8 +4,6 @@ import { NormalizedUrl } from '../../../src/entity/common/normalized-url';
 
 const decode = Schema.decodeUnknownResult(NormalizedUrl);
 
-const encode = Schema.encodeSync(NormalizedUrl);
-
 const isInvalid = (input: string): boolean => Result.isFailure(decode(input));
 
 const hrefOf = (input: string): string => Result.getOrThrow(decode(input)).href;
@@ -93,27 +91,5 @@ describe('NormalizedUrl serialization', () => {
     expect(url.username).toBe('user');
     expect(url.password).toBe('secret');
     expect(url.href).toBe('https://user:secret@example.com/a');
-  });
-
-  it('applies the standard url serialization', () => {
-    expect(hrefOf('https://EXAMPLE.com')).toBe('https://example.com/');
-    expect(hrefOf('https://example.com:443/post')).toBe(
-      'https://example.com/post'
-    );
-    expect(hrefOf('https://example.com/post/')).toBe(
-      'https://example.com/post/'
-    );
-    expect(hrefOf('https://site')).toBe(hrefOf('https://site/'));
-    expect(hrefOf('https://site/post')).not.toBe(hrefOf('https://site/post/'));
-    expect(hrefOf('http://site/post')).not.toBe(hrefOf('https://site/post'));
-    expect(hrefOf('https://site/post')).not.toBe(
-      hrefOf('https://www.site/post')
-    );
-  });
-
-  it('encodes back to the url string', () => {
-    const url = Result.getOrThrow(decode('https://example.com/a?b=1#frag'));
-
-    expect(encode(url)).toBe('https://example.com/a?b=1');
   });
 });

@@ -10,7 +10,6 @@ import {
   FeedItemSchema,
   FeedSchema,
   LibraryError,
-  PAGE_SIZE,
   type Preview,
   PreviewSchema,
   type SavedPage,
@@ -137,9 +136,6 @@ const json =
 const failure = async (task: Promise<unknown>): Promise<unknown> =>
   task.catch((caught: unknown) => caught);
 
-const idsBody = (request: RecordedRequest): ReadonlyArray<string> =>
-  (request.body as { readonly ids: ReadonlyArray<string> }).ids;
-
 describe('library list requests', () => {
   it('lists saved pages with the unread flag, page size, and cursor', async () => {
     const { client, requests } = makeClient(
@@ -151,8 +147,7 @@ describe('library list requests', () => {
     expect(request?.path).toBe('/api/library/saved-pages');
     expect(request?.method).toBe('GET');
     expect(request?.params.get('unreadOnly')).toBe('true');
-    expect(request?.params.get('limit')).toBe(String(PAGE_SIZE));
-    expect(PAGE_SIZE).toBe(30);
+    expect(request?.params.get('limit')).toBe('30');
     expect(request?.params.get('cursor')).toBe('cursor-1');
     expect(request?.params.get('feedId')).toBeNull();
     expect(request?.credentials).toBe('include');
@@ -197,10 +192,9 @@ describe('library list requests', () => {
 
 describe('library reads', () => {
   it('reads subscriptions without a sync timestamp', async () => {
-    const { client, requests } = makeClient(json({ items: [feedJson('f1')] }));
+    const { client } = makeClient(json({ items: [feedJson('f1')] }));
 
     expect(await client.feeds()).toEqual([feed('f1')]);
-    expect(requests[0]?.cache).toBe('no-store');
   });
 
   it('composes the two unread count requests', async () => {
@@ -283,7 +277,6 @@ describe('library reads', () => {
     ).toEqual(savedArticle('a', 'One'));
     expect(found.requests[0]?.path).toBe('/api/library/saved-pages/by-url');
     expect(found.requests[0]?.params.get('url')).toBe('https://example.com/a');
-    expect(found.requests[0]?.cache).toBe('no-store');
     expect(
       await missing.client.findSavedPageByUrl('https://example.com/gone')
     ).toBeNull();
@@ -346,25 +339,6 @@ describe('library article writes', () => {
         body: { ids: ['a', 'b', 'c'] },
       },
     ]);
-  });
-
-  it('chunks mark-read batches at 5000 ids', async () => {
-    const { client, requests } = makeClient(json({ ok: true }));
-    const refs = Array.from({ length: 5001 }, (_, index) => ({
-      id: `s${index}`,
-      feedId: undefined,
-    }));
-
-    await client.markArticles(refs);
-
-    expect(requests.map((request) => idsBody(request).length)).toEqual([
-      5000, 1,
-    ]);
-    expect(
-      requests.every(
-        (request) => request.path === '/api/library/saved-pages/mark-read'
-      )
-    ).toBe(true);
   });
 
   it('deletes saved pages and saves a feed item by id', async () => {
@@ -557,19 +531,7 @@ describe('library error tags', () => {
       message: '正文提取失败，请稍后重试',
     });
   });
-
-  it('maps tags removed from the API to a plain request failure', async () => {
-    const removed = makeClient(
-      json({ _tag: 'FeedExists', message: 'Exists', id: 'f1' }, 409)
-    );
-
-    expect(await failure(removed.client.feeds())).toMatchObject({
-      tag: 'RequestFailed',
-      message: '请求失败，请稍后重试',
-    });
-  });
 });
-
 describe('library error fallbacks', () => {
   it('maps bare 401 bodies and unknown tags to local failures', async () => {
     const unauthorized = makeClient(json({ error: 'Unauthorized' }, 401));

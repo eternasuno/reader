@@ -38,9 +38,7 @@ const publishedDateOf = (
   );
 
 const readArticle = (document: Document): ExtractedArticle => {
-  const result = new Readability(document, {
-    maxElemsToParse: 50_000,
-  }).parse();
+  const result = new Readability(document).parse();
   if (!result?.content) {
     throw new Error('No article content found');
   }

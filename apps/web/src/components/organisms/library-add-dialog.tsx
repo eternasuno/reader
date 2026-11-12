@@ -1,7 +1,7 @@
 import { Option } from 'effect';
 import { createEffect, createSignal, For, Show } from 'solid-js';
 import type { Preview } from '../../lib/library';
-import type { PreviewResult } from '../../pages/library-model';
+import type { PreviewResult } from '../../pages/library-mutations';
 import { Button } from '../atoms/button';
 import { SubmitButton } from '../atoms/submit-button';
 import { Dialog } from '../molecules/dialog';
@@ -155,7 +155,6 @@ const AddForm = (props: {
       hint="请输入有效的 http 或 https 链接"
       type="url"
       required
-      maxLength={4096}
       placeholder={
         props.mode === 'article' ? '粘贴文章链接…' : '粘贴 RSS / Atom 链接…'
       }

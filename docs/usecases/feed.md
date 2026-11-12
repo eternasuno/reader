@@ -90,7 +90,7 @@ Example, N = 3, list order shown from top to bottom. This is an illustration of 
 ### FD-IMPORT — Turning entries into items
 
 - FD-IMPORT-1 Each imported entry becomes a `FeedItem` with `read = false`, no `extractedContent`, the owner of the feed, the entry's URL and an id taken at that moment (FD-SEL-9).
-- FD-IMPORT-2 `description` and `content` are cleaned before storage as in CM-HTML, with the item's URL as the base for relative links, cut to `maxTextLength`, the parameter of `refreshFeed`.
+- FD-IMPORT-2 `description` and `content` are cleaned before storage as in CM-HTML, with the item's URL as the base for relative links. The text is not shortened.
 - FD-IMPORT-3 An absent or empty description or content is stored as none. Every entry that reaches this step has a URL; the parser drops entries without one.
 - FD-IMPORT-4 A stored item is never overwritten: `create` skips a row whose id or unique URL key already exists (CM-PORT-6).
 - FD-IMPORT-5 The publish time is the one the source gives, if any, and is kept for display only. A missing time stays none; no fallback invents one. A time that is wrong or in the future is shown as given and changes nothing else.
@@ -147,15 +147,14 @@ The scheduler lives in the application, not in `packages/business`. It owns the 
 
 - FD-SCHED-1 Every refresh interval, all feeds are enqueued, and each feed is enqueued once at process start.
 - FD-SCHED-2 Each feed has at most one refresh, queued or running. A request for a feed that already has one, in either state, is dropped.
-- FD-SCHED-3 At most P refreshes run at the same time across all feeds. Different feeds of the same owner may refresh at the same time.
+- FD-SCHED-3 Refreshes of different feeds run at the same time; there is no bound on how many. Different feeds of the same owner may refresh at the same time.
 - FD-SCHED-4 A feed that fails to refresh is logged and does not stop the others.
 - FD-SCHED-5 A failed refresh is not visible to the user. No status is stored besides `Feed.updatedAt`.
-- FD-SCHED-6 The two numbers are the scheduler's own configuration, not business values:
+- FD-SCHED-6 The refresh interval is the scheduler's own configuration, not a business value:
 
-| Value            | Default    | What it is for                                                                             |
-| ---------------- | ---------- | ------------------------------------------------------------------------------------------ |
-| Refresh interval | 30 minutes | How stale a feed may get. Shorter means fresher items and more requests to the sources     |
-| Parallel jobs    | 3          | Upper bound on feeds refreshed at the same time, which bounds outgoing requests and memory |
+| Value            | Default    | What it is for                                                                         |
+| ---------------- | ---------- | -------------------------------------------------------------------------------------- |
+| Refresh interval | 30 minutes | How stale a feed may get. Shorter means fresher items and more requests to the sources |
 
 - FD-SCHED-7 Only two things enqueue: the periodic run (FD-SCHED-1) and subscribe (the HTTP layer enqueues a new feed right after it is created, FD-SUB). No user operation refreshes a feed.
 
@@ -225,7 +224,7 @@ Each is a single port call, so there is no use case. They are listed separately 
 | `fetchParsedFeed` | `url`                                                | `ParsedFeed`                                            | `FetchFeedError`, `FeedParserError`                                |
 | `previewFeed`     | `url`                                                | title (`FeedTitle`), optional description, entry titles | as `fetchParsedFeed`                                               |
 | `subscribeFeed`   | `owner`, `url`, `title`                              | `Feed`                                                  | `FeedAlreadyExists`; nothing is fetched                            |
-| `refreshFeed`     | `owner`, `feedId`, `maxTextLength`                   | nothing                                                 | as `fetchParsedFeed`; cleaning errors skip the entry (FD-IMPORT-6) |
+| `refreshFeed`     | `owner`, `feedId`                                    | nothing                                                 | as `fetchParsedFeed`; cleaning errors skip the entry (FD-IMPORT-6) |
 | `listItems`       | `owner`, `feedId?`, `unreadOnly`, `limit`, `cursor?` | items, `cursor` or `null`                               | none                                                               |
 | `extractItem`     | `owner`, `itemId`                                    | `FeedItem`                                              | `FeedItemNotFound`, and those of CM-FETCH                          |
 
@@ -276,10 +275,6 @@ All methods are scoped by `ownerId`. Patch and write semantics are those of CM-P
 
 - `HttpClient` (`effect/http`) is not a port of this package: `fetchParsedFeed` uses Effect's service directly and sends a GET to the feed URL. The application provides Effect's plain `FetchHttpClient`; `fetch` follows redirects, and no address, size or time limit is added. Because `fetch` rejects a URL that carries a user name or password, `fetchParsedFeed` sends those credentials as a Basic authorization header and the URL without them (CM-URL-4).
 - `FeedParser.parse(text, baseUrl)`: a `ParsedFeed`, or `FeedParserError`. Entry URLs are resolved against `baseUrl`, the final URL from the fetcher; an entry whose URL is then not a valid `NormalizedUrl` is dropped, and so is an entry with no URL. The feed keeps the submitted URL. An entry without a publish time has none. Titles are plain text; any length limit on a title is the adapter's.
-
-### Text-length limit
-
-`refreshFeed` takes `maxTextLength`, the longest description or content, in Unicode code points, kept from an entry (CM-HTML-1). It is a plain parameter: business defines no number, and the application passes it (the refresh queue in `apps/api`).
 
 ### From other domains
 

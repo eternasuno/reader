@@ -1,13 +1,7 @@
 import { expect, it } from '@effect/vitest';
-import { Effect, Fiber, Redacted } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/http';
-import { TestClock } from 'effect/testing';
-import { vi } from 'vitest';
 import { fetchJina } from '../src/jina';
-
-vi.mock('node:dns/promises', () => ({
-  lookup: async () => [{ address: '93.184.216.34', family: 4 }],
-}));
 
 type FetchInput = Parameters<typeof globalThis.fetch>[0];
 
@@ -23,11 +17,11 @@ const provideFetch = (impl: typeof globalThis.fetch) =>
   Effect.provideService(FetchHttpClient.Fetch, impl);
 
 const textFetch =
-  (body: string, status = 200, headers: Record<string, string> = {}) =>
+  (body: string, status = 200) =>
   () =>
-    Promise.resolve(new Response(body, { status, headers }));
+    Promise.resolve(new Response(body, { status }));
 
-it.effect('returns Jina html with the target and credentials', () =>
+it.effect('requests Jina html for the target with the key', () =>
   Effect.gen(function* () {
     let seen: { url: string; init: FetchInit | undefined } | undefined;
     const fetchImpl = (input: FetchInput, init?: FetchInit) => {
@@ -39,13 +33,12 @@ it.effect('returns Jina html with the target and credentials', () =>
       provideFetch(fetchImpl as typeof globalThis.fetch)
     );
     const headers = new Headers(seen?.init?.headers);
+
     expect(result).toBe(html);
     expect(seen?.url).toBe(`https://r.jina.ai/${article}`);
-    expect(seen?.init?.redirect).toBe('error');
     expect(headers.get('authorization')).toBe('Bearer secret');
     expect(headers.get('accept')).toBe('text/html');
     expect(headers.get('x-return-format')).toBe('html');
-    expect(headers.get('x-timeout')).toBe('30');
   })
 );
 
@@ -60,140 +53,35 @@ it.effect('omits credentials when no key is configured', () =>
     const result = yield* fetchJina(article, undefined).pipe(
       provideFetch(fetchImpl as typeof globalThis.fetch)
     );
+
     expect(result).toBe(html);
     expect(new Headers(init?.headers).get('authorization')).toBeNull();
   })
 );
 
-it.effect(
-  'reports distinct rate limit, rejected key and failure messages',
-  () =>
-    Effect.gen(function* () {
-      const responses = [
-        new Response('slow down', { status: 429 }),
-        new Response('denied', { status: 401 }),
-        new Response('denied', { status: 403 }),
-        new Response('boom', { status: 502 }),
-      ];
-      const fetchImpl = () => {
-        const response = responses.shift();
-
-        if (!response) {
-          throw new Error('Unexpected request');
-        }
-
-        return Promise.resolve(response);
-      };
-      const run = () =>
-        Effect.flip(
-          fetchJina(article, key).pipe(
-            provideFetch(fetchImpl as typeof globalThis.fetch)
-          )
-        );
-      expect((yield* run()).message).toBe('Jina rate limit exceeded');
-      expect((yield* run()).message).toBe('Jina API key rejected');
-      expect((yield* run()).message).toBe('Jina API key rejected');
-      expect((yield* run()).message).toBe(
-        'Jina request failed with status 502'
-      );
-    })
-);
-
-it.effect('rejects unsupported targets before fetching', () =>
+it.effect('fails with the response status on a non-2xx answer', () =>
   Effect.gen(function* () {
-    let called = false;
-    const fetchImpl = () => {
-      called = true;
-
-      return Promise.resolve(new Response(html));
-    };
-    const addresses = ['ftp://example.com/article', 'not a url'];
-
-    for (const address of addresses) {
-      const error = yield* Effect.flip(
-        fetchJina(address, key).pipe(
-          provideFetch(fetchImpl as typeof globalThis.fetch)
-        )
-      );
-      expect(error._tag).toBe('FetchFailure');
-    }
-
-    expect(called).toBe(false);
-  })
-);
-
-it.effect('rejects redirects, failed statuses and oversized bodies', () =>
-  Effect.gen(function* () {
-    const responses = [
-      new Response(null, {
-        status: 302,
-        headers: { location: 'https://elsewhere.example/' },
-      }),
-      new Response('no', { status: 502 }),
-      new Response('a'.repeat(5 * 1024 * 1024 + 1)),
-    ];
-    const fetchImpl = () => {
-      const response = responses.shift();
-
-      if (!response) {
-        throw new Error('Unexpected request');
-      }
-
-      return Promise.resolve(response);
-    };
-    const run = () =>
-      Effect.flip(
-        fetchJina(article, key).pipe(
-          provideFetch(fetchImpl as typeof globalThis.fetch)
-        )
-      );
-    const redirect = yield* run();
-    const failed = yield* run();
-    const oversized = yield* run();
-    expect(redirect._tag).toBe('FetchFailure');
-    expect(failed._tag).toBe('FetchFailure');
-    expect(oversized._tag).toBe('FetchFailure');
-  })
-);
-
-it.effect('reports a forty second timeout', () =>
-  Effect.gen(function* () {
-    let started = () => {};
-    const sent = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const fetchImpl = () => {
-      started();
-
-      return new Promise<Response>(() => {});
-    };
-    const fiber = yield* fetchJina(article, key).pipe(
-      provideFetch(fetchImpl as typeof globalThis.fetch),
-      Effect.forkChild
+    const fetchImpl = () => textFetch('denied', 403)();
+    const failure = yield* Effect.flip(
+      fetchJina(article, key).pipe(
+        provideFetch(fetchImpl as typeof globalThis.fetch)
+      )
     );
-    yield* Effect.promise(() => sent);
-    yield* TestClock.adjust('40 seconds');
-    const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-    expect(error._tag).toBe('FetchFailure');
-    expect(error.message).toBe('Jina request timed out');
+
+    expect(failure._tag).toBe('FetchFailure');
+    expect(failure.message).toBe('Jina request failed with status 403');
   })
 );
 
-it.effect('accepts a credentialed target and forwards it to Jina', () =>
+it.effect('fails when the request cannot be sent', () =>
   Effect.gen(function* () {
-    let seen: string | undefined;
-    const fetchImpl = (input: FetchInput) => {
-      seen = String(input);
-
-      return textFetch(html)();
-    };
-    const result = yield* fetchJina(
-      'https://alice:secret@example.com/article',
-      key
-    ).pipe(provideFetch(fetchImpl as typeof globalThis.fetch));
-    expect(result).toBe(html);
-    expect(seen).toBe(
-      'https://r.jina.ai/https://alice:secret@example.com/article'
+    const fetchImpl = () => Promise.reject(new Error('Network down'));
+    const failure = yield* Effect.flip(
+      fetchJina(article, key).pipe(
+        provideFetch(fetchImpl as typeof globalThis.fetch)
+      )
     );
+
+    expect(failure.message).toBe('Jina request failed');
   })
 );

@@ -214,7 +214,7 @@ const updateAllFeedItems = (
 
 const UnreadCountRow = Schema.Struct({
   feedId: FeedId,
-  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  total: Schema.Int,
 });
 
 const readUnreadCounts = (db: Surreal, owner: OwnerId) =>

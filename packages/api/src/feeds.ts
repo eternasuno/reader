@@ -77,7 +77,7 @@ export const feedEndpoints = [
   }),
   HttpApiEndpoint.post('markFeedsRead', '/api/library/feeds/mark-read', {
     payload: Schema.Struct({
-      feedIds: Schema.Array(FeedId).check(Schema.isMaxLength(5000)),
+      feedIds: Schema.Array(FeedId),
     }),
     success: ok,
     error: feedItemErrors,
@@ -112,7 +112,7 @@ export const feedEndpoints = [
   }),
   HttpApiEndpoint.post('markFeedItems', '/api/library/feeds/items/mark-read', {
     payload: Schema.Struct({
-      ids: Schema.Array(FeedItemId).check(Schema.isMaxLength(5000)),
+      ids: Schema.Array(FeedItemId),
     }),
     success: ok,
     error: feedItemErrors,

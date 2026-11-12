@@ -19,13 +19,6 @@ import {
 } from 'effect';
 import { type AnyFeed, parseFeed as parseSyndication } from 'feedsmith';
 
-const MAX_TITLE_LENGTH = 500;
-
-const UNSUPPORTED_DECLARATION = /<!(?:DOCTYPE|ENTITY)\b/i;
-
-const SKIPPED_XML_MARKUP =
-  /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>/gi;
-
 type RawEntry = {
   readonly title: string | undefined;
   readonly description: string | undefined;
@@ -61,24 +54,8 @@ const HTML_MEDIA_TYPES = new Set([
   'application/xhtml+xml',
 ]);
 
-const hasUnsupportedDeclaration = (content: string) => {
-  let index = 0;
-
-  for (const skipped of content.matchAll(SKIPPED_XML_MARKUP)) {
-    if (UNSUPPORTED_DECLARATION.test(content.slice(index, skipped.index))) {
-      return true;
-    }
-
-    index = skipped.index + skipped[0].length;
-  }
-
-  return UNSUPPORTED_DECLARATION.test(content.slice(index));
-};
-
 const stripByteOrderMark = (content: string) =>
   content.startsWith('\uFEFF') ? content.slice(1) : content;
-
-const isJsonContent = (content: string) => content.trimStart().startsWith('{');
 
 const mediaType = (type: string | undefined) =>
   type?.split(';')[0]?.trim().toLowerCase() ?? '';
@@ -213,9 +190,7 @@ const toPublishedAt = (
 };
 
 const cleanTitle = (title: string | undefined) =>
-  Schema.decodeSync(ArticleTitle)(
-    (title ?? '').trim().slice(0, MAX_TITLE_LENGTH)
-  );
+  Schema.decodeSync(ArticleTitle)((title ?? '').trim());
 
 const toEntry = (
   item: RawEntry,
@@ -235,7 +210,7 @@ const feedTitle = (parsed: AnyFeed, baseUrl: URL): FeedTitle => {
   const title =
     parsed.format === 'atom' ? parsed.feed.title?.value : parsed.feed.title;
 
-  return makeFeedTitle((title ?? '').slice(0, MAX_TITLE_LENGTH), baseUrl);
+  return makeFeedTitle(title ?? '', baseUrl);
 };
 
 const feedDescription = (parsed: AnyFeed): Option.Option<string> => {
@@ -244,9 +219,7 @@ const feedDescription = (parsed: AnyFeed): Option.Option<string> => {
       ? parsed.feed.subtitle?.value
       : parsed.feed.description;
 
-  return Schema.decodeSync(ParsedFeed.fields.description)(
-    description?.slice(0, MAX_TITLE_LENGTH)
-  );
+  return Schema.decodeSync(ParsedFeed.fields.description)(description);
 };
 
 const feedEntries = (
@@ -256,13 +229,7 @@ const feedEntries = (
   Arr.getSomes(rawEntries(parsed).map((item) => toEntry(item, baseUrl)));
 
 export const parseFeed = (content: string, baseUrl: URL): ParsedFeed => {
-  const document = stripByteOrderMark(content);
-
-  if (!isJsonContent(document) && hasUnsupportedDeclaration(document)) {
-    throw new Error('Unsupported XML declarations');
-  }
-
-  const parsed = parseSyndication(document);
+  const parsed = parseSyndication(stripByteOrderMark(content));
 
   return {
     title: feedTitle(parsed, baseUrl),

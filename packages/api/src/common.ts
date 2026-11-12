@@ -9,9 +9,9 @@ const failure = <Tag extends string>(tag: Tag, status: number) =>
     url: Schema.optionalKey(Schema.String),
   }).pipe(HttpApiSchema.status(status));
 
-export const UnauthorizedSchema = failure('Unauthorized', 401);
+const UnauthorizedSchema = failure('Unauthorized', 401);
 
-export const ForbiddenSchema = failure('Forbidden', 403);
+const ForbiddenSchema = failure('Forbidden', 403);
 
 export const InvalidPageUrlSchema = failure('InvalidPageUrl', 400);
 
@@ -34,14 +34,11 @@ export const SavedPageAlreadyExistsSchema = failure(
 
 export const FeedAlreadyExistsSchema = failure('FeedAlreadyExists', 409);
 
-export const ArticleEmptyContentSchema = failure('ArticleEmptyContent', 422);
+const ArticleEmptyContentSchema = failure('ArticleEmptyContent', 422);
 
-export const WebpageFetcherErrorSchema = failure('WebpageFetcherError', 422);
+const WebpageFetcherErrorSchema = failure('WebpageFetcherError', 422);
 
-export const ArticleExtractorErrorSchema = failure(
-  'ArticleExtractorError',
-  422
-);
+const ArticleExtractorErrorSchema = failure('ArticleExtractorError', 422);
 
 export const FetchFeedErrorSchema = failure('FetchFeedError', 422);
 
@@ -52,22 +49,13 @@ export const BrowserEndpointRequiredSchema = failure(
   422
 );
 
-export const FeedItemRepositoryErrorSchema = failure(
-  'FeedItemRepositoryError',
-  500
-);
+const FeedItemRepositoryErrorSchema = failure('FeedItemRepositoryError', 500);
 
 export const FeedRepositoryErrorSchema = failure('FeedRepositoryError', 500);
 
-export const SavedPageRepositoryErrorSchema = failure(
-  'SavedPageRepositoryError',
-  500
-);
+const SavedPageRepositoryErrorSchema = failure('SavedPageRepositoryError', 500);
 
-export const SettingRepositoryErrorSchema = failure(
-  'SettingRepositoryError',
-  500
-);
+const SettingRepositoryErrorSchema = failure('SettingRepositoryError', 500);
 
 export const authErrors = [UnauthorizedSchema, ForbiddenSchema];
 
@@ -89,20 +77,17 @@ export const unreadOnly = Schema.Boolean.pipe(
 );
 
 export const limit = Schema.Int.pipe(
-  Schema.check(Schema.isBetween({ minimum: 1, maximum: 100 }))
+  Schema.check(Schema.isGreaterThanOrEqualTo(1))
 );
 
 export const urlPayload = Schema.Struct({
-  url: Schema.String.check(Schema.isMaxLength(4096)),
+  url: Schema.String,
 });
 
 export const subscribePayload = Schema.Struct({
-  url: Schema.String.check(Schema.isMaxLength(4096)),
-  title: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4096))),
+  url: Schema.String,
+  title: Schema.optionalKey(Schema.String),
 });
-
-export const batchIds = <Id extends Schema.Top>(id: Id) =>
-  Schema.Struct({ ids: Schema.Array(id).check(Schema.isMaxLength(5000)) });
 
 export const ok = Schema.Struct({ ok: Schema.Boolean });
 

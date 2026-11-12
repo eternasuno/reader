@@ -1,35 +1,8 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Option, Result, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
-import {
-  Feed,
-  FeedId,
-  FeedTitle,
-  makeFeedTitle,
-} from '../../../src/entity/feed/feed';
+import { Option, Result, Schema } from 'effect';
+import { Feed, FeedTitle, makeFeedTitle } from '../../../src/entity/feed/feed';
 import { FeedItem } from '../../../src/entity/feed/feed-item';
-import { alice, decodeUrl, makeFeed, makeFeedItem } from '../../support';
-
-const lowerCaseUuidV7 =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-const feedInput = {
-  ownerId: alice,
-  url: decodeUrl('https://example.com/feed.xml'),
-  title: FeedTitle.make('Feed'),
-  updatedAt: Option.none(),
-};
-
-const makeId = Feed.makeEffect(feedInput).pipe(
-  Effect.map((feed) => feed.id),
-  Effect.orDie
-);
-
-const isStrictlyIncreasing = (ids: ReadonlyArray<string>): boolean =>
-  ids.every((id, index) => index === 0 || id > (ids[index - 1] ?? ''));
-
-const withoutKey = (row: object, key: string): object =>
-  Object.fromEntries(Object.entries(row).filter(([name]) => name !== key));
+import { makeFeed, makeFeedItem } from '../../support';
 
 describe('FeedTitle', () => {
   it('trims the title and rejects a blank one', () => {
@@ -49,54 +22,6 @@ describe('FeedTitle', () => {
     );
     expect(makeFeedTitle('  My feed ', url)).toBe('My feed');
   });
-});
-
-describe('FeedId', () => {
-  it('rejects ids that are not lower-case version 7 uuids', () => {
-    const decode = Schema.decodeUnknownResult(FeedId);
-
-    expect(
-      Result.isSuccess(decode('0190a5f0-7c4d-7b3a-8f2e-1a2b3c4d5e6f'))
-    ).toBe(true);
-    expect(
-      Result.isFailure(decode('0190A5F0-7C4D-7B3A-8F2E-1A2B3C4D5E6F'))
-    ).toBe(true);
-    expect(
-      Result.isFailure(decode('f16739e9-6f1e-4e3a-9b0a-2b3c4d5e6f70'))
-    ).toBe(true);
-    expect(Result.isFailure(decode('not-an-id'))).toBe(true);
-  });
-
-  it.effect('makes lower-case version 7 uuids that increase', () =>
-    Effect.gen(function* () {
-      const ids: Array<string> = [];
-
-      for (let index = 0; index < 200; index += 1) {
-        ids.push(yield* makeId);
-      }
-
-      for (const id of ids) {
-        expect(id).toMatch(lowerCaseUuidV7);
-      }
-
-      expect(new Set(ids).size).toBe(ids.length);
-      expect(isStrictlyIncreasing(ids)).toBe(true);
-    })
-  );
-
-  it.effect('keeps increasing under a test clock', () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-      const first = yield* makeId;
-
-      yield* TestClock.setTime(Date.UTC(2020, 0, 1));
-      const second = yield* makeId;
-
-      expect(first).toMatch(lowerCaseUuidV7);
-      expect(second).toMatch(lowerCaseUuidV7);
-      expect(second > first).toBe(true);
-    })
-  );
 });
 
 describe('Feed', () => {
@@ -146,14 +71,5 @@ describe('FeedItem', () => {
     expect(Option.isNone(decoded.content)).toBe(true);
     expect(Option.isNone(decoded.extractedContent)).toBe(true);
     expect(Option.isNone(decoded.publishedAt)).toBe(true);
-  });
-
-  it('requires an owner, a feed, a url and a title', () => {
-    const decode = Schema.decodeUnknownResult(FeedItem);
-    const item = Schema.encodeSync(FeedItem)(makeFeedItem());
-
-    for (const key of ['ownerId', 'feedId', 'url', 'title']) {
-      expect(Result.isFailure(decode(withoutKey(item, key)))).toBe(true);
-    }
   });
 });

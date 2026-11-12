@@ -13,10 +13,16 @@ import {
   SettingRepository,
 } from '@reader/business';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
-import { Effect, Layer, Option, type Scope, Semaphore } from 'effect';
+import {
+  type Context,
+  Effect,
+  Layer,
+  Option,
+  type Scope,
+  Semaphore,
+} from 'effect';
 import { FetchHttpClient, HttpClient, HttpRouter } from 'effect/http';
 import type { Surreal } from 'surrealdb';
-import { vi } from 'vitest';
 import { makeFeedItems } from '../../src/adapter/feed-item-store';
 import { makeFeedRepository } from '../../src/adapter/feed-store';
 import { makeSavedPages } from '../../src/adapter/saved-page-store';
@@ -38,34 +44,35 @@ import {
   webpageFetch,
 } from './library-network-stubs';
 
-vi.mock('node:dns/promises', () => ({
-  lookup: async () => [{ address: '93.184.216.34', family: 4 }],
-}));
-
 const TEST_PASSWORD = 'test-password-123';
 
-export type ParsedFeedStub = (
+type ParsedFeedStub = (
   baseUrl: URL
 ) => ParsedFeed | Effect.Effect<ParsedFeed, FeedParserError>;
 
-export type HarnessStubs = {
+type HarnessStubs = {
   webpage: WebpageStub;
   feed: FeedStub;
   parsedFeed: ParsedFeedStub;
   articleExtractor: IArticleExtractor | undefined;
 };
 
-export type HarnessRepositories = {
+type HarnessRepositories = {
   readonly feed: ReturnType<typeof makeFeedRepository>;
   readonly feedItem: ReturnType<typeof makeFeedItems>;
   readonly savedPage: ReturnType<typeof makeSavedPages>;
   readonly setting: ReturnType<typeof makeSettings>;
 };
 
-export type EnqueuedFeed = {
+type EnqueuedFeed = {
   readonly owner: OwnerId;
   readonly feedId: FeedId;
 };
+
+type RequestHandler = (
+  request: Request,
+  context?: Context.Context<never>
+) => Promise<Response>;
 
 export type TestSession = {
   readonly email: string;
@@ -94,7 +101,7 @@ export type CallOptions = {
 export type Harness = {
   readonly db: Surreal;
   readonly auth: ReturnType<typeof betterAuth>;
-  readonly handler: (request: Request) => Promise<Response>;
+  readonly handler: RequestHandler;
   readonly repositories: HarnessRepositories;
   readonly stubs: HarnessStubs;
   readonly enqueued: Array<EnqueuedFeed>;
@@ -182,10 +189,7 @@ const cookieOf = (response: Response) =>
     .join('; ');
 
 const signIn =
-  (
-    handler: (request: Request) => Promise<Response>,
-    auth: ReturnType<typeof betterAuth>
-  ) =>
+  (handler: RequestHandler, auth: ReturnType<typeof betterAuth>) =>
   async (email: string): Promise<TestSession> => {
     await handler(emailRequest('sign-up/email', email));
     const response = await handler(emailRequest('sign-in/email', email));
@@ -218,24 +222,22 @@ const requestUrl = (options: CallOptions) => {
   return url;
 };
 
-const call =
-  (handler: (request: Request) => Promise<Response>) =>
-  (options: CallOptions) =>
-    handler(
-      new Request(requestUrl(options), {
-        method: options.method ?? 'GET',
-        headers: {
-          origin: options.origin ?? TEST_ORIGIN,
-          ...(options.cookie === undefined ? {} : { cookie: options.cookie }),
-          ...(options.body === undefined
-            ? {}
-            : { 'content-type': 'application/json' }),
-        },
+const call = (handler: RequestHandler) => (options: CallOptions) =>
+  handler(
+    new Request(requestUrl(options), {
+      method: options.method ?? 'GET',
+      headers: {
+        origin: options.origin ?? TEST_ORIGIN,
+        ...(options.cookie === undefined ? {} : { cookie: options.cookie }),
         ...(options.body === undefined
           ? {}
-          : { body: JSON.stringify(options.body) }),
-      })
-    );
+          : { 'content-type': 'application/json' }),
+      },
+      ...(options.body === undefined
+        ? {}
+        : { body: JSON.stringify(options.body) }),
+    })
+  );
 
 export type HarnessOptions = {
   readonly webpage?: WebpageStub;

@@ -14,7 +14,6 @@ export type LibraryState = {
   readonly counts: Counts;
   readonly loading: boolean;
   readonly initialized: boolean;
-  readonly hasMore: boolean;
   readonly cursor: string | null;
   readonly generation: number;
   readonly error: string | undefined;
@@ -36,7 +35,6 @@ export const initialLibraryState = (
   counts: emptyCounts,
   loading: false,
   initialized: false,
-  hasMore: false,
   cursor: null,
   generation: 0,
   error: undefined,

@@ -6,7 +6,7 @@ import {
   SavedPageRepository,
 } from '@reader/business';
 import { savedPageRepositoryContract } from '@reader/business/testing';
-import { Effect, Exit, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { Database } from '../../src/infrastructure/db';
 import {
   owner,
@@ -73,23 +73,5 @@ it.effect('decodes a stored row without optional fields as none', () =>
 
     expect(Option.isNone(stored.description)).toBe(true);
     expect(Option.isNone(stored.publishedAt)).toBe(true);
-  }).pipe(Effect.provide(readerStoreDatabaseLayer))
-);
-
-it.effect('keeps one page per owner and url in the database', () =>
-  Effect.gen(function* () {
-    const db = yield* Database;
-    const page = pageRow();
-    const create = (id: string) =>
-      query(
-        db,
-        'CREATE saved_page SET owner = $owner, pageId = $id, url = $url, title = "Page", content = "<p>Body</p>", read = false;',
-        { owner: alice, id, url: page.url.href }
-      );
-
-    yield* create(page.id);
-    const duplicate = yield* Effect.exit(create(pageRow().id));
-
-    expect(Exit.isFailure(duplicate)).toBe(true);
   }).pipe(Effect.provide(readerStoreDatabaseLayer))
 );

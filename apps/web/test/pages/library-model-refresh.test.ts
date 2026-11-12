@@ -1,6 +1,10 @@
 // biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: grouped reload cases stay together with their shared client fixture.
 import { describe, expect, it } from 'vitest';
-import { createLibraryModel } from '../../src/pages/library-model';
+import type { Article } from '../../src/lib/library';
+import {
+  createLibraryModel,
+  type LibraryModel,
+} from '../../src/pages/library-model';
 import {
   article,
   counts,
@@ -18,6 +22,41 @@ const loaded = async (rows = [article('a'), article('b')]) => {
 
   return { client, model };
 };
+
+type StubClient = ReturnType<typeof createStubClient>;
+type Gate = ReturnType<typeof deferred<void>>;
+
+type BusyCase = {
+  readonly name: string;
+  readonly rows: ReadonlyArray<Article>;
+  readonly block: (client: StubClient, gate: Gate) => void;
+  readonly act: (model: LibraryModel) => Promise<unknown>;
+  readonly expectedIds: ReadonlyArray<string>;
+};
+
+const busyCases: ReadonlyArray<BusyCase> = [
+  {
+    name: 'a read mark',
+    rows: [article('a')],
+    block: (client, gate) => client.markRead.mockReturnValue(gate.promise),
+    act: (model) => model.toggleRead(model.state().items[0] ?? article('a')),
+    expectedIds: ['a'],
+  },
+  {
+    name: 'a delete',
+    rows: [article('a'), article('b')],
+    block: (client, gate) => client.remove.mockReturnValue(gate.promise),
+    act: (model) => model.remove(model.state().items[0] ?? article('a')),
+    expectedIds: ['b'],
+  },
+  {
+    name: 'a whole-scope mark',
+    rows: [article('a')],
+    block: (client, gate) => client.markLater.mockReturnValue(gate.promise),
+    act: (model) => model.markAll(),
+    expectedIds: ['a'],
+  },
+];
 
 describe('library reload', () => {
   it('reloads the current list from its first page and reloads counts', async () => {
@@ -51,60 +90,37 @@ describe('library reload', () => {
     expect(model.state().items.map((item) => item.id)).toEqual(['g']);
   });
 
-  it('ignores a refresh while a read mark is in flight', async () => {
-    const { client, model } = await loaded([article('a')]);
-    const mark = deferred<void>();
-    client.markRead.mockReturnValue(mark.promise);
-    const pending = model.toggleRead(model.state().items[0] ?? article('a'));
+  it('ignores a refresh while a write is in flight', async () => {
+    for (const testCase of busyCases) {
+      const client = createStubClient();
+      client.list.mockResolvedValue(page(testCase.rows, null));
+      client.unreadCounts.mockResolvedValue(counts(0));
+      const model = createLibraryModel(client);
+      await model.refresh();
 
-    client.list.mockResolvedValue(page([article('b')]));
-    await model.refresh();
+      const gate = deferred<void>();
+      testCase.block(client, gate);
+      const pending = testCase.act(model);
 
-    expect(client.list).toHaveBeenCalledTimes(1);
-    expect(model.state().items.map((item) => item.id)).toEqual(['a']);
+      await model.refresh();
 
-    mark.resolve();
-    await pending;
-  });
+      expect(
+        client.list,
+        `refresh during ${testCase.name}`
+      ).toHaveBeenCalledTimes(1);
+      expect(model.state().items.map((item) => item.id)).toEqual(
+        testCase.expectedIds
+      );
 
-  it('ignores a refresh while a delete is in flight', async () => {
-    const { client, model } = await loaded();
-    const remove = deferred<void>();
-    client.remove.mockReturnValue(remove.promise);
-    const pending = model.remove(model.state().items[0] ?? article('a'));
+      gate.resolve();
+      await pending;
 
-    await model.refresh();
-
-    expect(client.list).toHaveBeenCalledTimes(1);
-    expect(model.state().items.map((item) => item.id)).toEqual(['b']);
-
-    remove.resolve();
-    await pending;
-  });
-
-  it('ignores a refresh while a whole-scope mark is in flight', async () => {
-    const client = createStubClient();
-    client.list.mockResolvedValue(page([article('a', { read: true })]));
-    client.unreadCounts.mockResolvedValue(counts(3));
-    const model = createLibraryModel(client);
-    await model.refresh();
-    const mark = deferred<void>();
-    client.markLater.mockReturnValue(mark.promise);
-
-    const pending = model.markAll();
-    expect(client.markLater).toHaveBeenCalledTimes(1);
-
-    await model.markAll();
-    expect(client.markLater).toHaveBeenCalledTimes(1);
-
-    await model.refresh();
-    expect(client.list).toHaveBeenCalledTimes(1);
-
-    mark.resolve();
-    await pending;
-
-    await model.refresh();
-    expect(client.list).toHaveBeenCalledTimes(2);
+      await model.refresh();
+      expect(
+        client.list,
+        `refresh after ${testCase.name}`
+      ).toHaveBeenCalledTimes(2);
+    }
   });
 
   it('reloads on entering the library even for the default scope', async () => {

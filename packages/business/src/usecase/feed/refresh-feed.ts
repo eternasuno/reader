@@ -85,8 +85,7 @@ export const selectItems = (
 
 const cleanHtml = (
   text: Option.Option<string>,
-  url: NormalizedUrl,
-  maxLength: number
+  url: NormalizedUrl
 ): Effect.Effect<
   Option.Option<string>,
   HtmlParserError | DocumentSanitizerError,
@@ -99,10 +98,9 @@ const cleanHtml = (
 
     const parser = yield* HtmlParser;
     const sanitizer = yield* DocumentSanitizer;
-    const cut = Array.from(text.value).slice(0, maxLength).join('');
     const sanitized = yield* Effect.scoped(
       Effect.gen(function* () {
-        const document = yield* parser.parse(cut, url);
+        const document = yield* parser.parse(text.value, url);
 
         return yield* sanitizer.sanitize(document);
       })
@@ -115,27 +113,22 @@ const cleanHtml = (
   });
 
 const cleanEntry = (
-  entry: ParsedFeedEntry,
-  maxTextLength: number
+  entry: ParsedFeedEntry
 ): Effect.Effect<
   Option.Option<CleanedEntry>,
   never,
   HtmlParser | DocumentSanitizer
 > =>
   Effect.gen(function* () {
-    const description = yield* cleanHtml(
-      entry.description,
-      entry.url,
-      maxTextLength
-    );
-    const content = yield* cleanHtml(entry.content, entry.url, maxTextLength);
+    const description = yield* cleanHtml(entry.description, entry.url);
+    const content = yield* cleanHtml(entry.content, entry.url);
 
     return Option.some({ description, content } satisfies CleanedEntry);
   }).pipe(
     Effect.catch((error) =>
       Effect.logWarning(
         'Skipping a feed entry that cannot be cleaned',
-        `${entry.url.origin}${entry.url.pathname}`,
+        entry.url.href,
         error
       ).pipe(Effect.as(Option.none<CleanedEntry>()))
     )
@@ -160,16 +153,12 @@ const buildItem = (
     read: false,
   }).pipe(Effect.orDie);
 
-const buildItems = (
-  feed: Feed,
-  entries: ReadonlyArray<ParsedFeedEntry>,
-  maxTextLength: number
-) =>
+const buildItems = (feed: Feed, entries: ReadonlyArray<ParsedFeedEntry>) =>
   Effect.gen(function* () {
     const built: Array<FeedItem> = [];
 
     for (const entry of [...entries].reverse()) {
-      const cleaned = yield* cleanEntry(entry, maxTextLength);
+      const cleaned = yield* cleanEntry(entry);
 
       if (Option.isSome(cleaned)) {
         built.push(yield* buildItem(feed, entry, cleaned.value));
@@ -181,8 +170,7 @@ const buildItems = (
 
 export const refreshFeed = (
   owner: OwnerId,
-  feedId: FeedId,
-  maxTextLength: number
+  feedId: FeedId
 ): Effect.Effect<
   void,
   | FetchFeedError
@@ -217,7 +205,7 @@ export const refreshFeed = (
       parsed.entries,
       setting.feed.retention
     );
-    const built = yield* buildItems(feed, selection.toImport, maxTextLength);
+    const built = yield* buildItems(feed, selection.toImport);
 
     if (built.length > 0) {
       yield* items.create(feed.ownerId, built);

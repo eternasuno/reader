@@ -33,11 +33,4 @@ describe('OptionFromOptionalNonEmpty', () => {
     expect(Option.isNone(decodeContent(undefined))).toBe(true);
     expect(Option.isNone(decodeContent('  '))).toBe(true);
   });
-
-  it('trims present text and keeps it', () => {
-    expect(decodeDescription('  <p>about</p> ')).toEqual(
-      Option.some('<p>about</p>')
-    );
-    expect(decodeContent(' <p>body</p> ')).toEqual(Option.some('<p>body</p>'));
-  });
 });

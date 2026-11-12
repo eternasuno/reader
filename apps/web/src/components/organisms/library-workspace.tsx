@@ -7,11 +7,8 @@ import {
   confirmUnsubscribe,
   createFeedMenu,
 } from '../../pages/library-feed-menu';
-import {
-  type LibraryModel,
-  sameScope,
-  useLibraryModel,
-} from '../../pages/library-model';
+import { type LibraryModel, useLibraryModel } from '../../pages/library-model';
+import { sameScope } from '../../pages/library-state';
 import { LibraryMobileBar } from '../molecules/library-mobile-bar';
 import { LibraryToastView } from '../molecules/library-toast';
 import { LibraryAddDialog } from './library-add-dialog';

@@ -69,7 +69,6 @@ const JinaKeyField = (props: {
     name="jinaKey"
     type="password"
     autocomplete="off"
-    maxlength={2048}
     label="Jina API Key"
     hint={
       props.configured
@@ -92,8 +91,6 @@ const BrowserEndpointField = (props: {
     id="settings-browser-endpoint"
     name="browserEndpoint"
     type="url"
-    pattern="(?:https?|wss?)://.+"
-    maxlength={2048}
     autocomplete="off"
     spellcheck={false}
     label="浏览器服务地址"

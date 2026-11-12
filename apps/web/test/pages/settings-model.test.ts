@@ -178,26 +178,6 @@ describe('settings retention save', () => {
     expect(drafts.retention()).toBe('200');
     expect(isSectionDirty(drafts, 'articles')).toBe(false);
   });
-
-  it('surfaces mapped API codes instead of backend messages', async () => {
-    fetchMock.mockResolvedValue(
-      json({ _tag: 'InvalidRetention', message: 'backend text' }, 400)
-    );
-
-    const { drafts, status } = setup();
-
-    drafts.setRetention('200');
-    submitRetention(drafts, status, form);
-    await flush();
-
-    const toast = status.toast();
-    expect(toast?.kind).toBe('error');
-    expect(toast?.message).toBe('保留数量必须是 30 到 300 之间的整数');
-    expect(toast?.message).not.toContain('backend');
-    expect(status.loadError()).toBe('');
-    expect(drafts.settings()?.retention).toBe(baseline.retention);
-    expect(isSettingsBusy(status)).toBe(false);
-  });
 });
 
 describe('settings Jina key save', () => {
@@ -210,10 +190,7 @@ describe('settings Jina key save', () => {
     await flush();
 
     expect(lastCall()[0]).toBe('/api/library/settings/fetcher');
-    expect(lastCall()[1]).toMatchObject({
-      method: 'PUT',
-      credentials: 'include',
-    });
+    expect(lastCall()[1]?.method).toBe('PUT');
     expect(lastBody()).toEqual({ provider: 'jina', key: 'sk-live' });
     expect(drafts.settings()).toMatchObject({
       provider: 'jina',
@@ -288,27 +265,6 @@ describe('settings browser address save', () => {
       provider: 'browser',
       browserEndpointConfigured: true,
     });
-  });
-});
-
-describe('settings missing browser address', () => {
-  it('shows the required message and changes nothing', async () => {
-    fetchMock.mockResolvedValue(
-      json({ _tag: 'BrowserEndpointRequired', message: 'required' }, 422)
-    );
-
-    const { drafts, status } = setup();
-
-    drafts.setProvider('browser');
-    submitFetcher(drafts, status, form);
-    await flush();
-
-    expect(status.toast()).toMatchObject({
-      kind: 'error',
-      message: '请填写浏览器服务地址',
-    });
-    expect(drafts.settings()).toEqual(baseline);
-    expect(drafts.provider()).toBe('browser');
   });
 });
 

@@ -1,6 +1,6 @@
 import { createEffect, onCleanup, Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import type { LibraryToast } from '../../pages/library-model';
+import type { LibraryToast } from '../../pages/library-state';
 import { Button } from '../atoms/button';
 
 const toastDuration = 6000;

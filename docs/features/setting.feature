@@ -46,16 +46,15 @@ Feature: Settings
 
   # SET-VAL-1, SET-VAL-5
   @boundary
-  Scenario Outline: Retention must be an integer between 30 and 300
+  Scenario Outline: Retention must be a positive integer
     When I set the retention to <value>
     Then <outcome>
 
     Examples:
       | value | outcome                 |
-      | 30    | it is saved             |
-      | 300   | it is saved             |
-      | 29    | the request is rejected |
-      | 301   | the request is rejected |
+      | 1     | it is saved             |
+      | 1000  | it is saved             |
+      | 0     | the request is rejected |
       | 50.5  | the request is rejected |
 
   # SET-FETCH-1
@@ -203,8 +202,6 @@ Feature: Settings
 
     Examples:
       | input                                | outcome                 |
-      | a key with a line break              | the request is rejected |
-      | a key longer than 2048 characters    | the request is rejected |
       | the browser address "ws://host:9222" | it is accepted          |
       | the browser address "ftp://host"     | the request is rejected |
       | the browser address "not a url"      | the request is rejected |

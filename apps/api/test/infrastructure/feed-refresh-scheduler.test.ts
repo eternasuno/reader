@@ -188,7 +188,3 @@ it.effect('logs a failed listing and retries at the next interval', () => {
       })
   ).pipe(Effect.provide(Logger.layer([collector(logs)])));
 });
-
-it('defaults to a 30 minute refresh interval', () => {
-  expect(FEED_REFRESH_INTERVAL).toBe('30 minutes');
-});

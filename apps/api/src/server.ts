@@ -9,17 +9,10 @@ import {
 import { refreshFeed } from '@reader/business';
 import { Config, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
-import {
-  AppLive,
-  FEED_IMPORT_MAX_TEXT_LENGTH,
-  LibraryServicesLive,
-} from './app';
+import { AppLive, LibraryServicesLive } from './app';
 import { AuthLive } from './infrastructure/auth';
 import { DatabaseLive } from './infrastructure/db';
-import {
-  FEED_REFRESH_PARALLEL_JOBS,
-  feedRefreshQueueLayer,
-} from './infrastructure/feed-refresh-queue';
+import { feedRefreshQueueLayer } from './infrastructure/feed-refresh-queue';
 import {
   FEED_REFRESH_INTERVAL,
   feedRefreshSchedulerLayer,
@@ -34,11 +27,9 @@ const server = NodeHttpServer.layerConfig(createServer, {
 
 const library = LibraryServicesLive.pipe(Layer.provide(DatabaseLive));
 
-const queue = feedRefreshQueueLayer({
-  parallelJobs: FEED_REFRESH_PARALLEL_JOBS,
-  refresh: (owner, feedId) =>
-    refreshFeed(owner, feedId, FEED_IMPORT_MAX_TEXT_LENGTH),
-}).pipe(Layer.provide(library));
+const queue = feedRefreshQueueLayer({ refresh: refreshFeed }).pipe(
+  Layer.provide(library)
+);
 
 const scheduler = feedRefreshSchedulerLayer({
   interval: FEED_REFRESH_INTERVAL,

@@ -26,7 +26,6 @@ describe('library initial load', () => {
       initialized: true,
       loading: false,
       cursor: 'cursor-1',
-      hasMore: true,
     });
     expect(model.state().items.map((item) => item.id)).toEqual(['a']);
     expect(model.state().feeds).toEqual([feed('f1')]);
@@ -122,7 +121,6 @@ describe('library paging', () => {
     await model.loadMore();
     expect(model.state().error).toBeUndefined();
     expect(model.state().items.map((item) => item.id)).toEqual(['a', 'b']);
-    expect(model.state().hasMore).toBe(false);
     expect(client.list).toHaveBeenLastCalledWith(
       { kind: 'later' },
       false,
