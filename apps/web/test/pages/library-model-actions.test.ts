@@ -8,26 +8,24 @@ import {
   createStubClient,
   deferred,
   feed,
-  newerArticle,
   page,
 } from './library-fixtures';
 
 describe('library initial load', () => {
   it('loads the first page with subscriptions and unread counts', async () => {
     const client = createStubClient();
-    client.list.mockResolvedValue(page([article('a')], 'cursor-1', 'top'));
+    client.list.mockResolvedValue(page([article('a')], 'cursor-1'));
     client.feeds.mockResolvedValue([feed('f1')]);
     client.unreadCounts.mockResolvedValue(counts(1, { f1: 0 }));
     const model = createLibraryModel(client);
 
     await model.refresh();
 
-    expect(client.list).toHaveBeenCalledWith({ kind: 'later' }, 'all');
+    expect(client.list).toHaveBeenCalledWith({ kind: 'later' }, false);
     expect(model.state()).toMatchObject({
       initialized: true,
       loading: false,
       cursor: 'cursor-1',
-      boundary: 'top',
       hasMore: true,
     });
     expect(model.state().items.map((item) => item.id)).toEqual(['a']);
@@ -39,7 +37,7 @@ describe('library initial load', () => {
 
   it('keeps loaded data when feeds or counts fail', async () => {
     const client = createStubClient();
-    client.list.mockResolvedValue(page([article('a')], null, 'top'));
+    client.list.mockResolvedValue(page([article('a')]));
     client.feeds.mockRejectedValue(new LibraryError('FeedRepositoryError'));
     client.unreadCounts.mockRejectedValue(
       new LibraryError('FeedItemRepositoryError')
@@ -58,11 +56,10 @@ describe('library initial load', () => {
     });
   });
 
-  it('keeps the last counts when the combined count request fails', async () => {
+  it('keeps the last counts when the count request fails', async () => {
     const client = createStubClient();
-    client.list.mockResolvedValue(page([article('a')], null, 'top'));
+    client.list.mockResolvedValue(page([article('a')]));
     client.unreadCounts.mockResolvedValueOnce(counts(4, { f1: 2 }));
-    client.refresh.mockResolvedValue([article('a')]);
     const model = createLibraryModel(client);
 
     await model.refresh();
@@ -78,7 +75,7 @@ describe('library initial load', () => {
 
   it('deduplicates count failure toasts until recovery', async () => {
     const client = createStubClient();
-    client.list.mockResolvedValue(page([article('a')], null, 'top'));
+    client.list.mockResolvedValue(page([article('a')]));
     client.unreadCounts.mockRejectedValue(
       new LibraryError('FeedItemRepositoryError')
     );
@@ -107,81 +104,13 @@ describe('library initial load', () => {
   });
 });
 
-describe('library sync', () => {
-  it('prepends new articles through the stored boundary', async () => {
-    const client = createStubClient();
-    client.list.mockResolvedValue(page([article('a')], 'cursor-1', 'top'));
-    const model = createLibraryModel(client);
-    await model.refresh();
-    client.refresh.mockResolvedValue([newerArticle('n'), article('a')]);
-
-    await model.refresh();
-
-    expect(client.refresh).toHaveBeenCalledWith(
-      { kind: 'later' },
-      'all',
-      'top'
-    );
-    expect(model.state().items.map((item) => item.id)).toEqual(['n', 'a']);
-    expect(model.state().boundary).toBe('top');
-    expect(model.state().cursor).toBe('cursor-1');
-    expect(model.state().hasMore).toBe(true);
-  });
-
-  it('keeps the tail boundary once every page is loaded', async () => {
-    const client = createStubClient();
-    client.list.mockResolvedValue(page([article('a')], null, 'top'));
-    const model = createLibraryModel(client);
-    await model.refresh();
-    client.refresh.mockResolvedValue([newerArticle('n'), article('a')]);
-
-    await model.refresh();
-    await model.refresh();
-
-    expect(model.state().hasMore).toBe(false);
-    expect(model.state().boundary).toBe('top');
-    expect(client.refresh).toHaveBeenLastCalledWith(
-      { kind: 'later' },
-      'all',
-      'top'
-    );
-    expect(model.state().items.map((item) => item.id)).toEqual(['n', 'a']);
-  });
-
-  it('refreshes an empty first page without resetting the list', async () => {
-    const client = createStubClient();
-    client.list
-      .mockResolvedValueOnce(page([], null, null))
-      .mockResolvedValueOnce(page([article('n')], 'cursor-2', 'boundary-2'));
-    const model = createLibraryModel(client);
-
-    await model.refresh();
-    expect(model.state()).toMatchObject({
-      initialized: true,
-      loading: false,
-      items: [],
-      boundary: null,
-    });
-
-    await model.refresh();
-
-    expect(client.list).toHaveBeenCalledTimes(2);
-    expect(client.list).toHaveBeenLastCalledWith({ kind: 'later' }, 'all');
-    expect(client.refresh).not.toHaveBeenCalled();
-    expect(model.state().items.map((item) => item.id)).toEqual(['n']);
-    expect(model.state().boundary).toBe('boundary-2');
-    expect(model.state().cursor).toBe('cursor-2');
-    expect(model.state().loading).toBe(false);
-  });
-});
-
 describe('library paging', () => {
   it('retries the same cursor after a load failure', async () => {
     const client = createStubClient();
     client.list
-      .mockResolvedValueOnce(page([article('a')], 'cursor-1', 'top'))
+      .mockResolvedValueOnce(page([article('a')], 'cursor-1'))
       .mockRejectedValueOnce(new LibraryError('FeedItemRepositoryError'))
-      .mockResolvedValueOnce(page([article('b')], null, 'top'));
+      .mockResolvedValueOnce(page([article('b')], null));
     const model = createLibraryModel(client);
     await model.refresh();
 
@@ -196,55 +125,20 @@ describe('library paging', () => {
     expect(model.state().hasMore).toBe(false);
     expect(client.list).toHaveBeenLastCalledWith(
       { kind: 'later' },
-      'all',
+      false,
       'cursor-1'
     );
   });
 
-  it('advances the refresh boundary with each loaded page', async () => {
+  it('stops paging once the last page is loaded', async () => {
     const client = createStubClient();
-    client.list
-      .mockResolvedValueOnce(page([article('a')], 'cursor-1', 'boundary-1'))
-      .mockResolvedValueOnce(page([article('b')], null, 'boundary-2'));
+    client.list.mockResolvedValue(page([article('a')], null));
     const model = createLibraryModel(client);
     await model.refresh();
 
     await model.loadMore();
-    expect(model.state().boundary).toBe('boundary-2');
 
-    client.refresh.mockResolvedValue([article('a'), article('b')]);
-    await model.refresh();
-
-    expect(client.refresh).toHaveBeenLastCalledWith(
-      { kind: 'later' },
-      'all',
-      'boundary-2'
-    );
-    expect(model.state().cursor).toBeNull();
-    expect(model.state().boundary).toBe('boundary-2');
-  });
-
-  it('restarts from the first page after an invalid cursor', async () => {
-    const client = createStubClient();
-    client.list
-      .mockResolvedValueOnce(page([article('a')], 'cursor-1', 'top'))
-      .mockRejectedValueOnce(new LibraryError('InvalidCursor'))
-      .mockResolvedValueOnce(page([article('b')], 'cursor-2', 'top'));
-    const model = createLibraryModel(client);
-    await model.refresh();
-
-    await model.loadMore();
-    expect(model.state().error).toBe('列表已更新，请刷新后重试');
-    expect(model.state().cursor).toBe('cursor-1');
-    expect(model.state().cursorInvalid).toBe(true);
-
-    await model.loadMore();
-
-    expect(client.list).toHaveBeenLastCalledWith({ kind: 'later' }, 'all');
-    expect(model.state().items.map((item) => item.id)).toEqual(['b']);
-    expect(model.state().cursor).toBe('cursor-2');
-    expect(model.state().cursorInvalid).toBe(false);
-    expect(model.state().error).toBeUndefined();
+    expect(client.list).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -253,30 +147,53 @@ describe('library query reset', () => {
     const client = createStubClient();
     const stale = deferred<ArticlePage>();
     client.list.mockReturnValueOnce(stale.promise);
-    client.list.mockResolvedValue(page([article('b')], null, 'top'));
+    client.list.mockResolvedValue(page([article('b')]));
     const model = createLibraryModel(client);
 
     const initial = model.refresh();
-    await model.setFilter('unread');
-    stale.resolve(page([article('a')], null, 'top'));
+    await model.setFilter(true);
+    stale.resolve(page([article('a')]));
     await initial;
 
-    expect(model.state().filter).toBe('unread');
+    expect(model.state().unreadOnly).toBe(true);
     expect(model.state().items.map((item) => item.id)).toEqual(['b']);
+  });
+
+  it('reloads the first page when the filter changes', async () => {
+    const client = createStubClient();
+    client.list.mockResolvedValue(page([article('a')], 'cursor-1'));
+    const model = createLibraryModel(client);
+    await model.refresh();
+
+    client.list.mockResolvedValue(page([article('u')], 'cursor-2'));
+    await model.setFilter(true);
+
+    expect(client.list).toHaveBeenLastCalledWith({ kind: 'later' }, true);
+    expect(model.state().unreadOnly).toBe(true);
+    expect(model.state().items.map((item) => item.id)).toEqual(['u']);
+    expect(model.state().cursor).toBe('cursor-2');
+  });
+
+  it('keeps the filter and does not reload when it is unchanged', async () => {
+    const client = createStubClient();
+    const model = createLibraryModel(client);
+    await model.refresh();
+
+    await model.setFilter(false);
+
+    expect(client.list).toHaveBeenCalledTimes(1);
   });
 
   it('resets the list when the scope changes', async () => {
     const client = createStubClient();
-    client.list.mockResolvedValue(
-      page([article('a', { feedId: 'f1' })], null, 'top')
-    );
+    client.list.mockResolvedValue(page([article('a', { feedId: 'f1' })]));
     const model = createLibraryModel(client);
     await model.refresh();
 
     await model.setScope({ kind: 'feeds', feedId: 'f1' });
     expect(client.list).toHaveBeenLastCalledWith(
       { kind: 'feeds', feedId: 'f1' },
-      'all'
+      false
     );
     await model.setScope({ kind: 'feeds', feedId: 'f1' });
     expect(client.list).toHaveBeenCalledTimes(2);

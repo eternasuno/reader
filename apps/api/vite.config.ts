@@ -7,4 +7,7 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
   },
+  resolve: {
+    dedupe: ['vitest', '@effect/vitest'],
+  },
 });

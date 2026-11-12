@@ -1,0 +1,253 @@
+import { describe, expect, it } from '@effect/vitest';
+import { DateTime, Effect, Option } from 'effect';
+import {
+  FeedItemRepository,
+  type IFeedItemRepository,
+} from '../../../src/port/feed-item-repository';
+import { SavedPageRepository } from '../../../src/port/saved-page-repository';
+import { WebpageFetcherError } from '../../../src/port/webpage-fetcher';
+import { addSavedPage } from '../../../src/usecase/saved-page/add-saved-page';
+import { saveFeedItem } from '../../../src/usecase/saved-page/save-feed-item';
+import {
+  alice,
+  bob,
+  decodeContent,
+  decodeDescription,
+  decodeTitle,
+  decodeUrl,
+  makeFeedItem,
+  makeSavedPage,
+} from '../../support';
+import {
+  asAlreadyExists,
+  asNotFound,
+  capture,
+  errorsOf,
+  recordingFetch,
+  run,
+  storedPages,
+  storeFeedItem,
+} from './support';
+
+const publishedAt = DateTime.fromDateUnsafe(
+  new Date('2026-02-01T00:00:00.000Z')
+);
+
+describe('saveFeedItem lookup', () => {
+  it.effect('SP-SAVE-1 fails for an unknown item and saves nothing', () =>
+    run(
+      Effect.gen(function* () {
+        const item = makeFeedItem();
+        const error = yield* saveFeedItem(alice, item.id).pipe(Effect.flip);
+
+        expect(asNotFound(error).id).toBe(item.id);
+        expect(yield* storedPages(alice)).toEqual([]);
+      })
+    )
+  );
+
+  it.effect("SP-SAVE-1 fails for another owner's item and saves nothing", () =>
+    run(
+      Effect.gen(function* () {
+        const theirs = yield* storeFeedItem(bob);
+        const error = yield* saveFeedItem(alice, theirs.id).pipe(Effect.flip);
+
+        expect(asNotFound(error).id).toBe(theirs.id);
+        expect(yield* storedPages(alice)).toEqual([]);
+        expect(yield* storedPages(bob)).toEqual([]);
+      })
+    )
+  );
+
+  it.effect('SP-SAVE-3 detects a duplicate before fetching', () => {
+    const fetched: Array<string> = [];
+
+    return run(
+      Effect.gen(function* () {
+        const repository = yield* SavedPageRepository;
+        const item = yield* storeFeedItem(alice);
+        const saved = makeSavedPage({ url: item.url });
+
+        yield* repository.create(alice, [saved]);
+
+        const error = yield* saveFeedItem(alice, item.id).pipe(Effect.flip);
+
+        expect(asAlreadyExists(error).url.href).toBe(item.url.href);
+        expect(fetched).toEqual([]);
+        expect(yield* storedPages(alice)).toEqual([saved]);
+      }),
+      { fetch: recordingFetch(fetched) }
+    );
+  });
+});
+
+describe('saveFeedItem copy', () => {
+  it.effect('SP-SAVE-2 SP-SAVE-5 SP-SAVE-9 copies the item values', () =>
+    run(
+      Effect.gen(function* () {
+        const items = yield* FeedItemRepository;
+        const item = yield* storeFeedItem(alice, {
+          url: decodeUrl('https://example.com/item/post'),
+          title: decodeTitle('Item title'),
+          description: decodeDescription('Item description'),
+          content: decodeContent('<p>Feed body</p>'),
+          publishedAt: Option.some(publishedAt),
+        });
+        const page = yield* saveFeedItem(alice, item.id);
+
+        expect(page.url.href).toBe(item.url.href);
+        expect(page.title).toBe('Item title');
+        expect(Option.getOrThrow(page.description)).toBe('Item description');
+        expect(Option.getOrThrow(page.publishedAt)).toBe(publishedAt);
+        expect(page.content).toBe('<p>Feed body</p>');
+        expect(page.read).toBe(false);
+        expect(page.id).not.toBe(item.id);
+
+        const unchanged = yield* items.find(alice, item.id);
+
+        expect(Option.getOrThrow(unchanged)).toEqual(item);
+      })
+    )
+  );
+
+  it.effect('SP-SAVE-9 puts the saved copy on top of the list', () =>
+    run(
+      Effect.gen(function* () {
+        const older = yield* addSavedPage(
+          alice,
+          decodeUrl('https://example.com/older')
+        );
+        const item = yield* storeFeedItem(alice, {
+          content: decodeContent('<p>Feed body</p>'),
+        });
+        const page = yield* saveFeedItem(alice, item.id);
+        const listed = yield* storedPages(alice);
+
+        expect(listed.map((row) => row.id)).toEqual([page.id, older.id]);
+        expect(page.id > older.id).toBe(true);
+      })
+    )
+  );
+});
+
+describe('saveFeedItem content priority', () => {
+  it.effect(
+    'SP-SAVE-8 prefers the extracted content over the feed content',
+    () => {
+      const fetched: Array<string> = [];
+
+      return run(
+        Effect.gen(function* () {
+          const item = yield* storeFeedItem(alice, {
+            content: decodeContent('<p>Feed body</p>'),
+            extractedContent: decodeContent('<p>Extracted body</p>'),
+          });
+          const page = yield* saveFeedItem(alice, item.id);
+
+          expect(page.content).toBe('<p>Extracted body</p>');
+          expect(fetched).toEqual([]);
+        }),
+        { fetch: recordingFetch(fetched) }
+      );
+    }
+  );
+
+  it.effect('SP-SAVE-8 falls back to the feed content without fetching', () => {
+    const fetched: Array<string> = [];
+
+    return run(
+      Effect.gen(function* () {
+        const item = yield* storeFeedItem(alice, {
+          content: decodeContent('<p>Feed body</p>'),
+        });
+        const page = yield* saveFeedItem(alice, item.id);
+
+        expect(page.content).toBe('<p>Feed body</p>');
+        expect(fetched).toEqual([]);
+      }),
+      { fetch: recordingFetch(fetched) }
+    );
+  });
+
+  it.effect('SP-SAVE-8 fetches the item url when it has no content', () => {
+    const fetched: Array<string> = [];
+
+    return run(
+      Effect.gen(function* () {
+        const item = yield* storeFeedItem(alice);
+        const page = yield* saveFeedItem(alice, item.id);
+
+        expect(page.content).toBe('<p>Fetched</p>');
+        expect(fetched).toEqual([item.url.href]);
+      }),
+      { fetch: recordingFetch(fetched) }
+    );
+  });
+});
+
+describe('saveFeedItem failures', () => {
+  it.effect('SP-SAVE-6 saves nothing when the fetch fails', () =>
+    run(
+      Effect.gen(function* () {
+        const item = yield* storeFeedItem(alice);
+        const error = yield* saveFeedItem(alice, item.id).pipe(Effect.flip);
+
+        expect(error._tag).toBe('WebpageFetcherError');
+        expect(yield* storedPages(alice)).toEqual([]);
+      }),
+      {
+        fetch: () => Effect.fail(new WebpageFetcherError({ message: 'fetch' })),
+      }
+    )
+  );
+});
+
+describe('saveFeedItem races and deletion', () => {
+  it.effect('SP-SAVE-7 saves exactly one page when two saves run at once', () =>
+    run(
+      Effect.gen(function* () {
+        const item = yield* storeFeedItem(alice, {
+          content: decodeContent('<p>Feed body</p>'),
+        });
+        const captures = yield* Effect.all(
+          [
+            capture(saveFeedItem(alice, item.id)),
+            capture(saveFeedItem(alice, item.id)),
+          ],
+          { concurrency: 'unbounded' }
+        );
+
+        expect(captures.filter((captured) => captured.ok)).toHaveLength(1);
+        expect(errorsOf(captures).map((error) => error._tag)).toEqual([
+          'SavedPageAlreadyExists',
+        ]);
+        expect(yield* storedPages(alice)).toHaveLength(1);
+      })
+    )
+  );
+
+  it.effect('SP-SAVE-10 saves the item found before it was deleted', () =>
+    run(
+      Effect.gen(function* () {
+        const items = yield* FeedItemRepository;
+        const item = yield* storeFeedItem(alice, {
+          content: decodeContent('<p>Feed body</p>'),
+        });
+        const removingFind: IFeedItemRepository = {
+          ...items,
+          find: (owner, id) =>
+            Effect.tap(items.find(owner, id), () => items.remove(owner, [id])),
+        };
+
+        const page = yield* saveFeedItem(alice, item.id).pipe(
+          Effect.provideService(FeedItemRepository, removingFind)
+        );
+
+        expect(page.url.href).toBe(item.url.href);
+        expect(page.content).toBe('<p>Feed body</p>');
+        expect(Option.isNone(yield* items.find(alice, item.id))).toBe(true);
+        expect(yield* storedPages(alice)).toEqual([page]);
+      })
+    )
+  );
+});

@@ -4,7 +4,7 @@ Rules shared by more than one domain. Each rule says where it lives. Entity-leve
 
 Parsing and validation happen where outside data enters: HTTP input, adapter outputs (the fetchers, the feed parser, the article extractor, the sanitizer) and configuration. Past those boundaries, branded values are trusted and never re-validated. This holds for every domain and is not repeated in the other specs.
 
-The dependency direction `SavedPage -> Feed -> Setting -> Common` constrains code imports, not specs: a spec may mention another domain to explain a rule. This spec mentions `FeedImportConfig` (`feed.md`); Common itself only receives `maxLength`.
+The dependency direction `SavedPage -> Feed -> Setting -> Common` constrains code imports, not specs: a spec may mention another domain to explain a rule. This spec mentions the `maxTextLength` parameter of `refreshFeed` (`feed.md`); Common itself only receives `maxLength`.
 
 ## CM-URL — Normalized URL (entity schema)
 
@@ -24,7 +24,7 @@ Known limit of CM-URL-3: a site that routes by fragment (`https://site/#/post/1`
 - CM-ART-1 `ArticleTitle`: trimmed; empty becomes "Untitled".
 - CM-ART-2 `ArticleDescription` and `ArticleContent`: trimmed.
 - CM-ART-3 An optional text that is absent or blank is `Option.none()`.
-- CM-ART-4 A stored `ArticleDescription` or `ArticleContent` is always sanitized HTML. There are exactly two producers: `cleanHtml` (CM-HTML) for feed text, and the `ArticleExtractor` port (CM-FETCH) for extracted pages. No use case stores text from any other source.
+- CM-ART-4 A stored `ArticleDescription` or `ArticleContent` is always sanitized HTML. There are exactly two producers: the cleaning step of the feed refresh (CM-HTML) for feed text, and the `ArticleExtractor` port (CM-FETCH) for extracted pages. No use case stores text from any other source.
 - CM-ART-5 "Empty content" means sanitized text that is blank after trimming, which is none (CM-ART-3). CM-FETCH-4 and CM-HTML-2 use this meaning.
 
 ## CM-ID — Ids
@@ -56,14 +56,14 @@ Every id (`FeedId`, `FeedItemId`, `SavedPageId`) is a branded string checked as 
 
 ## CM-HTML — Clean feed text before storing
 
-`cleanHtml(text, url, maxLength)`. Used when importing feed items for their description and content. `url` is required: it is the item's URL, the base for relative links.
+A step of the feed refresh (`refreshFeed`, see `feed.md`), not a function of its own: it cleans the description and content of each imported entry. Input: the text, the item's URL as the base for relative links, and `maxLength`.
 
 1. If `text` is absent, the result is none.
 2. Cut `text` to `maxLength` Unicode code points. A cut never splits one.
 3. Parse it through `HtmlParser`, with `url` as the base.
 4. Sanitize the document through `DocumentSanitizer`, which returns `Option<string>`.
 
-- CM-HTML-1 `maxLength` is a positive integer, checked where the configuration is loaded. Business defines no number; the Feed domain reads it from `FeedImportConfig` (see `feed.md`), which is provided from outside.
+- CM-HTML-1 `maxLength` is a positive integer chosen by the application. Business defines no number; the Feed domain receives it as the `maxTextLength` parameter of `refreshFeed` (see `feed.md`).
 - CM-HTML-2 Text that is empty after cleaning (CM-ART-5) is none.
 - CM-HTML-3 Which tags, attributes and URLs survive sanitizing is decided by the sanitizer adapter, not by business.
 - CM-HTML-4 Errors: `HtmlParserError`, `DocumentSanitizerError`.
@@ -75,7 +75,7 @@ Used by the SavedPage and Feed item lists. Both lists are ordered by `id` descen
 - CM-PAGE-1 Order: `id` descending. A single-feed list is the all-feeds list restricted to one `feedId`: same order, same cursor shape.
 - CM-PAGE-2 `limit` is a positive integer supplied by the caller. Business defines no page size. The boundary rejects zero, negative, non-integer and too-large values.
 - CM-PAGE-3 A cursor is the `id` of a row. It carries no owner, scope or filter.
-- CM-PAGE-4 Given an optional cursor, the helper asks the repository for `limit + 1` rows strictly after the cursor (CM-PAGE-1), which are the rows with a smaller id. It returns the first `limit` rows. If more than `limit` rows came back, the result's cursor is the id of the last returned row; otherwise it is `null`.
+- CM-PAGE-4 Given an optional cursor, the list use case asks the repository for `limit + 1` rows strictly after the cursor (CM-PAGE-1), which are the rows with a smaller id. It returns the first `limit` rows. If more than `limit` rows came back, the result's cursor is the id of the last returned row; otherwise it is `null`.
 - CM-PAGE-5 Business reads and returns the cursor as a structured value, the id of a row. How it is written into a request or response is decided at the boundary. A malformed cursor, including one that is not a lower-case version-7 UUID, is rejected there, so business has no cursor error.
 - CM-PAGE-6 A cursor stays valid after its row is deleted, because it is an id, not a lookup key.
 - CM-PAGE-7 Changing the scope or the filter starts a new list: the caller lists again with no cursor. Business does not check that a cursor belongs to the scope or filter it is used with. Using it elsewhere returns the rows after that position under the new selection, still limited to the caller's owner.
@@ -94,7 +94,7 @@ Used by the SavedPage and Feed item lists. Both lists are ordered by `id` descen
 - CM-TIME-1 Wherever a rule says "now" (`Feed.updatedAt`), the use case reads the injected clock. No adapter and no entity reads the time for a business value. A publish time is not "now": a missing one stays none (CM-FETCH-1). The id default takes its timestamp from the injected `Clock` (CM-ID-3), but an id is not a time and business never reads a time out of an id.
 - CM-TIME-2 Each use case function reads the injected clock at most once and uses that value throughout. A use case called by another reads its own clock. The time is never passed as a parameter. The id default reads the `Clock` once for each new row (CM-ID-3); that is not the use case's "now" and does not count here.
 
-Readers of the clock: `syncItems` (`updatedAt`). `fetchAndExtract` and `subscribeFeed` read no clock.
+Readers of the clock: `refreshFeed` (`updatedAt`). `fetchAndExtract` and `subscribeFeed` read no clock.
 
 ## CM-PORT — Port contracts
 
@@ -109,11 +109,9 @@ An operation that only forwards one port call gets no use case. So part of the b
 
 ## Functions
 
-| Function          | Input                                                                           | Output                                                                               | Errors                                                                                   |
-| ----------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `fetchAndExtract` | `NormalizedUrl`                                                                 | title, optional description, `ArticleContent`, publish time as `Option<DateTimeUtc>` | `WebpageFetcherError`, `HtmlParserError`, `ArticleExtractorError`, `ArticleEmptyContent` |
-| `cleanHtml`       | text, `NormalizedUrl` as the base, `maxLength`                                  | the sanitized text as `Option`                                                       | `HtmlParserError`, `DocumentSanitizerError`                                              |
-| `page`            | a `fetchPage` that returns rows after a position, an optional position, `limit` | the first `limit` rows and the next cursor or `null`                                 | those of `fetchPage`                                                                     |
+| Function          | Input           | Output                                                                               | Errors                                                                                   |
+| ----------------- | --------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `fetchAndExtract` | `NormalizedUrl` | title, optional description, `ArticleContent`, publish time as `Option<DateTimeUtc>` | `WebpageFetcherError`, `HtmlParserError`, `ArticleExtractorError`, `ArticleEmptyContent` |
 
 ## Errors
 
@@ -136,7 +134,7 @@ The shapes below are what business depends on. The adapter decodes its own outpu
 | `DocumentSanitizer` | `sanitize` | the parsed document     | `Option<string>` of sanitized HTML                                                                              | `DocumentSanitizerError` |
 | `ArticleExtractor`  | `extract`  | the parsed document     | `title: ArticleTitle`, optional `description`, optional sanitized `content`, `publishedAt: Option<DateTimeUtc>` | `ArticleExtractorError`  |
 
-The parsed document lives in a resource scope opened by the calling function, `fetchAndExtract` or `cleanHtml`. The scope covers the parse and the following extract or sanitize step, and is released when that function ends.
+The parsed document lives in a resource scope opened by `fetchAndExtract` or by the cleaning step of the feed refresh. The scope covers the parse and the following extract or sanitize step, and is released when that step ends.
 
 Redirects, timeouts, size limits and which addresses may be reached are the adapters' concern.
 

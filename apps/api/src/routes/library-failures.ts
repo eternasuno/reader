@@ -1,124 +1,100 @@
+import type { NormalizedUrl } from '@reader/business';
+import { Effect } from 'effect';
 import {
   articleEmptyContent,
   articleExtractError,
-  duplicateSavedPage,
-  feedExists,
-  feedItemMissingUrl,
+  browserEndpointRequired,
+  feedAlreadyExists,
   feedItemNotFound,
   feedItemRepositoryError,
-  feedNotFound,
   feedRepositoryError,
-  feedUrlInvalid,
   fetchFeedError,
-  invalidCursor,
   invalidEndpoint,
   invalidKey,
-  invalidPageUrl,
   invalidProvider,
   invalidRetention,
   parseFeedError,
+  savedPageAlreadyExists,
   savedPageRepositoryError,
-  settingsReadError,
-  settingsRepositoryError,
-  settingsSaveError,
+  settingRepositoryError,
   webpageFetchError,
 } from './library-errors';
 
-export const savedPageFailure = {
-  SavedPageRepositoryError: savedPageRepositoryError,
-};
+type Failure = { readonly _tag: string; readonly message: string };
 
-export const savedPagePageFailure = {
-  InvalidCursor: invalidCursor,
-  ...savedPageFailure,
-};
+const failed =
+  <F extends Failure>(value: () => F) =>
+  () =>
+    Effect.fail(value());
 
 export const feedRepositoryFailure = {
-  FeedRepositoryError: feedRepositoryError,
+  FeedRepositoryError: failed(feedRepositoryError),
 };
 
-export const feedItemFailure = {
-  FeedItemRepositoryError: feedItemRepositoryError,
-  FeedNotFound: feedNotFound,
-  ...feedRepositoryFailure,
+export const feedItemRepositoryFailure = {
+  FeedItemRepositoryError: failed(feedItemRepositoryError),
 };
 
-export const feedItemPageFailure = {
-  InvalidCursor: invalidCursor,
-  ...feedItemFailure,
+export const savedPageRepositoryFailure = {
+  SavedPageRepositoryError: failed(savedPageRepositoryError),
 };
 
-export const settingsRepositoryFailure = {
-  SettingsRepositoryError: settingsRepositoryError,
+export const settingRepositoryFailure = {
+  SettingRepositoryError: failed(settingRepositoryError),
 };
 
-const extractionFailure = {
-  ArticleEmptyContent: articleEmptyContent,
-  ...settingsRepositoryFailure,
-  WebpageFetcherError: webpageFetchError,
-  ArticleExtractorError: articleExtractError,
-  HtmlParserError: articleExtractError,
-};
-
-export const addSavedPageFailure = {
-  InvalidPageUrl: invalidPageUrl,
-  DuplicateSavedPage: duplicateSavedPage,
-  ...extractionFailure,
-  ...savedPageFailure,
-};
-
-export const saveFeedItemFailure = {
-  FeedItemNotFound: feedItemNotFound,
-  DuplicateSavedPage: duplicateSavedPage,
-  ...extractionFailure,
-  ...feedItemFailure,
-  ...savedPageFailure,
-};
-
-export const extractFeedItemFailure = {
-  FeedItemNotFound: feedItemNotFound,
-  FeedItemMissingUrl: feedItemMissingUrl,
-  ...extractionFailure,
-  ...feedItemFailure,
-};
-
-export const unreadCountsFailure = {
-  FeedItemRepositoryError: feedItemRepositoryError,
-  ...feedRepositoryFailure,
-  ...savedPageFailure,
-};
-
-export const markFeedsFailure = {
-  FeedItemRepositoryError: feedItemRepositoryError,
-  ...feedRepositoryFailure,
+export const extractionFailure = {
+  ArticleEmptyContent: failed(articleEmptyContent),
+  WebpageFetcherError: failed(webpageFetchError),
+  ArticleExtractorError: failed(articleExtractError),
+  HtmlParserError: failed(articleExtractError),
+  ...settingRepositoryFailure,
 };
 
 export const previewFailure = {
-  FeedUrlInvalid: feedUrlInvalid,
-  FetchFeedError: fetchFeedError,
-  FeedParserError: parseFeedError,
+  FetchFeedError: failed(fetchFeedError),
+  FeedParserError: failed(parseFeedError),
+};
+
+export const addSavedPageFailure = {
+  SavedPageAlreadyExists: (error: { readonly url: NormalizedUrl }) =>
+    Effect.fail(savedPageAlreadyExists(error)),
+  ...extractionFailure,
+  ...savedPageRepositoryFailure,
+};
+
+export const saveFeedItemFailure = {
+  FeedItemNotFound: (error: { readonly id: string }) =>
+    Effect.fail(feedItemNotFound(error)),
+  SavedPageAlreadyExists: (error: { readonly url: NormalizedUrl }) =>
+    Effect.fail(savedPageAlreadyExists(error)),
+  ...extractionFailure,
+  ...feedItemRepositoryFailure,
+  ...savedPageRepositoryFailure,
+};
+
+export const extractFeedItemFailure = {
+  FeedItemNotFound: (error: { readonly id: string }) =>
+    Effect.fail(feedItemNotFound(error)),
+  ...extractionFailure,
+  ...feedItemRepositoryFailure,
 };
 
 export const subscribeFailure = {
-  FeedUrlInvalid: feedUrlInvalid,
-  FeedExists: feedExists,
-  FetchFeedError: fetchFeedError,
-  FeedParserError: parseFeedError,
+  FeedAlreadyExists: (error: { readonly url: NormalizedUrl }) =>
+    Effect.fail(feedAlreadyExists(error)),
   ...feedRepositoryFailure,
 };
 
-export const settingsReadFailure = {
-  SettingsRepositoryError: settingsReadError,
-};
-
 export const retentionFailure = {
-  InvalidRetention: invalidRetention,
-  SettingsRepositoryError: settingsSaveError,
+  InvalidRetention: failed(invalidRetention),
+  ...settingRepositoryFailure,
 };
 
-export const extractionSettingsFailure = {
-  InvalidProvider: invalidProvider,
-  InvalidKey: invalidKey,
-  InvalidEndpoint: invalidEndpoint,
-  SettingsRepositoryError: settingsSaveError,
+export const fetcherFailure = {
+  InvalidProvider: failed(invalidProvider),
+  InvalidKey: failed(invalidKey),
+  InvalidEndpoint: failed(invalidEndpoint),
+  BrowserEndpointRequired: failed(browserEndpointRequired),
+  ...settingRepositoryFailure,
 };

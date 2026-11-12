@@ -99,7 +99,7 @@ it.effect(
     })
 );
 
-it.effect('rejects unsupported or credentialed targets before fetching', () =>
+it.effect('rejects unsupported targets before fetching', () =>
   Effect.gen(function* () {
     let called = false;
     const fetchImpl = () => {
@@ -107,11 +107,7 @@ it.effect('rejects unsupported or credentialed targets before fetching', () =>
 
       return Promise.resolve(new Response(html));
     };
-    const addresses = [
-      'ftp://example.com/article',
-      'https://user:pass@example.com/article',
-      'not a url',
-    ];
+    const addresses = ['ftp://example.com/article', 'not a url'];
 
     for (const address of addresses) {
       const error = yield* Effect.flip(
@@ -180,5 +176,24 @@ it.effect('reports a forty second timeout', () =>
     const error = yield* Fiber.join(fiber).pipe(Effect.flip);
     expect(error._tag).toBe('FetchFailure');
     expect(error.message).toBe('Jina request timed out');
+  })
+);
+
+it.effect('accepts a credentialed target and forwards it to Jina', () =>
+  Effect.gen(function* () {
+    let seen: string | undefined;
+    const fetchImpl = (input: FetchInput) => {
+      seen = String(input);
+
+      return textFetch(html)();
+    };
+    const result = yield* fetchJina(
+      'https://alice:secret@example.com/article',
+      key
+    ).pipe(provideFetch(fetchImpl as typeof globalThis.fetch));
+    expect(result).toBe(html);
+    expect(seen).toBe(
+      'https://r.jina.ai/https://alice:secret@example.com/article'
+    );
   })
 );

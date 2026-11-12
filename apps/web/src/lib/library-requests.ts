@@ -4,15 +4,14 @@ import {
   FeedItemOrNullResponseSchema,
   FeedItemPageSchema,
   FeedItemResponseSchema,
-  FeedItemsResponseSchema,
   FeedResponseSchema,
   FeedsResponseSchema,
+  FeedUnreadSchema,
   PreviewResponseSchema,
   SavedPageOrNullResponseSchema,
   SavedPagePageSchema,
   SavedPageResponseSchema,
-  SavedPagesResponseSchema,
-  UnreadCountsSchema,
+  SavedPageUnreadSchema,
 } from './library-schema';
 import { decodeBody, type Send, sendGet, sendJson } from './library-transport';
 import type {
@@ -20,32 +19,39 @@ import type {
   ArticlePage,
   ArticleRef,
   Counts,
-  Filter,
   Scope,
 } from './library-types';
 
-const fromFeedItem = (item: FeedItem): Article => ({
-  id: item.id,
-  feedId: Option.some(item.feedId),
-  url: item.url,
-  title: item.title,
-  description: item.description,
-  content: item.content,
-  extractedContent: item.extractedContent,
-  publishedAt: item.publishedAt,
-  read: item.read,
-});
+export const PAGE_SIZE = 30;
 
-const fromSavedPage = (page: SavedPage): Article => ({
+const MARK_CHUNK = 5000;
+
+const savedPagesPath = '/api/library/saved-pages';
+
+const feedItemsPath = '/api/library/feeds/items';
+
+const savedPageArticle = (page: SavedPage): Article => ({
   id: page.id,
   feedId: Option.none(),
-  url: page.url,
+  url: Option.some(page.url),
   title: page.title,
   description: page.description,
   content: Option.some(page.content),
   extractedContent: Option.some(page.content),
-  publishedAt: page.publishedAt,
+  publishedAt: Option.getOrUndefined(page.publishedAt),
   read: page.read,
+});
+
+const feedItemArticle = (item: FeedItem): Article => ({
+  id: item.id,
+  feedId: Option.some(item.feedId),
+  url: Option.some(item.url),
+  title: item.title,
+  description: item.description,
+  content: item.content,
+  extractedContent: item.extractedContent,
+  publishedAt: Option.getOrUndefined(item.publishedAt),
+  read: item.read,
 });
 
 export const refOf = (article: Article): ArticleRef => ({
@@ -53,68 +59,44 @@ export const refOf = (article: Article): ArticleRef => ({
   feedId: Option.getOrUndefined(article.feedId),
 });
 
-const scopeQuery = (
-  scope: Scope
-): Readonly<Record<string, string | undefined>> =>
-  scope.kind === 'feeds' && scope.feedId !== undefined
-    ? { feedId: scope.feedId }
-    : {};
+const listQuery = (
+  scope: Scope,
+  unreadOnly: boolean,
+  cursor: string | undefined
+): Readonly<Record<string, string | undefined>> => {
+  const feedId = scope.kind === 'feeds' ? scope.feedId : undefined;
+
+  return {
+    unreadOnly: String(unreadOnly),
+    limit: String(PAGE_SIZE),
+    cursor,
+    feedId,
+  };
+};
 
 export const readPage = async (
   send: Send,
   scope: Scope,
-  filter: Filter,
+  unreadOnly: boolean,
   cursor?: string
 ): Promise<ArticlePage> => {
+  const query = listQuery(scope, unreadOnly, cursor);
+
   if (scope.kind === 'later') {
     const page = await decodeBody(
       SavedPagePageSchema,
-      await sendGet(send, '/api/library/saved-pages', { filter, cursor })
+      await sendGet(send, savedPagesPath, query)
     );
 
-    return { ...page, items: page.items.map(fromSavedPage) };
+    return { ...page, items: page.items.map(savedPageArticle) };
   }
 
   const page = await decodeBody(
     FeedItemPageSchema,
-    await sendGet(send, '/api/library/feeds/items', {
-      filter,
-      cursor,
-      ...scopeQuery(scope),
-    })
+    await sendGet(send, feedItemsPath, query)
   );
 
-  return { ...page, items: page.items.map(fromFeedItem) };
-};
-
-export const readRefresh = async (
-  send: Send,
-  scope: Scope,
-  filter: Filter,
-  through: string
-): Promise<ReadonlyArray<Article>> => {
-  if (scope.kind === 'later') {
-    const response = await decodeBody(
-      SavedPagesResponseSchema,
-      await sendGet(send, '/api/library/saved-pages/refresh', {
-        filter,
-        through,
-      })
-    );
-
-    return response.items.map(fromSavedPage);
-  }
-
-  const response = await decodeBody(
-    FeedItemsResponseSchema,
-    await sendGet(send, '/api/library/feeds/items/refresh', {
-      filter,
-      through,
-      ...scopeQuery(scope),
-    })
-  );
-
-  return response.items.map(fromFeedItem);
+  return { ...page, items: page.items.map(feedItemArticle) };
 };
 
 export const readFeeds = async (send: Send): Promise<ReadonlyArray<Feed>> =>
@@ -126,26 +108,59 @@ export const readFeeds = async (send: Send): Promise<ReadonlyArray<Feed>> =>
   ).items;
 
 export const readUnreadCounts = async (send: Send): Promise<Counts> => {
-  const counts = await decodeBody(
-    UnreadCountsSchema,
-    await sendGet(send, '/api/library/unread')
-  );
+  const [feedBody, savedBody] = await Promise.all([
+    sendGet(send, '/api/library/feeds/unread'),
+    sendGet(send, `${savedPagesPath}/unread`),
+  ]);
+  const { feeds } = await decodeBody(FeedUnreadSchema, feedBody);
+  const saved = await decodeBody(SavedPageUnreadSchema, savedBody);
 
   return {
-    later: counts.saved,
-    feedsTotal: counts.feedsTotal,
-    feeds: Object.fromEntries(
-      counts.feeds.map((feed) => [feed.id, feed.count])
-    ),
+    later: saved.count,
+    feedsTotal: feeds.reduce((total, feed) => total + feed.count, 0),
+    feeds: Object.fromEntries(feeds.map((feed) => [feed.feedId, feed.count])),
   };
 };
 
-export const readSavedPage = async (
+export const readArticle = async (
+  send: Send,
+  ref: ArticleRef
+): Promise<Article | null> => {
+  if (ref.feedId === undefined) {
+    const { item } = await decodeBody(
+      SavedPageOrNullResponseSchema,
+      await sendGet(send, `${savedPagesPath}/item`, { id: ref.id })
+    );
+
+    return item === null ? null : savedPageArticle(item);
+  }
+
+  const { item } = await decodeBody(
+    FeedItemOrNullResponseSchema,
+    await sendGet(send, `${feedItemsPath}/item`, { id: ref.id })
+  );
+
+  return item === null ? null : feedItemArticle(item);
+};
+
+export const readSavedPageByUrl = async (
+  send: Send,
+  url: string
+): Promise<Article | null> => {
+  const { item } = await decodeBody(
+    SavedPageOrNullResponseSchema,
+    await sendGet(send, `${savedPagesPath}/by-url`, { url })
+  );
+
+  return item === null ? null : savedPageArticle(item);
+};
+
+const readSavedPage = async (
   send: Send,
   path: string,
   body: unknown
 ): Promise<Article> =>
-  fromSavedPage(
+  savedPageArticle(
     (
       await decodeBody(
         SavedPageResponseSchema,
@@ -154,39 +169,33 @@ export const readSavedPage = async (
     ).item
   );
 
-export const readFeedItem = async (
+const readFeedItem = async (
   send: Send,
   path: string,
   body: unknown
 ): Promise<Article> =>
-  fromFeedItem(
+  feedItemArticle(
     (await decodeBody(FeedItemResponseSchema, await sendJson(send, path, body)))
       .item
   );
 
-export const readArticleByRef = async (
+export const addSavedPage = (send: Send, url: string): Promise<Article> =>
+  readSavedPage(send, savedPagesPath, { url });
+
+export const saveFeedItem = (send: Send, article: Article): Promise<Article> =>
+  Option.isNone(article.feedId)
+    ? Promise.resolve(article)
+    : readSavedPage(send, `${savedPagesPath}/from-feed-item`, {
+        id: article.id,
+      });
+
+export const extractFeedItem = (
   send: Send,
-  ref: ArticleRef
-): Promise<Article | null> => {
-  if (ref.feedId === undefined) {
-    const { item } = await decodeBody(
-      SavedPageOrNullResponseSchema,
-      await sendGet(send, '/api/library/saved-pages/item', { id: ref.id })
-    );
-
-    return item === null ? null : fromSavedPage(item);
-  }
-
-  const { item } = await decodeBody(
-    FeedItemOrNullResponseSchema,
-    await sendGet(send, '/api/library/feeds/items/item', {
-      feedId: ref.feedId,
-      id: ref.id,
-    })
-  );
-
-  return item === null ? null : fromFeedItem(item);
-};
+  article: Article
+): Promise<Article> =>
+  Option.isNone(article.feedId)
+    ? Promise.resolve(article)
+    : readFeedItem(send, `${feedItemsPath}/extract`, { id: article.id });
 
 export const readPreview = async (send: Send, url: string): Promise<Preview> =>
   (
@@ -198,67 +207,62 @@ export const readPreview = async (send: Send, url: string): Promise<Preview> =>
 
 export const readSubscription = async (
   send: Send,
-  url: string
+  url: string,
+  title: string
 ): Promise<Feed> =>
   (
     await decodeBody(
       FeedResponseSchema,
-      await sendJson(send, '/api/library/feeds', { url })
+      await sendJson(send, '/api/library/feeds', { url, title })
     )
   ).item;
 
 export const markRead = async (send: Send, ref: ArticleRef, read: boolean) => {
-  if (ref.feedId === undefined) {
-    await send('/api/library/saved-pages', {
-      method: 'PATCH',
-      body: { id: ref.id, read },
-    });
+  const path = ref.feedId === undefined ? savedPagesPath : feedItemsPath;
 
-    return;
-  }
-
-  await send('/api/library/feeds/items', {
-    method: 'PATCH',
-    body: { feedId: ref.feedId, id: ref.id, read },
-  });
+  await send(path, { method: 'PATCH', body: { id: ref.id, read } });
 };
 
 export const markLater = async (send: Send) => {
-  await sendJson(send, '/api/library/saved-pages/mark-all-read', {});
+  await sendJson(send, `${savedPagesPath}/mark-all-read`, {});
+};
+
+export const markAllFeeds = async (send: Send) => {
+  await sendJson(send, '/api/library/feeds/mark-all-read', {});
 };
 
 export const markFeeds = async (send: Send, feedIds: ReadonlyArray<string>) => {
   await sendJson(send, '/api/library/feeds/mark-read', { feedIds });
 };
 
+const idsOf = (
+  refs: ReadonlyArray<ArticleRef>,
+  kind: 'saved' | 'feed'
+): ReadonlyArray<string> =>
+  refs
+    .filter((ref) => (ref.feedId === undefined) === (kind === 'saved'))
+    .map((ref) => ref.id);
+
+const postIds = async (
+  send: Send,
+  path: string,
+  ids: ReadonlyArray<string>
+) => {
+  for (let index = 0; index < ids.length; index += MARK_CHUNK) {
+    await sendJson(send, path, { ids: ids.slice(index, index + MARK_CHUNK) });
+  }
+};
+
 export const markArticles = async (
   send: Send,
   refs: ReadonlyArray<ArticleRef>
 ) => {
-  const saved = refs.filter((ref) => ref.feedId === undefined);
-  if (saved.length > 0) {
-    await sendJson(send, '/api/library/saved-pages/mark-read', {
-      ids: saved.map((ref) => ref.id),
-    });
-  }
-
-  const byFeed = new Map<string, Array<string>>();
-  for (const ref of refs) {
-    if (ref.feedId !== undefined) {
-      byFeed.set(ref.feedId, [...(byFeed.get(ref.feedId) ?? []), ref.id]);
-    }
-  }
-
-  for (const [feedId, ids] of byFeed) {
-    await sendJson(send, '/api/library/feeds/items/mark-read', {
-      feedId,
-      ids,
-    });
-  }
+  await postIds(send, `${savedPagesPath}/mark-read`, idsOf(refs, 'saved'));
+  await postIds(send, `${feedItemsPath}/mark-read`, idsOf(refs, 'feed'));
 };
 
 export const removeSavedPage = async (send: Send, id: string) => {
-  await send('/api/library/saved-pages', { method: 'DELETE', body: { id } });
+  await send(savedPagesPath, { method: 'DELETE', body: { id } });
 };
 
 export const removeSubscription = async (send: Send, id: string) => {

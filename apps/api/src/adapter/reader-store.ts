@@ -6,23 +6,23 @@ import {
 import { Context, Effect, Layer, Semaphore } from 'effect';
 import { Database } from '../infrastructure/db';
 import { makeFeedItems } from './feed-item-store';
+import { makeFeedRepository } from './feed-store';
 import { makeSavedPages } from './saved-page-store';
-import { makeSubscriptions } from './subscription-store';
 
 export const readerStoreSchema = `
-DEFINE TABLE IF NOT EXISTS feed_item SCHEMALESS;
-DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE feed_item TYPE datetime;
-DEFINE INDEX IF NOT EXISTS feed_item_feed ON feed_item FIELDS feedId;
-DEFINE INDEX IF NOT EXISTS feed_item_feed_order ON feed_item FIELDS feedId, publishedAt, itemId;
-DEFINE INDEX IF NOT EXISTS feed_item_order ON feed_item FIELDS publishedAt, itemId;
-DEFINE INDEX IF NOT EXISTS feed_item_read_order ON feed_item FIELDS read, publishedAt, itemId;
-DEFINE TABLE IF NOT EXISTS saved_page SCHEMALESS;
-DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE saved_page TYPE datetime;
-DEFINE INDEX IF NOT EXISTS saved_page_owner ON saved_page FIELDS owner;
-DEFINE INDEX IF NOT EXISTS saved_page_owner_order ON saved_page FIELDS owner, publishedAt, pageId;
 DEFINE TABLE IF NOT EXISTS feed SCHEMALESS;
-DEFINE FIELD IF NOT EXISTS updatedAt ON TABLE feed TYPE datetime;
-DEFINE INDEX IF NOT EXISTS reader_feed_owner ON feed FIELDS owner;
+DEFINE FIELD IF NOT EXISTS updatedAt ON TABLE feed TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS feed_owner_url ON feed FIELDS owner, url UNIQUE;
+DEFINE TABLE IF NOT EXISTS feed_item SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE feed_item TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS feed_item_feed_url ON feed_item FIELDS feedId, url UNIQUE;
+DEFINE INDEX IF NOT EXISTS feed_item_owner_item ON feed_item FIELDS owner, itemId;
+DEFINE INDEX IF NOT EXISTS feed_item_owner_feed_item ON feed_item FIELDS owner, feedId, itemId;
+DEFINE INDEX IF NOT EXISTS feed_item_owner_read_item ON feed_item FIELDS owner, read, itemId;
+DEFINE TABLE IF NOT EXISTS saved_page SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE saved_page TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS saved_page_owner_url ON saved_page FIELDS owner, url UNIQUE;
+DEFINE INDEX IF NOT EXISTS saved_page_owner_page ON saved_page FIELDS owner, pageId;
 DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS setting_owner ON setting FIELDS owner UNIQUE;
 `;
@@ -63,7 +63,7 @@ export const FeedRepositoryLive = Layer.effect(
     const db = yield* Database;
     const lock = yield* ReaderStoreConcurrency;
 
-    return makeSubscriptions(db, lock);
+    return makeFeedRepository(db, lock);
   })
 );
 

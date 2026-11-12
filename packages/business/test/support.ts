@@ -1,127 +1,151 @@
-import { type DateTime, Effect, Schema } from 'effect';
-import { Feed, FeedId } from '../src/entity/feed/feed';
-import { FeedItem } from '../src/entity/feed/feed-item';
+import { type DateTime, Effect, Option, Schema } from 'effect';
 import {
   ArticleContent,
   ArticleDescription,
   ArticleTitle,
-} from '../src/entity/object-value/article';
-import { NormalizedUrl } from '../src/entity/object-value/normalized-url';
-import { OptionFromOptionalNonEmpty } from '../src/entity/object-value/option-from-optional-non-empty';
-import { OwnerId } from '../src/entity/object-value/owner-id';
-import { SavedPage } from '../src/entity/saved-page/saved-page';
-import { ListCursorFromString } from '../src/usecase/list-cursor';
-
-export const decodeContent = Schema.decodeSync(
-  OptionFromOptionalNonEmpty(ArticleContent)
-);
-
-export const decodeDescription = Schema.decodeSync(
-  OptionFromOptionalNonEmpty(ArticleDescription)
-);
-
-export const decodeTitle = Schema.decodeSync(ArticleTitle);
-
-export const decodeUrl = Schema.decodeSync(NormalizedUrl);
+} from '../src/entity/common/article';
+import { NormalizedUrl } from '../src/entity/common/normalized-url';
+import { OptionFromOptionalNonEmpty } from '../src/entity/common/option-from-optional-non-empty';
+import { OwnerId } from '../src/entity/common/owner-id';
+import { Feed, type FeedId, FeedTitle } from '../src/entity/feed/feed';
+import { FeedItem, type FeedItemId } from '../src/entity/feed/feed-item';
+import {
+  SavedPage,
+  type SavedPageId,
+} from '../src/entity/saved-page/saved-page';
+import { BrowserEndpoint, JinaKey } from '../src/entity/setting/fetcher';
+import { Retention } from '../src/entity/setting/retention';
+import {
+  FeedRepository,
+  type FeedRepositoryError,
+} from '../src/port/feed-repository';
 
 export const alice = OwnerId.make('alice');
 
 export const bob = OwnerId.make('bob');
 
-export const feedId = FeedId.make('f'.repeat(64));
+export const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
-export const otherFeedId = FeedId.make('e'.repeat(64));
+export const decodeTitle = Schema.decodeSync(ArticleTitle);
 
-export const hex = (value: number): string =>
-  value.toString(16).padStart(64, '0');
+export const decodeDescription = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleDescription)
+);
 
-export const decodeCursor = (wire: string) =>
-  Schema.decodeSync(ListCursorFromString)(wire);
-
-export const extractedPublishedAt = Schema.decodeSync(
-  Schema.DateTimeUtcFromString
-)('2024-05-06T07:08:09.000Z');
-
-export const timeOf = (publishedAt: DateTime.Utc): string =>
-  Schema.encodeSync(Schema.DateTimeUtcFromString)(publishedAt);
+export const decodeContent = Schema.decodeSync(
+  OptionFromOptionalNonEmpty(ArticleContent)
+);
 
 export const parsedDocument = (html = ''): Document =>
   ({ body: { innerHTML: html } }) as unknown as Document;
 
-export const storedFeed = (id: FeedId = feedId): Feed =>
-  Schema.decodeUnknownSync(Feed)({
-    id,
-    ownerId: alice,
-    url: 'https://example.com/feed.xml',
-    title: 'Feed',
-    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
-  });
+const defaultFeedUrl = decodeUrl('https://example.com/feed.xml');
 
-const baseTime = Date.UTC(2026, 0, 1, 12);
-
-export const makeFeedItem = (overrides: Record<string, unknown> = {}) =>
-  Schema.decodeUnknownSync(FeedItem)({
-    id: hex(1),
-    feedId,
-    title: 'Title',
-    publishedAt: new Date('2026-01-01T00:00:00.000Z'),
-    read: false,
-    ...overrides,
-  });
-
-export const makeSavedPage = (overrides: Record<string, unknown> = {}) =>
-  Schema.decodeUnknownSync(SavedPage)({
-    id: hex(1),
-    ownerId: alice,
-    title: 'Title',
-    content: '<p>Body</p>',
-    publishedAt: new Date('2026-01-01T00:00:00.000Z'),
-    read: false,
-    ...overrides,
-  });
-
-export const series = <T>(
-  count: number,
-  make: (overrides: Record<string, unknown>) => T
-): Array<T> =>
-  Array.from({ length: count }, (_, index) =>
-    make({
-      id: hex(index),
-      title: `Item ${index}`,
-      publishedAt: new Date(baseTime + index * 60_000),
-    })
-  );
-
-type Listed = { readonly id: string; readonly publishedAt: DateTime.Utc };
-
-/**
- * Fake listing store keeping `items` in list order: `list` returns the
- * exclusive suffix past `after`, `listThrough` the inclusive prefix up to
- * `through`. The boundary is matched by its (publishedAt, id) tuple, so a
- * removed boundary item still bounds the returned page.
- */
-export const pagedStore = <T extends Listed>(items: ReadonlyArray<T>) => {
-  const isLaterThan = (item: Listed, boundary: Listed): boolean => {
-    const publishedAt = timeOf(item.publishedAt);
-    const boundaryAt = timeOf(boundary.publishedAt);
-
-    return (
-      publishedAt > boundaryAt ||
-      (publishedAt === boundaryAt && item.id > boundary.id)
-    );
-  };
-
-  return {
-    list: (query: { readonly after?: Listed; readonly limit: number }) =>
-      Effect.succeed(
-        items
-          .filter(
-            (item) =>
-              query.after === undefined || isLaterThan(item, query.after)
-          )
-          .slice(0, query.limit)
-      ),
-    listThrough: (query: { readonly through: Listed }) =>
-      Effect.succeed(items.filter((item) => !isLaterThan(item, query.through))),
-  };
+export type FeedOverrides = {
+  readonly id?: FeedId;
+  readonly ownerId?: OwnerId;
+  readonly url?: NormalizedUrl;
+  readonly title?: FeedTitle;
+  readonly updatedAt?: Option.Option<DateTime.Utc>;
 };
+
+export const makeFeed = (overrides: FeedOverrides = {}): Feed =>
+  Feed.make({
+    ownerId: alice,
+    url: defaultFeedUrl,
+    title: FeedTitle.make('Feed'),
+    updatedAt: Option.none(),
+    ...overrides,
+  });
+
+const defaultFeedId = makeFeed().id;
+
+export type FeedItemOverrides = {
+  readonly id?: FeedItemId;
+  readonly ownerId?: OwnerId;
+  readonly feedId?: FeedId;
+  readonly url?: NormalizedUrl;
+  readonly title?: ArticleTitle;
+  readonly description?: Option.Option<ArticleDescription>;
+  readonly content?: Option.Option<ArticleContent>;
+  readonly extractedContent?: Option.Option<ArticleContent>;
+  readonly publishedAt?: Option.Option<DateTime.Utc>;
+  readonly read?: boolean;
+};
+
+export const makeFeedItem = (overrides: FeedItemOverrides = {}): FeedItem =>
+  FeedItem.make({
+    ownerId: alice,
+    feedId: defaultFeedId,
+    url: decodeUrl('https://example.com/item'),
+    title: decodeTitle('Item'),
+    description: Option.none(),
+    content: Option.none(),
+    extractedContent: Option.none(),
+    publishedAt: Option.none(),
+    read: false,
+    ...overrides,
+  });
+
+export type SavedPageOverrides = {
+  readonly id?: SavedPageId;
+  readonly ownerId?: OwnerId;
+  readonly url?: NormalizedUrl;
+  readonly title?: ArticleTitle;
+  readonly description?: Option.Option<ArticleDescription>;
+  readonly content?: ArticleContent;
+  readonly publishedAt?: Option.Option<DateTime.Utc>;
+  readonly read?: boolean;
+};
+
+export const makeSavedPage = (overrides: SavedPageOverrides = {}): SavedPage =>
+  SavedPage.make({
+    ownerId: alice,
+    url: decodeUrl('https://example.com/page'),
+    title: decodeTitle('Page'),
+    description: Option.none(),
+    content: ArticleContent.make('<p>Body</p>'),
+    publishedAt: Option.none(),
+    read: false,
+    ...overrides,
+  });
+
+let urlCounter = 0;
+
+export const uniqueUrl = (path: string): NormalizedUrl => {
+  urlCounter += 1;
+
+  return decodeUrl(`https://example.com/${path}/${urlCounter}`);
+};
+
+export const makeUniqueFeed = (overrides: FeedOverrides = {}): Feed =>
+  makeFeed({ url: uniqueUrl('feed'), ...overrides });
+
+export const makeUniqueFeedItem = (
+  overrides: FeedItemOverrides = {}
+): FeedItem => makeFeedItem({ url: uniqueUrl('item'), ...overrides });
+
+export const makeUniqueSavedPage = (
+  overrides: SavedPageOverrides = {}
+): SavedPage => makeSavedPage({ url: uniqueUrl('page'), ...overrides });
+
+export const idsOf = (
+  rows: ReadonlyArray<{ readonly id: string }>
+): Array<string> => rows.map((row) => row.id);
+
+export const storedFeed = (
+  owner: OwnerId = alice
+): Effect.Effect<Feed, FeedRepositoryError, FeedRepository> =>
+  Effect.gen(function* () {
+    const feeds = yield* FeedRepository;
+    const feed = makeUniqueFeed({ ownerId: owner });
+    yield* feeds.create(owner, [feed]);
+
+    return feed;
+  });
+
+export const decodeRetention = Schema.decodeSync(Retention);
+
+export const decodeJinaKey = Schema.decodeSync(JinaKey);
+
+export const decodeBrowserEndpoint = Schema.decodeSync(BrowserEndpoint);

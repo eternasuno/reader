@@ -1,12 +1,12 @@
 import { createSignal, onCleanup, onMount } from 'solid-js';
 import { changePassword } from '../lib/auth';
 import {
-  clearBrowserEndpoint,
   clearJinaKey,
+  type FetcherInput,
   type FetcherProvider,
   getSettings,
   type LibrarySettings,
-  saveExtraction,
+  saveFetcher,
   saveRetention,
 } from '../lib/settings';
 
@@ -17,12 +17,7 @@ export type SettingsToast = {
   readonly message: string;
 };
 
-type PendingAction =
-  | 'password'
-  | 'retention'
-  | 'extraction'
-  | 'key'
-  | 'browser';
+type PendingAction = 'password' | 'retention' | 'extraction' | 'key';
 
 const failureMessage = (error: unknown): string =>
   error instanceof Error ? error.message : '操作失败，请稍后重试';
@@ -136,7 +131,7 @@ const applySettings = (drafts: DraftStore, data: LibrarySettings) => {
   drafts.setSettings(data);
   drafts.setRetention(String(data.retention));
   drafts.setProvider(data.provider);
-  drafts.setBrowserEndpoint(data.browserEndpoint ?? '');
+  drafts.setBrowserEndpoint('');
   drafts.setJinaKey('');
 };
 
@@ -171,7 +166,7 @@ const extractionDirty = (drafts: DraftStore) => {
   return (
     drafts.provider() !== base.provider ||
     drafts.jinaKey().trim() !== '' ||
-    drafts.browserEndpoint().trim() !== (base.browserEndpoint ?? '')
+    drafts.browserEndpoint().trim() !== ''
   );
 };
 
@@ -191,7 +186,7 @@ const resetExtraction = (drafts: DraftStore) => {
   if (base === undefined) return;
 
   drafts.setProvider(base.provider);
-  drafts.setBrowserEndpoint(base.browserEndpoint ?? '');
+  drafts.setBrowserEndpoint('');
   drafts.setJinaKey('');
 };
 
@@ -266,7 +261,41 @@ export const submitRetention: SubmitForm = (drafts, status, form) => {
   );
 };
 
-export const submitExtraction: SubmitForm = (drafts, status, form) => {
+const fetcherInput = (
+  provider: FetcherProvider,
+  key: string,
+  endpoint: string
+): FetcherInput =>
+  provider === 'browser' ? { provider, endpoint } : { provider, key };
+
+const applyFetcherSaved = (
+  drafts: DraftStore,
+  base: LibrarySettings,
+  provider: FetcherProvider,
+  key: string,
+  endpoint: string
+) => {
+  if (provider === 'browser') {
+    drafts.setSettings({
+      ...base,
+      provider,
+      browserEndpointConfigured:
+        base.browserEndpointConfigured || endpoint.trim() !== '',
+    });
+    drafts.setBrowserEndpoint('');
+
+    return;
+  }
+
+  drafts.setSettings({
+    ...base,
+    provider,
+    jinaKeyConfigured: base.jinaKeyConfigured || key.trim() !== '',
+  });
+  drafts.setJinaKey('');
+};
+
+export const submitFetcher: SubmitForm = (drafts, status, form) => {
   const base = drafts.settings();
   form.classList.add('submitted');
   if (base === undefined || isSettingsBusy(status)) return;
@@ -274,24 +303,15 @@ export const submitExtraction: SubmitForm = (drafts, status, form) => {
   if (!form.checkValidity()) return;
 
   const provider = drafts.provider();
-  const jinaKey = drafts.jinaKey();
-  const endpoint = drafts.browserEndpoint().trim();
-  const browserEndpoint = endpoint || (base.browserEndpoint ?? '');
+  const key = drafts.jinaKey();
+  const endpoint = drafts.browserEndpoint();
 
   void runAction(
     status,
     'extraction',
     async () => {
-      await saveExtraction({ provider, jinaKey, browserEndpoint });
-      drafts.setSettings({
-        ...base,
-        provider,
-        browserEndpoint,
-        jinaConfigured: base.jinaConfigured || jinaKey.trim() !== '',
-      });
-      drafts.setProvider(provider);
-      drafts.setBrowserEndpoint(browserEndpoint);
-      drafts.setJinaKey('');
+      await saveFetcher(fetcherInput(provider, key, endpoint));
+      applyFetcherSaved(drafts, base, provider, key, endpoint);
     },
     '提取设置已保存'
   );
@@ -305,28 +325,9 @@ export const removeJinaKey = (drafts: DraftStore, status: StatusStore) =>
     'key',
     async (base) => {
       await clearJinaKey();
-      drafts.setSettings({ ...base, jinaConfigured: false });
+      drafts.setSettings({ ...base, jinaKeyConfigured: false });
     },
     'Jina Key 已删除'
-  );
-
-export const removeBrowserEndpoint = (
-  drafts: DraftStore,
-  status: StatusStore
-) =>
-  confirmAction(
-    drafts,
-    status,
-    '清除浏览器服务地址？清除后提取方式将切换回 Jina。',
-    'browser',
-    async (base) => {
-      const provider = base.provider === 'browser' ? 'jina' : base.provider;
-      await clearBrowserEndpoint();
-      drafts.setSettings({ ...base, provider, browserEndpoint: '' });
-      drafts.setProvider(provider);
-      drafts.setBrowserEndpoint('');
-    },
-    '浏览器服务地址已清除'
   );
 
 export const createSettingsStores = () => ({

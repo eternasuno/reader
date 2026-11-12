@@ -6,7 +6,6 @@ import type {
   ArticleRef,
   Counts,
   Feed,
-  Filter,
   Preview,
   Scope,
 } from '../../src/lib/library';
@@ -25,7 +24,7 @@ export const article = (
 ): Article => ({
   id,
   title: `Article ${id}`,
-  publishedAt: options.publishedAt ?? '2026-01-01T00:00:00.000Z',
+  publishedAt: options.publishedAt,
   read: options.read ?? false,
   feedId: Option.fromUndefinedOr(options.feedId),
   url: Option.fromUndefinedOr(options.url),
@@ -34,25 +33,20 @@ export const article = (
   extractedContent: Option.fromUndefinedOr(options.extractedContent),
 });
 
-/** Article newer than the shared default so it sorts ahead of loaded rows. */
-export const newerArticle = (
-  id: string,
-  options: { readonly feedId?: string; readonly read?: boolean } = {}
-): Article =>
-  article(id, { ...options, publishedAt: '2026-01-02T00:00:00.000Z' });
-
 export const page = (
   items: ReadonlyArray<Article>,
-  cursor: string | null = null,
-  boundary: string | null = null
-): ArticlePage => ({ items, cursor, boundary });
+  cursor: string | null = null
+): ArticlePage => ({ items, cursor });
 
-export const feed = (id: string): Feed => ({
+export const feed = (
+  id: string,
+  url = `https://example.com/${id}.xml`
+): Feed => ({
   id,
   ownerId: 'owner',
-  url: `https://example.com/${id}.xml`,
+  url,
   title: `Feed ${id}`,
-  updatedAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: Option.some('2026-01-01T00:00:00.000Z'),
 });
 
 export const counts = (
@@ -84,20 +78,18 @@ export const deferred = <T>() => {
 
 /** Stub transport whose defaults resolve to empty successful responses. */
 export const createStubClient = () => ({
-  list: vi.fn(async (_scope: Scope, _filter: Filter, _cursor?: string) =>
+  list: vi.fn(async (_scope: Scope, _unreadOnly: boolean, _cursor?: string) =>
     page([])
-  ),
-  refresh: vi.fn(
-    async (_scope: Scope, _filter: Filter, _through: string) =>
-      [] as ReadonlyArray<Article>
   ),
   feeds: vi.fn(async () => [] as ReadonlyArray<Feed>),
   unreadCounts: vi.fn(async (): Promise<Counts> => counts()),
   article: vi.fn(async (_ref: ArticleRef) => null as Article | null),
+  findSavedPageByUrl: vi.fn(async (_url: string) => null as Article | null),
   markRead: vi.fn(
     async (_ref: ArticleRef, _read: boolean): Promise<void> => undefined
   ),
   markLater: vi.fn(async (): Promise<void> => undefined),
+  markAllFeeds: vi.fn(async (): Promise<void> => undefined),
   markFeeds: vi.fn(
     async (_feedIds: ReadonlyArray<string>): Promise<void> => undefined
   ),
@@ -109,6 +101,6 @@ export const createStubClient = () => ({
   add: vi.fn(async (_url: string) => article('added')),
   extract: vi.fn(async (_article: Article) => article('extracted')),
   preview: vi.fn(async (_url: string) => preview),
-  subscribe: vi.fn(async (_url: string) => feed('f1')),
+  subscribe: vi.fn(async (_url: string, _title: string) => feed('f1')),
   unsubscribe: vi.fn(async (_id: string): Promise<void> => undefined),
 });

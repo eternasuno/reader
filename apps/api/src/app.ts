@@ -1,30 +1,27 @@
 import { BrowserConcurrencyLive } from '@reader/webpage';
 import { HttpFetchLive } from '@reader/webpage/http';
 import { Effect, Layer } from 'effect';
-import { HttpRouter } from 'effect/http';
+import { FetchHttpClient, HttpRouter } from 'effect/http';
 import { ArticleExtractorLive } from './adapter/article-extractor';
 import { DocumentSanitizerLive } from './adapter/document-sanitizer';
-import { FeedFetcherLive } from './adapter/feed-fetcher';
 import { FeedParserLive } from './adapter/feed-parser';
 import { HtmlParserLive } from './adapter/html-parser';
 import { ReaderStoreLive } from './adapter/reader-store';
-import { SettingsRepositoryLive } from './adapter/settings-repository';
+import { SettingRepositoryLive } from './adapter/setting-repository';
 import type { Auth } from './infrastructure/auth';
-import { FeedHttpClientLive } from './infrastructure/feed-http-client';
+import type { FeedRefreshQueue } from './infrastructure/feed-refresh-queue';
 import { authRoutes } from './routes/auth';
 import { libraryRoutes } from './routes/library';
 
-const FeedFetcherLayer = FeedFetcherLive.pipe(
-  Layer.provideMerge(FeedHttpClientLive)
-);
+export const FEED_IMPORT_MAX_TEXT_LENGTH = 100_000;
 
 export const LibraryServicesLive = Layer.mergeAll(
   ReaderStoreLive,
-  SettingsRepositoryLive,
+  SettingRepositoryLive,
   ArticleExtractorLive,
   BrowserConcurrencyLive,
   HtmlParserLive,
-  FeedFetcherLayer,
+  FetchHttpClient.layer,
   FeedParserLive,
   DocumentSanitizerLive,
   HttpFetchLive
@@ -34,7 +31,9 @@ export type LibraryServices = Layer.Success<typeof LibraryServicesLive>;
 
 export const AppLive = Layer.unwrap(
   Effect.gen(function* () {
-    const context = yield* Effect.context<Auth | LibraryServices>();
+    const context = yield* Effect.context<
+      Auth | LibraryServices | FeedRefreshQueue
+    >();
 
     return Layer.mergeAll(authRoutes, libraryRoutes).pipe(
       HttpRouter.provideRequest(Layer.succeedContext(context))

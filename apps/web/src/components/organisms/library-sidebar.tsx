@@ -1,5 +1,5 @@
 import { For, Show } from 'solid-js';
-import type { Counts, Feed, Filter, Scope } from '../../lib/library';
+import type { Counts, Feed, Scope } from '../../lib/library';
 import { Button } from '../atoms/button';
 import { IconButton } from '../atoms/icon-button';
 import { MenuCheckbox } from '../atoms/menu-checkbox';
@@ -119,7 +119,7 @@ type LibrarySidebarProps = {
   readonly counts: Counts;
   readonly feeds: ReadonlyArray<Feed>;
   readonly pending: ReadonlySet<string>;
-  readonly filter: Filter;
+  readonly unreadOnly: boolean;
   readonly onFilterScope: (scope: Scope, checked: boolean) => void;
   readonly onMarkScope: (scope: Scope) => void;
   readonly onUnsubscribe: (feed: Feed) => void;
@@ -136,7 +136,7 @@ const PrimaryScopes = (props: LibrarySidebarProps) => (
       count={props.counts.later}
       active={props.scope.kind === 'later'}
       busy={props.pending.size > 0}
-      unreadOnly={props.filter === 'unread'}
+      unreadOnly={props.unreadOnly}
       onFilter={(checked) => props.onFilterScope({ kind: 'later' }, checked)}
       onMarkAll={() => props.onMarkScope({ kind: 'later' })}
       onPick={() => props.onPickScope({ kind: 'later' })}
@@ -147,7 +147,7 @@ const PrimaryScopes = (props: LibrarySidebarProps) => (
       count={props.counts.feedsTotal}
       active={props.scope.kind === 'feeds' && props.scope.feedId === undefined}
       busy={props.pending.size > 0}
-      unreadOnly={props.filter === 'unread'}
+      unreadOnly={props.unreadOnly}
       onFilter={(checked) => props.onFilterScope({ kind: 'feeds' }, checked)}
       onMarkAll={() => props.onMarkScope({ kind: 'feeds' })}
       onPick={() => props.onPickScope({ kind: 'feeds' })}
@@ -194,7 +194,7 @@ export const LibrarySidebar = (props: LibrarySidebarProps) => (
             count={props.counts.feeds[feed.id] ?? 0}
             active={feedActive(props.scope, feed.id)}
             busy={props.pending.has(feed.id)}
-            unreadOnly={props.filter === 'unread'}
+            unreadOnly={props.unreadOnly}
             onFilter={(checked) =>
               props.onFilterScope({ kind: 'feeds', feedId: feed.id }, checked)
             }

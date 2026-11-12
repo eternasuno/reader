@@ -1,7 +1,6 @@
 import { expect, it } from '@effect/vitest';
 import { ArticleExtractor, HtmlParser } from '@reader/business';
 import { type DateTime, Effect, Layer, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import { ArticleExtractorLive } from '../../src/adapter/article-extractor';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 
@@ -52,10 +51,6 @@ const expectResolvedMedia = (content: Option.Option<string>) => {
 
 const Live = Layer.mergeAll(HtmlParserLive, ArticleExtractorLive);
 
-const nowMillis = Date.UTC(2026, 0, 1, 12);
-
-const nowIso = '2026-01-01T12:00:00.000Z';
-
 const extractHtml = (html: string, sourceUrl: URL = new URL(baseUrl)) =>
   Effect.gen(function* () {
     const parser = yield* HtmlParser;
@@ -90,8 +85,12 @@ const verifyTypedFailure = Effect.gen(function* () {
   });
 });
 
-const encodePublishedAt = (publishedAt: DateTime.Utc): string =>
-  Schema.encodeSync(Schema.DateTimeUtcFromString)(publishedAt);
+const isoOf = (publishedAt: Option.Option<DateTime.Utc>) =>
+  Option.match(publishedAt, {
+    onNone: () => undefined,
+    onSome: (published) =>
+      Schema.encodeSync(Schema.DateTimeUtcFromString)(published),
+  });
 
 const verifyMetadata = Effect.gen(function* () {
   const result = yield* extractHtml(
@@ -101,17 +100,14 @@ const verifyMetadata = Effect.gen(function* () {
   expect(result.description).toEqual(
     Option.some('A &lt;b&gt;bold&lt;/b&gt; summary &amp; more')
   );
-  expect(encodePublishedAt(result.publishedAt)).toBe(
-    '2024-05-06T07:08:09.000Z'
-  );
+  expect(isoOf(result.publishedAt)).toBe('2024-05-06T07:08:09.000Z');
 });
 
 const verifyUntitledFallback = Effect.gen(function* () {
-  yield* TestClock.setTime(nowMillis);
   const result = yield* extractHtml(untitledHtml('not a date'));
   expect(result.title).toBe('Untitled');
   expect(result.title).not.toContain(baseUrl);
-  expect(encodePublishedAt(result.publishedAt)).toBe(nowIso);
+  expect(result.publishedAt).toEqual(Option.none());
 });
 
 it.effect(
@@ -134,16 +130,14 @@ it.effect('escapes the description and parses the published time', () =>
 
 it.effect('defaults missing description and publication time', () =>
   Effect.gen(function* () {
-    yield* TestClock.setTime(nowMillis);
     const result = yield* extractHtml(
       `<html><head><title>Missing metadata</title></head><body><article><h2>${sentence.repeat(12)}</h2></article></body></html>`
     );
     expect(result.description).toEqual(Option.none());
-    expect(encodePublishedAt(result.publishedAt)).toBe(nowIso);
+    expect(result.publishedAt).toEqual(Option.none());
   }).pipe(Effect.scoped, Effect.provide(Live))
 );
 
-it.effect(
-  'falls back to an Untitled title and the current time for invalid dates',
-  () => verifyUntitledFallback.pipe(Effect.scoped, Effect.provide(Live))
+it.effect('falls back to an Untitled title and none for invalid dates', () =>
+  verifyUntitledFallback.pipe(Effect.scoped, Effect.provide(Live))
 );

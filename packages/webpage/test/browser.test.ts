@@ -119,7 +119,9 @@ const pageFixture = (html = '<html>ok</html>', status = 200) => {
     off: vi.fn((_event: string, listener: RequestListener) =>
       listeners.delete(listener)
     ),
-    goto: vi.fn(async () => ({ status: () => status })),
+    goto: vi.fn(async (_url: string, _options?: unknown) => ({
+      status: () => status,
+    })),
     waitForNetworkIdle: vi.fn(async (..._args: Array<unknown>) => {}),
     content: vi.fn(async () => html),
     emit: (request: RequestFixture) => {
@@ -255,16 +257,26 @@ it.effect('resolves a relative discovery answer against the endpoint', () =>
 
 it.effect('rejects invalid targets before connecting', () =>
   Effect.gen(function* () {
-    for (const url of [
-      'http://127.0.0.1/article',
-      'ftp://8.8.8.8/article',
-      'http://user:pass@8.8.8.8/article',
-    ]) {
+    for (const url of ['http://127.0.0.1/article', 'ftp://8.8.8.8/article']) {
       expect((yield* failFetch(url))._tag).toBe('FetchFailure');
     }
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(connectMock).not.toHaveBeenCalled();
+  })
+);
+
+it.effect('accepts a credentialed article target', () =>
+  Effect.gen(function* () {
+    const fixture = browserFixture();
+    connectMock.mockResolvedValue(fixture.browser);
+    expect(
+      yield* fetchBrowser('http://alice:secret@8.8.8.8/article', endpoint)
+    ).toBe('<html>ok</html>');
+    expect(fixture.page.goto.mock.calls[0]?.[0]).toBe(
+      'http://alice:secret@8.8.8.8/article'
+    );
+    expectTeardown(fixture);
   })
 );
 

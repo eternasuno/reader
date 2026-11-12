@@ -1,6 +1,11 @@
-import { type Article, libraryErrorMessage, refOf } from '../lib/library';
+import {
+  type Article,
+  type Counts,
+  libraryErrorMessage,
+  refOf,
+} from '../lib/library';
 import { setItemsRead, upsertItem } from './library-articles';
-import { feedScopeIds, markArticleRefs, markScope } from './library-commands';
+import { markArticleRefs, markScope } from './library-commands';
 import type { LibraryStore } from './library-context';
 import { clearScopeCounts, unreadCount } from './library-counts';
 import { loadCounts } from './library-reference';
@@ -104,10 +109,27 @@ export const markLoaded = async (store: LibraryStore): Promise<void> => {
   }
 };
 
+const failMarkAll = async (
+  store: LibraryStore,
+  entries: ReadonlyArray<readonly [string, number]>,
+  ids: ReadonlyArray<string>,
+  counts: Counts,
+  error: unknown
+): Promise<void> => {
+  endAll(store, entries);
+  rollbackRead(store, ids);
+  store.setState((value) => ({ ...value, counts }));
+  await loadCounts(store);
+  store.notify('error', libraryErrorMessage(error));
+};
+
 export const markAll = async (store: LibraryStore): Promise<void> => {
   const current = store.state();
   const scope = current.scope;
-  const feedIds = feedScopeIds(scope, current.feeds);
+  if (current.pendingScopeWrite) {
+    return;
+  }
+
   const targets = current.items.filter(
     (item) => !item.read && !current.pending.has(item.id)
   );
@@ -121,16 +143,15 @@ export const markAll = async (store: LibraryStore): Promise<void> => {
   store.setState((value) => ({
     ...setItemsRead(value, new Set(ids), true),
     counts: clearScopeCounts(value.counts, scope),
+    pendingScopeWrite: true,
   }));
   try {
-    await markScope(store.client, scope, feedIds, targets);
+    await markScope(store.client, scope);
     endAll(store, entries);
     await loadCounts(store);
   } catch (error) {
-    endAll(store, entries);
-    rollbackRead(store, ids);
-    store.setState((value) => ({ ...value, counts }));
-    await loadCounts(store);
-    store.notify('error', libraryErrorMessage(error));
+    await failMarkAll(store, entries, ids, counts, error);
+  } finally {
+    store.setState((value) => ({ ...value, pendingScopeWrite: false }));
   }
 };

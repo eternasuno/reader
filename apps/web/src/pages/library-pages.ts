@@ -1,22 +1,19 @@
-import type { Article, ArticlePage, Filter, Scope } from '../lib/library';
+import type { Article, ArticlePage, Scope } from '../lib/library';
 import type { LibraryState } from './library-state';
 
 export const resetList = (
   state: LibraryState,
   scope: Scope,
-  filter: Filter
+  unreadOnly: boolean
 ): LibraryState => ({
   ...state,
   scope,
-  filter,
+  unreadOnly,
   items: [],
   loading: true,
-  refreshing: false,
   initialized: false,
   hasMore: false,
   cursor: null,
-  boundary: null,
-  cursorInvalid: false,
   error: undefined,
   generation: state.generation + 1,
 });
@@ -30,12 +27,9 @@ export const startLoadMore = (state: LibraryState): LibraryState => ({
 export const failList = (
   state: LibraryState,
   error: string,
-  generation: number,
-  cursorInvalid = false
+  generation: number
 ): LibraryState =>
-  state.generation === generation
-    ? { ...state, loading: false, error, cursorInvalid }
-    : state;
+  state.generation === generation ? { ...state, loading: false, error } : state;
 
 const mergeNewItems = (
   state: LibraryState,
@@ -70,11 +64,9 @@ export const applyPage = (
     ...state,
     items: added.length === 0 ? state.items : [...state.items, ...added],
     cursor: page.cursor,
-    boundary: page.boundary ?? state.boundary,
     hasMore: page.cursor !== null,
     initialized: true,
     loading: false,
-    cursorInvalid: false,
     error: undefined,
   };
 };

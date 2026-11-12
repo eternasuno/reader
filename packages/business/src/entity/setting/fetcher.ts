@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import { OptionFromOptionalNonEmpty } from '../object-value/option-from-optional-non-empty';
+import { OptionFromOptionalNonEmpty } from '../common/option-from-optional-non-empty';
 
 export const FetcherProvider = Schema.Literals(['jina', 'browser']).pipe(
   Schema.withDecodingDefaultType(Effect.succeed('jina' as const))
@@ -8,19 +8,25 @@ export const FetcherProvider = Schema.Literals(['jina', 'browser']).pipe(
 export type FetcherProvider = typeof FetcherProvider.Type;
 
 export const JinaKey = Schema.Trim.pipe(
-  Schema.check(Schema.isMinLength(1)),
-  Schema.decodeTo(Schema.RedactedFromValue(Schema.String))
+  Schema.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(2048),
+    Schema.isPattern(/^[^\r\n]*$/)
+  ),
+  Schema.brand('JinaKey'),
+  Schema.RedactedFromValue
 );
 
 export type JinaKey = typeof JinaKey.Type;
 
-const browserEndpointProtocol = Schema.makeFilter((url: URL) =>
-  ['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)
-);
+const supportedProtocols = new Set(['http:', 'https:', 'ws:', 'wss:']);
 
 export const BrowserEndpoint = Schema.URLFromString.pipe(
-  Schema.check(browserEndpointProtocol),
-  Schema.brand('BrowserEndpoint')
+  Schema.check(
+    Schema.makeFilter((url: URL) => supportedProtocols.has(url.protocol))
+  ),
+  Schema.brand('BrowserEndpoint'),
+  Schema.RedactedFromValue
 );
 
 export type BrowserEndpoint = typeof BrowserEndpoint.Type;

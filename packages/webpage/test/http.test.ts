@@ -6,7 +6,6 @@ import {
   isPublicIPv4,
   parsePublicUrl,
   pinnedAddressLookup,
-  publicAddressLookup,
   selectPublicAddress,
 } from '../src/http';
 
@@ -64,7 +63,9 @@ it('rejects unsafe URLs and private or mixed DNS results', () => {
 
   expect(isPublicIPv4('8.8.8.8')).toBe(true);
   expect(() => parsePublicUrl('ftp://example.com/file')).toThrow();
-  expect(() => parsePublicUrl('https://user:pass@example.com')).toThrow();
+  expect(parsePublicUrl('https://user:pass@example.com').href).toBe(
+    'https://user:pass@example.com/'
+  );
   expect(() => parsePublicUrl('http://example.com:8080')).toThrow();
   expect(parsePublicUrl('https://example.com/path').href).toBe(
     'https://example.com/path'
@@ -83,16 +84,6 @@ it('pins the validated address for single and all lookups', () => {
     [null, [{ address: '93.184.216.34', family: 4 }]],
     [null, '93.184.216.34', 4],
   ]);
-});
-
-it('resolves public addresses and rejects private ones during lookup', async () => {
-  const resolve = (hostname: string) =>
-    new Promise<ReadonlyArray<unknown>>((resolve) => {
-      publicAddressLookup(hostname, {}, (...args) => resolve(args));
-    });
-  expect(await resolve('8.8.8.8')).toEqual([null, '8.8.8.8', 4]);
-  const [error] = await resolve('127.0.0.1');
-  expect(error).toBeInstanceOf(Error);
 });
 
 it.effect('keeps the public URL and uses a scoped dispatcher', () =>
@@ -179,31 +170,27 @@ it.effect('rejects a redirect to a private address', () =>
   })
 );
 
-it.effect(
-  'rejects redirects to prohibited ports or credentials before requesting',
-  () =>
-    Effect.gen(function* () {
-      for (const location of [
-        'http://8.8.8.9:8080/next',
-        'http://user:pass@8.8.8.9/next',
-      ]) {
-        const seen: Array<string> = [];
-        const fetchImpl = (input: FetchInput) => {
-          seen.push(String(input));
+it.effect('rejects a redirect to a prohibited port before requesting', () =>
+  Effect.gen(function* () {
+    const seen: Array<string> = [];
+    const fetchImpl = (input: FetchInput) => {
+      seen.push(String(input));
 
-          return Promise.resolve(
-            new Response(null, { status: 302, headers: { location } })
-          );
-        };
-        const error = yield* Effect.flip(
-          fetchPublicText(request).pipe(
-            withFetch(fetchImpl as typeof globalThis.fetch)
-          )
-        );
-        expect(error._tag).toBe('FetchFailure');
-        expect(seen).toEqual(['http://8.8.8.8/page']);
-      }
-    })
+      return Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'http://8.8.8.9:8080/next' },
+        })
+      );
+    };
+    const error = yield* Effect.flip(
+      fetchPublicText(request).pipe(
+        withFetch(fetchImpl as typeof globalThis.fetch)
+      )
+    );
+    expect(error._tag).toBe('FetchFailure');
+    expect(seen).toEqual(['http://8.8.8.8/page']);
+  })
 );
 
 it.effect('rejects a private address before requesting', () =>

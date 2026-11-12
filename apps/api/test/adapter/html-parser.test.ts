@@ -21,7 +21,7 @@ it.effect('closes the parsed document when its scope ends', () => {
     const parser = yield* HtmlParser;
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const document = yield* parser.parse('<p>Hello</p>');
+        const document = yield* parser.parse('<p>Hello</p>', articleUrl);
         const view = document.defaultView;
         expect(view).not.toBeNull();
         view?.setTimeout(() => {

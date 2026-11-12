@@ -1,5 +1,5 @@
 import { Show } from 'solid-js';
-import type { Feed, Filter } from '../../lib/library';
+import type { Feed } from '../../lib/library';
 import { Button } from '../atoms/button';
 import { IconButton } from '../atoms/icon-button';
 import { MenuCheckbox } from '../atoms/menu-checkbox';
@@ -9,14 +9,15 @@ import { PopoverMenu } from './popover-menu';
 type LibraryToolbarProps = {
   readonly title: string;
   readonly unread: number;
-  readonly filter: Filter;
+  readonly unreadOnly: boolean;
   readonly busy: boolean;
   readonly loadedUnread: boolean;
   readonly currentFeed: Feed | undefined;
   readonly canAddArticle: boolean;
-  readonly onFilter: (filter: Filter) => void;
+  readonly onFilter: (unreadOnly: boolean) => void;
   readonly onMarkLoaded: () => void;
   readonly onMarkAll: () => void;
+  readonly onRefresh: () => void;
   readonly onAdd: () => void;
   readonly onUnsubscribe: (feed: Feed) => void;
 };
@@ -35,10 +36,10 @@ const LibraryMenu = (props: LibraryToolbarProps) => (
         <li>
           <MenuCheckbox
             label="只显示未读"
-            checked={props.filter === 'unread'}
+            checked={props.unreadOnly}
             onChange={(checked) => {
               close();
-              props.onFilter(checked ? 'unread' : 'all');
+              props.onFilter(checked);
             }}
           />
         </li>
@@ -103,6 +104,14 @@ export const LibraryToolbar = (props: LibraryToolbarProps) => (
         <span class="sr-only"> 篇未读</span>
       </span>
     </div>
+    <IconButton
+      label="刷新"
+      disabled={props.busy}
+      busy={props.busy}
+      onClick={props.onRefresh}
+    >
+      <ReaderIcon name="refresh" />
+    </IconButton>
     <IconButton
       label="将已加载文章标为已读"
       disabled={props.busy || !props.loadedUnread}

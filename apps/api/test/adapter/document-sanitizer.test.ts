@@ -27,20 +27,21 @@ it.effect('sanitizes HTML and resolves links against the article URL', () =>
 );
 
 it.effect(
-  'preserves raw relative links without a base and removes unsafe URLs',
+  'resolves relative links against the article URL and removes unsafe URLs',
   () =>
     Effect.gen(function* () {
       const parser = yield* HtmlParser;
       const processor = yield* DocumentSanitizer;
       const document = yield* parser.parse(
-        '<p><a href="/next">next</a><a href="javascript:alert(1)">bad</a></p><img src="images/pic.png">'
+        '<p><a href="/next">next</a><a href="javascript:alert(1)">bad</a></p><img src="images/pic.png">',
+        articleUrl
       );
       const html = Option.getOrThrow(yield* processor.sanitize(document));
       expect(html).toContain(
-        '<a href="/next" target="_blank" rel="noopener noreferrer">next</a>'
+        '<a href="https://example.com/next" target="_blank" rel="noopener noreferrer">next</a>'
       );
       expect(html).toContain(
-        '<img src="images/pic.png" loading="lazy" referrerpolicy="no-referrer">'
+        '<img src="https://example.com/posts/images/pic.png" loading="lazy" referrerpolicy="no-referrer">'
       );
       expect(html).not.toContain('javascript:');
       expect(html).toContain('>bad</a>');

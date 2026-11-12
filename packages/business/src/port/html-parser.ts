@@ -7,10 +7,10 @@ export class HtmlParserError extends Data.TaggedError('HtmlParserError')<{
 export interface IHtmlParser {
   readonly parse: (
     html: string,
-    url?: URL
+    url: URL
   ) => Effect.Effect<Document, HtmlParserError, Scope.Scope>;
 }
 
 export class HtmlParser extends Context.Service<HtmlParser, IHtmlParser>()(
-  'HtmlParser'
+  '@reader/business/HtmlParser'
 ) {}

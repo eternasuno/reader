@@ -1,12 +1,12 @@
 import type { LibraryApi } from '@reader/api';
 import {
-  InvalidCursor,
-  type ListCursor,
-  ListCursorFromString,
   OwnerId,
   type Setting,
+  SettingRepository,
+  type WebpageFetcher,
 } from '@reader/business';
-import { Effect, Option, Schema } from 'effect';
+import type { BrowserConcurrency } from '@reader/webpage';
+import { Effect, type Layer, Option } from 'effect';
 import type { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import {
   browserWebpageFetcherLive,
@@ -36,27 +36,23 @@ export const optionToNull = <A>(value: Option.Option<A>): A | null =>
     onSome: (item) => item,
   });
 
-const invalidCursor = () =>
-  new InvalidCursor({ message: 'Invalid pagination cursor' });
+const jinaFetcher = (setting: Setting) =>
+  jinaWebpageFetcherLive(Option.getOrUndefined(setting.fetcher.jina.key));
 
-export const cursor = (
-  value: string
-): Effect.Effect<ListCursor, InvalidCursor> =>
-  Schema.decodeEffect(ListCursorFromString)(value).pipe(
-    Effect.mapError(invalidCursor)
-  );
+export const webpageFetcherLayerFor = (
+  setting: Setting
+): Layer.Layer<WebpageFetcher, never, BrowserConcurrency> => {
+  const endpoint = setting.fetcher.browser.endpoint;
 
-export const optionalCursor = (
-  value: Option.Option<string>
-): Effect.Effect<ListCursor | undefined, InvalidCursor> =>
-  Option.match(value, {
-    onNone: () => Effect.succeed(undefined),
-    onSome: cursor,
+  return setting.fetcher.provider === 'browser' && Option.isSome(endpoint)
+    ? browserWebpageFetcherLive(endpoint.value)
+    : jinaFetcher(setting);
+};
+
+export const fetcherFor = (owner: OwnerId) =>
+  Effect.gen(function* () {
+    const settings = yield* SettingRepository;
+    const setting = yield* settings.get(owner);
+
+    return webpageFetcherLayerFor(setting);
   });
-
-export const webpageFetcherLayerFor = (config: Setting) =>
-  config.fetcher.provider === 'jina'
-    ? jinaWebpageFetcherLive(Option.getOrUndefined(config.fetcher.jina.key))
-    : browserWebpageFetcherLive(
-        Option.getOrUndefined(config.fetcher.browser.endpoint)
-      );

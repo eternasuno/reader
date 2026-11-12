@@ -8,13 +8,13 @@ export type Article = {
   readonly description: Option.Option<string>;
   readonly content: Option.Option<string>;
   readonly extractedContent: Option.Option<string>;
-  readonly publishedAt: string;
+  readonly publishedAt: string | undefined;
   readonly read: boolean;
 };
 
 /**
  * Identifies an article on the server: saved pages are addressed by id alone,
- * feed items additionally by the feed they belong to.
+ * feed items by the same id; `feedId` only picks which endpoint to call.
  */
 export type ArticleRef = {
   readonly id: string;
@@ -24,10 +24,7 @@ export type ArticleRef = {
 export type ArticlePage = {
   readonly items: ReadonlyArray<Article>;
   readonly cursor: string | null;
-  readonly boundary: string | null;
 };
-
-export type Filter = 'all' | 'unread' | 'read';
 
 export type Scope =
   | { readonly kind: 'later' }

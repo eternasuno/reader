@@ -12,12 +12,11 @@ import {
   type DraftStore,
   isSectionDirty,
   isSettingsBusy,
-  removeBrowserEndpoint,
   removeJinaKey,
   resetSettingsSection,
   type SettingsSection,
   type StatusStore,
-  submitExtraction,
+  submitFetcher,
   submitPassword,
   submitRetention,
   useSettingsModel,
@@ -209,16 +208,17 @@ const ExtractionPanel = (props: {
     busy={isSettingsBusy(props.status)}
     pending={props.status.pending() === 'extraction'}
     provider={props.drafts.provider()}
-    jinaConfigured={props.drafts.settings()?.jinaConfigured === true}
+    jinaKeyConfigured={props.drafts.settings()?.jinaKeyConfigured === true}
+    browserEndpointConfigured={
+      props.drafts.settings()?.browserEndpointConfigured === true
+    }
     jinaKey={props.drafts.jinaKey()}
     browserEndpoint={props.drafts.browserEndpoint()}
-    browserConfigured={(props.drafts.settings()?.browserEndpoint ?? '') !== ''}
     onProviderChange={props.drafts.setProvider}
     onJinaKeyChange={props.drafts.setJinaKey}
     onBrowserEndpointChange={props.drafts.setBrowserEndpoint}
-    onSubmit={(form) => submitExtraction(props.drafts, props.status, form)}
+    onSubmit={(form) => submitFetcher(props.drafts, props.status, form)}
     onClearKey={() => removeJinaKey(props.drafts, props.status)}
-    onClearBrowser={() => removeBrowserEndpoint(props.drafts, props.status)}
   />
 );
 

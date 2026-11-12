@@ -1,8 +1,6 @@
 import {
   type Article,
-  type Feed,
   type LibraryClient,
-  LibraryError,
   refOf,
   type Scope,
 } from '../lib/library';
@@ -19,49 +17,18 @@ export const markArticleRefs = async (
   }
 };
 
-export const feedScopeIds = (
-  scope: Scope,
-  feeds: ReadonlyArray<Feed>
-): ReadonlyArray<string> | undefined => {
-  if (scope.kind === 'later') {
-    return undefined;
-  }
-
-  if (scope.feedId !== undefined) {
-    return [scope.feedId];
-  }
-
-  return feeds.map((feed) => feed.id);
-};
-
-export const markScope = async (
-  client: LibraryClient,
-  scope: Scope,
-  feedIds: ReadonlyArray<string> | undefined,
-  articles: ReadonlyArray<Article>
-) => {
+export const markScope = async (client: LibraryClient, scope: Scope) => {
   if (scope.kind === 'later') {
     await client.markLater();
 
     return;
   }
 
-  if (feedIds !== undefined && feedIds.length > 0) {
-    await client.markFeeds(feedIds);
+  if (scope.feedId === undefined) {
+    await client.markAllFeeds();
 
     return;
   }
 
-  await markArticleRefs(client, articles);
+  await client.markFeeds([scope.feedId]);
 };
-
-export const duplicateId = (error: unknown): string | undefined =>
-  error instanceof LibraryError && error.tag === 'DuplicateSavedPage'
-    ? error.id
-    : undefined;
-
-export const errorFeedId = (
-  error: unknown,
-  tag: 'FeedExists' | 'FeedImportFailed'
-): string | undefined =>
-  error instanceof LibraryError && error.tag === tag ? error.id : undefined;

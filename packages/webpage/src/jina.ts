@@ -10,11 +10,7 @@ const parseTarget = (url: string): Effect.Effect<URL, FetchFailure> =>
     try: () => {
       const address = new URL(url);
 
-      if (
-        !['http:', 'https:'].includes(address.protocol) ||
-        address.username ||
-        address.password
-      ) {
+      if (!['http:', 'https:'].includes(address.protocol)) {
         throw new Error('Invalid URL');
       }
 

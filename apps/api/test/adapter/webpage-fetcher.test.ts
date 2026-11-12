@@ -2,15 +2,12 @@ import { expect, it } from '@effect/vitest';
 import {
   type BrowserEndpoint,
   BrowserEndpoint as BrowserEndpointSchema,
-  OwnerId,
-  Retention,
-  type Setting,
-  SettingsRepository,
-  SettingsRepositoryError,
+  type JinaKey,
+  JinaKey as JinaKeySchema,
   WebpageFetcher,
 } from '@reader/business';
 import { BrowserConcurrency, BrowserConcurrencyLive } from '@reader/webpage';
-import { Effect, Layer, Option, Redacted, Schema, Semaphore } from 'effect';
+import { Effect, Layer, Schema, Semaphore } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { vi } from 'vitest';
 import {
@@ -26,24 +23,32 @@ const article = 'https://example.com/article';
 
 const html = '<html><body><p>Body</p></body></html>';
 
-const alice = OwnerId.make('alice');
+const jinaKey = (value: string): JinaKey =>
+  Schema.decodeSync(JinaKeySchema)(value);
 
-const bob = OwnerId.make('bob');
-
-const retention = Schema.decodeSync(Retention);
-
-const browserEndpoint = Schema.decodeSync(BrowserEndpointSchema);
-
-const browserEndpointOf = (config: Setting): BrowserEndpoint => {
-  if (config.fetcher.provider !== 'browser') {
-    throw new Error('Expected a browser fetcher setting');
-  }
-
-  return Option.getOrThrow(config.fetcher.browser.endpoint);
-};
+const browserEndpoint = (value: string): BrowserEndpoint =>
+  Schema.decodeSync(BrowserEndpointSchema)(value);
 
 const discoveryFailure = () =>
   Promise.resolve(new Response(null, { status: 500 }));
+
+const basic = (credentials: string) =>
+  `Basic ${Buffer.from(credentials).toString('base64')}`;
+
+const fetchArticle = Effect.flatMap(WebpageFetcher, (fetcher) =>
+  fetcher.fetch(article)
+);
+
+const jinaLayer = (key: JinaKey | undefined, impl: typeof globalThis.fetch) =>
+  Layer.mergeAll(
+    jinaWebpageFetcherLive(key),
+    Layer.succeed(FetchHttpClient.Fetch, impl)
+  );
+
+const browserLayer = (
+  endpoint: BrowserEndpoint | undefined,
+  concurrency: Layer.Layer<BrowserConcurrency>
+) => browserWebpageFetcherLive(endpoint).pipe(Layer.provide(concurrency));
 
 const browserConcurrencyMock = (permits: Array<number>) => {
   const semaphore = Semaphore.makeUnsafe(2);
@@ -65,117 +70,100 @@ const browserConcurrencyMock = (permits: Array<number>) => {
   });
 };
 
-it.effect('selects each owner key when building a Jina layer', () => {
-  const headers: Array<string> = [];
-  const calls: Array<string> = [];
-  const settings = Layer.mock(SettingsRepository, {
-    get: (owner) => {
-      calls.push(`get:${owner}`);
-
-      return Effect.succeed({
-        ownerId: owner,
-        feed: { retention: retention(100) },
-        fetcher: {
-          provider: 'jina' as const,
-          jina: { key: Option.some(Redacted.make(`${owner}-secret`)) },
-          browser: { endpoint: Option.none() },
-        },
-      });
-    },
-  });
-  const fetchImpl = (_input: RequestInfo | URL, options?: RequestInit) => {
-    headers.push(new Headers(options?.headers).get('authorization') ?? '');
+it.effect('sends a redacted Jina key as a bearer token', () => {
+  let seen: { url: string; headers: Headers } | undefined;
+  const fetchImpl = (input: RequestInfo | URL, init?: RequestInit) => {
+    seen = { url: String(input), headers: new Headers(init?.headers) };
 
     return Promise.resolve(new Response(html, { status: 200 }));
   };
 
   return Effect.gen(function* () {
-    for (const owner of [alice, bob]) {
-      const settingsRepository = yield* SettingsRepository;
-      const config = yield* settingsRepository.get(owner);
-      const configured = jinaWebpageFetcherLive(
-        Option.getOrUndefined(config.fetcher.jina.key)
-      );
-      const result = yield* Effect.gen(function* () {
-        const fetcher = yield* WebpageFetcher;
-
-        return yield* fetcher.fetch(article);
-      }).pipe(Effect.provide(configured));
-      expect(result).toBe(html);
-    }
-
-    expect(headers).toEqual(['Bearer alice-secret', 'Bearer bob-secret']);
-    expect(calls).toEqual(['get:alice', 'get:bob']);
+    const body = yield* fetchArticle;
+    expect(body).toBe(html);
+    expect(seen?.url).toBe(`https://r.jina.ai/${article}`);
+    expect(seen?.headers.get('authorization')).toBe('Bearer alice-secret');
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        settings,
-        BrowserConcurrencyLive,
-        Layer.succeed(
-          FetchHttpClient.Fetch,
-          fetchImpl as typeof globalThis.fetch
-        )
-      )
+      jinaLayer(jinaKey('alice-secret'), fetchImpl as typeof globalThis.fetch)
     )
   );
 });
 
-it.effect('shares browser concurrency across owners', () => {
+it.effect('omits Jina credentials when no key is configured', () => {
+  let headers: Headers | undefined;
+  const fetchImpl = (_input: RequestInfo | URL, init?: RequestInit) => {
+    headers = new Headers(init?.headers);
+
+    return Promise.resolve(new Response(html, { status: 200 }));
+  };
+
+  return Effect.gen(function* () {
+    yield* fetchArticle;
+    expect(headers?.get('authorization')).toBeNull();
+  }).pipe(
+    Effect.provide(jinaLayer(undefined, fetchImpl as typeof globalThis.fetch))
+  );
+});
+
+it.effect('uses a shared browser concurrency for the redacted endpoint', () => {
   const permits: Array<number> = [];
   const concurrency = browserConcurrencyMock(permits);
-  const settings = Layer.mock(SettingsRepository, {
-    get: (owner) =>
-      Effect.succeed({
-        ownerId: owner,
-        feed: { retention: retention(100) },
-        fetcher: {
-          provider: 'browser' as const,
-          jina: { key: Option.none() },
-          browser: {
-            endpoint: Option.some(browserEndpoint('http://127.0.0.1:9222')),
-          },
-        },
-      }),
-  });
 
   vi.stubGlobal('fetch', discoveryFailure);
 
   return Effect.gen(function* () {
-    for (const owner of [alice, bob]) {
-      const settingsRepository = yield* SettingsRepository;
-      const config = yield* settingsRepository.get(owner);
-      const configured = browserWebpageFetcherLive(browserEndpointOf(config));
-      const error = yield* Effect.flip(
-        Effect.gen(function* () {
-          const fetcher = yield* WebpageFetcher;
-
-          return yield* fetcher.fetch(article);
-        }).pipe(Effect.provide(configured))
-      );
-      expect(error.message).toBe('Browser extraction failed');
-    }
-
-    expect(permits).toEqual([1, 1]);
+    const error = yield* Effect.flip(fetchArticle);
+    expect(error.message).toBe('Browser extraction failed');
+    expect(permits).toEqual([1]);
   }).pipe(
-    Effect.provide(Layer.merge(settings, concurrency)),
+    Effect.provide(
+      browserLayer(browserEndpoint('http://127.0.0.1:9222'), concurrency)
+    ),
     Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals()))
   );
 });
 
-it.effect(
-  'propagates settings errors before creating the fetcher layer',
-  () => {
-    const settings = Layer.mock(SettingsRepository, {
-      get: () =>
-        Effect.fail(
-          new SettingsRepositoryError({ message: 'settings unavailable' })
-        ),
-    });
+it.effect('accepts an endpoint with credentials and sends basic auth', () => {
+  let seen: { url: string; authorization: string | null } | undefined;
+  const fetchImpl = (input: RequestInfo | URL, init?: RequestInit) => {
+    seen = {
+      url: String(input),
+      authorization: new Headers(init?.headers).get('authorization'),
+    };
 
-    return Effect.gen(function* () {
-      const settingsRepository = yield* SettingsRepository;
-      const error = yield* Effect.flip(settingsRepository.get(alice));
-      expect(error.message).toBe('settings unavailable');
-    }).pipe(Effect.provide(settings));
-  }
-);
+    return discoveryFailure();
+  };
+
+  vi.stubGlobal('fetch', fetchImpl);
+
+  return Effect.gen(function* () {
+    const error = yield* Effect.flip(fetchArticle);
+    expect(error.message).toBe('Browser extraction failed');
+    expect(seen?.url).toBe('http://127.0.0.1:9222/json/version');
+    expect(seen?.authorization).toBe(basic('alice:secret'));
+  }).pipe(
+    Effect.provide(
+      browserLayer(
+        browserEndpoint('http://alice:secret@127.0.0.1:9222'),
+        BrowserConcurrencyLive
+      )
+    ),
+    Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals()))
+  );
+});
+
+it.effect('requires a browser endpoint instead of a default', () => {
+  vi.stubGlobal('fetch', () => {
+    throw new Error('Unexpected request');
+  });
+
+  return Effect.gen(function* () {
+    const error = yield* Effect.flip(fetchArticle);
+    expect(error._tag).toBe('WebpageFetcherError');
+    expect(error.message).toBe('Browser service address is required');
+  }).pipe(
+    Effect.provide(browserLayer(undefined, BrowserConcurrencyLive)),
+    Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals()))
+  );
+});

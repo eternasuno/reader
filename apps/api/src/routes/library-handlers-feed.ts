@@ -1,101 +1,75 @@
 import {
-  addFeed,
-  FeedFetcher,
-  type FeedId,
-  FeedParser,
   FeedRepository,
-  feedId,
-  NormalizedUrl,
-  type OwnerId,
+  makeFeedTitle,
+  previewFeed,
+  subscribeFeed,
 } from '@reader/business';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option } from 'effect';
+import { FeedRefreshQueue } from '../infrastructure/feed-refresh-queue';
 import { type HandlerRequest, withSession } from './library-contract';
-import { feedImportFailed, feedNotFound } from './library-errors';
 import {
   feedRepositoryFailure,
   previewFailure,
   subscribeFailure,
 } from './library-failures';
-
-const decodeFeedUrl = (address: string) =>
-  Schema.decodeEffect(NormalizedUrl)(address).pipe(
-    Effect.mapError(
-      () =>
-        ({
-          _tag: 'FeedUrlInvalid',
-          message: 'Feed URL must use HTTP or HTTPS',
-        }) as const
-    )
-  );
-
-const preview = (url: NormalizedUrl) =>
-  Effect.gen(function* () {
-    const feedFetcher = yield* FeedFetcher;
-    const feedParser = yield* FeedParser;
-    const document = yield* feedFetcher.fetch(url);
-    const feed = yield* feedParser.parse(document.content, document.url);
-
-    return {
-      preview: {
-        url,
-        title: feed.title,
-        description: feed.description,
-        titles: feed.items.map((item) => item.title),
-      },
-    };
-  });
-
-const removeSubscription = (owner: OwnerId, id: FeedId) =>
-  Effect.gen(function* () {
-    const subscriptions = yield* FeedRepository;
-    const found = yield* subscriptions.find(owner, id);
-    if (Option.isNone(found)) {
-      return yield* feedNotFound();
-    }
-
-    yield* subscriptions.remove(owner, [id]);
-
-    return { ok: true as const };
-  });
+import { decodeFeedUrl } from './library-input';
 
 const feeds = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const subscriptions = yield* FeedRepository;
+      const repository = yield* FeedRepository;
 
-      return { items: yield* subscriptions.list(owner) };
+      return { items: yield* repository.list(owner) };
     })
   ).pipe(Effect.catchTags(feedRepositoryFailure));
 
-const previewHandler = ({ payload }: HandlerRequest<'preview'>) =>
-  withSession(() => Effect.flatMap(decodeFeedUrl(payload.url), preview)).pipe(
-    Effect.catchTags(previewFailure)
-  );
+const descriptionOf = (description: Option.Option<string>) =>
+  Option.match(description, {
+    onNone: () => ({}),
+    onSome: (value) => ({ description: value }),
+  });
 
-const subscribeHandler = ({ payload }: HandlerRequest<'subscribe'>) =>
+const preview = ({ payload }: HandlerRequest<'preview'>) =>
+  withSession(() =>
+    Effect.gen(function* () {
+      const url = yield* decodeFeedUrl(payload.url);
+      const result = yield* previewFeed(url);
+
+      return {
+        preview: {
+          url: url.href,
+          title: result.title,
+          ...descriptionOf(result.description),
+          titles: result.entryTitles,
+        },
+      };
+    })
+  ).pipe(Effect.catchTags(previewFailure));
+
+const subscribe = ({ payload }: HandlerRequest<'subscribe'>) =>
   withSession((owner) =>
-    Effect.flatMap(decodeFeedUrl(payload.url), (url) =>
-      addFeed(owner, url).pipe(
-        Effect.map((item) => ({ item })),
-        Effect.catchTags({
-          FeedItemRepositoryError: () =>
-            feedImportFailed({ id: feedId(owner, url) }),
-          DocumentSanitizerError: () =>
-            feedImportFailed({ id: feedId(owner, url) }),
-          HtmlParserError: () => feedImportFailed({ id: feedId(owner, url) }),
-        })
-      )
-    )
+    Effect.gen(function* () {
+      const url = yield* decodeFeedUrl(payload.url);
+      const item = yield* subscribeFeed(
+        owner,
+        url,
+        makeFeedTitle(payload.title ?? '', url)
+      );
+      const queue = yield* FeedRefreshQueue;
+      yield* queue.enqueue(owner, item.id);
+
+      return { item };
+    })
   ).pipe(Effect.catchTags(subscribeFailure));
 
 const unsubscribe = ({ payload }: HandlerRequest<'unsubscribe'>) =>
-  withSession((owner) => removeSubscription(owner, payload.id)).pipe(
-    Effect.catchTags(feedRepositoryFailure)
-  );
+  withSession((owner) =>
+    Effect.gen(function* () {
+      const repository = yield* FeedRepository;
+      yield* repository.remove(owner, [payload.id]);
 
-export const feedHandlers = {
-  feeds,
-  preview: previewHandler,
-  subscribe: subscribeHandler,
-  unsubscribe,
-};
+      return { ok: true as const };
+    })
+  ).pipe(Effect.catchTags(feedRepositoryFailure));
+
+export const feedHandlers = { feeds, preview, subscribe, unsubscribe };

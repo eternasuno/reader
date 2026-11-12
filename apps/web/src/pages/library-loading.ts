@@ -1,24 +1,18 @@
-import {
-  type Filter,
-  LibraryError,
-  libraryErrorMessage,
-  type Scope,
-} from '../lib/library';
+import { libraryErrorMessage, type Scope } from '../lib/library';
 import type { LibraryStore } from './library-context';
 import { applyPage, failList, resetList, startLoadMore } from './library-pages';
 import { loadFeeds, loadReference } from './library-reference';
-import { applyRefresh, applyRefreshPage } from './library-refresh';
-import { sameScope } from './library-state';
+import { isBusy, sameScope } from './library-state';
 
 export const startLoad = async (
   store: LibraryStore,
   scope: Scope,
-  filter: Filter
+  unreadOnly: boolean
 ): Promise<void> => {
-  store.setState((current) => resetList(current, scope, filter));
+  store.setState((current) => resetList(current, scope, unreadOnly));
   const generation = store.state().generation;
   try {
-    const page = await store.client.list(scope, filter);
+    const page = await store.client.list(scope, unreadOnly);
     store.setState((current) => applyPage(current, page, generation));
   } catch (error) {
     store.setState((current) =>
@@ -27,63 +21,36 @@ export const startLoad = async (
   }
 };
 
-const loadNew = async (store: LibraryStore): Promise<void> => {
-  const before = store.state();
-  const covered = new Set(before.items.map((item) => item.id));
-  store.setState((current) => ({ ...current, refreshing: true }));
-  try {
-    if (before.boundary === null) {
-      const page = await store.client.list(before.scope, before.filter);
-      store.setState((current) =>
-        applyRefreshPage(current, page, before.generation, covered)
-      );
-
-      return;
-    }
-
-    const items = await store.client.refresh(
-      before.scope,
-      before.filter,
-      before.boundary
-    );
-    store.setState((current) =>
-      applyRefresh(current, items, before.generation, covered)
-    );
-  } catch (error) {
-    store.setState((current) => ({ ...current, refreshing: false }));
-    store.notify('error', libraryErrorMessage(error));
-  }
-};
-
 export const refresh = async (store: LibraryStore): Promise<void> => {
-  const current = store.state();
-  if (store.flags.isRefreshing() || current.loading) {
+  if (isBusy(store.state()) || store.flags.isRefreshing()) {
     return;
   }
 
+  const { scope, unreadOnly } = store.state();
   store.flags.setRefreshing(true);
   try {
-    if (!current.initialized) {
-      await startLoad(store, current.scope, current.filter);
-    } else {
-      await loadNew(store);
-    }
-
-    await loadReference(store);
+    await Promise.all([
+      startLoad(store, scope, unreadOnly),
+      loadReference(store),
+    ]);
   } finally {
     store.flags.setRefreshing(false);
   }
 };
 
+export const enter = async (
+  store: LibraryStore,
+  scope: Scope
+): Promise<void> => {
+  store.setState((current) =>
+    sameScope(current.scope, scope) ? current : { ...current, scope }
+  );
+  await refresh(store);
+};
+
 export const loadMore = async (store: LibraryStore): Promise<void> => {
   const before = store.state();
   if (before.loading) {
-    return;
-  }
-
-  if (before.cursorInvalid) {
-    await startLoad(store, before.scope, before.filter);
-
     return;
   }
 
@@ -95,13 +62,15 @@ export const loadMore = async (store: LibraryStore): Promise<void> => {
   const generation = before.generation;
   store.setState(startLoadMore);
   try {
-    const page = await store.client.list(before.scope, before.filter, cursor);
+    const page = await store.client.list(
+      before.scope,
+      before.unreadOnly,
+      cursor
+    );
     store.setState((current) => applyPage(current, page, generation));
   } catch (error) {
-    const invalid =
-      error instanceof LibraryError && error.tag === 'InvalidCursor';
     store.setState((current) =>
-      failList(current, libraryErrorMessage(error), generation, invalid)
+      failList(current, libraryErrorMessage(error), generation)
     );
   }
 };
@@ -114,24 +83,23 @@ export const setScope = async (
     return;
   }
 
-  const filter = store.state().filter;
   store.setState((current) => ({ ...current, scope }));
   const feeds = store.state().feeds.length === 0 ? loadFeeds(store) : undefined;
   await Promise.all([
-    startLoad(store, scope, filter),
+    startLoad(store, scope, store.state().unreadOnly),
     ...(feeds === undefined ? [] : [feeds]),
   ]);
 };
 
 export const setFilter = async (
   store: LibraryStore,
-  filter: Filter
+  unreadOnly: boolean
 ): Promise<void> => {
-  if (store.state().filter === filter) {
+  if (store.state().unreadOnly === unreadOnly) {
     return;
   }
 
-  await startLoad(store, store.state().scope, filter);
+  await startLoad(store, store.state().scope, unreadOnly);
 };
 
 export const selectFeed = async (
@@ -139,12 +107,4 @@ export const selectFeed = async (
   feedId: string
 ): Promise<void> => {
   await setScope(store, { kind: 'feeds', feedId });
-};
-
-export const reloadFeed = async (
-  store: LibraryStore,
-  feedId: string
-): Promise<void> => {
-  await loadFeeds(store);
-  await selectFeed(store, feedId);
 };

@@ -1,13 +1,11 @@
 import { expect, it } from '@effect/vitest';
 import { DocumentSanitizer, HtmlParser } from '@reader/business';
-import { DateTime, Effect, Layer, Option } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 import { DocumentSanitizerLive } from '../../src/adapter/document-sanitizer';
 import { parseFeed } from '../../src/adapter/feed-parser';
 import { HtmlParserLive } from '../../src/adapter/html-parser';
 
 const base = new URL('https://example.com/feed.xml');
-
-const now = DateTime.fromDateUnsafe(new Date('2026-02-01T00:00:00.000Z'));
 
 const Live = Layer.mergeAll(HtmlParserLive, DocumentSanitizerLive);
 
@@ -16,6 +14,7 @@ it('escapes explicitly plain Atom and JSON fields and leaves RSS HTML unchanged'
     <title>Escapes</title>
     <entry>
       <title>Atom</title>
+      <link href="https://example.com/atom"/>
       <summary type="text">&lt;title&gt; &amp;copy; &amp; more</summary>
       <content type="text">&lt;b&gt;bold&lt;/b&gt;</content>
     </entry>
@@ -26,6 +25,7 @@ it('escapes explicitly plain Atom and JSON fields and leaves RSS HTML unchanged'
     items: [
       {
         id: '1',
+        url: 'https://example.com/json',
         title: 'JSON',
         summary: '<title> &copy; & more',
         content_text: '<b>bold</b>',
@@ -37,15 +37,16 @@ it('escapes explicitly plain Atom and JSON fields and leaves RSS HTML unchanged'
       <title>Escapes</title>
       <item>
         <title>RSS</title>
+        <link>https://example.com/rss</link>
         <description>&lt;title&gt; &amp;copy; &amp; more</description>
       </item>
     </channel>
   </rss>`;
   const escaped = '&lt;title&gt; &amp;copy; &amp; more';
 
-  const atomEntry = parseFeed(atom, base, now).items[0];
-  const jsonEntry = parseFeed(json, base, now).items[0];
-  const rssEntry = parseFeed(rss, base, now).items[0];
+  const atomEntry = parseFeed(atom, base).entries[0];
+  const jsonEntry = parseFeed(json, base).entries[0];
+  const rssEntry = parseFeed(rss, base).entries[0];
 
   expect(atomEntry?.description).toEqual(Option.some(escaped));
   expect(atomEntry?.content).toEqual(Option.some('&lt;b&gt;bold&lt;/b&gt;'));
@@ -58,10 +59,17 @@ it('escapes plain text exactly once without decoding existing entities', () => {
   const json = JSON.stringify({
     version: 'https://jsonfeed.org/version/1.1',
     title: 'Once',
-    items: [{ id: '1', title: 'Once', content_text: '&amp;' }],
+    items: [
+      {
+        id: '1',
+        url: 'https://example.com/once',
+        title: 'Once',
+        content_text: '&amp;',
+      },
+    ],
   });
 
-  expect(parseFeed(json, base, now).items[0]?.content).toEqual(
+  expect(parseFeed(json, base).entries[0]?.content).toEqual(
     Option.some('&amp;amp;')
   );
 });
@@ -74,6 +82,7 @@ it.effect('retains escaped plain text literally after DOM sanitization', () =>
       items: [
         {
           id: '1',
+          url: 'https://example.com/literal',
           title: 'Literal',
           content_text: '<title> &copy; & more',
         },
@@ -81,7 +90,7 @@ it.effect('retains escaped plain text literally after DOM sanitization', () =>
     });
     const content =
       Option.getOrUndefined<string>(
-        parseFeed(json, base, now).items[0]?.content ?? Option.none()
+        parseFeed(json, base).entries[0]?.content ?? Option.none()
       ) ?? '';
     const parser = yield* HtmlParser;
     const processor = yield* DocumentSanitizer;

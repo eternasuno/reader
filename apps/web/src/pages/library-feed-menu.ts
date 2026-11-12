@@ -22,7 +22,7 @@ export const createFeedMenu = (
   return {
     filter: async (scope: Scope, checked: boolean) => {
       if (await selectScope(scope)) {
-        await model.setFilter(checked ? 'unread' : 'all');
+        await model.setFilter(checked);
       }
     },
     markAll: async (scope: Scope) => {

@@ -1,4 +1,4 @@
-import type { JSX } from 'solid-js';
+import { type JSX, Show } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { Button } from '../atoms/button';
 import { ReadStatusIcon } from '../atoms/reader-icon';
@@ -63,11 +63,11 @@ const EntryTime = (props: { readonly value: string }) => {
 
 export const EntryMeta = (props: {
   readonly source: string;
-  readonly time: string;
+  readonly time: string | undefined;
 }) => (
   <p class="mb-1 flex items-center justify-between gap-3 text-xs leading-[1.6] text-base-content/60">
     <span class="min-w-0 truncate">{props.source}</span>
-    <EntryTime value={props.time} />
+    <Show when={props.time}>{(time) => <EntryTime value={time()} />}</Show>
   </p>
 );
 

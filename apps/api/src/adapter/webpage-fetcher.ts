@@ -1,16 +1,22 @@
-import type { BrowserEndpoint, WebpageFetcher } from '@reader/business';
+import type {
+  BrowserEndpoint,
+  JinaKey,
+  WebpageFetcher,
+} from '@reader/business';
 import {
   type BrowserConcurrency,
   BrowserWebpageFetcherLive,
   JinaWebpageFetcherLive,
 } from '@reader/webpage';
-import type { Layer, Redacted } from 'effect';
+import { type Layer, Redacted } from 'effect';
 
 export const jinaWebpageFetcherLive = (
-  key?: Redacted.Redacted<string> | undefined
+  key?: JinaKey
 ): Layer.Layer<WebpageFetcher> => JinaWebpageFetcherLive(key);
 
 export const browserWebpageFetcherLive = (
-  endpoint: BrowserEndpoint | undefined
+  endpoint?: BrowserEndpoint
 ): Layer.Layer<WebpageFetcher, never, BrowserConcurrency> =>
-  BrowserWebpageFetcherLive(endpoint);
+  BrowserWebpageFetcherLive(
+    endpoint === undefined ? undefined : Redacted.value(endpoint)
+  );

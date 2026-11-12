@@ -16,7 +16,7 @@ const withRows = async (
   rows = [article('a', { feedId: 'f1' }), article('b')]
 ) => {
   const client = createStubClient();
-  client.list.mockResolvedValue(page(rows, null, 'top'));
+  client.list.mockResolvedValue(page(rows, null));
   client.unreadCounts.mockResolvedValue(counts(0, { f1: 1 }));
   const model = createLibraryModel(client);
   await model.refresh();
@@ -121,49 +121,42 @@ describe('library open', () => {
     expect(model.state().selected).toBeUndefined();
     expect(model.state().items[0]?.title).toBe('Article a');
   });
+
+  it('keeps an article opened from the unread list listed as read', async () => {
+    const { client, model } = await withRows([article('a')]);
+    await model.setFilter(true);
+    client.article.mockResolvedValue(null);
+
+    await model.openArticle('a');
+
+    expect(model.state().items.map((item) => [item.id, item.read])).toEqual([
+      ['a', true],
+    ]);
+  });
 });
 
 describe('library subscriptions', () => {
-  it('selects the duplicate feed reported by the error id', async () => {
+  it('subscribes with the previewed url and title and selects the new feed', async () => {
     const client = createStubClient();
-    client.feeds.mockResolvedValue([feed('f-other')]);
-    client.list.mockResolvedValue(page([], null, 'top'));
-    client.subscribe.mockRejectedValue(
-      new LibraryError('FeedExists', { id: 'f-existing' })
-    );
-    const model = createLibraryModel(client);
-
-    expect(await model.subscribe('https://example.com/f-other.xml')).toBe(true);
-
-    expect(model.state().scope).toEqual({
-      kind: 'feeds',
-      feedId: 'f-existing',
-    });
-    expect(client.list).toHaveBeenLastCalledWith(
-      { kind: 'feeds', feedId: 'f-existing' },
-      'all'
-    );
-    expect(model.state().toast).toEqual({
-      kind: 'success',
-      message: '该订阅已存在',
-    });
-  });
-
-  it('selects the new subscription and keeps the feeds sorted', async () => {
-    const client = createStubClient();
-    client.list.mockResolvedValue(page([], null, 'top'));
+    client.list.mockResolvedValue(page([]));
     client.feeds.mockResolvedValue([feed('f-c')]);
     client.subscribe.mockResolvedValue(feed('f-a'));
     const model = createLibraryModel(client);
     await model.refresh();
 
-    expect(await model.subscribe('https://example.com/f-a.xml')).toBe(true);
+    expect(
+      await model.subscribe('https://example.com/f-a.xml', 'Feed f-a')
+    ).toBe(true);
 
+    expect(client.subscribe).toHaveBeenCalledWith(
+      'https://example.com/f-a.xml',
+      'Feed f-a'
+    );
     expect(model.state().feeds.map((item) => item.id)).toEqual(['f-a', 'f-c']);
     expect(model.state().scope).toEqual({ kind: 'feeds', feedId: 'f-a' });
     expect(client.list).toHaveBeenLastCalledWith(
       { kind: 'feeds', feedId: 'f-a' },
-      'all'
+      false
     );
     expect(model.state().toast).toEqual({
       kind: 'success',
@@ -171,27 +164,59 @@ describe('library subscriptions', () => {
     });
   });
 
-  it('selects the kept feed when the initial import fails', async () => {
+  it('selects the loaded feed whose url the error names', async () => {
     const client = createStubClient();
-    client.list.mockResolvedValue(page([], null, 'top'));
-    client.feeds.mockResolvedValue([feed('kept')]);
+    client.feeds.mockResolvedValue([
+      feed('f-other'),
+      feed('f-existing', 'https://example.com/existing.xml'),
+    ]);
+    client.list.mockResolvedValue(page([]));
     client.subscribe.mockRejectedValue(
-      new LibraryError('FeedImportFailed', { id: 'kept' })
+      new LibraryError('FeedAlreadyExists', {
+        url: 'https://example.com/existing.xml',
+      })
     );
     const model = createLibraryModel(client);
+    await model.refresh();
 
-    expect(await model.subscribe('https://example.com/kept.xml')).toBe(true);
+    expect(
+      await model.subscribe('https://example.com/existing.xml', 'Existing')
+    ).toBe(true);
 
-    expect(model.state().feeds.map((item) => item.id)).toEqual(['kept']);
-    expect(model.state().scope).toEqual({ kind: 'feeds', feedId: 'kept' });
+    expect(client.feeds).toHaveBeenCalledTimes(1);
+    expect(model.state().scope).toEqual({
+      kind: 'feeds',
+      feedId: 'f-existing',
+    });
     expect(client.list).toHaveBeenLastCalledWith(
-      { kind: 'feeds', feedId: 'kept' },
-      'all'
+      { kind: 'feeds', feedId: 'f-existing' },
+      false
     );
     expect(model.state().toast).toEqual({
-      kind: 'error',
-      message: '订阅文章导入失败，请稍后重试',
+      kind: 'success',
+      message: '该订阅已存在',
     });
+  });
+
+  it('reloads the feed list once when the existing feed is not loaded', async () => {
+    const client = createStubClient();
+    client.feeds
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([feed('f-x', 'https://example.com/x.xml')]);
+    client.list.mockResolvedValue(page([]));
+    client.subscribe.mockRejectedValue(
+      new LibraryError('FeedAlreadyExists', {
+        url: 'https://example.com/x.xml',
+      })
+    );
+    const model = createLibraryModel(client);
+    await model.refresh();
+
+    expect(await model.subscribe('https://example.com/x.xml', 'X')).toBe(true);
+
+    expect(client.feeds).toHaveBeenCalledTimes(2);
+    expect(model.state().feeds.map((item) => item.id)).toEqual(['f-x']);
+    expect(model.state().scope).toEqual({ kind: 'feeds', feedId: 'f-x' });
   });
 
   it('keeps the current scope when the subscription fails', async () => {
@@ -199,7 +224,7 @@ describe('library subscriptions', () => {
     client.subscribe.mockRejectedValue(new LibraryError('FetchFeedError'));
     const model = createLibraryModel(client);
 
-    expect(await model.subscribe('https://example.com/x.xml')).toBe(false);
+    expect(await model.subscribe('https://example.com/x.xml', 'X')).toBe(false);
 
     expect(model.state().scope).toEqual({ kind: 'later' });
     expect(client.list).not.toHaveBeenCalled();

@@ -45,12 +45,12 @@ What `FeedParser` returns: the feed `title`, an optional `description`, and the 
 
 ### FD-FETCH — Fetch and parse (shared by preview and refresh)
 
-`fetchParsedFeed(url)` fetches the source through `FeedFetcher` and parses it through `FeedParser`.
+`fetchParsedFeed(url)` fetches the source with `HttpClient` (`effect/http`) and parses it through `FeedParser`.
 
 - FD-FETCH-1 It returns a `ParsedFeed`.
-- FD-FETCH-2 Failure to fetch fails `FetchFeedError`. Failure to parse fails `FeedParserError`.
+- FD-FETCH-2 Failure to fetch, including a response that is not 2xx, fails `FetchFeedError`. Failure to parse fails `FeedParserError`.
 - FD-FETCH-3 It has no side effects and reads no stored data.
-- FD-FETCH-4 `FeedFetcher.fetch` returns the body text and the final URL after redirects. The parser resolves entry URLs against that final URL; the feed keeps the submitted URL.
+- FD-FETCH-4 The application provides Effect's `FetchHttpClient`, and `fetch` follows redirects; the final URL is the response's URL, the URL of the last hop. The parser resolves entry URLs against that final URL; the feed keeps the submitted URL.
 
 ### FD-PREVIEW — Preview a subscription
 
@@ -75,7 +75,7 @@ N is the owner's retention setting. The listed entries are the first N distinct 
 - FD-SEL-8 Selection is a pure function of the inventory (the `id` and `url` of each stored item), the entries in source order and N. It returns the entries to import, in source order, and the ids of the stored items to delete. A new feed is the case of an empty inventory.
 - FD-SEL-9 Items are built in the order they are imported, from the last listed entry to the first, and each gets its id when it is built (CM-ID-3). So the first listed entry gets the largest id of that sync and is on top (FD-LIST-4), and the entries of one sync keep their source order. Entries that are already stored or skipped for cleaning (FD-IMPORT-6) are not built and do not disturb the others.
 
-Example, N = 3, list order shown from top to bottom. This is an illustration of the pure `selectItems` function, covered by unit tests; N = 3 is not a valid user setting.
+Example, N = 3, list order shown from top to bottom. This is an illustration of the pure selection function inside `refreshFeed`, covered by unit tests; N = 3 is not a valid user setting.
 
 | Case                                  | Stored before (list order) | Source lists (source order) | Stored after (list order) | Why                                                                    |
 | ------------------------------------- | -------------------------- | --------------------------- | ------------------------- | ---------------------------------------------------------------------- |
@@ -90,7 +90,7 @@ Example, N = 3, list order shown from top to bottom. This is an illustration of 
 ### FD-IMPORT — Turning entries into items
 
 - FD-IMPORT-1 Each imported entry becomes a `FeedItem` with `read = false`, no `extractedContent`, the owner of the feed, the entry's URL and an id taken at that moment (FD-SEL-9).
-- FD-IMPORT-2 `description` and `content` are cleaned before storage as in CM-HTML, with the item's URL as the base for relative links, cut to `FeedImportConfig.maxTextLength`.
+- FD-IMPORT-2 `description` and `content` are cleaned before storage as in CM-HTML, with the item's URL as the base for relative links, cut to `maxTextLength`, the parameter of `refreshFeed`.
 - FD-IMPORT-3 An absent or empty description or content is stored as none. Every entry that reaches this step has a URL; the parser drops entries without one.
 - FD-IMPORT-4 A stored item is never overwritten: `create` skips a row whose id or unique URL key already exists (CM-PORT-6).
 - FD-IMPORT-5 The publish time is the one the source gives, if any, and is kept for display only. A missing time stays none; no fallback invents one. A time that is wrong or in the future is shown as given and changes nothing else.
@@ -99,10 +99,10 @@ Example, N = 3, list order shown from top to bottom. This is an illustration of 
 
 ### FD-SYNC — Bring a feed's items in line with its source
 
-`syncItems(feed, parsed)`. The one place where items are written from a source; used only by refresh.
+The sync is part of `refreshFeed`, not a use case of its own: it is the one place where items are written from a source.
 
 1. Read the inventory of the feed, `(id, url)` of every stored item in list order, and the owner's N.
-2. Select (FD-SEL): `selectItems` returns the entries to import, in source order, and the ids of the stored items to delete.
+2. Select (FD-SEL): the selection function returns the entries to import, in source order, and the ids of the stored items to delete.
 3. For the entries to import, from the last to the first: clean the entry with its URL as the base (FD-IMPORT), skip it if cleaning fails (FD-IMPORT-6), otherwise build the item, which makes its id (FD-SEL-9). Then create the built items in one call.
 4. Delete the items whose ids step 2 returned (`FeedItemRepository.remove`). Every one of them was stored before step 3, so nothing created there is touched.
 5. Update the feed's `title` and `updatedAt = now`, the only clock read of the sync.
@@ -112,7 +112,7 @@ Example, N = 3, list order shown from top to bottom. This is an illustration of 
 - FD-SYNC-3 Syncing one feed never changes another feed, nor any saved page.
 - FD-SYNC-4 On failure the feed's title and `updatedAt` are not updated.
 - FD-SYNC-5 Items are created only while their feed exists (see `FeedItemRepository.create`). If the feed is removed while a sync is running, the sync leaves no items behind: `create` skips items of a missing feed, and `remove` and `update` on a missing feed change nothing. A later subscription to the same address is a new feed with a new id (FD-UNSUB-5), and it gets its own items from its own refresh.
-- FD-SYNC-6 `syncItems` never runs twice at the same time for one feed. The refresh queue guarantees it (FD-SCHED-2); nothing else in the domain relies on concurrent syncs.
+- FD-SYNC-6 The sync never runs twice at the same time for one feed. The refresh queue guarantees it (FD-SCHED-2); nothing else in the domain relies on concurrent syncs.
 
 ### FD-SUB — Subscribe
 
@@ -136,7 +136,7 @@ Run only by the scheduler's refresh queue (FD-SCHED). There is no user operation
 
 1. Find the feed for this owner. If it does not exist, do nothing and succeed.
 2. `fetchParsedFeed(feed.url)`.
-3. `syncItems(feed, parsed)`.
+3. Sync the feed's items with the parsed source (FD-SYNC).
 
 - FD-REFRESH-1 A feed removed before or during the run is not an error: `find` returns none and the run is done; `create` skips items of a missing feed; `remove` and `update` on a missing feed change nothing. Other failures of the run (fetch, parse, storage) are still failures and are logged.
 - FD-REFRESH-2 Every run goes through the refresh queue, so no two runs of one feed overlap (FD-SCHED-2). Errors are those of FD-FETCH and of the repositories used by FD-SYNC.
@@ -220,16 +220,14 @@ Each is a single port call, so there is no use case. They are listed separately 
 
 ## Use cases
 
-| Use case          | Input                                                | Output                                                                           | Errors (besides repository errors)                                           |
-| ----------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `fetchParsedFeed` | `url`                                                | `ParsedFeed`                                                                     | `FetchFeedError`, `FeedParserError`                                          |
-| `selectItems`     | inventory (`id`, `url`), entries, N                  | the entries to import in source order, and the ids of the stored items to delete | none (pure)                                                                  |
-| `syncItems`       | `feed`, `ParsedFeed`                                 | nothing                                                                          | none besides repository errors; cleaning errors skip the entry (FD-IMPORT-6) |
-| `previewFeed`     | `url`                                                | title (`FeedTitle`), optional description, entry titles                          | as `fetchParsedFeed`                                                         |
-| `subscribeFeed`   | `owner`, `url`, `title`                              | `Feed`                                                                           | `FeedAlreadyExists`; nothing is fetched                                      |
-| `refreshFeed`     | `owner`, `feedId`                                    | nothing                                                                          | as `fetchParsedFeed` and `syncItems`                                         |
-| `listItems`       | `owner`, `feedId?`, `unreadOnly`, `limit`, `cursor?` | items, `cursor` or `null`                                                        | none                                                                         |
-| `extractItem`     | `owner`, `itemId`                                    | `FeedItem`                                                                       | `FeedItemNotFound`, and those of CM-FETCH                                    |
+| Use case          | Input                                                | Output                                                  | Errors (besides repository errors)                                 |
+| ----------------- | ---------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
+| `fetchParsedFeed` | `url`                                                | `ParsedFeed`                                            | `FetchFeedError`, `FeedParserError`                                |
+| `previewFeed`     | `url`                                                | title (`FeedTitle`), optional description, entry titles | as `fetchParsedFeed`                                               |
+| `subscribeFeed`   | `owner`, `url`, `title`                              | `Feed`                                                  | `FeedAlreadyExists`; nothing is fetched                            |
+| `refreshFeed`     | `owner`, `feedId`, `maxTextLength`                   | nothing                                                 | as `fetchParsedFeed`; cleaning errors skip the entry (FD-IMPORT-6) |
+| `listItems`       | `owner`, `feedId?`, `unreadOnly`, `limit`, `cursor?` | items, `cursor` or `null`                               | none                                                               |
+| `extractItem`     | `owner`, `itemId`                                    | `FeedItem`                                              | `FeedItemNotFound`, and those of CM-FETCH                          |
 
 Find one item, mark items, mark feeds, mark all, unread counts, list feeds and unsubscribe are one port call each and have no use case.
 
@@ -239,7 +237,7 @@ Find one item, mark items, mark feeds, mark all, unread counts, list feeds and u
 | ------------------------- | ----------------- | -------------------------------------- | ------------------------- |
 | `FeedAlreadyExists`       | `url` of the feed | The owner already follows this URL     | FD-SUB step 2             |
 | `FeedItemNotFound`        | `id`              | The item does not exist for this owner | FD-EXTRACT, SP-SAVE       |
-| `FetchFeedError`          | message           | The source could not be fetched        | `FeedFetcher` port        |
+| `FetchFeedError`          | message           | The source could not be fetched        | `fetchParsedFeed`         |
 | `FeedParserError`         | message           | The response is not a feed             | `FeedParser` port         |
 | `FeedRepositoryError`     | message           | Storage failure                        | `FeedRepository` port     |
 | `FeedItemRepositoryError` | message           | Storage failure                        | `FeedItemRepository` port |
@@ -274,18 +272,14 @@ All methods are scoped by `ownerId`. Patch and write semantics are those of CM-P
 | `inventory(owner, feedId)`                            | `(id, url)` of every stored item of the feed, ordered by `id` descending                                                                                                                                                             |
 | `remove(owner, ids)`                                  | Deletes the owner's items among `ids`; unknown ids ignored                                                                                                                                                                           |
 
-### FeedFetcher, FeedParser
+### HttpClient, FeedParser
 
-- `FeedFetcher.fetch(url)`: the body of the source as text and the final URL after redirects, or `FetchFeedError`. Redirects, timeouts, size limits and which addresses may be reached are the adapter's concern; the same holds for `WebpageFetcher`.
+- `HttpClient` (`effect/http`) is not a port of this package: `fetchParsedFeed` uses Effect's service directly and sends a GET to the feed URL. The application provides Effect's plain `FetchHttpClient`; `fetch` follows redirects, and no address, size or time limit is added. Because `fetch` rejects a URL that carries a user name or password, `fetchParsedFeed` sends those credentials as a Basic authorization header and the URL without them (CM-URL-4).
 - `FeedParser.parse(text, baseUrl)`: a `ParsedFeed`, or `FeedParserError`. Entry URLs are resolved against `baseUrl`, the final URL from the fetcher; an entry whose URL is then not a valid `NormalizedUrl` is dropped, and so is an entry with no URL. The feed keeps the submitted URL. An entry without a publish time has none. Titles are plain text; any length limit on a title is the adapter's.
 
-### FeedImportConfig
+### Text-length limit
 
-A value provided from outside by injection. Business defines no number; whether the outer layer reads it from configuration or fixes it in its own code is its choice.
-
-| Field           | Meaning                                                                       |
-| --------------- | ----------------------------------------------------------------------------- |
-| `maxTextLength` | Longest description or content, in characters, kept from an entry (CM-HTML-1) |
+`refreshFeed` takes `maxTextLength`, the longest description or content, in Unicode code points, kept from an entry (CM-HTML-1). It is a plain parameter: business defines no number, and the application passes it (the refresh queue in `apps/api`).
 
 ### From other domains
 

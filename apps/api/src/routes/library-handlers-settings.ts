@@ -1,155 +1,69 @@
 import {
-  BrowserEndpoint,
-  FetcherProvider,
-  JinaKeyUpdate,
-  Retention,
-  SettingsRepository,
-  updateSettings,
+  SettingRepository,
+  setFetcher as setFetcherUseCase,
 } from '@reader/business';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option } from 'effect';
 import { type HandlerRequest, withSession } from './library-contract';
 import {
-  invalidEndpoint,
-  invalidKey,
-  invalidProvider,
-  invalidRetention,
-} from './library-errors';
-import {
-  extractionSettingsFailure,
+  fetcherFailure,
   retentionFailure,
-  settingsReadFailure,
-  settingsRepositoryFailure,
+  settingRepositoryFailure,
 } from './library-failures';
-
-const decodeInput = <A, E, R, E2>(
-  decode: Effect.Effect<A, E, R>,
-  onInvalid: () => Effect.Effect<never, E2>
-) =>
-  Effect.matchEffect(decode, {
-    onFailure: onInvalid,
-    onSuccess: Effect.succeed,
-  });
+import { decodeFetcherInput, decodeRetention } from './library-input';
 
 const settings = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const repository = yield* SettingsRepository;
-      const value = yield* repository.get(owner);
+      const repository = yield* SettingRepository;
+      const setting = yield* repository.get(owner);
 
       return {
-        retention: value.feed.retention,
-        provider: value.fetcher.provider,
-        jinaConfigured: Option.isSome(value.fetcher.jina.key),
-        browserEndpoint: Option.map(
-          value.fetcher.browser.endpoint,
-          (url) => url.href
+        retention: setting.feed.retention,
+        provider: setting.fetcher.provider,
+        jinaKeyConfigured: Option.isSome(setting.fetcher.jina.key),
+        browserEndpointConfigured: Option.isSome(
+          setting.fetcher.browser.endpoint
         ),
       };
     })
-  ).pipe(Effect.catchTags(settingsReadFailure));
+  ).pipe(Effect.catchTags(settingRepositoryFailure));
 
 const setRetention = ({ payload }: HandlerRequest<'setRetention'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const retention = yield* decodeInput(
-        Schema.decodeEffect(Retention)(payload.retention),
-        invalidRetention
-      );
-
-      const repository = yield* SettingsRepository;
+      const retention = yield* decodeRetention(payload.retention);
+      const repository = yield* SettingRepository;
       yield* repository.update(owner, { feed: { retention } });
 
       return { ok: true as const };
     })
   ).pipe(Effect.catchTags(retentionFailure));
 
-const jinaPatch = (payload: HandlerRequest<'setExtraction'>['payload']) =>
-  Effect.gen(function* () {
-    const key = yield* decodeInput(
-      Schema.decodeEffect(JinaKeyUpdate)(
-        Option.getOrUndefined(payload.jinaKey)
-      ),
-      invalidKey
-    );
-
-    return key === undefined ? {} : { jina: { key: Option.some(key) } };
-  });
-
-const browserPatch = (payload: HandlerRequest<'setExtraction'>['payload']) =>
-  Option.match(payload.browserEndpoint, {
-    onNone: () => Effect.succeed({}),
-    onSome: (value) =>
-      decodeInput(
-        Schema.decodeEffect(BrowserEndpoint)(value),
-        invalidEndpoint
-      ).pipe(
-        Effect.map((endpoint) => ({
-          browser: { endpoint: Option.some(endpoint) },
-        }))
-      ),
-  });
-
-const extractionFetcher = (
-  payload: HandlerRequest<'setExtraction'>['payload']
-) =>
-  Effect.gen(function* () {
-    const provider = yield* decodeInput(
-      Schema.decodeUnknownEffect(FetcherProvider)(payload.provider),
-      invalidProvider
-    );
-    const jina = yield* jinaPatch(payload);
-    const browser = yield* browserPatch(payload);
-
-    return { provider, ...jina, ...browser };
-  });
-
-const setExtraction = ({ payload }: HandlerRequest<'setExtraction'>) =>
+const setFetcher = ({ payload }: HandlerRequest<'setFetcher'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const fetcher = yield* extractionFetcher(payload);
-
-      yield* updateSettings(owner, { fetcher });
+      const input = yield* decodeFetcherInput(payload);
+      yield* setFetcherUseCase(owner, input);
 
       return { ok: true as const };
     })
-  ).pipe(
-    Effect.catchTags({
-      ...extractionSettingsFailure,
-      BrowserEndpointRequired: invalidEndpoint,
-    })
-  );
+  ).pipe(Effect.catchTags(fetcherFailure));
 
 const deleteKey = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const repository = yield* SettingsRepository;
+      const repository = yield* SettingRepository;
       yield* repository.update(owner, {
         fetcher: { jina: { key: Option.none() } },
       });
 
       return { ok: true as const };
     })
-  ).pipe(Effect.catchTags(settingsRepositoryFailure));
-
-const deleteBrowser = () =>
-  withSession((owner) =>
-    Effect.gen(function* () {
-      const repository = yield* SettingsRepository;
-      yield* repository.update(owner, {
-        fetcher: {
-          provider: 'jina',
-          browser: { endpoint: Option.none() },
-        },
-      });
-
-      return { ok: true as const };
-    })
-  ).pipe(Effect.catchTags(settingsRepositoryFailure));
+  ).pipe(Effect.catchTags(settingRepositoryFailure));
 
 export const settingsHandlers = {
   settings,
   setRetention,
-  setExtraction,
+  setFetcher,
   deleteKey,
-  deleteBrowser,
 };

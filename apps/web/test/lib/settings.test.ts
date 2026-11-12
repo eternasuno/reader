@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  clearBrowserEndpoint,
   clearJinaKey,
   getSettings,
-  saveExtraction,
+  saveFetcher,
   saveRetention,
 } from '../../src/lib/settings';
 
@@ -18,8 +17,8 @@ const json = (body: unknown, status = 200) =>
 const settings = {
   retention: 120,
   provider: 'jina',
-  jinaConfigured: true,
-  browserEndpoint: 'ws://127.0.0.1:9222',
+  jinaKeyConfigured: true,
+  browserEndpointConfigured: false,
 };
 
 const lastCall = (): [string, RequestInit | undefined] => {
@@ -27,6 +26,8 @@ const lastCall = (): [string, RequestInit | undefined] => {
 
   return [String(call?.[0]), call?.[1] as RequestInit | undefined];
 };
+
+const lastBody = (): unknown => JSON.parse(String(lastCall()[1]?.body));
 
 beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
@@ -38,7 +39,7 @@ afterEach(() => {
 });
 
 describe('getSettings', () => {
-  it('loads the direct settings shape with credentials', async () => {
+  it('loads the settings flags with credentials', async () => {
     fetchMock.mockResolvedValue(json(settings));
 
     await expect(getSettings()).resolves.toEqual(settings);
@@ -51,17 +52,20 @@ describe('getSettings', () => {
     });
   });
 
-  it('accepts settings without a saved browser endpoint', async () => {
-    const withoutEndpoint = {
+  it('accepts a browser endpoint that is only reported as configured', async () => {
+    const browser = {
       retention: 120,
-      provider: 'jina',
-      jinaConfigured: true,
+      provider: 'browser',
+      jinaKeyConfigured: false,
+      browserEndpointConfigured: true,
     };
-    fetchMock.mockResolvedValue(json(withoutEndpoint));
+    fetchMock.mockResolvedValue(json(browser));
 
-    await expect(getSettings()).resolves.toEqual(withoutEndpoint);
+    await expect(getSettings()).resolves.toEqual(browser);
   });
+});
 
+describe('settings payload validation', () => {
   it('rejects malformed settings payloads', async () => {
     fetchMock.mockResolvedValueOnce(json({ ...settings, retention: '120' }));
     await expect(getSettings()).rejects.toThrow(
@@ -69,7 +73,19 @@ describe('getSettings', () => {
     );
 
     fetchMock.mockResolvedValueOnce(
-      json({ ...settings, browserEndpoint: 9222 })
+      json({ ...settings, browserEndpointConfigured: 'yes' })
+    );
+    await expect(getSettings()).rejects.toThrow(
+      '设置数据格式不正确，请稍后重试'
+    );
+
+    fetchMock.mockResolvedValueOnce(
+      json({
+        retention: 120,
+        provider: 'jina',
+        jinaConfigured: true,
+        browserEndpointConfigured: false,
+      })
     );
     await expect(getSettings()).rejects.toThrow(
       '设置数据格式不正确，请稍后重试'
@@ -93,6 +109,32 @@ describe('settings errors', () => {
     );
   });
 
+  it('localizes the required browser endpoint', async () => {
+    fetchMock.mockResolvedValue(
+      json({ _tag: 'BrowserEndpointRequired', message: 'required' }, 422)
+    );
+
+    await expect(saveFetcher({ provider: 'browser' })).rejects.toThrow(
+      '请填写浏览器服务地址'
+    );
+  });
+
+  it('localizes the remaining fetcher and setting failures', async () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['InvalidProvider', '请选择有效的文章提取方式'],
+      ['InvalidKey', '请输入有效的 Jina API Key'],
+      ['InvalidEndpoint', '请输入有效的浏览器服务地址'],
+      ['SettingRepositoryError', '暂时无法保存设置，请稍后重试'],
+    ];
+
+    for (const [tag, message] of cases) {
+      fetchMock.mockResolvedValueOnce(json({ _tag: tag }, 400));
+      await expect(saveFetcher({ provider: 'jina' })).rejects.toThrow(message);
+    }
+  });
+});
+
+describe('settings error fallbacks', () => {
   it('maps status codes when the body has no error code', async () => {
     fetchMock.mockResolvedValueOnce(json({ error: 'Unauthorized' }, 401));
     await expect(getSettings()).rejects.toThrow('登录状态已失效，请重新登录');
@@ -133,43 +175,51 @@ describe('settings mutations', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ retention: 120 });
   });
 
-  it('omits blank extraction fields', async () => {
+  it('omits a blank Jina key', async () => {
     fetchMock.mockResolvedValue(json({ ok: true }));
 
-    await saveExtraction({
-      provider: 'jina',
-      jinaKey: '  ',
-      browserEndpoint: ' ',
+    await saveFetcher({ provider: 'jina', key: '  ' });
+
+    expect(lastCall()[0]).toBe('/api/library/settings/fetcher');
+    expect(lastCall()[1]?.method).toBe('PUT');
+    expect(lastBody()).toEqual({ provider: 'jina' });
+  });
+
+  it('sends a trimmed Jina key', async () => {
+    fetchMock.mockResolvedValue(json({ ok: true }));
+
+    await saveFetcher({ provider: 'jina', key: ' key ' });
+
+    expect(lastBody()).toEqual({ provider: 'jina', key: 'key' });
+  });
+
+  it('omits a blank browser endpoint', async () => {
+    fetchMock.mockResolvedValue(json({ ok: true }));
+
+    await saveFetcher({ provider: 'browser', endpoint: ' ' });
+
+    expect(lastBody()).toEqual({ provider: 'browser' });
+  });
+
+  it('sends a trimmed browser endpoint', async () => {
+    fetchMock.mockResolvedValue(json({ ok: true }));
+
+    await saveFetcher({
+      provider: 'browser',
+      endpoint: ' ws://127.0.0.1:9222 ',
     });
-    expect(JSON.parse(String(lastCall()[1]?.body))).toEqual({
-      provider: 'jina',
+
+    expect(lastBody()).toEqual({
+      provider: 'browser',
+      endpoint: 'ws://127.0.0.1:9222',
     });
   });
 
-  it('trims non-blank extraction fields', async () => {
-    fetchMock.mockResolvedValue(json({ ok: true }));
-
-    await saveExtraction({
-      provider: 'browser',
-      jinaKey: ' key ',
-      browserEndpoint: ' ws://127.0.0.1:9222 ',
-    });
-    expect(JSON.parse(String(lastCall()[1]?.body))).toEqual({
-      provider: 'browser',
-      jinaKey: 'key',
-      browserEndpoint: 'ws://127.0.0.1:9222',
-    });
-  });
-
-  it('deletes the saved key and browser endpoint', async () => {
+  it('deletes the saved key', async () => {
     fetchMock.mockImplementation(async () => json({ ok: true }));
 
     await clearJinaKey();
     expect(lastCall()[0]).toBe('/api/library/settings/key');
-    expect(lastCall()[1]?.method).toBe('DELETE');
-
-    await clearBrowserEndpoint();
-    expect(lastCall()[0]).toBe('/api/library/settings/browser');
     expect(lastCall()[1]?.method).toBe('DELETE');
   });
 });

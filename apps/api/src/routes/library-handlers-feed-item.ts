@@ -1,115 +1,106 @@
 import {
-  extractFeedItem,
-  findFeedItem,
-  listFeedItems,
-  markFeedItems,
-  markFeedsRead,
-  refreshFeedItems,
-  SettingsRepository,
-  unreadCounts,
+  extractItem,
+  type FeedItemId,
+  FeedItemRepository,
+  listItems,
 } from '@reader/business';
-import { Effect, Option } from 'effect';
+import { Effect } from 'effect';
 import {
-  cursor,
+  fetcherFor,
   type HandlerRequest,
-  optionalCursor,
   optionToNull,
-  webpageFetcherLayerFor,
   withSession,
 } from './library-contract';
 import {
   extractFeedItemFailure,
-  feedItemFailure,
-  feedItemPageFailure,
-  markFeedsFailure,
-  unreadCountsFailure,
+  feedItemRepositoryFailure,
 } from './library-failures';
 
-const feedItems = ({ query }: HandlerRequest<'feedItems'>) =>
+const unread = () =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const after = yield* optionalCursor(query.cursor);
+      const repository = yield* FeedItemRepository;
+      const counts = yield* repository.unreadCounts(owner);
 
-      return yield* listFeedItems(
-        owner,
-        Option.getOrUndefined(query.feedId),
-        Option.getOrElse(query.filter, () => 'all'),
-        after
-      );
+      return { feeds: counts };
     })
-  ).pipe(Effect.catchTags(feedItemPageFailure));
+  ).pipe(Effect.catchTags(feedItemRepositoryFailure));
 
-const feedItemsRefresh = ({ query }: HandlerRequest<'feedItemsRefresh'>) =>
+const markFeeds = ({ payload }: HandlerRequest<'markFeedsRead'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const through = yield* cursor(query.through);
+      const repository = yield* FeedItemRepository;
+      yield* repository.updateByFeeds(owner, payload.feedIds, { read: true });
 
-      return yield* Effect.map(
-        refreshFeedItems(
-          owner,
-          Option.getOrUndefined(query.feedId),
-          Option.getOrElse(query.filter, () => 'all'),
-          through
-        ),
-        (items) => ({ items })
-      );
+      return { ok: true as const };
     })
-  ).pipe(Effect.catchTags(feedItemPageFailure));
+  ).pipe(Effect.catchTags(feedItemRepositoryFailure));
 
-const feedItem = ({ query }: HandlerRequest<'feedItem'>) =>
+const markAll = () =>
   withSession((owner) =>
-    Effect.map(findFeedItem(owner, query.feedId, query.id), (found) => ({
-      item: optionToNull(found),
-    }))
-  ).pipe(Effect.catchTags(feedItemFailure));
+    Effect.gen(function* () {
+      const repository = yield* FeedItemRepository;
+      yield* repository.updateAll(owner, { read: true });
+
+      return { ok: true as const };
+    })
+  ).pipe(Effect.catchTags(feedItemRepositoryFailure));
+
+const items = ({ query }: HandlerRequest<'feedItems'>) =>
+  withSession((owner) =>
+    listItems(owner, {
+      unreadOnly: query.unreadOnly,
+      limit: query.limit,
+      ...(query.feedId === undefined ? {} : { feedId: query.feedId }),
+      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+    })
+  ).pipe(Effect.catchTags(feedItemRepositoryFailure));
+
+const item = ({ query }: HandlerRequest<'feedItem'>) =>
+  withSession((owner) =>
+    Effect.gen(function* () {
+      const repository = yield* FeedItemRepository;
+      const found = yield* repository.find(owner, query.id);
+
+      return { item: optionToNull(found) };
+    })
+  ).pipe(Effect.catchTags(feedItemRepositoryFailure));
 
 const extract = ({ payload }: HandlerRequest<'extractFeedItem'>) =>
   withSession((owner) =>
     Effect.gen(function* () {
-      const settings = yield* SettingsRepository;
-      const config = yield* settings.get(owner);
-
-      const item = yield* extractFeedItem(
-        owner,
-        payload.feedId,
-        payload.id
-      ).pipe(Effect.provide(webpageFetcherLayerFor(config)));
+      const fetcher = yield* fetcherFor(owner);
+      const item = yield* extractItem(owner, payload.id).pipe(
+        Effect.provide(fetcher)
+      );
 
       return { item };
     })
   ).pipe(Effect.catchTags(extractFeedItemFailure));
 
-const markOne = ({ payload }: HandlerRequest<'markFeedItem'>) =>
+const updateRead = (ids: ReadonlyArray<FeedItemId>, read: boolean) =>
   withSession((owner) =>
-    markFeedItems(owner, payload.feedId, [payload.id], payload.read).pipe(
-      Effect.as({ ok: true as const })
-    )
-  ).pipe(Effect.catchTags(feedItemFailure));
+    Effect.gen(function* () {
+      const repository = yield* FeedItemRepository;
+      yield* repository.update(owner, ids, { read });
+
+      return { ok: true as const };
+    })
+  ).pipe(Effect.catchTags(feedItemRepositoryFailure));
+
+const markOne = ({ payload }: HandlerRequest<'markFeedItem'>) =>
+  updateRead([payload.id], payload.read);
 
 const markMany = ({ payload }: HandlerRequest<'markFeedItems'>) =>
-  withSession((owner) =>
-    markFeedItems(owner, payload.feedId, payload.ids, true).pipe(
-      Effect.as({ ok: true as const })
-    )
-  ).pipe(Effect.catchTags(feedItemFailure));
-
-const markFeeds = ({ payload }: HandlerRequest<'markFeedsRead'>) =>
-  withSession((owner) =>
-    markFeedsRead(owner, payload.feedIds).pipe(Effect.as({ ok: true as const }))
-  ).pipe(Effect.catchTags(markFeedsFailure));
-
-const unread = () =>
-  withSession((owner) => unreadCounts(owner)).pipe(
-    Effect.catchTags(unreadCountsFailure)
-  );
+  updateRead(payload.ids, true);
 
 export const feedItemHandlers = {
-  feedItems,
-  feedItemsRefresh,
-  feedItem,
+  feedUnread: unread,
+  markFeedsRead: markFeeds,
+  markAllFeedItems: markAll,
+  feedItems: items,
+  feedItem: item,
   extractFeedItem: extract,
   markFeedItem: markOne,
   markFeedItems: markMany,
-  markFeedsRead: markFeeds,
-  unreadCounts: unread,
 };

@@ -27,6 +27,11 @@ type LibraryParams = {
 const listPathOf = (scope: Scope): string =>
   scope.kind === 'later' ? '/' : '/rss';
 
+const enteredScope = (path: string): Scope =>
+  path === '/rss' || path.startsWith('/read/feed/')
+    ? { kind: 'feeds' }
+    : { kind: 'later' };
+
 const scopeLabel = (scope: Scope, feeds: ReadonlyArray<Feed>): string => {
   if (scope.kind === 'later') return '稍后阅读';
   if (scope.feedId === undefined) return '全部订阅';
@@ -63,9 +68,7 @@ const useLibraryRoute = (model: LibraryModel) => {
   };
 
   onMount(() => {
-    const path = location.pathname;
-    if (path === '/rss') void model.setScope({ kind: 'feeds' });
-    else if (path === '/') void model.setScope({ kind: 'later' });
+    void model.enter(enteredScope(location.pathname));
   });
 
   createEffect(() => {
@@ -111,9 +114,10 @@ const addArticle = async (
 const subscribeFeed = async (
   model: LibraryModel,
   route: RouteState,
-  url: string
+  url: string,
+  title: string
 ): Promise<boolean> => {
-  if (!(await model.subscribe(url))) return false;
+  if (!(await model.subscribe(url, title))) return false;
 
   route.back();
 
@@ -160,7 +164,7 @@ const SidebarColumn = (props: {
         counts={props.model.state().counts}
         feeds={props.model.state().feeds}
         pending={props.model.state().pending}
-        filter={props.model.state().filter}
+        unreadOnly={props.model.state().unreadOnly}
         onAdd={props.onAdd}
         onFilterScope={(scope, checked) => void menu.filter(scope, checked)}
         onMarkScope={(scope) => void menu.markAll(scope)}
@@ -284,7 +288,9 @@ const AddDialog = (props: {
     onClose={props.onClose}
     onAdd={(url) => addArticle(props.model, props.route, url)}
     onPreview={props.model.preview}
-    onSubscribe={(url) => subscribeFeed(props.model, props.route, url)}
+    onSubscribe={(url, title) =>
+      subscribeFeed(props.model, props.route, url, title)
+    }
   />
 );
 

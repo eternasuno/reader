@@ -9,6 +9,7 @@ import {
   HttpClientRequest,
   type HttpClientResponse,
 } from 'effect/http';
+import { stripCredentials, withBasicAuthorization } from './credentials';
 
 export class FetchFailure extends Data.TaggedError('FetchFailure')<{
   readonly message: string;
@@ -71,8 +72,6 @@ export const parsePublicUrl = (address: string): URL => {
 
   if (
     !['http:', 'https:'].includes(url.protocol) ||
-    url.username ||
-    url.password ||
     (url.port && !['80', '443'].includes(url.port))
   ) {
     throw new Error('Unsupported address');
@@ -106,39 +105,6 @@ export const pinnedAddressLookup =
 
     callback(null, address, 4);
   };
-
-const lookupPublicAddress = async (
-  hostname: string,
-  options: LookupOptions,
-  callback: LookupCallback
-): Promise<void> => {
-  let address: string;
-
-  try {
-    const records = await lookup(hostname, { all: true, family: 4 });
-    address = selectPublicAddress(records.map((record) => record.address));
-  } catch (cause) {
-    callback(cause as NodeJS.ErrnoException, '');
-
-    return;
-  }
-
-  if (options.all) {
-    callback(null, [{ address, family: 4 }]);
-
-    return;
-  }
-
-  callback(null, address, 4);
-};
-
-export const publicAddressLookup = (
-  hostname: string,
-  options: LookupOptions,
-  callback: LookupCallback
-): void => {
-  void lookupPublicAddress(hostname, options, callback);
-};
 
 const resolvePinnedAddress = (
   hostname: string
@@ -202,12 +168,17 @@ const sendHop = (
   Scope.Scope
 > =>
   Effect.gen(function* () {
-    const address = yield* resolvePinnedAddress(url.hostname);
+    const target = stripCredentials(url);
+    const headers = withBasicAuthorization(
+      request.headers,
+      target.authorization
+    );
+    const address = yield* resolvePinnedAddress(target.url.hostname);
     const dispatcher = yield* acquireDispatcher(address);
     const client = HttpClient.withScope(yield* HttpClient.HttpClient);
 
     return yield* client
-      .execute(HttpClientRequest.get(url, { headers: request.headers }))
+      .execute(HttpClientRequest.get(target.url, { headers }))
       .pipe(
         Effect.provideService(FetchHttpClient.RequestInit, {
           dispatcher,

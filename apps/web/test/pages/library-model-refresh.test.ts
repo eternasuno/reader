@@ -1,97 +1,120 @@
-// biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: grouped refresh cases stay together with their shared page fixture.
+// biome-ignore-all lint/complexity/noExcessiveLinesPerFunction: grouped reload cases stay together with their shared client fixture.
 import { describe, expect, it } from 'vitest';
-import { setItemsRead } from '../../src/pages/library-articles';
-import { applyPage } from '../../src/pages/library-pages';
+import { createLibraryModel } from '../../src/pages/library-model';
 import {
-  applyRefresh,
-  applyRefreshPage,
-} from '../../src/pages/library-refresh';
-import { initialLibraryState } from '../../src/pages/library-state';
-import { article, counts, page } from './library-fixtures';
+  article,
+  counts,
+  createStubClient,
+  deferred,
+  page,
+} from './library-fixtures';
 
-const loaded = () =>
-  applyPage(
-    { ...initialLibraryState(), loading: true },
-    page([article('a'), article('b')], 'cursor-1', 'boundary-1'),
-    0
-  );
+const loaded = async (rows = [article('a'), article('b')]) => {
+  const client = createStubClient();
+  client.list.mockResolvedValue(page(rows, null));
+  client.unreadCounts.mockResolvedValue(counts(0));
+  const model = createLibraryModel(client);
+  await model.refresh();
 
-describe('library bounded refresh', () => {
-  it('drops covered rows the server no longer returns', () => {
-    const state = { ...loaded(), counts: counts(2) };
-    const synced = applyRefresh(state, [article('a')], state.generation);
+  return { client, model };
+};
 
-    expect(synced.items.map((item) => item.id)).toEqual(['a']);
-    expect(synced.counts.later).toBe(1);
+describe('library reload', () => {
+  it('reloads the current list from its first page and reloads counts', async () => {
+    const { client, model } = await loaded();
+    client.list.mockResolvedValue(page([article('c')]));
+    client.unreadCounts.mockResolvedValue(counts(2));
+
+    await model.refresh();
+
+    expect(client.list).toHaveBeenLastCalledWith({ kind: 'later' }, false);
+    expect(model.state().items.map((item) => item.id)).toEqual(['c']);
+    expect(model.state().cursor).toBeNull();
+    expect(client.unreadCounts).toHaveBeenCalledTimes(2);
+    expect(model.state().counts).toEqual(counts(2));
   });
 
-  it('keeps server order instead of prepending a backdated discovery', () => {
-    const state = applyPage(
-      { ...initialLibraryState(), loading: true },
-      page(
-        [
-          article('a', { publishedAt: '2026-01-02T00:00:00.000Z' }),
-          article('c', { publishedAt: '2026-01-01T00:00:00.000Z' }),
-        ],
-        'cursor-1',
-        'boundary-1'
-      ),
-      0
-    );
-    const synced = applyRefresh(
-      state,
-      [
-        article('n', { publishedAt: '2026-01-03T00:00:00.000Z' }),
-        article('a', { publishedAt: '2026-01-02T00:00:00.000Z' }),
-        article('old', { publishedAt: '2026-01-01T12:00:00.000Z' }),
-      ],
-      state.generation
-    );
+  it('reloads the selected feed list without a cursor', async () => {
+    const { client, model } = await loaded();
+    client.list.mockResolvedValue(page([article('f', { feedId: 'f1' })]));
+    await model.setScope({ kind: 'feeds', feedId: 'f1' });
 
-    expect(synced.items.map((item) => item.id)).toEqual(['n', 'a', 'old']);
+    client.list.mockResolvedValue(
+      page([article('g', { feedId: 'f1' })], 'cursor-3')
+    );
+    await model.refresh();
+
+    expect(client.list).toHaveBeenLastCalledWith(
+      { kind: 'feeds', feedId: 'f1' },
+      false
+    );
+    expect(model.state().items.map((item) => item.id)).toEqual(['g']);
   });
 
-  it('retains pending rows the server does not return yet, ties by descending id', () => {
-    const state = {
-      ...setItemsRead(loaded(), new Set(['a']), true),
-      pending: new Set(['a']),
-    };
-    const synced = applyRefresh(state, [article('b')], state.generation);
+  it('ignores a refresh while a read mark is in flight', async () => {
+    const { client, model } = await loaded([article('a')]);
+    const mark = deferred<void>();
+    client.markRead.mockReturnValue(mark.promise);
+    const pending = model.toggleRead(model.state().items[0] ?? article('a'));
 
-    expect(synced.items.map((item) => item.id)).toEqual(['b', 'a']);
-    expect(synced.items[1]?.read).toBe(true);
+    client.list.mockResolvedValue(page([article('b')]));
+    await model.refresh();
+
+    expect(client.list).toHaveBeenCalledTimes(1);
+    expect(model.state().items.map((item) => item.id)).toEqual(['a']);
+
+    mark.resolve();
+    await pending;
   });
 
-  it('keeps rows loaded after the request outside the covered range', () => {
-    const state = applyPage(
-      loaded(),
-      page([article('c')], 'cursor-2', 'boundary-2'),
-      0
-    );
-    const synced = applyRefresh(
-      state,
-      [article('a'), article('b')],
-      state.generation,
-      new Set(['a', 'b'])
-    );
+  it('ignores a refresh while a delete is in flight', async () => {
+    const { client, model } = await loaded();
+    const remove = deferred<void>();
+    client.remove.mockReturnValue(remove.promise);
+    const pending = model.remove(model.state().items[0] ?? article('a'));
 
-    expect(synced.items.map((item) => item.id)).toEqual(['a', 'b', 'c']);
+    await model.refresh();
+
+    expect(client.list).toHaveBeenCalledTimes(1);
+    expect(model.state().items.map((item) => item.id)).toEqual(['b']);
+
+    remove.resolve();
+    await pending;
   });
 
-  it('replaces covered first-page rows that disappeared', () => {
-    const state = applyPage(
-      { ...initialLibraryState(), loading: true },
-      page([article('a'), article('b')], null, null),
-      0
-    );
-    const synced = applyRefreshPage(
-      state,
-      page([article('b')], 'cursor-2', 'boundary-2'),
-      state.generation
-    );
+  it('ignores a refresh while a whole-scope mark is in flight', async () => {
+    const client = createStubClient();
+    client.list.mockResolvedValue(page([article('a', { read: true })]));
+    client.unreadCounts.mockResolvedValue(counts(3));
+    const model = createLibraryModel(client);
+    await model.refresh();
+    const mark = deferred<void>();
+    client.markLater.mockReturnValue(mark.promise);
 
-    expect(synced.items.map((item) => item.id)).toEqual(['b']);
-    expect(synced.cursor).toBe('cursor-2');
-    expect(synced.boundary).toBe('boundary-2');
+    const pending = model.markAll();
+    expect(client.markLater).toHaveBeenCalledTimes(1);
+
+    await model.markAll();
+    expect(client.markLater).toHaveBeenCalledTimes(1);
+
+    await model.refresh();
+    expect(client.list).toHaveBeenCalledTimes(1);
+
+    mark.resolve();
+    await pending;
+
+    await model.refresh();
+    expect(client.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('reloads on entering the library even for the default scope', async () => {
+    const client = createStubClient();
+    client.list.mockResolvedValue(page([article('a')]));
+    const model = createLibraryModel(client);
+
+    await model.enter({ kind: 'later' });
+
+    expect(client.list).toHaveBeenCalledWith({ kind: 'later' }, false);
+    expect(model.state().items.map((item) => item.id)).toEqual(['a']);
   });
 });

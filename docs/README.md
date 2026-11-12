@@ -2,7 +2,7 @@
 
 This directory specifies the behavior of the reader: a self-hosted read-later and feed reader. A user saves web pages to read later, subscribes to feeds, and reads the articles in one place.
 
-The specs describe the **target** behavior and structure, and state it without reference to the present code. The business core will be rewritten from them. The present code still matters as a reference, so everything about it is kept in one place: "The current code" at the end says where it differs and which parts can be carried over.
+The specs describe the **target** behavior and structure, and state it without reference to the present code. The business core was rewritten from them on 2026-11-11 and follows them now. "The current code" at the end records how the earlier code differed and lists outer-layer behavior that must be kept.
 
 ## Overview
 
@@ -113,52 +113,48 @@ Tags:
 | Unsubscribing              | Idempotent; removes the feed and its items; saved pages stay                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Not found                  | There is no feed-not-found error: an unknown feed lists as empty and refreshes as a no-op. `FeedItemNotFound` only where an operation cannot go on without the item (extract, save to read later)                                                                                                                                                                                                                                                                      |
 | Repository ports           | Generic patches (`update`, `updateByFeeds`, `updateAll`) rather than one method per intention; immutable fields are never in a patch; the boundary limits what may be patched                                                                                                                                                                                                                                                                                          |
-| Limits                     | The text-length limit comes from an injected `FeedImportConfig` and counts Unicode code points; the page size is a positive parameter bounded at the boundary                                                                                                                                                                                                                                                                                                          |
+| Limits                     | The text-length limit is the `maxTextLength` parameter of `refreshFeed`, passed by the application, and counts Unicode code points; the page size is a positive parameter bounded at the boundary                                                                                                                                                                                                                                                                      |
 | Settings                   | Grouped by category; setting the fetcher is one operation with a union by provider; a stored key or address is kept when omitted; the Jina key can be cleared after confirmation; the browser address can only be replaced; the key and the address are redacted and never sent to the browser, which learns only whether each is configured                                                                                                                           |
 | Provider choice            | The outer layer reads the owner's fetcher setting and injects the matching `WebpageFetcher`. Business takes no provider or owner parameter for fetching                                                                                                                                                                                                                                                                                                                |
 | Entries without a URL      | An entry with no valid URL, after resolving it against the source, is not imported. Every item has a URL, so every item can be saved                                                                                                                                                                                                                                                                                                                                   |
 
 ## Target code layout
 
-Entities, ports and use cases are grouped by domain, and every domain has the same shape.
+The code is grouped by layer first. `entity/` and `usecase/` are split by domain inside; `port/` is flat, because the port interfaces are generic and a domain split only adds paths.
 
 ```text
 packages/business/src/
-  common/
-    entity/        normalized-url, owner-id, article
-    port/          webpage-fetcher, html-parser, document-sanitizer, article-extractor
-    usecase/       fetch-and-extract, clean-html, paging, errors
-    index.ts
-  feed/
-    entity/        feed, feed-item, parsed-feed
-    port/          feed-repository, feed-item-repository, feed-fetcher, feed-parser,
-                   feed-import-config
-    usecase/       fetch-parsed-feed, preview-feed, subscribe-feed, refresh-feed,
-                   select-items, sync-items, list-items, extract-item, errors
-    index.ts
-  saved-page/
-    entity/        saved-page
-    port/          saved-page-repository
-    usecase/       add-saved-page, save-feed-item, list-saved-pages, errors
-    index.ts
-  setting/
-    entity/        setting, retention, fetcher
-    port/          setting-repository
-    usecase/       set-fetcher, errors
-    index.ts
-  index.ts         re-exports the four domains
+  entity/
+    common/        normalized-url, owner-id, article, option-from-optional-non-empty
+    feed/          feed, feed-item
+    saved-page/    saved-page
+    setting/       setting, retention, fetcher
+  port/            webpage-fetcher, html-parser, document-sanitizer, article-extractor,
+                   feed-repository, feed-item-repository, feed-parser,
+                   saved-page-repository, setting-repository
+  usecase/
+    common/        fetch-and-extract, errors
+    feed/          fetch-parsed-feed, preview-feed, subscribe-feed, refresh-feed,
+                   list-items, extract-item, errors
+    saved-page/    add-saved-page, save-feed-item, list-saved-pages, errors
+    setting/       set-fetcher, errors
+  index.ts         re-exports every module
 ```
 
 Rules for the layout:
 
-- Each domain has `entity/`, `port/`, `usecase/` and an `index.ts`. A domain with nothing to put in a folder omits it.
-- `usecase/` holds every core function of the domain, whether it is pure (`select-items`, `paging`) or needs ports.
-- Errors of a domain live in `usecase/errors.ts` of that domain.
-- Tests mirror the layout: `test/<domain>/entity/` and `test/<domain>/usecase/`. The contract suite of a repository port lives with the port's domain and is run by every implementation.
-- Imports follow the dependency direction `SavedPage -> Feed -> Setting -> Common`. A domain imports another only through its `index.ts`.
-- Adapters, HTTP handlers, the scheduler and the front end stay in their packages and apps; they import from the domain `index.ts` files.
+- `entity/` holds only business entities and the value types of their fields. Paging, cursors, queries, use-case inputs and values a port returns (`ParsedFeed`, `ExtractedArticle`) are not entities.
+- `port/` holds the port interfaces, together with the types they take and return and the port's own error. A capability Effect already provides as a service is used directly, not wrapped in a port: fetching a feed source uses `HttpClient` from `effect/http`.
+- A deployment value a use case needs (the text-length limit) is a plain parameter, not a port.
+- `usecase/` holds every core function of the domain, whether it is pure or needs ports. A function called by only one use case is part of that use case's module, not a module of its own (the sync, selection and text cleaning are inside `refresh-feed`), and a few lines shared by two use cases are repeated rather than extracted. The errors a use case raises live in `usecase/<domain>/errors.ts`.
+- A layer or domain with nothing to put in a folder omits it.
+- Tests mirror the layout: `test/entity/<domain>/`, `test/usecase/<domain>/` and a flat `test/port/`. `test/port/` holds the contract suite of each repository port and its in-memory double; `test/testing.ts` exports them as `@reader/business/testing`, so every implementation runs the same suite.
+- Imports follow the dependency direction `SavedPage -> Feed -> Setting -> Common`. Inside the package, modules import each other by relative path.
+- Adapters, HTTP handlers, the scheduler and the front end stay in their packages and apps; they import from `@reader/business` only.
 
 ## The current code
+
+The rewrite has landed: the code follows the specs and the layout above. The two tables below are kept as the record of what the rewrite changed; the file paths in them refer to the earlier code and many no longer exist. "Outer-layer behavior to keep" still applies.
 
 The business core is rewritten from the specs, not migrated step by step. The current code is the reference for details the specs leave to the implementation, so this section says what to carry over and where it must not be copied. It is the only place in `docs/` that describes the current code. The lists are a summary, not exhaustive.
 
@@ -184,7 +180,7 @@ The business core is rewritten from the specs, not migrated step by step. The cu
 | List refresh        | Refresh use cases, `through` queries, `listThrough` on both repositories, the `boundary` field of list results, two refresh endpoints, 30-second polling and in-place merge of rows                                                                   | None of them. Reload means listing again from the first page                                                                                                                                                                                                                                                                       |
 | Cursor              | Business encodes the cursor, checks owner, scope and filter, raises `InvalidCursor`                                                                                                                                                                   | The id of a row, a plain position encoded at the boundary                                                                                                                                                                                                                                                                          |
 | Page size           | `PAGE_SIZE = 30` fixed in business                                                                                                                                                                                                                    | A parameter                                                                                                                                                                                                                                                                                                                        |
-| Text limit          | `MAX_CONTENT_LENGTH = 100_000` in business and `MAX_FIELD_LENGTH = 100_000` in the parser adapter                                                                                                                                                     | `FeedImportConfig.maxTextLength`, injected                                                                                                                                                                                                                                                                                         |
+| Text limit          | `MAX_CONTENT_LENGTH = 100_000` in business and `MAX_FIELD_LENGTH = 100_000` in the parser adapter                                                                                                                                                     | `maxTextLength`, a parameter of `refreshFeed`                                                                                                                                                                                                                                                                                      |
 | Ids                 | Feed-item ids hash URL, title, description and `feedId`; saved-page ids hash URL, title, description and `ownerId` (`packages/business/src/usecase/identity.ts:24`, `:45`)                                                                            | All three ids are version-7 UUIDs made by the entity schema's `id` default (`Model.UuidV7WithGenerate`), increasing within the process (CM-ID); uniqueness is by URL per owner or per feed (CM-ID-6, CM-PORT-6); saved-page duplicates are found by `findByUrl` before fetching, feed duplicates by the unique key inside `create` |
 | URL                 | The fragment is kept; the fetcher adapters reject credentials (`packages/webpage/src/jina.ts:13`, `packages/webpage/src/http.ts:69`)                                                                                                                  | Fragment removed; credentials allowed and never rejected by a fetcher                                                                                                                                                                                                                                                              |
 | SavedPage           | No save time, listed by `publishedAt`; duplicates found after fetching; an item without a URL can be saved; saving an item resolves the feed first                                                                                                    | Listing by `id` descending; duplicate check before fetching; URL required; the item is found by owner and id and used even if it disappears                                                                                                                                                                                        |
@@ -210,9 +206,9 @@ The business core is rewritten from the specs, not migrated step by step. The cu
 
 These behaviors live outside the business core. The specs do not state them, but they must survive the rewrite:
 
-- HTTP error status and tag mapping, and the front end's whitelist of error tags (`apps/web/src/lib/library-transport.ts:65`).
-- The Origin check that rejects cross-site non-GET requests with 403 (`apps/api/src/middleware/origin.ts:16`).
+- HTTP error status and tag mapping, and the front end's whitelist of error tags (`apps/web/src/lib/library-error.ts`).
+- The Origin check that rejects cross-site non-GET requests with 403 (`apps/api/src/middleware/origin.ts`).
 - Feed parser behavior: RSS, Atom, RDF and JSON Feed; plain-text Atom and JSON `content_text` escaped; `DOCTYPE` and `ENTITY` declarations rejected (`apps/api/src/adapter/feed-parser.ts`).
-- Request limits: a URL of at most 4096 characters and at most 5000 ids per batch (`packages/api/src/reader-api.ts`).
+- Request limits: a URL of at most 4096 characters and at most 5000 ids per batch (`packages/api/src/common.ts`).
 - The shared browser-fetch concurrency of 2 with a 40-second timeout (`packages/webpage/src/webpage-fetcher.ts`).
 - The front end's optimistic read-state update with rollback on failure (`apps/web/src/pages/library-read.ts`).
