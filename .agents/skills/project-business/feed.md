@@ -1,8 +1,8 @@
 # Feed (subscriptions and their items)
 
-Domain: the feeds a user subscribes to and the items collected from them. A feed item and a saved page are independent: saving an item to read later makes a copy (see the SavedPage spec).
+Domain: the feeds a user subscribes to and the items collected from them. A feed item and a saved page are independent: saving an item to read later makes a copy (see `saved-page.md`).
 
-Scope: business contract only. Front-end behavior (what the list shows while loading, confirmation dialogs, request races) is not specified here.
+Scope: business contract only. Front-end behavior (what the list shows while loading, confirmation dialogs, request races) is in the `project-architecture` skill's `reader-ui.md`; HTTP boundary behavior is in the `project-effect-api` skill.
 
 ## Entities
 
@@ -146,7 +146,7 @@ Run only by the scheduler's refresh queue (FD-SCHED). There is no user operation
 The scheduler lives in the application, not in `packages/business`. It owns the refresh queue and calls the refresh use case (FD-REFRESH). It is described here because the retention, subscribe and sync rules rely on it. Listing the feeds for the periodic run is the scheduler's own query, not a business port.
 
 - FD-SCHED-1 Every refresh interval, all feeds are enqueued, and each feed is enqueued once at process start.
-- FD-SCHED-2 Each feed has at most one refresh, queued or running. A request for a feed that already has one, in either state, is dropped.
+- FD-SCHED-2 Each feed has at most one outstanding refresh. An accepted request starts at once; a request for a feed whose refresh has not finished is dropped.
 - FD-SCHED-3 Refreshes of different feeds run at the same time; there is no bound on how many. Different feeds of the same owner may refresh at the same time.
 - FD-SCHED-4 A feed that fails to refresh is logged and does not stop the others.
 - FD-SCHED-5 A failed refresh is not visible to the user. No status is stored besides `Feed.updatedAt`.
@@ -210,12 +210,12 @@ Each is a single port call, so there is no use case. They are listed separately 
 - FD-UNSUB-2 Ids that do not exist, or belong to another owner, succeed and change nothing.
 - FD-UNSUB-3 Saved pages created from the feed's items stay.
 - FD-UNSUB-4 Unread counts no longer include the removed feeds.
-- FD-UNSUB-5 Subscribing again to the same URL creates a new feed with a new id. Its refresh is queued on its own (FD-SCHED-2); a refresh of the old feed that is still running finds the old feed gone and creates nothing (FD-SYNC-5).
+- FD-UNSUB-5 Subscribing again to the same URL creates a new feed with a new id. Its refresh runs on its own (FD-SCHED-2); a refresh of the old feed that is still running finds the old feed gone and creates nothing (FD-SYNC-5).
 
 ### FD-OWN — Ownership
 
 - FD-OWN-1 Every operation is scoped to the owner passed in (CM-OWN).
-- FD-OWN-2 An unknown feed is never an error. An unknown item is an error only where the operation cannot go on without it (FD-EXTRACT, and SP-SAVE in the SavedPage spec).
+- FD-OWN-2 An unknown feed is never an error. An unknown item is an error only where the operation cannot go on without it (FD-EXTRACT, and SP-SAVE in `saved-page.md`).
 
 ## Use cases
 

@@ -2,7 +2,7 @@
 
 Domain: per-user settings. Settings are grouped by category so that new categories never collide with existing fields.
 
-Scope: business contract only. The HTTP interface, how values are written in a request, and the settings form are not specified here; `features/setting.feature` has reference scenarios for them.
+Scope: business contract only. The HTTP interface, how values are written in a request, and the settings form are not specified here; the HTTP boundary rules are in the `project-effect-api` skill and the settings form in the `project-architecture` skill's `reader-ui.md`.
 
 ## Entity
 

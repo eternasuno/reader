@@ -2,7 +2,7 @@
 
 Domain: pages a user saved to read later. Saved pages are independent of feed items: saving a feed item makes a copy, after which the two never affect each other.
 
-Scope: business contract only. Front-end behavior (auto-marking a page read when opened, keeping a just-read page in the unread list, when the user reloads, request races) is not specified here.
+Scope: business contract only. Front-end behavior (auto-marking a page read when opened, keeping a just-read page in the unread list, when the user reloads, request races) is in the `project-architecture` skill's `reader-ui.md`.
 
 ## Entity
 

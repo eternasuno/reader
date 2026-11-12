@@ -2,9 +2,9 @@
 
 Rules shared by more than one domain. Each rule says where it lives. Entity-level rules (URL normalization, article values) are part of the entity schema and are never repeated in use cases.
 
-Parsing and validation happen where outside data enters: HTTP input, adapter outputs (the fetchers, the feed parser, the article extractor, the sanitizer) and configuration. Past those boundaries, branded values are trusted and never re-validated. This holds for every domain and is not repeated in the other specs.
+Parsing and validation happen where outside data enters: HTTP input, adapter outputs (the fetchers, the feed parser, the article extractor, the sanitizer) and configuration. Past those boundaries, branded values are trusted and never re-validated. This holds for every domain and is not repeated in the other rule files.
 
-The dependency direction `SavedPage -> Feed -> Setting -> Common` constrains code imports, not specs: a spec may mention another domain to explain a rule.
+The dependency direction `SavedPage -> Feed -> Setting -> Common` constrains code imports, not these rule files: a rule may mention another domain to explain itself.
 
 ## CM-URL — Normalized URL (entity schema)
 
@@ -96,7 +96,7 @@ Readers of the clock: `refreshFeed` (`updatedAt`). `fetchAndExtract` and `subscr
 
 ## CM-PORT — Port contracts
 
-An operation that only forwards one port call gets no use case. So part of the business behavior (skipping existing ids, owner scoping, unique URLs, removing a feed together with its items) is stated as port contracts in the domain specs.
+An operation that only forwards one port call gets no use case. So part of the business behavior (skipping existing ids, owner scoping, unique URLs, removing a feed together with its items) is stated as port contracts in the domain rule files.
 
 - CM-PORT-1 A port contract is a business rule. Every implementation of a port, including a test double, must satisfy it.
 - CM-PORT-2 Each repository port has one contract test suite, written against the port. It runs against every implementation.
@@ -139,4 +139,4 @@ Redirects, timeouts, size limits and which addresses may be reached are the adap
 ## Not common
 
 - Choosing the extraction provider and the sanitizer's allowed markup are adapter concerns.
-- Read-state rules (marking, idempotence) differ per domain and live in the SavedPage and Feed specs.
+- Read-state rules (marking, idempotence) differ per domain and live in `saved-page.md` and `feed.md`.

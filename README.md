@@ -52,8 +52,9 @@ pnpm typecheck  # run TypeScript checks for both applications
 
 Maintainers should read [`AGENTS.md`](AGENTS.md) first, then read the relevant project skill for the task:
 
-- [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — architecture, browser/API boundaries, session subscriptions, or deployment topology.
-- [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, sessions, protected APIs, business ports and use cases, repository and paging contracts, Effect services, or Layer composition.
+- [`project-business`](.agents/skills/project-business/SKILL.md) — business rules: feeds, feed items, saved pages, settings, ids, paging, refresh and retention, with numbered rules that tests refer to.
+- [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — architecture, reader and settings UI behavior, browser/API boundaries, session subscriptions, or deployment topology.
+- [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, sessions, protected APIs, HTTP handlers and error mapping, the feed refresh queue, Effect services, or Layer composition.
 - [`project-database`](.agents/skills/project-database/SKILL.md) — SurrealDB/SurrealKV connections, queries, schema migrations, or database deployment configuration.
 - [`project-testing`](.agents/skills/project-testing/SKILL.md) — tests, test doubles, Effect Layers, or in-memory database schema setup.
 
