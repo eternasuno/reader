@@ -25,6 +25,9 @@ Read the relevant skill first when the task involves:
 - Treat `README.md` as the source of truth for setup, commands, environment variables, routes, and deployment details.
 - Business behavior is defined by the numbered rules in the `project-business` skill. Change its rule files in the same change as the behavior they describe.
 - Add no length, size, batch, page-size, timeout or concurrency limit and no defensive policy until running the application shows it is needed.
+- Files are capped at 300 non-blank lines (`biome.json`). When a file outgrows the cap, turn it into a directory of the same name and split it by concept (`feed-item/create.ts`, `feed-item/list.ts`), not into sibling files that differ by a suffix. This holds for production code and tests alike.
+- One domain has one name in every layer: `feed`, `folder`, `feed-item`, `saved-page` and `setting` in `packages/business`, `apps/api` and `apps/web`.
+- Import direction between layers is written in the skills (`project-business`, `project-effect-api`, `project-architecture`, `project-testing`) and enforced by review, not by a lint rule: when a change adds a file or an import, check its import statements against those rules.
 - Keep Docker runtime independent of the workspace: compiled API, Web assets in `public/`, and API production dependencies only; start Node directly and inject configuration through Docker environment variables. See README for the maintained layout and commands.
 - The project is in development: do not add data migrations or backward compatibility for stored data. When a schema or embedded-engine change makes an existing database unusable, delete it and rebuild with `pnpm db:migrate`.
 - Before finishing changes, run `pnpm check`, `pnpm typecheck`, `pnpm test`, and `pnpm build`.

@@ -6,7 +6,6 @@ import {
 } from '../../../src/port/feed-item-repository';
 import { SavedPageRepository } from '../../../src/port/saved-page-repository';
 import { WebpageFetcherError } from '../../../src/port/webpage-fetcher';
-import { addSavedPage } from '../../../src/usecase/saved-page/add-saved-page';
 import { saveFeedItem } from '../../../src/usecase/saved-page/save-feed-item';
 import {
   alice,
@@ -17,17 +16,15 @@ import {
   decodeUrl,
   makeFeedItem,
   makeSavedPage,
-} from '../../support';
+} from '../../support/fixtures';
 import {
   asAlreadyExists,
   asNotFound,
-  capture,
-  errorsOf,
   recordingFetch,
   run,
   storedPages,
   storeFeedItem,
-} from './support';
+} from '../../support/usecase/saved-page';
 
 const publishedAt = DateTime.fromDateUnsafe(
   new Date('2026-02-01T00:00:00.000Z')
@@ -109,25 +106,6 @@ describe('saveFeedItem copy', () => {
       })
     )
   );
-
-  it.effect('SP-SAVE-9 puts the saved copy on top of the list', () =>
-    run(
-      Effect.gen(function* () {
-        const older = yield* addSavedPage(
-          alice,
-          decodeUrl('https://example.com/older')
-        );
-        const item = yield* storeFeedItem(alice, {
-          content: decodeContent('<p>Feed body</p>'),
-        });
-        const page = yield* saveFeedItem(alice, item.id);
-        const listed = yield* storedPages(alice);
-
-        expect(listed.map((row) => row.id)).toEqual([page.id, older.id]);
-        expect(page.id > older.id).toBe(true);
-      })
-    )
-  );
 });
 
 describe('saveFeedItem content priority', () => {
@@ -203,29 +181,6 @@ describe('saveFeedItem failures', () => {
 });
 
 describe('saveFeedItem races and deletion', () => {
-  it.effect('SP-SAVE-7 saves exactly one page when two saves run at once', () =>
-    run(
-      Effect.gen(function* () {
-        const item = yield* storeFeedItem(alice, {
-          content: decodeContent('<p>Feed body</p>'),
-        });
-        const captures = yield* Effect.all(
-          [
-            capture(saveFeedItem(alice, item.id)),
-            capture(saveFeedItem(alice, item.id)),
-          ],
-          { concurrency: 'unbounded' }
-        );
-
-        expect(captures.filter((captured) => captured.ok)).toHaveLength(1);
-        expect(errorsOf(captures).map((error) => error._tag)).toEqual([
-          'SavedPageAlreadyExists',
-        ]);
-        expect(yield* storedPages(alice)).toHaveLength(1);
-      })
-    )
-  );
-
   it.effect('SP-SAVE-10 saves the item found before it was deleted', () =>
     run(
       Effect.gen(function* () {

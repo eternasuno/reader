@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option } from 'effect';
 import { previewFeed } from '../../../src/usecase/feed/preview-feed';
-import { alice, decodeUrl } from '../../support';
+import { alice, decodeUrl } from '../../support/fixtures';
 import {
   allItems,
   parsedEntry,
@@ -9,7 +9,7 @@ import {
   run,
   storedFeeds,
   transportFailure,
-} from './support';
+} from '../../support/usecase/feed';
 
 const url = decodeUrl('https://example.com/feed.xml');
 

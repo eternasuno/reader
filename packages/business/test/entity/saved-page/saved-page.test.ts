@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Option } from 'effect';
-import { makeSavedPage } from '../../support';
+import { makeSavedPage } from '../../support/fixtures';
 
 describe('SavedPage', () => {
   it('starts unread with an empty description and no publish time', () => {

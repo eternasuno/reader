@@ -217,8 +217,5 @@ export const refreshFeed = (
 
     const now = yield* DateTime.now;
 
-    yield* feeds.update(feed.ownerId, [feed.id], {
-      title: parsed.title,
-      updatedAt: Option.some(now),
-    });
+    yield* feeds.recordSync(feed.ownerId, feed.id, parsed.title, now);
   });

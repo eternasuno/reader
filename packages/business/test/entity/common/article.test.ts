@@ -4,7 +4,11 @@ import {
   ArticleContent,
   ArticleDescription,
 } from '../../../src/entity/common/article';
-import { decodeContent, decodeDescription, decodeTitle } from '../../support';
+import {
+  decodeContent,
+  decodeDescription,
+  decodeTitle,
+} from '../../support/fixtures';
 
 const decodeArticleDescription = Schema.decodeSync(ArticleDescription);
 

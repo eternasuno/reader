@@ -42,14 +42,14 @@ Scope: business contract only. Front-end behavior (what the list shows while loa
 
 ### ParsedFeed (value, not stored)
 
-What `FeedParser` returns: the feed `title`, an optional `description`, and the entries. An entry has `title`, optional `description`, optional `content`, required `url` and optional `publishedAt`. The parser drops every entry without a valid URL (see `FeedParser`). Entry text is as the source gave it, not yet cleaned.
+What `FeedParser` returns: the feed `title`, an optional `description`, and the entries. An entry has `title`, optional `description`, optional `content`, required `url` and optional `publishedAt`. The parser drops every entry without a valid URL (FD-PARSE-2). Entry text is as the source gave it, not yet cleaned; how each field is taken from each format is the FD-PARSE contract.
 
 ## Rules
 
 ### FD-ID — Identity
 
 - FD-ID-1 A feed's id is a new id (CM-ID), made when the feed is created. Feeds are unique per owner and URL: one owner follows a normalized URL at most once (the unique URL key, CM-ID-6). Two owners subscribing to one URL get two feeds.
-- FD-ID-2 An item's id is a new id (CM-ID), made when the item is imported (FD-SYNC step 3). Items are unique per feed and URL: one item per feed for a normalized URL (CM-ID-6). Title and description take no part in identity, so a source that edits them does not create a new item or reset its read state. Entries with the same URL collapse to the first one in source order.
+- FD-ID-2 An item's id is a new id (CM-ID), made when the item is imported (FD-SYNC step 3). Items are unique per feed and URL: one item per feed for a normalized URL (CM-ID-6); the URL is the one the parser selects for the entry (FD-PARSE-2, FD-PARSE-3), so changing that selection would turn stored items into new ones. Title and description take no part in identity, so a source that edits them does not create a new item or reset its read state. Entries with the same URL collapse to the first one in source order.
 - FD-ID-3 The same URL in two feeds is two items.
 
 ### FD-FETCH — Fetch and parse (shared by preview and refresh)
@@ -102,9 +102,9 @@ Example, N = 3, list order shown from top to bottom. This is an illustration of 
 - FD-IMPORT-2 `description` and `content` are cleaned before storage as in CM-HTML, with the item's URL as the base for relative links. The text is not shortened.
 - FD-IMPORT-3 An absent or empty description or content is stored as none. Every entry that reaches this step has a URL; the parser drops entries without one.
 - FD-IMPORT-4 A stored item is never overwritten: `create` skips a row whose id or unique URL key already exists (CM-PORT-6).
-- FD-IMPORT-5 The publish time is the one the source gives, if any, and is kept for display only. A missing time stays none; no fallback invents one. A time that is wrong or in the future is shown as given and changes nothing else.
+- FD-IMPORT-5 The publish time is the one the source gives in the field FD-PARSE-7 names, if any, and is kept for display only. A missing time stays none; no fallback invents one. A time that is wrong or in the future is shown as given and changes nothing else.
 - FD-IMPORT-6 An entry whose description or content cannot be cleaned (CM-HTML-4) is skipped and logged. The other entries are imported. The skipped entry is not stored, so the next sync tries it again. One bad entry never blocks a feed.
-- FD-IMPORT-7 An entry whose URL is missing, or is not a valid `NormalizedUrl` after resolution against the final URL, is dropped by the parser and never imported. Every stored item therefore has a URL.
+- FD-IMPORT-7 An entry whose URL is missing, or is not a valid `NormalizedUrl` after resolution against the final URL, is dropped by the parser (FD-PARSE-2) and never imported. Every stored item therefore has a URL.
 
 ### FD-SYNC — Bring a feed's items in line with its source
 
@@ -114,13 +114,13 @@ The sync is part of `refreshFeed`, not a use case of its own: it is the one plac
 2. Select (FD-SEL): the selection function returns the entries to import, in source order, and the ids of the stored items to delete.
 3. For the entries to import, from the last to the first: clean the entry with its URL as the base (FD-IMPORT), skip it if cleaning fails (FD-IMPORT-6), otherwise build the item, which makes its id (FD-SEL-9). Then create the built items in one call.
 4. Delete the items whose ids step 2 returned (`FeedItemRepository.remove`). Every one of them was stored before step 3, so nothing created there is touched.
-5. Update the feed's `title` and `updatedAt = now`, the only clock read of the sync.
+5. Record the sync: `FeedRepository.recordSync(owner, feed.id, parsed.title, now)` sets the feed's `title` and `updatedAt = now`, the only clock read of the sync.
 
 - FD-SYNC-1 Stored items are never modified. If the source changes an entry already stored, the stored item keeps its first-imported values.
 - FD-SYNC-2 The writes of steps 3 to 5 are not atomic. A failure in between may leave some entries imported, more than N items, or the old title. The next sync converges. Items are never lost beyond the retention rule.
 - FD-SYNC-3 Syncing one feed never changes another feed, nor any saved page.
 - FD-SYNC-4 On failure the feed's title and `updatedAt` are not updated.
-- FD-SYNC-5 Items are created only while their feed exists (see `FeedItemRepository.create`). If the feed is removed while a sync is running, the sync leaves no items behind: `create` skips items of a missing feed, and `remove` and `update` on a missing feed change nothing. A later subscription to the same address is a new feed with a new id (FD-UNSUB-5), and it gets its own items from its own refresh.
+- FD-SYNC-5 Items are created only while their feed exists (see `FeedItemRepository.create`). If the feed is removed while a sync is running, the sync leaves no items behind: `create` skips items of a missing feed, and `remove` and `recordSync` on a missing feed change nothing. A later subscription to the same address is a new feed with a new id (FD-UNSUB-5), and it gets its own items from its own refresh.
 - FD-SYNC-6 The sync never runs twice at the same time for one feed. The refresh queue guarantees it (FD-SCHED-2); nothing else in the domain relies on concurrent syncs.
 
 ### FD-SUB — Subscribe
@@ -149,7 +149,7 @@ Run only by the scheduler's refresh queue (FD-SCHED). There is no user operation
 2. `fetchParsedFeed(feed.url)`.
 3. Sync the feed's items with the parsed source (FD-SYNC).
 
-- FD-REFRESH-1 A feed removed before or during the run is not an error: `find` returns none and the run is done; `create` skips items of a missing feed; `remove` and `update` on a missing feed change nothing. Other failures of the run (fetch, parse, storage) are still failures and are logged.
+- FD-REFRESH-1 A feed removed before or during the run is not an error: `find` returns none and the run is done; `create` skips items of a missing feed; `remove` and `recordSync` on a missing feed change nothing. Other failures of the run (fetch, parse, storage) are still failures and are logged.
 - FD-REFRESH-2 Every run goes through the refresh queue, so no two runs of one feed overlap (FD-SCHED-2). Errors are those of FD-FETCH and of the repositories used by FD-SYNC.
 
 ### FD-SCHED — Scheduled refresh (system behavior, outside business)
@@ -171,9 +171,9 @@ The scheduler lives in the application, not in `packages/business`. It owns the 
 
 ### FD-LIST — List items
 
-Input: `owner`, `scope`, `unreadOnly`, `limit`, optional `cursor`. `scope` is a `FeedItemScope`, a `Schema.TaggedUnion` in `list-items.ts`: `All`, `Feed { feedId }` or `Folder { folderId }`. Paging follows CM-PAGE.
+Three use cases in `list-items.ts`, one per scope: `listAllItems(owner, page)`, `listFeedItems(owner, feedId, page)` and `listFolderItems(owner, folderId, page)`. `page` is `unreadOnly`, `limit` and an optional `cursor`; paging follows CM-PAGE through the shared helpers of `usecase/common/paging.ts`.
 
-- FD-LIST-1 Each scope is one port call: `All` lists the items of all of the owner's feeds (`listAll`), `Feed` only the items of that feed (`listByFeed`), `Folder` the items of the feeds in that folder (`listByFolder`). No feed or folder is looked up first.
+- FD-LIST-1 Each scope is one use case and one port call, with no branching on a scope value anywhere: `listAllItems` lists the items of all of the owner's feeds (`listAll`), `listFeedItems` only the items of that feed (`listByFeed`), `listFolderItems` the items of the feeds in that folder (`listByFolder`). No feed or folder is looked up first.
 - FD-LIST-2 A `feedId` that does not exist, or is not the owner's, gives an empty page (CM-OWN-3).
 - FD-LIST-3 Feeds themselves are listed by title ascending, then id ascending.
 - FD-LIST-4 Rows are ordered by `id` descending. Ids are made in creation order (CM-ID-1), so this is newest first. A single-feed or single-folder list is the all-feeds list restricted to that scope: same order, same cursor shape (CM-PAGE-1).
@@ -192,7 +192,7 @@ Input: `owner`, `scope`, `unreadOnly`, `limit`, optional `cursor`. `scope` is a 
 1. Find the item for this owner, else `FeedItemNotFound`.
 2. If it already has `extractedContent`, return the item. Nothing is fetched.
 3. `fetchAndExtract(item.url)` (CM-FETCH).
-4. Store the content as `extractedContent` and return the updated item. If `update` returns no id, the item vanished: fail `FeedItemNotFound`.
+4. Store the content with `FeedItemRepository.setExtractedContent(owner, item.id, content)` and return the item with it. If it returns `false`, the item vanished: fail `FeedItemNotFound`.
 
 - FD-EXTRACT-1 Extraction failure or empty content fails the operation and stores nothing.
 - FD-EXTRACT-2 Later requests reuse the stored content. Two requests at once may both fetch; each stores and returns what it extracted, and the last write wins.
@@ -201,12 +201,12 @@ Input: `owner`, `scope`, `unreadOnly`, `limit`, optional `cursor`. `scope` is a 
 
 Each is a single port call, so there is no use case. They are listed separately because callers need them distinct:
 
-| Operation               | Port call                                     | Effect                                                                                       |
-| ----------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Mark items (by id list) | `update(owner, ids, { read })`                | Sets `read` on exactly those items. Used for single items and "the items loaded in the list" |
-| Mark feeds              | `updateByFeeds(owner, feedIds, { read })`     | Sets `read` on every item of the given feeds                                                 |
-| Mark folders            | `updateByFolders(owner, folderIds, { read })` | Sets `read` on every item of the feeds that are in the given folders when the call runs      |
-| Mark all                | `updateAll(owner, { read })`                  | Sets `read` on every item of every feed of the owner                                         |
+| Operation               | Port call                              | Effect                                                                                       |
+| ----------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Mark items (by id list) | `markRead(owner, ids, read)`           | Sets `read` on exactly those items. Used for single items and "the items loaded in the list" |
+| Mark feeds              | `markReadByFeeds(owner, feedIds)`      | Sets `read = true` on every item of the given feeds                                          |
+| Mark folders            | `markReadByFolders(owner, folderIds)`  | Sets `read = true` on every item of the feeds that are in the given folders when the call runs |
+| Mark all                | `markAllRead(owner)`                   | Sets `read = true` on every item of every feed of the owner                                  |
 
 - FD-READ-1 Marking unknown ids, or ids of another owner, succeeds and changes nothing.
 - FD-READ-2 Marking feeds affects only feeds of the owner. Feed ids that are not the owner's are ignored.
@@ -236,18 +236,18 @@ A folder groups some of one owner's feeds so they can be listed, counted and mar
 - FD-FOLDER-2 The name is a `FolderName`: trimmed, and not empty after trimming; the boundary rejects an empty name. Names are compared exactly as stored, so they are case-sensitive: `Tech` and `tech` are two folders.
 - FD-FOLDER-3 Folders are one level deep: a folder holds feeds only. A feed is in at most one folder (`Feed.folderId`); a feed with none is at the top level.
 - FD-FOLDER-4 Create (`createFolder(owner, name)`): build the folder with its constructor, which makes the id (CM-ID-3), and create it with `FolderRepository.create`. If nothing was created, fail `FolderAlreadyExists(folderName)`. Two creates of one name at once create one folder. A new folder is empty.
-- FD-FOLDER-5 Rename (`renameFolder(owner, folderId, name)`): `FolderRepository.update(owner, [folderId], { name })`. If the id is not returned, find the folder: none fails `FolderNotFound(folderId)`, some fails `FolderAlreadyExists(folderName)`. Renaming a folder to its current name succeeds and changes nothing. Renaming changes no feed and no item.
-- FD-FOLDER-6 A feed's `folderId` always names an existing folder of the same owner. `FeedRepository.create` skips a row whose folder is not the owner's, and `FeedRepository.update` writes nothing when the patch names such a folder; in both the folder check and the write are one atomic write, so no feed is ever left pointing at a removed folder.
+- FD-FOLDER-5 Rename (`renameFolder(owner, folderId, name)`): `FolderRepository.rename(owner, folderId, name)`. If it returns `false`, find the folder: none fails `FolderNotFound(folderId)`, some fails `FolderAlreadyExists(folderName)`. Renaming a folder to its current name succeeds and changes nothing. Renaming changes no feed and no item.
+- FD-FOLDER-6 A feed's `folderId` always names an existing folder of the same owner. `FeedRepository.create` skips a row whose folder is not the owner's, and `FeedRepository.moveToFolder` writes nothing when given such a folder; in both the folder check and the write are one atomic write, so no feed is ever left pointing at a removed folder.
 - FD-FOLDER-7 Removing folders (`FolderRepository.remove`, a single port call) removes the owner's listed folders, every feed in them and those feeds' items, in one atomic write: removing a folder unsubscribes its feeds (FD-UNSUB). Saved pages stay (FD-UNSUB-3). Unknown and foreign ids succeed and change nothing. A feed moved into the folder at the same time is either removed with it or not moved (FD-MOVE-3).
 - FD-FOLDER-8 `FolderRepository.list(owner)` returns the owner's folders by name, then id, ascending; it is not paged. An empty folder is kept and listed, also after its last feed left it.
-- FD-FOLDER-9 Refresh never changes a feed's folder: the sync writes only `title` and `updatedAt` (FD-SYNC step 5).
+- FD-FOLDER-9 Refresh never changes a feed's folder: the sync writes only `title` and `updatedAt` through `recordSync` (FD-SYNC step 5).
 
 ### FD-MOVE — Move a feed
 
 `moveFeed(owner, feedId, folderId)`, where `folderId` is an `Option`: some folder puts the feed in it, none takes it out to the top level.
 
-1. `FeedRepository.update(owner, [feedId], { folderId })`.
-2. If the feed's id is returned, the feed was moved.
+1. `FeedRepository.moveToFolder(owner, feedId, folderId)`.
+2. If it returns `true`, the feed was moved.
 3. Otherwise, when `folderId` is some folder that `FolderRepository.find` does not return, fail `FolderNotFound(folderId)`.
 4. Otherwise the feed does not exist for the owner: succeed without change (FD-OWN-2).
 
@@ -269,7 +269,9 @@ A folder groups some of one owner's feeds so they can be listed, counted and mar
 | `previewFeed`     | `url`                                              | title (`FeedTitle`), optional description, entry titles | as `fetchParsedFeed`                                               |
 | `subscribeFeed`   | `owner`, `url`, `title`, `folderId` (`Option`)     | `Feed`                                                  | `FeedAlreadyExists`, `FolderNotFound`; nothing is fetched          |
 | `refreshFeed`     | `owner`, `feedId`                                  | nothing                                                 | as `fetchParsedFeed`; cleaning errors skip the entry (FD-IMPORT-6) |
-| `listItems`       | `owner`, `scope`, `unreadOnly`, `limit`, `cursor?` | items, `cursor` or `null`                               | none                                                               |
+| `listAllItems`    | `owner`, `page` (`unreadOnly`, `limit`, `cursor?`) | items, `cursor` or `null`                               | none                                                               |
+| `listFeedItems`   | `owner`, `feedId`, `page`                          | items, `cursor` or `null`                               | none                                                               |
+| `listFolderItems` | `owner`, `folderId`, `page`                        | items, `cursor` or `null`                               | none                                                               |
 | `extractItem`     | `owner`, `itemId`                                  | `FeedItem`                                              | `FeedItemNotFound`, and those of CM-FETCH                          |
 | `createFolder`    | `owner`, `name`                                    | `Folder`                                                | `FolderAlreadyExists`                                              |
 | `renameFolder`    | `owner`, `folderId`, `name`                        | nothing                                                 | `FolderNotFound`, `FolderAlreadyExists`                            |
@@ -295,7 +297,7 @@ Find one item, mark items, mark feeds, mark folders, mark all, unread counts, li
 
 ### FeedRepository
 
-All methods are scoped by `ownerId`. Patch and write semantics are those of CM-PORT.
+All methods are scoped by `ownerId`. Write semantics are those of CM-PORT.
 
 | Method                      | Contract                                                                                                                                                                                                                                                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -303,23 +305,24 @@ All methods are scoped by `ownerId`. Patch and write semantics are those of CM-P
 | `list(owner)`               | The owner's feeds ordered by title, then id (FD-LIST-3)                                                                                                                                                                                                                                                     |
 | `create(owner, feeds)`      | Returns the ids actually created (CM-PORT). A row whose `folderId` is a folder that is not the owner's is skipped; the folder check and the insert are one atomic write (FD-FOLDER-6)                                                                                                                       |
 | `remove(owner, ids)`        | Removes the owner's feeds among `ids` **and all their items**; unknown ids ignored                                                                                                                                                                                                                          |
-| `update(owner, ids, patch)` | Applies a patch to the owner's feeds among `ids`; returns the ids that exist (CM-PORT). Writable fields: `title`, `folderId`, `updatedAt`. A patch whose `folderId` is a folder that is not the owner's writes nothing and returns no id; the folder check and the write are one atomic write (FD-FOLDER-6) |
+| `moveToFolder(owner, id, folderId)` | Sets the feed's `folderId` (`Option`; none is the top level) and returns `true`. Returns `false` and writes nothing when the feed is not the owner's or when `folderId` names a folder that is not the owner's; the folder check and the write are one atomic write (FD-FOLDER-6) |
+| `recordSync(owner, id, title, at)` | Sets the feed's `title` and `updatedAt = some(at)` (FD-SYNC step 5); an unknown feed changes nothing                                                                                                                                                                                                  |
 
 ### FolderRepository
 
-All methods are scoped by `ownerId`. Patch and write semantics are those of CM-PORT, except where `update` refuses a taken name.
+All methods are scoped by `ownerId`. Write semantics are those of CM-PORT.
 
 | Method                      | Contract                                                                                                                                                                                                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `find(owner, id)`           | `Option` of the folder                                                                                                                                                                                                                                                   |
 | `list(owner)`               | The owner's folders ordered by name, then id (FD-FOLDER-8)                                                                                                                                                                                                               |
 | `create(owner, folders)`    | Returns the ids actually created (CM-PORT-6). A row is skipped when its id exists, when the owner already has a folder of that name (CM-ID-6), or when its `ownerId` differs from `owner`; two creates of one name at once: exactly one succeeds                         |
-| `update(owner, ids, patch)` | Applies a patch to the owner's folders among `ids`; returns the ids written, each once. Writable field: `name`. A folder whose new name another folder of the owner has is not written and its id is not returned; two renames to one name at once: exactly one succeeds |
+| `rename(owner, id, name)`   | Sets the folder's `name` and returns `true`; renaming to the current name is `true` and changes nothing. Returns `false` and writes nothing when the folder is not the owner's or when another folder of the owner has the name; the name check and the write are one atomic write, so two renames to one name at once: exactly one succeeds |
 | `remove(owner, ids)`        | Removes the owner's folders among `ids`, **their feeds and those feeds' items**, in one atomic write (FD-FOLDER-7); unknown ids ignored                                                                                                                                  |
 
 ### FeedItemRepository
 
-All methods are scoped by `ownerId`. Patch and write semantics are those of CM-PORT.
+All methods are scoped by `ownerId`. Write semantics are those of CM-PORT.
 
 | Method                                          | Contract                                                                                                                                                                                                                             |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -328,10 +331,11 @@ All methods are scoped by `ownerId`. Patch and write semantics are those of CM-P
 | `listByFeed(owner, feedId, query)`              | As `listAll`, restricted to the items of that feed of the owner (FD-LIST-2)                                                                                                                                                          |
 | `listByFolder(owner, folderId, query)`          | As `listAll`, restricted to the items of the owner's feeds whose `folderId` is that folder when the query runs (FD-LIST-6, FD-LIST-7)                                                                                                |
 | `create(owner, items)`                          | Returns the ids actually created (CM-PORT). Items of a missing feed are skipped; the feed-exists check and the insert are one atomic write, so an item is never left without its feed when `FeedRepository.remove` runs concurrently |
-| `update(owner, ids, patch)`                     | Applies a patch to the owner's items among `ids`; returns the ids that exist (CM-PORT). Writable fields: `read`, `extractedContent`                                                                                                  |
-| `updateByFeeds(owner, feedIds, patch)`          | Applies a patch to every item of the owner's feeds among `feedIds`                                                                                                                                                                   |
-| `updateByFolders(owner, folderIds, patch)`      | Applies a patch to every item of the owner's feeds whose folder is among `folderIds` when the call runs (FD-READ-5)                                                                                                                  |
-| `updateAll(owner, patch)`                       | Applies a patch to every item of the owner                                                                                                                                                                                           |
+| `markRead(owner, ids, read)`                    | Sets `read` on the owner's items among `ids`; unknown and foreign ids ignored, an empty list changes nothing (FD-READ-1)                                                                                                             |
+| `markReadByFeeds(owner, feedIds)`               | Sets `read = true` on every item of the owner's feeds among `feedIds` (FD-READ-2)                                                                                                                                                    |
+| `markReadByFolders(owner, folderIds)`           | Sets `read = true` on every item of the owner's feeds whose folder is among `folderIds` when the call runs (FD-READ-5)                                                                                                               |
+| `markAllRead(owner)`                            | Sets `read = true` on every item of the owner                                                                                                                                                                                        |
+| `setExtractedContent(owner, id, content)`       | Sets the item's `extractedContent` and returns `true`; returns `false` and writes nothing when the item is not the owner's (FD-EXTRACT step 4)                                                                                       |
 | `unreadCounts(owner)`                           | Unread count per feed of the owner                                                                                                                                                                                                   |
 | `inventory(owner, feedId)`                      | `(id, url)` of every stored item of the feed, ordered by `id` descending                                                                                                                                                             |
 | `remove(owner, ids)`                            | Deletes the owner's items among `ids`; unknown ids ignored                                                                                                                                                                           |
@@ -339,7 +343,21 @@ All methods are scoped by `ownerId`. Patch and write semantics are those of CM-P
 ### HttpClient, FeedParser
 
 - `HttpClient` (`effect/http`) is not a port of this package: `fetchParsedFeed` uses Effect's service directly and sends a GET to the feed URL. The application provides Effect's plain `FetchHttpClient`; `fetch` follows redirects, and no address, size or time limit is added. Because `fetch` rejects a URL that carries a user name or password, `fetchParsedFeed` sends those credentials as a Basic authorization header and the URL without them (CM-URL-4).
-- `FeedParser.parse(text, baseUrl)`: a `ParsedFeed`, or `FeedParserError`. Entry URLs are resolved against `baseUrl`, the final URL from the fetcher; an entry whose URL is then not a valid `NormalizedUrl` is dropped, and so is an entry with no URL. The feed keeps the submitted URL. An entry without a publish time has none. Titles are plain text; any length limit on a title is the adapter's.
+- `FeedParser.parse(text, baseUrl)`: a `ParsedFeed`, or `FeedParserError`. `baseUrl` is the final URL from the fetcher (FD-FETCH-4); the feed keeps the submitted URL. The contract is FD-PARSE below. Which library parses the formats, and any length limit on a title, are the adapter's.
+
+#### FD-PARSE — FeedParser contract
+
+The parser reads RSS, Atom, RDF and JSON Feed. Each rule is a port contract (CM-PORT-1): every implementation must satisfy it, and the adapter tests name the rule they cover. The rules record what is taken from each format; they are not a description of the parsing library.
+
+- FD-PARSE-1 Input: one leading byte-order mark is removed before parsing; nothing else is trimmed or changed. Text that is not one of the four formats fails `FeedParserError`, and a failure is total: no partial feed is returned.
+- FD-PARSE-2 Entry URL: RSS and RDF take the entry's `link`, JSON Feed takes `url` (`external_url` is ignored), Atom takes the alternate link of FD-PARSE-3. The value is resolved against `baseUrl` and decoded as a `NormalizedUrl` (CM-URL). An entry whose URL is missing, blank, unresolvable or not a valid `NormalizedUrl` is dropped silently; the other entries keep their source order, and equal URLs are not collapsed here (FD-SEL-1 does that).
+- FD-PARSE-3 Atom entry URL: only links with no `rel` or `rel="alternate"` count. The first whose media type is `text/html` is taken (the type compared lower-cased and without parameters); else the first with no type; else the first alternate link of any type, including `application/xhtml+xml`. An entry with no alternate link is dropped (FD-PARSE-2), even when its `id` would be a usable URL.
+- FD-PARSE-4 Atom text typing: the summary and the content carry a type. Plain types (no type, `text`, `text/plain`) are HTML-escaped once (`&`, `<` and `>`; existing entities are not decoded, so `&amp;` becomes `&amp;amp;`); HTML types (`html`, `text/html`, `xhtml`, `application/xhtml+xml`) are kept as given; any other type gives none. The entry title is never escaped.
+- FD-PARSE-5 JSON Feed text typing: `summary` and `content_text` are HTML-escaped as in FD-PARSE-4; `content_html` is kept as given and is the content whenever the item has one. An empty or blank `content_html` counts as absent, so the content falls back to `content_text`. RSS and RDF text (`description`, `content:encoded`) is kept as given: Atom and JSON Feed are the only formats escaped. This escaping precedes the sanitizing of CM-HTML at import and is what makes a plain-text source survive it literally.
+- FD-PARSE-6 Entry content source: RSS and RDF use `content:encoded` only, never `description` as content; Atom content that carries a `src` attribute gives none (nothing is fetched); JSON Feed uses `content_html`, else `content_text`.
+- FD-PARSE-7 Publish time source: RSS `pubDate` only (`dc:date` is ignored); Atom `published` only (`updated` is ignored, so an entry with only `updated` has none); RDF the first `dc:date`; JSON Feed `date_published` only (`date_modified` is ignored). A missing or unparseable value is none (FD-IMPORT-5); no field falls back to another.
+- FD-PARSE-8 Feed title and description: Atom takes the `title` text and the `subtitle` text, the other formats `title` and `description`. The title is decoded as `FeedTitle`: trimmed, and the host of `baseUrl` when empty. The description is trimmed; empty is none.
+- FD-PARSE-9 Entry title and text: the title is trimmed and empty becomes "Untitled" (CM-ART-1); description and content are trimmed and empty becomes none (CM-ART-3). Nothing else is normalized, cut, deduplicated or reordered.
 
 ### From other domains
 

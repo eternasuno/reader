@@ -1,8 +1,8 @@
 import { NodeRuntime } from '@effect/platform-node';
 import { Data, Effect, Runtime } from 'effect';
-import { readerStoreSchema } from './adapter/reader-store';
-import { authOptions } from './infrastructure/auth.ts';
-import { Database, DatabaseLive } from './infrastructure/db';
+import { authOptions } from './auth.ts';
+import { Database, DatabaseLive } from './db';
+import { readerStoreSchema } from './store/schema';
 
 class SchemaUnsupported extends Data.TaggedError('SchemaUnsupported')<{
   message: string;

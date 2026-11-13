@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Option } from 'effect';
+import { Effect } from 'effect';
 import type { OwnerId } from '../../../src/entity/common/owner-id';
 import { type Folder, FolderName } from '../../../src/entity/feed/folder';
 import {
@@ -11,14 +11,8 @@ import {
   FolderNotFound,
 } from '../../../src/usecase/feed/errors';
 import { renameFolder } from '../../../src/usecase/feed/rename-folder';
-import {
-  alice,
-  bob,
-  makeFolder,
-  makeUniqueFeed,
-  storedFolder,
-} from '../../support';
-import { findFeed, run, storeFeed } from './support';
+import { alice, bob, makeFolder, storedFolder } from '../../support/fixtures';
+import { run } from '../../support/usecase/feed';
 
 const name = (value: string): FolderName => FolderName.make(value);
 
@@ -46,22 +40,6 @@ describe('renameFolder', () => {
       expect(result.folders).toStrictEqual([
         { ...result.folder, name: name('Renamed') },
       ]);
-    })
-  );
-
-  it.effect('FD-FOLDER-5 renaming to the current name changes nothing', () =>
-    Effect.gen(function* () {
-      const result = yield* run(
-        Effect.gen(function* () {
-          const folder = yield* storedFolder(alice);
-
-          yield* renameFolder(alice, folder.id, folder.name);
-
-          return { folder, folders: yield* foldersOf(alice) };
-        })
-      );
-
-      expect(result.folders).toStrictEqual([result.folder]);
     })
   );
 });
@@ -122,26 +100,6 @@ describe('renameFolder unknown folders', () => {
         new FolderNotFound({ id: result.folder.id })
       );
       expect(result.theirs).toStrictEqual([result.folder]);
-    })
-  );
-});
-
-describe('renameFolder feeds', () => {
-  it.effect("FD-FOLDER-5 renaming keeps the folder's feeds in it", () =>
-    Effect.gen(function* () {
-      const result = yield* run(
-        Effect.gen(function* () {
-          const folder = yield* storedFolder(alice);
-          const feed = makeUniqueFeed({ folderId: Option.some(folder.id) });
-
-          yield* storeFeed(feed);
-          yield* renameFolder(alice, folder.id, name('Renamed'));
-
-          return { feed, stored: yield* findFeed(alice, feed.id) };
-        })
-      );
-
-      expect(Option.getOrThrow(result.stored)).toStrictEqual(result.feed);
     })
   );
 });

@@ -72,10 +72,10 @@ Input: `owner`, `unreadOnly`, `limit`, optional `cursor`. Paging follows CM-PAGE
 
 Each operation is a single port call, so there is no use case. They are listed separately because callers need them distinct:
 
-| Operation               | Port call                      | Effect                                                                                       |
-| ----------------------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
-| Mark pages (by id list) | `update(owner, ids, { read })` | Sets `read` on exactly those pages. Used for "the pages loaded in the list" and single pages |
-| Mark all                | `updateAll(owner, { read })`   | Sets `read` on every page of the owner, loaded or not                                        |
+| Operation               | Port call                    | Effect                                                                                       |
+| ----------------------- | ---------------------------- | -------------------------------------------------------------------------------------------- |
+| Mark pages (by id list) | `markRead(owner, ids, read)` | Sets `read` on exactly those pages. Used for "the pages loaded in the list" and single pages |
+| Mark all                | `markAllRead(owner)`         | Sets `read = true` on every page of the owner, loaded or not                                 |
 
 - SP-READ-1 Marking unknown ids, or ids of another owner, succeeds and changes nothing.
 - SP-READ-2 Marking is idempotent.
@@ -128,8 +128,8 @@ All methods are scoped by `ownerId`.
 | `findByUrl(owner, url)`                      | `Option` of the owner's page with that URL (SP-ID-4)                                                                                         |
 | `list(owner, { unreadOnly, after?, limit })` | Pages ordered by `id` desc, newest saved first; those with a smaller id than `after` when given; at most `limit`                             |
 | `create(owner, pages)`                       | CM-PORT: returns the ids actually created; a row is skipped, never overwritten, when its id exists or its URL is already saved for the owner |
-| `update(owner, ids, patch)`                  | CM-PORT: applies `patch` to the owner's pages among `ids`; returns the ids that exist; the writable patch field is `read`                    |
-| `updateAll(owner, patch)`                    | Applies `patch` to every page of the owner                                                                                                   |
+| `markRead(owner, ids, read)`                 | Sets `read` on the owner's pages among `ids`; unknown and foreign ids ignored, an empty list changes nothing (SP-READ-1)                     |
+| `markAllRead(owner)`                         | Sets `read = true` on every page of the owner                                                                                                |
 | `remove(owner, ids)`                         | Removes the owner's pages among `ids`; unknown ids ignored                                                                                   |
 | `unreadCount(owner)`                         | Count of unread pages                                                                                                                        |
 

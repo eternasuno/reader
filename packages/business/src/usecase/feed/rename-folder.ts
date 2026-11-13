@@ -18,9 +18,9 @@ export const renameFolder = (
 > =>
   Effect.gen(function* () {
     const repository = yield* FolderRepository;
-    const written = yield* repository.update(owner, [folderId], { name });
+    const written = yield* repository.rename(owner, folderId, name);
 
-    if (written.length > 0) {
+    if (written) {
       return;
     }
 

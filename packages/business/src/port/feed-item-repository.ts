@@ -1,28 +1,13 @@
-import {
-  Context,
-  Data,
-  type Effect,
-  type Option,
-  Schema,
-  Struct,
-} from 'effect';
+import { Context, Data, type Effect, type Option } from 'effect';
+import type { ArticleContent } from '../entity/common/article';
 import type { OwnerId } from '../entity/common/owner-id';
 import type { FeedId } from '../entity/feed/feed';
-import { FeedItem, type FeedItemId } from '../entity/feed/feed-item';
+import type { FeedItem, FeedItemId } from '../entity/feed/feed-item';
 import type { FolderId } from '../entity/feed/folder';
 
 export class FeedItemRepositoryError extends Data.TaggedError(
   'FeedItemRepositoryError'
 )<{ readonly message: string }> {}
-
-export const FeedItemPatch = FeedItem.mapFields((fields) =>
-  Struct.map(
-    Struct.pick(fields, ['read', 'extractedContent']),
-    Schema.optionalKey
-  )
-);
-
-export type FeedItemPatch = typeof FeedItemPatch.Type;
 
 export type FeedItemQuery = {
   readonly unreadOnly: boolean;
@@ -60,25 +45,27 @@ export interface IFeedItemRepository {
     owner: OwnerId,
     items: ReadonlyArray<FeedItem>
   ) => Effect.Effect<ReadonlyArray<FeedItemId>, FeedItemRepositoryError>;
-  readonly update: (
+  readonly markRead: (
     owner: OwnerId,
     ids: ReadonlyArray<FeedItemId>,
-    patch: FeedItemPatch
-  ) => Effect.Effect<ReadonlyArray<FeedItemId>, FeedItemRepositoryError>;
-  readonly updateByFeeds: (
-    owner: OwnerId,
-    feedIds: ReadonlyArray<FeedId>,
-    patch: FeedItemPatch
+    read: boolean
   ) => Effect.Effect<void, FeedItemRepositoryError>;
-  readonly updateByFolders: (
+  readonly markReadByFeeds: (
     owner: OwnerId,
-    folderIds: ReadonlyArray<FolderId>,
-    patch: FeedItemPatch
+    feedIds: ReadonlyArray<FeedId>
   ) => Effect.Effect<void, FeedItemRepositoryError>;
-  readonly updateAll: (
+  readonly markReadByFolders: (
     owner: OwnerId,
-    patch: FeedItemPatch
+    folderIds: ReadonlyArray<FolderId>
   ) => Effect.Effect<void, FeedItemRepositoryError>;
+  readonly markAllRead: (
+    owner: OwnerId
+  ) => Effect.Effect<void, FeedItemRepositoryError>;
+  readonly setExtractedContent: (
+    owner: OwnerId,
+    id: FeedItemId,
+    content: ArticleContent
+  ) => Effect.Effect<boolean, FeedItemRepositoryError>;
   readonly unreadCounts: (
     owner: OwnerId
   ) => Effect.Effect<ReadonlyArray<FeedUnreadCount>, FeedItemRepositoryError>;

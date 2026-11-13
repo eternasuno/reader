@@ -11,7 +11,6 @@ import {
 } from '../../../src/port/webpage-fetcher';
 import { FeedItemNotFound } from '../../../src/usecase/feed/errors';
 import { extractItem } from '../../../src/usecase/feed/extract-item';
-import { memoryFeedStoreLayer } from '../../port/memory-feed-store';
 import {
   alice,
   bob,
@@ -20,7 +19,8 @@ import {
   makeUniqueFeed,
   makeUniqueFeedItem,
   parsedDocument,
-} from '../../support';
+} from '../../support/fixtures';
+import { memoryFeedStoreLayer } from '../../support/memory/feed-store';
 import {
   defaultExtract,
   defaultParseHtml,
@@ -31,7 +31,7 @@ import {
   storeFeed,
   storeFeedWithItem,
   storeItems,
-} from './support';
+} from '../../support/usecase/feed';
 
 const existingContent = decodeContent('<p>Already extracted</p>');
 

@@ -1,0 +1,26 @@
+import { Effect } from 'effect';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { Auth } from '../../auth';
+
+export const checkOrigin = HttpRouter.middleware()(
+  Effect.gen(function* () {
+    const auth = yield* Auth;
+    const context = yield* Effect.promise(() => auth.$context);
+    const allowedOrigin = new URL(context.baseURL).origin;
+
+    return (handler) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const { origin } = request.headers;
+
+        if (request.method !== 'GET' && origin && origin !== allowedOrigin) {
+          return yield* HttpServerResponse.json(
+            { error: 'Cross-site modification is not allowed' },
+            { status: 403 }
+          );
+        }
+
+        return yield* handler;
+      });
+  })
+);

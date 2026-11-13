@@ -23,9 +23,9 @@ export const moveFeed = (
 > =>
   Effect.gen(function* () {
     const feeds = yield* FeedRepository;
-    const moved = yield* feeds.update(owner, [feedId], { folderId });
+    const moved = yield* feeds.moveToFolder(owner, feedId, folderId);
 
-    if (moved.length > 0) {
+    if (moved) {
       return;
     }
 

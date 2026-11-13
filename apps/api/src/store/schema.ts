@@ -1,0 +1,20 @@
+export const readerStoreSchema = `
+DEFINE TABLE IF NOT EXISTS folder SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS folder_owner_name ON folder FIELDS owner, name UNIQUE;
+DEFINE TABLE IF NOT EXISTS feed SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS updatedAt ON TABLE feed TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS feed_owner_url ON feed FIELDS owner, url UNIQUE;
+DEFINE INDEX IF NOT EXISTS feed_owner_folder ON feed FIELDS owner, folderId;
+DEFINE TABLE IF NOT EXISTS feed_item SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE feed_item TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS feed_item_feed_url ON feed_item FIELDS feedId, url UNIQUE;
+DEFINE INDEX IF NOT EXISTS feed_item_owner_item ON feed_item FIELDS owner, itemId;
+DEFINE INDEX IF NOT EXISTS feed_item_owner_feed_item ON feed_item FIELDS owner, feedId, itemId;
+DEFINE INDEX IF NOT EXISTS feed_item_owner_read_item ON feed_item FIELDS owner, read, itemId;
+DEFINE TABLE IF NOT EXISTS saved_page SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE saved_page TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS saved_page_owner_url ON saved_page FIELDS owner, url UNIQUE;
+DEFINE INDEX IF NOT EXISTS saved_page_owner_page ON saved_page FIELDS owner, pageId;
+DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS setting_owner ON setting FIELDS owner UNIQUE;
+`;

@@ -1,26 +1,11 @@
-import {
-  Context,
-  Data,
-  type Effect,
-  type Option,
-  Schema,
-  Struct,
-} from 'effect';
+import { Context, Data, type DateTime, type Effect, type Option } from 'effect';
 import type { OwnerId } from '../entity/common/owner-id';
-import { Feed, type FeedId } from '../entity/feed/feed';
+import type { Feed, FeedId, FeedTitle } from '../entity/feed/feed';
+import type { FolderId } from '../entity/feed/folder';
 
 export class FeedRepositoryError extends Data.TaggedError(
   'FeedRepositoryError'
 )<{ readonly message: string }> {}
-
-export const FeedPatch = Feed.mapFields((fields) =>
-  Struct.map(
-    Struct.pick(fields, ['title', 'folderId', 'updatedAt']),
-    Schema.optionalKey
-  )
-);
-
-export type FeedPatch = typeof FeedPatch.Type;
 
 export interface IFeedRepository {
   readonly find: (
@@ -34,11 +19,17 @@ export interface IFeedRepository {
     owner: OwnerId,
     feeds: ReadonlyArray<Feed>
   ) => Effect.Effect<ReadonlyArray<FeedId>, FeedRepositoryError>;
-  readonly update: (
+  readonly moveToFolder: (
     owner: OwnerId,
-    ids: ReadonlyArray<FeedId>,
-    patch: FeedPatch
-  ) => Effect.Effect<ReadonlyArray<FeedId>, FeedRepositoryError>;
+    id: FeedId,
+    folderId: Option.Option<FolderId>
+  ) => Effect.Effect<boolean, FeedRepositoryError>;
+  readonly recordSync: (
+    owner: OwnerId,
+    id: FeedId,
+    title: FeedTitle,
+    at: DateTime.Utc
+  ) => Effect.Effect<void, FeedRepositoryError>;
   readonly remove: (
     owner: OwnerId,
     ids: ReadonlyArray<FeedId>

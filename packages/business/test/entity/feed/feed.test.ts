@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest';
 import { Option, Result, Schema } from 'effect';
 import { Feed, FeedTitle, makeFeedTitle } from '../../../src/entity/feed/feed';
 import { FeedItem } from '../../../src/entity/feed/feed-item';
-import { makeFeed, makeFeedItem, makeFolder } from '../../support';
+import { makeFeed, makeFeedItem, makeFolder } from '../../support/fixtures';
 
 describe('FeedTitle', () => {
   it('trims the title and rejects a blank one', () => {

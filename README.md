@@ -70,19 +70,19 @@ Browser
 ```
 
 - `apps/web` contains browser-only routes, components, and the Better Auth client. Vite builds static assets with `ssr: false`; there are no server functions or server runtime modules.
-- `apps/api/src/routes` owns HTTP routing. Better Auth handles `/api/auth/*`.
-- `apps/api/src/infrastructure` holds the Effect layers for Better Auth and SurrealDB; `apps/api/src/app.ts` composes them into the HTTP `AppLive`, and `apps/api/src/server.ts` is the process entry that launches it. The server entry owns layer acquisition and graceful shutdown via `NodeRuntime`.
+- `apps/api/src/http` owns HTTP routing: the library handlers under `http/library/`, the Better Auth and static routes, and the origin and session middleware. Better Auth handles `/api/auth/*`.
+- `apps/api/src` is grouped by responsibility: `store/` holds the SurrealDB repositories and schema, `content/` the feed parser, HTML parser, article extractor and sanitizer, `refresh/` the feed refresh queue and scheduler, `auth.ts` the Better Auth layer and `db/` the database connection. `apps/api/src/app.ts` composes them into the HTTP `AppLive`, and `apps/api/src/server.ts` is the process entry that launches it. The server entry owns layer acquisition and graceful shutdown via `NodeRuntime`.
 - `apps/api/test` tests the database, the authentication protocol, and HTTP handlers against `mem://`.
 
 ### Security boundaries
 
 The backend derives identity only from the Better Auth session cookie on the incoming request. It never accepts a client-supplied user ID as identity. Database clients, embedded engines, secrets, and Better Auth server configuration stay in `apps/api` and cannot enter the browser bundle.
 
-Better Auth owns `/api/auth/*`; application endpoints should not reimplement its protocol. Protected endpoints should use `sessionMiddleware` and derive identity from `Session` in `apps/api/src/middleware/session.ts`.
+Better Auth owns `/api/auth/*`; application endpoints should not reimplement its protocol. Protected endpoints should use `sessionMiddleware` and derive identity from `Session` in `apps/api/src/http/middleware/session.ts`.
 
 ### Embedded SurrealDB
 
-`apps/api/src/infrastructure/db/index.ts` connects to the configured database and selects its namespace and database. Runtime startup does not generate or apply schema.
+`apps/api/src/db/index.ts` connects to the configured database and selects its namespace and database. Runtime startup does not generate or apply schema.
 
 Better Auth's `auth migrate` command only supports its built-in Kysely adapter, so for the SurrealDB adapter the CLI can only emit DDL. Apply the schema with the package script:
 
@@ -131,9 +131,9 @@ Deploy the frontend and `/api` on the same public origin. In development and pre
 
 - `/api/auth/*` — Better Auth protocol
 - `/api/library/saved-pages*` — authenticated read-later pages: list, find by id or URL, add a link, save a feed item, mark read, mark all read, remove, unread count
-- `/api/library/feeds*` — subscriptions: list, preview, subscribe (optionally into a folder), unsubscribe, move to a folder or the top level, mark feeds read, mark all read, per-feed unread counts; `/api/library/feeds/items*` — feed items addressed by item id: list (all, one feed or one folder), find, extract, mark read
+- `/api/library/feeds*` — subscriptions: list, preview, subscribe (optionally into a folder), unsubscribe, move to a folder or the top level, mark feeds read, mark all read, per-feed unread counts; `/api/library/feeds/items*` — feed items: list all (`/items`), list one feed (`/items/by-feed?feedId`), list one folder (`/items/by-folder?folderId`), find, extract, mark read
 - `/api/library/folders*` — folders grouping feeds: list, create, rename, remove (unsubscribes its feeds), mark folders read
-- `/api/library/settings*` — read the settings (only whether the Jina key and the browser address are configured), set retention, set the fetcher (`jina` or `browser`), clear the Jina key
+- `/api/library/settings*` — read the settings (only whether the Jina key and the browser address are configured), set retention, use Jina (`/settings/fetcher/jina`, optional key), use the browser service (`/settings/fetcher/browser`, optional address), clear the Jina key
 
 The endpoint contract lives in `packages/api`. List endpoints take `limit` (a positive integer), `unreadOnly` and an optional `cursor`, which is the id of the last row of the previous page; feed items and saved pages are listed newest first by id. There is no background reload: clients list again from the first page to see new rows.
 

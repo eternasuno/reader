@@ -14,7 +14,6 @@ import {
   FolderNotFoundSchema,
   FolderRepositoryErrorSchema,
   feedItemErrors,
-  InvalidScopeSchema,
   limit,
   ok,
   subscribePayload,
@@ -24,13 +23,16 @@ import {
 
 const listResponse = Schema.Struct({ items: Schema.Array(Feed) });
 
-const listQuery = {
-  feedId: Schema.optionalKey(FeedId),
-  folderId: Schema.optionalKey(FolderId),
+const pageQuery = {
   unreadOnly,
   limit,
   cursor: Schema.optionalKey(FeedItemId),
 };
+
+const feedItemPage = Schema.Struct({
+  items: Schema.Array(FeedItem),
+  cursor: Schema.NullOr(FeedItemId),
+});
 
 const itemQuery = { id: FeedItemId };
 
@@ -104,13 +106,24 @@ export const feedEndpoints = [
     error: feedItemErrors,
   }),
   HttpApiEndpoint.get('feedItems', '/api/library/feeds/items', {
-    query: listQuery,
-    success: Schema.Struct({
-      items: Schema.Array(FeedItem),
-      cursor: Schema.NullOr(FeedItemId),
-    }),
-    error: [InvalidScopeSchema, ...feedItemErrors],
+    query: pageQuery,
+    success: feedItemPage,
+    error: feedItemErrors,
   }),
+  HttpApiEndpoint.get('feedItemsByFeed', '/api/library/feeds/items/by-feed', {
+    query: { feedId: FeedId, ...pageQuery },
+    success: feedItemPage,
+    error: feedItemErrors,
+  }),
+  HttpApiEndpoint.get(
+    'feedItemsByFolder',
+    '/api/library/feeds/items/by-folder',
+    {
+      query: { folderId: FolderId, ...pageQuery },
+      success: feedItemPage,
+      error: feedItemErrors,
+    }
+  ),
   HttpApiEndpoint.get('feedItem', '/api/library/feeds/items/item', {
     query: itemQuery,
     success: Schema.Struct({ item: Schema.NullOr(FeedItem) }),

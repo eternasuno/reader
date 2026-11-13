@@ -3,12 +3,19 @@ import { Effect, Schema } from 'effect';
 import { HttpApiSchema } from 'effect/http-api';
 
 const failure = <Tag extends string>(tag: Tag, status: number) =>
-  Schema.Struct({
-    _tag: Schema.Literal(tag),
-    message: Schema.String,
-    id: Schema.optionalKey(Schema.String),
-    url: Schema.optionalKey(Schema.String),
-  }).pipe(HttpApiSchema.status(status));
+  Schema.Struct({ _tag: Schema.Literal(tag) }).pipe(
+    HttpApiSchema.status(status)
+  );
+
+const failureWithId = <Tag extends string>(tag: Tag, status: number) =>
+  Schema.Struct({ _tag: Schema.Literal(tag), id: Schema.String }).pipe(
+    HttpApiSchema.status(status)
+  );
+
+const failureWithUrl = <Tag extends string>(tag: Tag, status: number) =>
+  Schema.Struct({ _tag: Schema.Literal(tag), url: Schema.String }).pipe(
+    HttpApiSchema.status(status)
+  );
 
 const UnauthorizedSchema = failure('Unauthorized', 401);
 
@@ -20,26 +27,22 @@ export const FeedUrlInvalidSchema = failure('FeedUrlInvalid', 400);
 
 export const InvalidRetentionSchema = failure('InvalidRetention', 400);
 
-export const InvalidProviderSchema = failure('InvalidProvider', 400);
-
 export const InvalidKeySchema = failure('InvalidKey', 400);
 
 export const InvalidEndpointSchema = failure('InvalidEndpoint', 400);
 
 export const InvalidFolderNameSchema = failure('InvalidFolderName', 400);
 
-export const InvalidScopeSchema = failure('InvalidScope', 400);
+export const FeedItemNotFoundSchema = failureWithId('FeedItemNotFound', 404);
 
-export const FeedItemNotFoundSchema = failure('FeedItemNotFound', 404);
+export const FolderNotFoundSchema = failureWithId('FolderNotFound', 404);
 
-export const FolderNotFoundSchema = failure('FolderNotFound', 404);
-
-export const SavedPageAlreadyExistsSchema = failure(
+export const SavedPageAlreadyExistsSchema = failureWithUrl(
   'SavedPageAlreadyExists',
   409
 );
 
-export const FeedAlreadyExistsSchema = failure('FeedAlreadyExists', 409);
+export const FeedAlreadyExistsSchema = failureWithUrl('FeedAlreadyExists', 409);
 
 export const FolderAlreadyExistsSchema = failure('FolderAlreadyExists', 409);
 

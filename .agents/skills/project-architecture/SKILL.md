@@ -9,17 +9,27 @@ description: Follow the client architecture and resource-lifecycle constraints w
 - The project is a pure client-side SolidJS 1 SPA with a separate Effect HttpServer API; the browser accesses the API through credentialed HTTP requests.
 - Keep `apps/web` limited to browser routes, components, the Better Auth client, and the API client; preserve client rendering.
 - Do not introduce `apps/api`, Effect server modules, database clients, embedded engines, secrets, or Better Auth server configuration into web; do not add SSR or server functions.
-- API HTTP routes belong in `apps/api/src/routes`, runtime Layers and database capabilities in `apps/api/src/infrastructure`, and request middleware in `apps/api/src/middleware`; place server capabilities according to these responsibilities and do not move them into web.
+- Server code is grouped by responsibility under `apps/api/src`: HTTP handlers and middleware in `http/`, repository implementations in `store/`, feed parsing, HTML parsing, extraction and sanitizing in `content/`, the refresh queue and scheduler in `refresh/`, Better Auth in `auth.ts`, the database connection in `db/`; see the `project-effect-api` skill. Do not move any of it into web.
 
 - Use `type` aliases for ordinary TypeScript data shapes and contracts instead of hand-written JavaScript classes; the rule targets native object-oriented style only. Class forms that Effect provides are allowed and preserved, such as `Context.Service`, `Schema.Class`, `Model.Class` and `Data.TaggedError`. The one exception is the shape of an Effect service: declare it as `interface I<Service>` next to its `Context.Service` class (ports in `packages/business/src/port/`, `IFeedRefreshQueue` in `apps/api`), and keep every such shape an `interface`, not a `type`.
 - Keep shared Effect language-service settings in the root `tsconfig.json`; let app configs inherit them rather than duplicate the plugin array. Use app overrides only for genuinely app-specific settings. Its `allowedUnstableApis` lists the unstable APIs the code may use: Effect tags modules and exports `@stability unstable` inside `effect` as well as in other packages, and an unlisted one makes `pnpm typecheck` exit non-zero. Allow whole modules or packages rather than individual exports (`effect/http`, `effect/http-api`, `@effect/platform-node`, `@effect/vitest`; the business rewrite adds `effect/schema/Model`).
 
-## Web Layers
+## Web layers
 
-- `apps/web/src/lib` owns ordinary async operations and their parameter types; it must not import Solid APIs or router hooks, handle `FormData`, or perform UI navigation.
+`apps/web/src` is split into `api/`, `models/`, `components/` (`atoms`, `molecules`, `organisms`, `templates`) and `pages/`. Imports point one way only; check every new import against this:
+
+```text
+pages → templates → organisms → molecules → atoms
+organisms, pages → models → api
+```
+
+- `api/` owns the HTTP client derived from the `@reader/api` contract with Effect's HTTP API client, the Better Auth client (`api/auth.ts`), and the one table from contract error `_tag` to user-visible wording. Every request goes through the derived client: no hand-written path, method, payload shape or response schema anywhere in web. `api/` imports no Solid API or router hook, handles no `FormData` and performs no navigation.
+- `models/<feature>/` (`models/library/`, `models/settings/`) owns state and logic. State and logic never live in `pages/`.
+- `components/atoms/` and `components/molecules/` carry no domain: they do not import `api/`, `models/` or the auth client, and receive their data through props. A component that knows the business is an organism, under `components/organisms/<feature>/` (`library/`, `settings/`, `auth/`). `components/templates/` hold page layouts and take their content through props.
+- `pages/` only check the session, take the model and hand data to a template. No file under `components/` imports `pages/`.
 - Reload a list by listing again from the first page with no cursor: no polling, no refresh-through request, and no in-place merge of rows. Fetch feed unread counts and the saved-page unread count from their separate endpoints.
-- Components and `src/pages` own presentation, native form validation, conversion from `FormData` to logic-layer parameters, submission state, and navigation. Organize components into `atoms`, `molecules`, `organisms`, and `templates`.
-- `src/lib/auth.ts` initializes the single official Better Auth Solid client and exports authentication operations using that client directly. Adapter initialization and inferred session types are allowed here; invoke reactive hooks only in the presentation layer.
+- Components and pages own presentation, native form validation, conversion from `FormData` to model parameters, submission state, and navigation.
+- `api/auth.ts` initializes the single official Better Auth Solid client and exports authentication operations using that client directly. Adapter initialization and inferred session types are allowed here; invoke reactive hooks only in the presentation layer.
 
 ## UI Styling and Focus
 

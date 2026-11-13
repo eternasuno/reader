@@ -5,7 +5,6 @@ import {
   BrowserEndpointRequiredSchema,
   InvalidEndpointSchema,
   InvalidKeySchema,
-  InvalidProviderSchema,
   InvalidRetentionSchema,
   ok,
   settingErrors,
@@ -28,21 +27,24 @@ export const settingEndpoints = [
     success: ok,
     error: [InvalidRetentionSchema, ...settingErrors],
   }),
-  HttpApiEndpoint.put('setFetcher', '/api/library/settings/fetcher', {
-    payload: Schema.Struct({
-      provider: Schema.String,
-      key: Schema.optionalKey(Schema.String),
-      endpoint: Schema.optionalKey(Schema.String),
-    }),
+  HttpApiEndpoint.put('useJinaFetcher', '/api/library/settings/fetcher/jina', {
+    payload: Schema.Struct({ key: Schema.optionalKey(Schema.String) }),
     success: ok,
-    error: [
-      InvalidProviderSchema,
-      InvalidKeySchema,
-      InvalidEndpointSchema,
-      BrowserEndpointRequiredSchema,
-      ...settingErrors,
-    ],
+    error: [InvalidKeySchema, ...settingErrors],
   }),
+  HttpApiEndpoint.put(
+    'useBrowserFetcher',
+    '/api/library/settings/fetcher/browser',
+    {
+      payload: Schema.Struct({ endpoint: Schema.optionalKey(Schema.String) }),
+      success: ok,
+      error: [
+        InvalidEndpointSchema,
+        BrowserEndpointRequiredSchema,
+        ...settingErrors,
+      ],
+    }
+  ),
   HttpApiEndpoint.delete('deleteKey', '/api/library/settings/key', {
     success: ok,
     error: settingErrors,

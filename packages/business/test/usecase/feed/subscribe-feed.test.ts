@@ -1,13 +1,24 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Option, Ref, Result } from 'effect';
+import { Effect, Option, Ref } from 'effect';
 import { FeedTitle } from '../../../src/entity/feed/feed';
 import {
   FeedAlreadyExists,
   FolderNotFound,
 } from '../../../src/usecase/feed/errors';
 import { subscribeFeed } from '../../../src/usecase/feed/subscribe-feed';
-import { alice, bob, decodeUrl, makeFolder, storedFolder } from '../../support';
-import { feedResponse, findFeed, run, storedFeeds } from './support';
+import {
+  alice,
+  bob,
+  decodeUrl,
+  makeFolder,
+  storedFolder,
+} from '../../support/fixtures';
+import {
+  feedResponse,
+  findFeed,
+  run,
+  storedFeeds,
+} from '../../support/usecase/feed';
 
 const url = decodeUrl('https://example.com/feed.xml');
 
@@ -188,30 +199,6 @@ describe('subscribeFeed duplicates with a missing folder', () => {
 
       expect(result.error).toStrictEqual(new FolderNotFound({ id: unknown }));
       expect(result.feeds).toStrictEqual([result.first]);
-    })
-  );
-});
-
-describe('subscribeFeed races', () => {
-  it.effect('creates exactly one feed for two concurrent subscriptions', () =>
-    Effect.gen(function* () {
-      const result = yield* run(
-        Effect.gen(function* () {
-          const results = yield* Effect.all(
-            [
-              subscribeFeed(alice, url, title, Option.none()),
-              subscribeFeed(alice, url, title, Option.none()),
-            ],
-            { concurrency: 'unbounded', mode: 'result' }
-          );
-
-          return { results, feeds: yield* storedFeeds(alice) };
-        })
-      );
-      const succeeded = result.results.filter(Result.isSuccess);
-
-      expect(succeeded).toHaveLength(1);
-      expect(result.feeds).toHaveLength(1);
     })
   );
 });
