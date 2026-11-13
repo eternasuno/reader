@@ -82,7 +82,7 @@ Two use cases exist, `useJina` and `useBrowser` (`usecase/setting/use-jina.ts`, 
 | Operation       | Input                | Output    | Errors                                              | Implementation                   |
 | --------------- | -------------------- | --------- | --------------------------------------------------- | -------------------------------- |
 | Read            | `owner`              | `Setting` | `SettingRepositoryError`                            | `SettingRepository.get`          |
-| Fetcher in effect | `setting`          | `ActiveFetcher` | none (a broken SET-FETCH-4 is a defect)          | Pure function `activeFetcher` (SET-ACTIVE) |
+| Fetcher in effect | `setting`          | `Effect<ActiveFetcher>` | none (a broken SET-FETCH-4 dies as a defect) | `activeFetcher` (SET-ACTIVE), reads no port |
 | Set retention   | `owner`, `retention` | nothing   | `SettingRepositoryError`                            | `SettingRepository.setRetention` |
 | Clear Jina key  | `owner`              | nothing   | `SettingRepositoryError`                            | `SettingRepository.clearJinaKey` |
 | **Use Jina**    | `owner`, `key?`      | nothing   | `SettingRepositoryError`                            | Use case `useJina` (below)       |

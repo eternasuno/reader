@@ -54,12 +54,14 @@ describe('useJina', () => {
       const repository = yield* SettingRepository;
 
       yield* repository.selectJinaWithKey(alice, otherKey);
+      yield* repository.selectBrowserWithEndpoint(alice, endpoint);
       yield* useJina(alice);
 
       const setting = yield* repository.get(alice);
 
       expect(setting.fetcher.provider).toBe('jina');
       expect(storedKey(setting)).toBe('other-secret');
+      expect(storedEndpoint(setting)).toBe(endpointHref);
     }).pipe(run)
   );
 });

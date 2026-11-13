@@ -7,7 +7,11 @@ export const base = new URL('https://example.com/feed.xml');
 const field = <A>(
   entry: ParsedFeedEntry | undefined,
   select: (entry: ParsedFeedEntry) => Option.Option<A>
-) => Option.flatMap(Option.fromUndefinedOr(entry), select);
+) => {
+  expect(entry).toBeDefined();
+
+  return Option.flatMap(Option.fromUndefinedOr(entry), select);
+};
 
 export const isoOf = (entry: ParsedFeedEntry | undefined) =>
   Option.match(

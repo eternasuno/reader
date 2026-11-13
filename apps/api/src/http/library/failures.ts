@@ -1,109 +1,104 @@
+import { ApiError } from '@reader/api';
 import { Effect } from 'effect';
 
-const tagged =
-  <Tag extends string>(tag: Tag) =>
-  () =>
-    Effect.fail({ _tag: tag } as const);
-
 const withId =
-  <Tag extends string>(tag: Tag) =>
+  <E>(make: (id: string) => E) =>
   (error: { readonly id: string }) =>
-    Effect.fail({ _tag: tag, id: error.id } as const);
+    Effect.fail(make(error.id));
 
 const withUrl =
-  <Tag extends string>(tag: Tag) =>
+  <E>(make: (url: string) => E) =>
   (error: { readonly url: URL }) =>
-    Effect.fail({ _tag: tag, url: error.url.href } as const);
+    Effect.fail(make(error.url.href));
 
 export const feedRepositoryFailure = {
-  FeedRepositoryError: tagged('FeedRepositoryError'),
+  FeedRepositoryError: () => Effect.fail(new ApiError.FeedRepositoryError()),
 };
 
 export const feedItemRepositoryFailure = {
-  FeedItemRepositoryError: tagged('FeedItemRepositoryError'),
+  FeedItemRepositoryError: () =>
+    Effect.fail(new ApiError.FeedItemRepositoryError()),
 };
 
 export const folderRepositoryFailure = {
-  FolderRepositoryError: tagged('FolderRepositoryError'),
+  FolderRepositoryError: () =>
+    Effect.fail(new ApiError.FolderRepositoryError()),
 };
 
 export const savedPageRepositoryFailure = {
-  SavedPageRepositoryError: tagged('SavedPageRepositoryError'),
+  SavedPageRepositoryError: () =>
+    Effect.fail(new ApiError.SavedPageRepositoryError()),
 };
 
 export const settingRepositoryFailure = {
-  SettingRepositoryError: tagged('SettingRepositoryError'),
+  SettingRepositoryError: () =>
+    Effect.fail(new ApiError.SettingRepositoryError()),
 };
 
 const extractionFailure = {
-  ArticleEmptyContent: tagged('ArticleEmptyContent'),
-  WebpageFetcherError: tagged('WebpageFetcherError'),
-  ArticleExtractorError: tagged('ArticleExtractorError'),
-  HtmlParserError: tagged('ArticleExtractorError'),
+  ArticleEmptyContent: () => Effect.fail(new ApiError.ArticleEmptyContent()),
+  WebpageFetcherError: () => Effect.fail(new ApiError.WebpageFetcherError()),
+  ArticleExtractorError: () =>
+    Effect.fail(new ApiError.ArticleExtractorError()),
+  HtmlParserError: () => Effect.fail(new ApiError.ArticleExtractorError()),
   ...settingRepositoryFailure,
 };
 
 export const previewFailure = {
-  FetchFeedError: tagged('FetchFeedError'),
-  FeedParserError: tagged('FeedParserError'),
+  FetchFeedError: () => Effect.fail(new ApiError.FetchFeedError()),
+  FeedParserError: () => Effect.fail(new ApiError.FeedParserError()),
 };
 
 export const addSavedPageFailure = {
-  SavedPageAlreadyExists: withUrl('SavedPageAlreadyExists'),
+  SavedPageAlreadyExists: withUrl(
+    (url) => new ApiError.SavedPageAlreadyExists({ url })
+  ),
   ...extractionFailure,
   ...savedPageRepositoryFailure,
 };
 
 export const saveFeedItemFailure = {
-  FeedItemNotFound: withId('FeedItemNotFound'),
-  SavedPageAlreadyExists: withUrl('SavedPageAlreadyExists'),
+  FeedItemNotFound: withId((id) => new ApiError.FeedItemNotFound({ id })),
+  SavedPageAlreadyExists: withUrl(
+    (url) => new ApiError.SavedPageAlreadyExists({ url })
+  ),
   ...extractionFailure,
   ...feedItemRepositoryFailure,
   ...savedPageRepositoryFailure,
 };
 
 export const extractFeedItemFailure = {
-  FeedItemNotFound: withId('FeedItemNotFound'),
+  FeedItemNotFound: withId((id) => new ApiError.FeedItemNotFound({ id })),
   ...extractionFailure,
   ...feedItemRepositoryFailure,
 };
 
 export const subscribeFailure = {
-  FeedAlreadyExists: withUrl('FeedAlreadyExists'),
-  FolderNotFound: withId('FolderNotFound'),
+  FeedAlreadyExists: withUrl((url) => new ApiError.FeedAlreadyExists({ url })),
+  FolderNotFound: withId((id) => new ApiError.FolderNotFound({ id })),
   ...feedRepositoryFailure,
   ...folderRepositoryFailure,
 };
 
 export const createFolderFailure = {
-  FolderAlreadyExists: tagged('FolderAlreadyExists'),
+  FolderAlreadyExists: () => Effect.fail(new ApiError.FolderAlreadyExists()),
   ...folderRepositoryFailure,
 };
 
 export const renameFolderFailure = {
-  FolderAlreadyExists: tagged('FolderAlreadyExists'),
-  FolderNotFound: withId('FolderNotFound'),
+  FolderAlreadyExists: () => Effect.fail(new ApiError.FolderAlreadyExists()),
+  FolderNotFound: withId((id) => new ApiError.FolderNotFound({ id })),
   ...folderRepositoryFailure,
 };
 
 export const moveFeedFailure = {
-  FolderNotFound: withId('FolderNotFound'),
+  FolderNotFound: withId((id) => new ApiError.FolderNotFound({ id })),
   ...feedRepositoryFailure,
   ...folderRepositoryFailure,
 };
 
-export const retentionFailure = {
-  InvalidRetention: tagged('InvalidRetention'),
-  ...settingRepositoryFailure,
-};
-
-export const jinaFetcherFailure = {
-  InvalidKey: tagged('InvalidKey'),
-  ...settingRepositoryFailure,
-};
-
 export const browserFetcherFailure = {
-  InvalidEndpoint: tagged('InvalidEndpoint'),
-  BrowserEndpointRequired: tagged('BrowserEndpointRequired'),
+  BrowserEndpointRequired: () =>
+    Effect.fail(new ApiError.BrowserEndpointRequired()),
   ...settingRepositoryFailure,
 };

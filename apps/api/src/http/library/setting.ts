@@ -1,11 +1,6 @@
 import { SettingRepository, useBrowser, useJina } from '@reader/business';
 import { Effect, Option } from 'effect';
-import {
-  browserFetcherFailure,
-  jinaFetcherFailure,
-  retentionFailure,
-  settingRepositoryFailure,
-} from './failures';
+import { browserFetcherFailure, settingRepositoryFailure } from './failures';
 import { decodeBrowserEndpoint, decodeJinaKey, decodeRetention } from './input';
 import { type HandlerRequest, handle, handleOk } from './session';
 
@@ -24,7 +19,7 @@ const settings = () =>
   );
 
 const setRetention = ({ payload }: HandlerRequest<'setRetention'>) =>
-  handleOk(retentionFailure, (owner) =>
+  handleOk(settingRepositoryFailure, (owner) =>
     Effect.flatMap(decodeRetention(payload.retention), (retention) =>
       Effect.flatMap(SettingRepository, (repository) =>
         repository.setRetention(owner, retention)
@@ -33,7 +28,7 @@ const setRetention = ({ payload }: HandlerRequest<'setRetention'>) =>
   );
 
 const useJinaFetcher = ({ payload }: HandlerRequest<'useJinaFetcher'>) =>
-  handleOk(jinaFetcherFailure, (owner) =>
+  handleOk(settingRepositoryFailure, (owner) =>
     Effect.flatMap(decodeJinaKey(payload.key), (key) => useJina(owner, key))
   );
 

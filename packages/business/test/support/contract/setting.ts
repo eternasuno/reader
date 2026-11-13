@@ -98,6 +98,32 @@ const registerProviderSwitch = (run: Run) =>
       )
   );
 
+const registerProviderSwitchBack = (run: Run) =>
+  it.effect(
+    'SET-FETCH-1 SET-FETCH-5 selectJinaWithKey switches back to jina and keeps the endpoint and retention',
+    () =>
+      run(
+        Effect.gen(function* () {
+          const repository = yield* SettingRepository;
+
+          yield* repository.setRetention(alice, decodeRetention(250));
+          yield* repository.selectJinaWithKey(alice, jinaKey);
+          yield* repository.selectBrowserWithEndpoint(alice, endpoint);
+          yield* repository.selectJinaWithKey(
+            alice,
+            decodeJinaKey('new-secret')
+          );
+
+          const setting = yield* repository.get(alice);
+
+          expect(setting.fetcher.provider).toBe('jina');
+          expect(keyOf(setting)).toBe('new-secret');
+          expect(endpointOf(setting)).toBe(endpointHref);
+          expect(setting.feed.retention).toBe(250);
+        })
+      )
+  );
+
 const registerClearKey = (run: Run) =>
   it.effect(
     'SET-KEY-1 clearJinaKey removes the key and keeps provider and endpoint',
@@ -198,6 +224,7 @@ export const settingRepositoryContract = (
     registerDefaults(run);
     registerWriters(run);
     registerProviderSwitch(run);
+    registerProviderSwitchBack(run);
     registerClearKey(run);
     registerClearKeyWithoutKey(run);
     registerConcurrent(run);

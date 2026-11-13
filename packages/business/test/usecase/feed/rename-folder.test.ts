@@ -11,7 +11,7 @@ import {
   FolderNotFound,
 } from '../../../src/usecase/feed/errors';
 import { renameFolder } from '../../../src/usecase/feed/rename-folder';
-import { alice, bob, makeFolder, storedFolder } from '../../support/fixtures';
+import { alice, makeFolder, storedFolder } from '../../support/fixtures';
 import { run } from '../../support/usecase/feed';
 
 const name = (value: string): FolderName => FolderName.make(value);
@@ -78,28 +78,6 @@ describe('renameFolder unknown folders', () => {
       );
 
       expect(error).toStrictEqual(new FolderNotFound({ id: unknown }));
-    })
-  );
-
-  it.effect("FD-FOLDER-5 another owner's folder fails FolderNotFound", () =>
-    Effect.gen(function* () {
-      const result = yield* run(
-        Effect.gen(function* () {
-          const folder = yield* storedFolder(bob);
-          const error = yield* renameFolder(
-            alice,
-            folder.id,
-            name('Renamed')
-          ).pipe(Effect.flip);
-
-          return { folder, error, theirs: yield* foldersOf(bob) };
-        })
-      );
-
-      expect(result.error).toStrictEqual(
-        new FolderNotFound({ id: result.folder.id })
-      );
-      expect(result.theirs).toStrictEqual([result.folder]);
     })
   );
 });

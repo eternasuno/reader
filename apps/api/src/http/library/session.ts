@@ -1,4 +1,4 @@
-import type { LibraryApi } from '@reader/api';
+import { type LibraryApi, Session } from '@reader/api';
 import {
   type ActiveFetcher,
   activeFetcher,
@@ -12,7 +12,6 @@ import {
 } from '@reader/webpage';
 import { Effect, type Layer, Option, Redacted } from 'effect';
 import type { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { Session } from '../middleware/session';
 
 type Groups =
   typeof LibraryApi extends HttpApi.HttpApi<string, infer G> ? G : never;
@@ -43,7 +42,7 @@ type HandledErrors<Table> = {
     : never;
 }[keyof Table];
 
-type UnhandledErrors<Err> = Exclude<Err, { readonly _tag: string }>;
+type UnhandledErrors<Err, Table> = Exclude<Err, { readonly _tag: keyof Table }>;
 
 /**
  * Runs a library handler and reports the endpoint errors its failure table
@@ -51,15 +50,18 @@ type UnhandledErrors<Err> = Exclude<Err, { readonly _tag: string }>;
  *
  * `Effect.catchTags` derives its error type from its case table, and that
  * derivation does not survive a generic wrapper, so the overload states the
- * handled errors instead while the implementation stays loose. Endpoint errors
- * are still checked: the declared error union is the union of the failure
- * table's errors, so a table that misses or invents a tag fails to type-check
- * against the endpoint.
+ * handled errors instead while the implementation stays loose. The handler's
+ * remaining error union must still be a subset of the endpoint's declared
+ * errors, which `handleAll` checks.
  */
 export function handle<A, Err, R, Table extends FailureTable>(
   failures: Table,
   use: (owner: OwnerId) => Effect.Effect<A, Err, R>
-): Effect.Effect<A, HandledErrors<Table> | UnhandledErrors<Err>, R | Session>;
+): Effect.Effect<
+  A,
+  HandledErrors<Table> | UnhandledErrors<Err, Table>,
+  R | Session
+>;
 export function handle(
   failures: FailureTable,
   use: (owner: OwnerId) => Effect.Effect<unknown, unknown, unknown>
@@ -73,7 +75,7 @@ export function handleOk<Err, R, Table extends FailureTable>(
   use: (owner: OwnerId) => Effect.Effect<unknown, Err, R>
 ): Effect.Effect<
   { readonly ok: true },
-  HandledErrors<Table> | UnhandledErrors<Err>,
+  HandledErrors<Table> | UnhandledErrors<Err, Table>,
   R | Session
 >;
 export function handleOk(

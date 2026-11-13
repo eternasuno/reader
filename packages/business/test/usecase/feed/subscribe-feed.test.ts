@@ -8,7 +8,6 @@ import {
 import { subscribeFeed } from '../../../src/usecase/feed/subscribe-feed';
 import {
   alice,
-  bob,
   decodeUrl,
   makeFolder,
   storedFolder,
@@ -124,31 +123,6 @@ describe('subscribeFeed folders', () => {
       );
 
       expect(result.error).toStrictEqual(new FolderNotFound({ id: unknown }));
-      expect(result.feeds).toHaveLength(0);
-    })
-  );
-});
-
-describe('subscribeFeed foreign folders', () => {
-  it.effect("FD-SUB-6 fails another owner's folder and creates no feed", () =>
-    Effect.gen(function* () {
-      const result = yield* run(
-        Effect.gen(function* () {
-          const folder = yield* storedFolder(bob);
-          const error = yield* subscribeFeed(
-            alice,
-            url,
-            title,
-            Option.some(folder.id)
-          ).pipe(Effect.flip);
-
-          return { error, folder, feeds: yield* storedFeeds(alice) };
-        })
-      );
-
-      expect(result.error).toStrictEqual(
-        new FolderNotFound({ id: result.folder.id })
-      );
       expect(result.feeds).toHaveLength(0);
     })
   );

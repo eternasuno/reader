@@ -6,9 +6,13 @@ import type { HttpApi, HttpApiGroup } from 'effect/http-api';
 type Groups =
   typeof LibraryApi extends HttpApi.HttpApi<string, infer G> ? G : never;
 
-type Endpoints = HttpApiGroup.WithIdentifier<Groups, 'library'>['endpoints'];
+type Group = HttpApiGroup.WithIdentifier<Groups, 'library'>;
 
-type ContractErrorTag = Endpoints[keyof Endpoints]['~Error']['Type']['_tag'];
+type Endpoints = Group['endpoints'];
+
+type ContractErrorTag =
+  | Endpoints[keyof Endpoints]['~Error']['Type']['_tag']
+  | HttpApiGroup.MiddlewareError<Group>['_tag'];
 
 export type LibraryErrorTag =
   | ContractErrorTag
@@ -19,6 +23,7 @@ export type LibraryErrorTag =
 export const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   Unauthorized: '登录状态已失效，请重新登录',
   Forbidden: '不允许跨站修改',
+  AuthUnavailable: '登录服务暂时不可用，请稍后重试',
   InvalidPageUrl: '请输入有效的 http 或 https 链接',
   FeedUrlInvalid: '请输入有效的订阅地址',
   FeedItemNotFound: '文章不存在，可能已被删除',
@@ -37,7 +42,6 @@ export const libraryErrorMessages: Record<LibraryErrorTag, string> = {
   FolderNotFound: '目录不存在，可能已被删除',
   FolderRepositoryError: '暂时无法访问目录，请稍后重试',
   InvalidRetention: '保留数量必须是正整数',
-  InvalidKey: '请输入有效的 Jina API Key',
   InvalidEndpoint: '请输入有效的浏览器服务地址',
   BrowserEndpointRequired: '请填写浏览器服务地址',
   SettingRepositoryError: '暂时无法访问设置，请稍后重试',
@@ -92,20 +96,10 @@ const contractTag = (error: unknown): LibraryErrorTag | undefined => {
   return typeof tag === 'string' && isLibraryErrorTag(tag) ? tag : undefined;
 };
 
-const statusTag = (status: number | undefined): LibraryErrorTag => {
-  if (status === 401) {
-    return 'Unauthorized';
-  }
-
-  return status === 403 ? 'Forbidden' : 'RequestFailed';
-};
-
 const httpClientTag = (
   error: HttpClientError.HttpClientError
 ): LibraryErrorTag =>
-  error.reason._tag === 'TransportError'
-    ? 'NetworkError'
-    : statusTag(error.response?.status);
+  error.reason._tag === 'TransportError' ? 'NetworkError' : 'RequestFailed';
 
 /** Maps the first failure of a failed effect to the wording table. */
 export const toLibraryError = (cause: Cause.Cause<unknown>): LibraryError => {

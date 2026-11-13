@@ -109,6 +109,67 @@ it.effect('rejects library requests without a session', () =>
       });
 
       expect(response.status).toBe(401);
+      expect(yield* Effect.promise(() => readFailure(response))).toEqual({
+        _tag: 'Unauthorized',
+      });
+    })
+  )
+);
+
+it.effect('reports an unavailable authentication service', () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const session = yield* sessionFor(harness, 'alice@example.com');
+      Object.assign(harness.auth.api, {
+        getSession: () => Promise.reject(new Error('authentication down')),
+      });
+
+      const response = yield* call(harness, {
+        path: '/api/library/saved-pages',
+        query: { limit: 30 },
+        cookie: session.cookie,
+      });
+
+      expect(response.status).toBe(500);
+      expect(yield* Effect.promise(() => readFailure(response))).toEqual({
+        _tag: 'AuthUnavailable',
+      });
+    })
+  )
+);
+
+it.effect('forwards renewed session cookies on a failed request', () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const session = yield* sessionFor(harness, 'alice@example.com');
+      Object.assign(harness.auth.api, {
+        getSession: () =>
+          Promise.resolve({
+            response: {
+              user: {
+                id: session.owner,
+                name: 'Alice',
+                email: 'alice@example.com',
+              },
+            },
+            headers: new Headers({ 'set-cookie': 'renewed=1; Path=/' }),
+          }),
+      });
+
+      const response = yield* call(harness, {
+        method: 'POST',
+        path: '/api/library/saved-pages',
+        cookie: session.cookie,
+        body: { url: 'not a url' },
+      });
+
+      expect(response.status).toBe(400);
+      expect(yield* Effect.promise(() => readFailure(response))).toEqual({
+        _tag: 'InvalidPageUrl',
+      });
+      expect(response.headers.get('set-cookie')).toContain('renewed=1');
     })
   )
 );
@@ -128,6 +189,27 @@ it.effect('rejects cross-site library modifications', () =>
       });
 
       expect(response.status).toBe(403);
+      expect(yield* Effect.promise(() => readFailure(response))).toEqual({
+        _tag: 'Forbidden',
+      });
+    })
+  )
+);
+
+it.effect('allows cross-site library reads', () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const session = yield* sessionFor(harness, 'alice@example.com');
+
+      const response = yield* call(harness, {
+        path: '/api/library/saved-pages',
+        query: { limit: 30 },
+        cookie: session.cookie,
+        origin: 'https://untrusted.example',
+      });
+
+      expect(response.status).toBe(200);
     })
   )
 );

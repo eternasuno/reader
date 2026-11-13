@@ -31,6 +31,8 @@ it.effect('lists unread feed items of one feed page by page', () =>
       const first = yield* seedItem(harness, session.owner, feed.id);
       yield* seedItem(harness, session.owner, feed.id, { read: true });
       const third = yield* seedItem(harness, session.owner, feed.id);
+      const otherFeed = yield* seedFeed(harness, session.owner);
+      const otherItem = yield* seedItem(harness, session.owner, otherFeed.id);
 
       const page = yield* call(harness, {
         path: FEED_ITEMS_BY_FEED,
@@ -39,8 +41,11 @@ it.effect('lists unread feed items of one feed page by page', () =>
       });
       const firstPage = yield* Effect.promise(() => readFeedItems(page));
 
+      const firstPageIds = firstPage.items.map((item) => item.id);
+
       expect(page.status).toBe(200);
-      expect(firstPage.items.map((item) => item.id)).toEqual([third.id]);
+      expect(firstPageIds).toEqual([third.id]);
+      expect(firstPageIds).not.toContain(otherItem.id);
       expect(firstPage.cursor).not.toBeNull();
 
       const next = yield* call(harness, {
@@ -55,7 +60,10 @@ it.effect('lists unread feed items of one feed page by page', () =>
       });
       const nextPage = yield* Effect.promise(() => readFeedItems(next));
 
-      expect(nextPage.items.map((item) => item.id)).toEqual([first.id]);
+      const nextPageIds = nextPage.items.map((item) => item.id);
+
+      expect(nextPageIds).toEqual([first.id]);
+      expect(nextPageIds).not.toContain(otherItem.id);
       expect(nextPage.cursor).toBeNull();
     })
   )

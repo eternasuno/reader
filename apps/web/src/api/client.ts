@@ -1,5 +1,5 @@
 import { LibraryApi } from '@reader/api';
-import { Effect, Exit } from 'effect';
+import { Cause, Effect, Exit } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { HttpApiClient } from 'effect/http-api';
 import { toLibraryError } from './errors';
@@ -49,6 +49,10 @@ export const makeRunner = (options: LibraryClientOptions) => {
 
     if (Exit.isSuccess(exit)) {
       return exit.value;
+    }
+
+    if (!Cause.hasFails(exit.cause)) {
+      throw Cause.squash(exit.cause);
     }
 
     throw toLibraryError(exit.cause);

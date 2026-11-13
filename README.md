@@ -78,7 +78,7 @@ Browser
 
 The backend derives identity only from the Better Auth session cookie on the incoming request. It never accepts a client-supplied user ID as identity. Database clients, embedded engines, secrets, and Better Auth server configuration stay in `apps/api` and cannot enter the browser bundle.
 
-Better Auth owns `/api/auth/*`; application endpoints should not reimplement its protocol. Protected endpoints should use `sessionMiddleware` and derive identity from `Session` in `apps/api/src/http/middleware/session.ts`.
+Better Auth owns `/api/auth/*`; application endpoints should not reimplement its protocol. Protected endpoints use the `Authentication` middleware declared in `packages/api/src/middleware.ts` and derive identity from `Session`; its implementation lives in `apps/api/src/http/middleware/session.ts`.
 
 ### Embedded SurrealDB
 

@@ -3,15 +3,21 @@ import type { LibraryStore } from './context';
 export const loadFeeds = async (store: LibraryStore): Promise<void> => {
   try {
     const feeds = await store.client.feeds();
+    store.clearNotified('feeds');
     store.setState((current) => ({ ...current, feeds }));
-  } catch {}
+  } catch (error) {
+    store.notifyCategory('feeds', error);
+  }
 };
 
 export const loadFolders = async (store: LibraryStore): Promise<void> => {
   try {
     const folders = await store.client.folders();
+    store.clearNotified('folders');
     store.setState((current) => ({ ...current, folders }));
-  } catch {}
+  } catch (error) {
+    store.notifyCategory('folders', error);
+  }
 };
 
 export const loadCounts = async (store: LibraryStore): Promise<void> => {

@@ -55,7 +55,7 @@ it('FD-PARSE-4 FD-PARSE-5 escapes explicitly plain Atom and JSON fields and leav
   expect(rssEntry?.description).toEqual(Option.some('<title> &copy; & more'));
 });
 
-it('FD-PARSE-4 escapes plain text exactly once without decoding existing entities', () => {
+it('FD-PARSE-5 escapes plain text exactly once without decoding existing entities', () => {
   const json = JSON.stringify({
     version: 'https://jsonfeed.org/version/1.1',
     title: 'Once',

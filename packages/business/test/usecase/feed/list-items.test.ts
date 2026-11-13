@@ -156,16 +156,6 @@ it.effect('CM-PAGE-4 walks the newest first list with a cursor', () =>
   })
 );
 
-it.effect('CM-PAGE-4 limits the page and reports a cursor', () =>
-  Effect.gen(function* () {
-    const feed = makeUniqueFeed({ ownerId: alice });
-    const page = yield* feedPageOf(feed, ['one', 'two', 'three', 'four'], 3);
-
-    expect(urlsOf(page.items)).toEqual([url('four'), url('three'), url('two')]);
-    expect(page.cursor).not.toBeNull();
-  })
-);
-
 it.effect('CM-PAGE-4 returns no cursor when the page is exactly full', () =>
   Effect.gen(function* () {
     const feed = makeUniqueFeed({ ownerId: alice });

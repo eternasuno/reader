@@ -248,8 +248,6 @@ export const submitRetention: SubmitForm = (drafts, status, form) => {
 
   const value = Number(drafts.retention());
 
-  if (!Number.isInteger(value)) return;
-
   void runAction(
     status,
     'retention',

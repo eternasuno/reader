@@ -1,3 +1,4 @@
+import { ApiError } from '@reader/api';
 import {
   BrowserEndpoint,
   FolderName,
@@ -7,34 +8,32 @@ import {
 } from '@reader/business';
 import { Effect, Schema } from 'effect';
 
-const invalid = <Tag extends string>(tag: Tag) => ({ _tag: tag }) as const;
-
 export const decodePageUrl = (
   text: string
-): Effect.Effect<NormalizedUrl, { readonly _tag: 'InvalidPageUrl' }> =>
+): Effect.Effect<NormalizedUrl, ApiError.InvalidPageUrl> =>
   Schema.decodeEffect(NormalizedUrl)(text).pipe(
-    Effect.mapError(() => invalid('InvalidPageUrl'))
+    Effect.mapError(() => new ApiError.InvalidPageUrl())
   );
 
 export const decodeFeedUrl = (
   text: string
-): Effect.Effect<NormalizedUrl, { readonly _tag: 'FeedUrlInvalid' }> =>
+): Effect.Effect<NormalizedUrl, ApiError.FeedUrlInvalid> =>
   Schema.decodeEffect(NormalizedUrl)(text).pipe(
-    Effect.mapError(() => invalid('FeedUrlInvalid'))
+    Effect.mapError(() => new ApiError.FeedUrlInvalid())
   );
 
 export const decodeRetention = (
   value: number
-): Effect.Effect<Retention, { readonly _tag: 'InvalidRetention' }> =>
+): Effect.Effect<Retention, ApiError.InvalidRetention> =>
   Schema.decodeEffect(Retention)(value).pipe(
-    Effect.mapError(() => invalid('InvalidRetention'))
+    Effect.mapError(() => new ApiError.InvalidRetention())
   );
 
 export const decodeFolderName = (
   text: string
-): Effect.Effect<FolderName, { readonly _tag: 'InvalidFolderName' }> =>
+): Effect.Effect<FolderName, ApiError.InvalidFolderName> =>
   Schema.decodeEffect(FolderName)(text).pipe(
-    Effect.mapError(() => invalid('InvalidFolderName'))
+    Effect.mapError(() => new ApiError.InvalidFolderName())
   );
 
 const givenText = (text: string | undefined) => {
@@ -45,27 +44,22 @@ const givenText = (text: string | undefined) => {
 
 export const decodeJinaKey = (
   text: string | undefined
-): Effect.Effect<JinaKey | undefined, { readonly _tag: 'InvalidKey' }> => {
+): Effect.Effect<JinaKey | undefined> => {
   const given = givenText(text);
 
   return given === undefined
     ? Effect.undefined
-    : Schema.decodeEffect(JinaKey)(given).pipe(
-        Effect.mapError(() => invalid('InvalidKey'))
-      );
+    : Schema.decodeEffect(JinaKey)(given).pipe(Effect.orDie);
 };
 
 export const decodeBrowserEndpoint = (
   text: string | undefined
-): Effect.Effect<
-  BrowserEndpoint | undefined,
-  { readonly _tag: 'InvalidEndpoint' }
-> => {
+): Effect.Effect<BrowserEndpoint | undefined, ApiError.InvalidEndpoint> => {
   const given = givenText(text);
 
   return given === undefined
     ? Effect.undefined
     : Schema.decodeEffect(BrowserEndpoint)(given).pipe(
-        Effect.mapError(() => invalid('InvalidEndpoint'))
+        Effect.mapError(() => new ApiError.InvalidEndpoint())
       );
 };

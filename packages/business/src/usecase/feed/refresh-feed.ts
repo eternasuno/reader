@@ -69,10 +69,9 @@ export const selectItems = (
   const retained = inventory.filter((item) => listedUrls.has(item.url.href));
   const others = inventory.filter((item) => !listedUrls.has(item.url.href));
   const keptIds = new Set(
-    [
-      ...retained,
-      ...others.slice(0, Math.max(retention - listed.length, 0)),
-    ].map((item) => item.id)
+    [...retained, ...others.slice(0, retention - listed.length)].map(
+      (item) => item.id
+    )
   );
 
   return {

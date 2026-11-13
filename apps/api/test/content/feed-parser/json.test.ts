@@ -91,3 +91,22 @@ it('FD-PARSE-5 falls back to content_text when content_html is blank', () => {
   expectContent(feed.entries[0], 'Plain');
   expectContent(feed.entries[1], 'Spaced');
 });
+
+it('FD-PARSE-5 prefers content_html over content_text', () => {
+  const json = JSON.stringify({
+    version: 'https://jsonfeed.org/version/1.1',
+    title: 'JSON News',
+    items: [
+      {
+        id: '1',
+        url: 'https://example.com/rich',
+        title: 'Rich',
+        content_html: '<p>rich</p>',
+        content_text: 'plain',
+      },
+    ],
+  });
+  const feed = parseFeed(json, base);
+  expect(feed.entries).toHaveLength(1);
+  expectContent(feed.entries[0], '<p>rich</p>');
+});

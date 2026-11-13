@@ -37,29 +37,17 @@ const markAll = () =>
     )
   );
 
-const pageOf = (query: {
-  readonly unreadOnly: boolean;
-  readonly limit: number;
-  readonly cursor?: FeedItemId;
-}) => ({
-  unreadOnly: query.unreadOnly,
-  limit: query.limit,
-  ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
-});
-
 const items = ({ query }: HandlerRequest<'feedItems'>) =>
-  handle(feedItemRepositoryFailure, (owner) =>
-    listAllItems(owner, pageOf(query))
-  );
+  handle(feedItemRepositoryFailure, (owner) => listAllItems(owner, query));
 
 const itemsByFeed = ({ query }: HandlerRequest<'feedItemsByFeed'>) =>
   handle(feedItemRepositoryFailure, (owner) =>
-    listFeedItems(owner, query.feedId, pageOf(query))
+    listFeedItems(owner, query.feedId, query)
   );
 
 const itemsByFolder = ({ query }: HandlerRequest<'feedItemsByFolder'>) =>
   handle(feedItemRepositoryFailure, (owner) =>
-    listFolderItems(owner, query.folderId, pageOf(query))
+    listFolderItems(owner, query.folderId, query)
   );
 
 const item = ({ query }: HandlerRequest<'feedItem'>) =>

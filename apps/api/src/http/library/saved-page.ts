@@ -21,13 +21,7 @@ import {
 } from './session';
 
 const savedPages = ({ query }: HandlerRequest<'savedPages'>) =>
-  handle(savedPageRepositoryFailure, (owner) =>
-    listSavedPages(owner, {
-      unreadOnly: query.unreadOnly,
-      limit: query.limit,
-      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
-    })
-  );
+  handle(savedPageRepositoryFailure, (owner) => listSavedPages(owner, query));
 
 const savedPage = ({ query }: HandlerRequest<'savedPage'>) =>
   handle(savedPageRepositoryFailure, (owner) =>

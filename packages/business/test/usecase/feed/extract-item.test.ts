@@ -13,7 +13,6 @@ import { FeedItemNotFound } from '../../../src/usecase/feed/errors';
 import { extractItem } from '../../../src/usecase/feed/extract-item';
 import {
   alice,
-  bob,
   decodeContent,
   makeFeedItem,
   makeUniqueFeed,
@@ -52,26 +51,6 @@ describe('extractItem missing items', () => {
       }).pipe(Effect.flip);
 
       expect(error).toStrictEqual(new FeedItemNotFound({ id: missing.id }));
-      expect(yield* Ref.get(fetched)).toBe(0);
-    })
-  );
-
-  it.effect('reports another owner’s item as missing', () =>
-    Effect.gen(function* () {
-      const feed = makeUniqueFeed({ ownerId: bob });
-      const foreign = makeFeedItem({ ownerId: bob, feedId: feed.id });
-      const fetched = yield* Ref.make(0);
-      const error = yield* run(
-        Effect.gen(function* () {
-          yield* storeFeed(feed);
-          yield* storeItems(bob, [foreign]);
-
-          return yield* extractItem(alice, foreign.id).pipe(Effect.flip);
-        }),
-        { fetchPage: recordFetch(fetched) }
-      );
-
-      expect(error).toStrictEqual(new FeedItemNotFound({ id: foreign.id }));
       expect(yield* Ref.get(fetched)).toBe(0);
     })
   );

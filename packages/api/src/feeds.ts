@@ -2,24 +2,26 @@ import { Feed, FeedId, FeedItem, FeedItemId, FolderId } from '@reader/business';
 import { Schema } from 'effect';
 import { HttpApiEndpoint } from 'effect/http-api';
 import {
-  authErrors,
   created,
   extractionErrors,
-  FeedAlreadyExistsSchema,
-  FeedItemNotFoundSchema,
-  FeedParserErrorSchema,
-  FeedRepositoryErrorSchema,
-  FeedUrlInvalidSchema,
-  FetchFeedErrorSchema,
-  FolderNotFoundSchema,
-  FolderRepositoryErrorSchema,
-  feedItemErrors,
   limit,
   ok,
   subscribePayload,
   unreadOnly,
   urlPayload,
 } from './common';
+import {
+  FeedAlreadyExists,
+  FeedItemNotFound,
+  FeedItemRepositoryError,
+  FeedParserError,
+  FeedRepositoryError,
+  FeedUrlInvalid,
+  FetchFeedError,
+  FolderNotFound,
+  FolderRepositoryError,
+} from './errors';
+import { OriginCheck } from './middleware';
 
 const listResponse = Schema.Struct({ items: Schema.Array(Feed) });
 
@@ -50,70 +52,59 @@ const unreadCounts = Schema.Struct({
 export const feedEndpoints = [
   HttpApiEndpoint.get('feeds', '/api/library/feeds', {
     success: listResponse,
-    error: [FeedRepositoryErrorSchema, ...authErrors],
+    error: FeedRepositoryError,
   }),
   HttpApiEndpoint.post('preview', '/api/library/feeds/preview', {
     payload: urlPayload,
     success: Schema.Struct({ preview: previewResponse }),
-    error: [
-      FeedUrlInvalidSchema,
-      FetchFeedErrorSchema,
-      FeedParserErrorSchema,
-      ...authErrors,
-    ],
-  }),
+    error: [FeedUrlInvalid, FetchFeedError, FeedParserError],
+  }).middleware(OriginCheck),
   HttpApiEndpoint.post('subscribe', '/api/library/feeds', {
     payload: subscribePayload,
     success: created(Schema.Struct({ item: Feed })),
     error: [
-      FeedUrlInvalidSchema,
-      FeedAlreadyExistsSchema,
-      FeedRepositoryErrorSchema,
-      FolderNotFoundSchema,
-      FolderRepositoryErrorSchema,
-      ...authErrors,
+      FeedUrlInvalid,
+      FeedAlreadyExists,
+      FeedRepositoryError,
+      FolderNotFound,
+      FolderRepositoryError,
     ],
-  }),
+  }).middleware(OriginCheck),
   HttpApiEndpoint.delete('unsubscribe', '/api/library/feeds', {
     payload: Schema.Struct({ id: FeedId }),
     success: ok,
-    error: [FeedRepositoryErrorSchema, ...authErrors],
-  }),
+    error: FeedRepositoryError,
+  }).middleware(OriginCheck),
   HttpApiEndpoint.patch('moveFeed', '/api/library/feeds', {
     payload: Schema.Struct({ id: FeedId, folderId: Schema.NullOr(FolderId) }),
     success: ok,
-    error: [
-      FolderNotFoundSchema,
-      FeedRepositoryErrorSchema,
-      FolderRepositoryErrorSchema,
-      ...authErrors,
-    ],
-  }),
+    error: [FolderNotFound, FeedRepositoryError, FolderRepositoryError],
+  }).middleware(OriginCheck),
   HttpApiEndpoint.get('feedUnread', '/api/library/feeds/unread', {
     success: unreadCounts,
-    error: feedItemErrors,
+    error: FeedItemRepositoryError,
   }),
   HttpApiEndpoint.post('markFeedsRead', '/api/library/feeds/mark-read', {
     payload: Schema.Struct({
       feedIds: Schema.Array(FeedId),
     }),
     success: ok,
-    error: feedItemErrors,
-  }),
+    error: FeedItemRepositoryError,
+  }).middleware(OriginCheck),
   HttpApiEndpoint.post('markAllFeedItems', '/api/library/feeds/mark-all-read', {
     payload: Schema.Struct({}),
     success: ok,
-    error: feedItemErrors,
-  }),
+    error: FeedItemRepositoryError,
+  }).middleware(OriginCheck),
   HttpApiEndpoint.get('feedItems', '/api/library/feeds/items', {
     query: pageQuery,
     success: feedItemPage,
-    error: feedItemErrors,
+    error: FeedItemRepositoryError,
   }),
   HttpApiEndpoint.get('feedItemsByFeed', '/api/library/feeds/items/by-feed', {
     query: { feedId: FeedId, ...pageQuery },
     success: feedItemPage,
-    error: feedItemErrors,
+    error: FeedItemRepositoryError,
   }),
   HttpApiEndpoint.get(
     'feedItemsByFolder',
@@ -121,29 +112,29 @@ export const feedEndpoints = [
     {
       query: { folderId: FolderId, ...pageQuery },
       success: feedItemPage,
-      error: feedItemErrors,
+      error: FeedItemRepositoryError,
     }
   ),
   HttpApiEndpoint.get('feedItem', '/api/library/feeds/items/item', {
     query: itemQuery,
     success: Schema.Struct({ item: Schema.NullOr(FeedItem) }),
-    error: feedItemErrors,
+    error: FeedItemRepositoryError,
   }),
   HttpApiEndpoint.post('extractFeedItem', '/api/library/feeds/items/extract', {
     payload: Schema.Struct({ id: FeedItemId }),
     success: Schema.Struct({ item: FeedItem }),
-    error: [FeedItemNotFoundSchema, ...extractionErrors, ...feedItemErrors],
-  }),
+    error: [FeedItemNotFound, ...extractionErrors, FeedItemRepositoryError],
+  }).middleware(OriginCheck),
   HttpApiEndpoint.patch('markFeedItem', '/api/library/feeds/items', {
     payload: Schema.Struct({ id: FeedItemId, read: Schema.Boolean }),
     success: ok,
-    error: feedItemErrors,
-  }),
+    error: FeedItemRepositoryError,
+  }).middleware(OriginCheck),
   HttpApiEndpoint.post('markFeedItems', '/api/library/feeds/items/mark-read', {
     payload: Schema.Struct({
       ids: Schema.Array(FeedItemId),
     }),
     success: ok,
-    error: feedItemErrors,
-  }),
+    error: FeedItemRepositoryError,
+  }).middleware(OriginCheck),
 ] as const;

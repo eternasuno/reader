@@ -1,5 +1,6 @@
-import { Option } from 'effect';
+import { Effect, Option } from 'effect';
 import { describe, expect, it } from 'vitest';
+import { makeRunner } from '../../src/api/client';
 import {
   type Article,
   createLibraryClient,
@@ -19,8 +20,8 @@ const feedId = uuid('3');
 const folderId = uuid('4');
 
 type Recorded = {
-  readonly method: string;
   readonly path: string;
+  readonly query: Readonly<Record<string, string>>;
   readonly init: RequestInit | undefined;
 };
 
@@ -30,9 +31,10 @@ const makeClient = (handler: Handler) => {
   const requests: Array<Recorded> = [];
   const client = createLibraryClient({
     fetch: async (input, init) => {
+      const url = new URL(String(input));
       const request: Recorded = {
-        method: init?.method ?? 'GET',
-        path: new URL(String(input)).pathname,
+        path: url.pathname,
+        query: Object.fromEntries(url.searchParams),
         init,
       };
       requests.push(request);
@@ -192,6 +194,52 @@ describe('unread counts', () => {
   });
 });
 
+describe('list scope dispatch', () => {
+  const cases = [
+    {
+      scope: { kind: 'later' },
+      path: '/api/library/saved-pages',
+      query: { unreadOnly: 'true', limit: '30' },
+      cursor: undefined,
+      body: { items: [savedPageJson], cursor: null },
+      articles: [savedArticle],
+    },
+    {
+      scope: { kind: 'feeds' },
+      path: '/api/library/feeds/items',
+      query: { unreadOnly: 'true', limit: '30', cursor: itemId },
+      cursor: itemId,
+      body: { items: [feedItemJson], cursor: itemId },
+      articles: [feedArticle],
+    },
+    {
+      scope: { kind: 'feeds', feedId },
+      path: '/api/library/feeds/items/by-feed',
+      query: { unreadOnly: 'true', limit: '30', feedId },
+      cursor: undefined,
+      body: { items: [feedItemJson], cursor: null },
+      articles: [feedArticle],
+    },
+    {
+      scope: { kind: 'folder', folderId },
+      path: '/api/library/feeds/items/by-folder',
+      query: { unreadOnly: 'true', limit: '30', folderId },
+      cursor: undefined,
+      body: { items: [feedItemJson], cursor: null },
+      articles: [feedArticle],
+    },
+  ] as const;
+
+  it.each(cases)('lists $scope.kind from $path', async (one) => {
+    const { client, requests } = makeClient(json(one.body));
+    const listed = await client.list(one.scope, true, one.cursor);
+
+    expect(requests[0]?.path).toBe(one.path);
+    expect(requests[0]?.query).toEqual(one.query);
+    expect(listed).toEqual({ items: one.articles, cursor: one.body.cursor });
+  });
+});
+
 describe('error wording', () => {
   it('keeps a message for every tag of the table', () => {
     for (const [tag, message] of Object.entries(libraryErrorMessages)) {
@@ -249,33 +297,33 @@ describe('error fallbacks', () => {
     });
   });
 
-  it('maps a bare 401 and a bare 403 by status', async () => {
-    const unauthorized = makeClient(json({ error: 'Unauthorized' }, 401));
-    const forbidden = makeClient(() => new Response('', { status: 403 }));
+  it.each([
+    ['Unauthorized', 401],
+    ['Forbidden', 403],
+    ['AuthUnavailable', 500],
+  ] as const)('maps a %s response body', async (tag, status) => {
+    const { client } = makeClient(json({ _tag: tag }, status));
+    const caught = await failure(client.add('https://example.com/post'));
 
-    expect(await failure(unauthorized.client.feeds())).toMatchObject({
-      tag: 'Unauthorized',
-    });
-    expect(await failure(forbidden.client.feeds())).toMatchObject({
-      tag: 'Forbidden',
-    });
+    expect(caught).toMatchObject({ tag, message: libraryErrorMessages[tag] });
   });
 
-  it('maps an undeclared status to a request failure', async () => {
-    const { client } = makeClient(() => new Response('boom', { status: 500 }));
+  it('keeps the original defect instead of wrapping it', async () => {
+    const run = makeRunner({});
+    const boom = new Error('boom');
 
-    expect(await failure(client.feeds())).toMatchObject({
-      tag: 'RequestFailed',
-      message: '请求失败，请稍后重试',
-    });
+    expect(await failure(run(() => Effect.die(boom)))).toBe(boom);
   });
 
-  it('maps a success body that fails the schema to an invalid response', async () => {
-    const { client } = makeClient(json({ items: [{ id: feedId }] }));
+  it.each([
+    ['RequestFailed', () => new Response('boom', { status: 500 })],
+    ['InvalidResponse', json({ items: [{ id: feedId }] })],
+  ] as const)('maps an unexpected response to %s', async (tag, handler) => {
+    const { client } = makeClient(handler);
 
     expect(await failure(client.feeds())).toMatchObject({
-      tag: 'InvalidResponse',
-      message: '响应数据格式不正确，请稍后重试',
+      tag,
+      message: libraryErrorMessages[tag],
     });
   });
 });

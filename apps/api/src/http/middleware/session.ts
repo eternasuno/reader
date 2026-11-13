@@ -1,24 +1,20 @@
-import { Context, Effect } from 'effect';
+import { ApiError, Authentication, Session } from '@reader/api';
+import { Effect, Layer } from 'effect';
 import {
   Cookies,
-  HttpRouter,
+  HttpEffect,
   HttpServerRequest,
   HttpServerResponse,
 } from 'effect/http';
+import { HttpApiError } from 'effect/http-api';
 import { Auth, AuthUnavailable } from '../../auth';
 
-export class Session extends Context.Service<
-  Session,
-  { id: string; name: string; email: string }
->()('Session') {}
-
-export const sessionMiddleware = HttpRouter.middleware<{
-  provides: Session;
-}>()(
+export const AuthenticationLive = Layer.effect(
+  Authentication,
   Effect.gen(function* () {
     const auth = yield* Auth;
 
-    return (handler) =>
+    return (httpEffect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const session = yield* Effect.tryPromise({
@@ -28,35 +24,35 @@ export const sessionMiddleware = HttpRouter.middleware<{
               returnHeaders: true,
             }),
           catch: (cause) => new AuthUnavailable({ cause }),
-        });
-        const response = session.response
-          ? yield* Effect.provideService(handler, Session, {
-              id: session.response.user.id,
-              name: session.response.user.name,
-              email: session.response.user.email,
-            })
-          : yield* HttpServerResponse.json(
-              { error: 'Unauthorized' },
-              { status: 401 }
-            );
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning('Authentication unavailable', error)
+          ),
+          Effect.mapError(() => new ApiError.AuthUnavailable())
+        );
+
         const headers = new Headers(session.headers);
         const cookies = Cookies.fromSetCookie(headers.getSetCookie());
         headers.delete('set-cookie');
 
-        return response.pipe(
-          HttpServerResponse.setHeaders(headers),
-          HttpServerResponse.mergeCookies(cookies)
-        );
-      }).pipe(
-        Effect.tapError((error) =>
-          Effect.logWarning('Authentication unavailable', error)
-        ),
-        Effect.catchTag('AuthUnavailable', () =>
-          HttpServerResponse.json(
-            { error: 'Authentication unavailable' },
-            { status: 500 }
+        yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+          Effect.succeed(
+            response.pipe(
+              HttpServerResponse.setHeaders(headers),
+              HttpServerResponse.mergeCookies(cookies)
+            )
           )
-        )
-      );
+        );
+
+        if (!session.response) {
+          return yield* new HttpApiError.Unauthorized({});
+        }
+
+        return yield* Effect.provideService(httpEffect, Session, {
+          id: session.response.user.id,
+          name: session.response.user.name,
+          email: session.response.user.email,
+        });
+      });
   })
 );
