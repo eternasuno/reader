@@ -121,6 +121,7 @@ describe('settings flags load', () => {
 
     await flush();
 
+    expect(lastCall()[0]).toBe('/api/library/settings');
     expect(model.status.loadError()).toBe('');
     expect(model.drafts.settings()).toEqual({
       ...baseline,

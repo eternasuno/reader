@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  getSettings,
-  useBrowserFetcher,
-  useJinaFetcher,
-} from '../../src/api/setting';
+import { useBrowserFetcher, useJinaFetcher } from '../../src/api/setting';
 
 const fetchMock = vi.fn();
 
@@ -14,13 +10,6 @@ const json = (body: unknown, status = 200) =>
   });
 
 const ok = () => json({ ok: true });
-
-const settings = {
-  retention: 120,
-  provider: 'jina',
-  jinaKeyConfigured: true,
-  browserEndpointConfigured: false,
-};
 
 const lastBody = (): unknown => {
   const call = fetchMock.mock.calls.at(-1);
@@ -35,14 +24,6 @@ beforeEach(() => {
 afterEach(() => {
   fetchMock.mockReset();
   vi.unstubAllGlobals();
-});
-
-describe('getSettings', () => {
-  it('loads the settings flags', async () => {
-    fetchMock.mockResolvedValue(json(settings));
-
-    await expect(getSettings()).resolves.toEqual(settings);
-  });
 });
 
 describe('settings mutations', () => {

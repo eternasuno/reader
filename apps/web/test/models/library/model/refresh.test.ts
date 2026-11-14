@@ -123,6 +123,26 @@ describe('library reload', () => {
     }
   });
 
+  it('SP-LIST-3 relists the first unread page so read pages vanish and new pages lead', async () => {
+    const client = createStubClient();
+    client.list.mockResolvedValue(
+      page([article('a'), article('b')], 'cursor-2')
+    );
+    const model = createLibraryModel(client);
+
+    await model.setFilter(true);
+
+    // The page read since that load is gone from the unread listing, and a
+    // page saved since leads it.
+    client.list.mockResolvedValue(page([article('new'), article('b')], null));
+
+    await model.refresh();
+
+    expect(client.list).toHaveBeenLastCalledWith({ kind: 'later' }, true);
+    expect(model.state().items.map((item) => item.id)).toEqual(['new', 'b']);
+    expect(model.state().cursor).toBeNull();
+  });
+
   it('reloads on entering the library even for the default scope', async () => {
     const client = createStubClient();
     client.list.mockResolvedValue(page([article('a')]));

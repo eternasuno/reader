@@ -46,6 +46,7 @@ it('converts login and registration network errors', async () => {
 it('completes successful sign out', async () => {
   client.signOut.mockResolvedValue({ data: { success: true }, error: null });
   await expect(logout()).resolves.toBeUndefined();
+  expect(client.signOut).toHaveBeenCalledWith();
 });
 
 it('preserves API sign out errors', async () => {
