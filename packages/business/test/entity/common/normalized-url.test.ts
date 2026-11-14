@@ -92,4 +92,24 @@ describe('NormalizedUrl serialization', () => {
     expect(url.password).toBe('secret');
     expect(url.href).toBe('https://user:secret@example.com/a');
   });
+
+  it('CM-URL-6 applies the standard url serialization and nothing else', () => {
+    expect(hrefOf('HTTPS://Site.Example')).toBe('https://site.example/');
+    expect(hrefOf('https://site.example:443/')).toBe('https://site.example/');
+    expect(hrefOf('http://site.example:80')).toBe('http://site.example/');
+
+    expect(hrefOf('https://site.example')).toBe(
+      hrefOf('https://site.example/')
+    );
+
+    expect(hrefOf('https://site.example/post')).not.toBe(
+      hrefOf('https://site.example/post/')
+    );
+    expect(hrefOf('http://site.example/')).not.toBe(
+      hrefOf('https://site.example/')
+    );
+    expect(hrefOf('https://www.site.example/')).not.toBe(
+      hrefOf('https://site.example/')
+    );
+  });
 });

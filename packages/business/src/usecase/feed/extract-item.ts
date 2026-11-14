@@ -32,14 +32,17 @@ const storeExtracted = (
 > =>
   Effect.gen(function* () {
     const items = yield* FeedItemRepository;
-    const extractedContent = Option.some(article.content);
-    const updated = yield* items.update(owner, [item.id], { extractedContent });
+    const written = yield* items.setExtractedContent(
+      owner,
+      item.id,
+      article.content
+    );
 
-    if (updated.length === 0) {
+    if (!written) {
       return yield* new FeedItemNotFound({ id: item.id });
     }
 
-    return { ...item, extractedContent };
+    return { ...item, extractedContent: Option.some(article.content) };
   });
 
 export const extractItem = (

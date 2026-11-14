@@ -27,7 +27,7 @@ import {
   decodeTitle,
   decodeUrl,
   parsedDocument,
-} from '../../support';
+} from '../../support/fixtures';
 
 const url = decodeUrl('https://example.com/article');
 

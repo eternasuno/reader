@@ -10,14 +10,14 @@ import { refreshFeed } from '@reader/business';
 import { Config, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
 import { AppLive, LibraryServicesLive } from './app';
-import { AuthLive } from './infrastructure/auth';
-import { DatabaseLive } from './infrastructure/db';
-import { feedRefreshQueueLayer } from './infrastructure/feed-refresh-queue';
+import { AuthLive } from './auth';
+import { DatabaseLive } from './db';
+import { staticRoutes } from './http/static';
+import { feedRefreshQueueLayer } from './refresh/queue';
 import {
   FEED_REFRESH_INTERVAL,
   feedRefreshSchedulerLayer,
-} from './infrastructure/feed-refresh-scheduler';
-import { staticRoutes } from './routes/static';
+} from './refresh/scheduler';
 
 const DEFAULT_PORT = 3001;
 

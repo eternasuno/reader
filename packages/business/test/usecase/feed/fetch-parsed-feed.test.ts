@@ -3,14 +3,14 @@ import { Effect, Option } from 'effect';
 import { Headers } from 'effect/http';
 import { FeedParserError } from '../../../src/port/feed-parser';
 import { fetchParsedFeed } from '../../../src/usecase/feed/fetch-parsed-feed';
-import { decodeUrl } from '../../support';
+import { decodeUrl } from '../../support/fixtures';
 import {
   feedResponse,
   parsedEntry,
   parsedFeed,
   run,
   transportFailure,
-} from './support';
+} from '../../support/usecase/feed';
 
 const url = decodeUrl('https://example.com/feed.xml');
 

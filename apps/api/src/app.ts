@@ -1,15 +1,14 @@
 import { Effect, Layer } from 'effect';
 import { FetchHttpClient, HttpRouter } from 'effect/http';
-import { ArticleExtractorLive } from './adapter/article-extractor';
-import { DocumentSanitizerLive } from './adapter/document-sanitizer';
-import { FeedParserLive } from './adapter/feed-parser';
-import { HtmlParserLive } from './adapter/html-parser';
-import { ReaderStoreLive } from './adapter/reader-store';
-import { SettingRepositoryLive } from './adapter/setting-repository';
-import type { Auth } from './infrastructure/auth';
-import type { FeedRefreshQueue } from './infrastructure/feed-refresh-queue';
-import { authRoutes } from './routes/auth';
-import { libraryRoutes } from './routes/library';
+import type { Auth } from './auth';
+import { ArticleExtractorLive } from './content/article-extractor';
+import { DocumentSanitizerLive } from './content/document-sanitizer';
+import { FeedParserLive } from './content/feed-parser';
+import { HtmlParserLive } from './content/html-parser';
+import { authRoutes } from './http/auth';
+import { libraryRoutes } from './http/library';
+import type { FeedRefreshQueue } from './refresh/queue';
+import { ReaderStoreLive, SettingRepositoryLive } from './store';
 
 export const LibraryServicesLive = Layer.mergeAll(
   ReaderStoreLive,

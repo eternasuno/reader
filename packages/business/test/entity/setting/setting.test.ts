@@ -7,7 +7,7 @@ import {
 } from '../../../src/entity/setting/fetcher';
 import { Retention } from '../../../src/entity/setting/retention';
 import { Setting } from '../../../src/entity/setting/setting';
-import { alice } from '../../support';
+import { alice } from '../../support/fixtures';
 
 const decodeRetention = Schema.decodeUnknownResult(Retention);
 

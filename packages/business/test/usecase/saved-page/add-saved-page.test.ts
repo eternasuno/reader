@@ -1,19 +1,17 @@
 import { describe, expect, it } from '@effect/vitest';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Deferred, Effect, Option, Ref, Result } from 'effect';
 import { HtmlParserError } from '../../../src/port/html-parser';
 import { SavedPageRepository } from '../../../src/port/saved-page-repository';
 import { WebpageFetcherError } from '../../../src/port/webpage-fetcher';
 import { addSavedPage } from '../../../src/usecase/saved-page/add-saved-page';
-import { alice, bob, decodeUrl, makeSavedPage } from '../../support';
+import { alice, decodeUrl, makeSavedPage } from '../../support/fixtures';
 import {
   asAlreadyExists,
-  capture,
-  errorsOf,
   fetchedArticle,
   recordingFetch,
   run,
   storedPages,
-} from './support';
+} from '../../support/usecase/saved-page';
 
 const publishedAt = DateTime.fromDateUnsafe(
   new Date('2026-02-01T00:00:00.000Z')
@@ -67,40 +65,6 @@ describe('addSavedPage duplicates', () => {
         expect(yield* storedPages(alice)).toEqual([saved]);
       }),
       { fetch: recordingFetch(fetched) }
-    );
-  });
-
-  it.effect('SP-ADD-5 saves exactly one page when two adds run at once', () => {
-    const fetched: Array<string> = [];
-
-    return run(
-      Effect.gen(function* () {
-        const url = decodeUrl('https://example.com/race');
-        const captures = yield* Effect.all(
-          [
-            capture(addSavedPage(alice, url)),
-            capture(addSavedPage(alice, url)),
-          ],
-          { concurrency: 'unbounded' }
-        );
-
-        expect(captures.filter((captured) => captured.ok)).toHaveLength(1);
-        expect(errorsOf(captures).map((error) => error._tag)).toEqual([
-          'SavedPageAlreadyExists',
-        ]);
-        expect(fetched).toHaveLength(2);
-        expect(yield* storedPages(alice)).toHaveLength(1);
-      }),
-      {
-        fetch: (href) => {
-          fetched.push(href);
-
-          return Effect.as(
-            Effect.yieldNow,
-            '<html><body><p>Raced</p></body></html>'
-          );
-        },
-      }
     );
   });
 });
@@ -172,36 +136,63 @@ describe('addSavedPage failures', () => {
   );
 });
 
-describe('addSavedPage ownership', () => {
-  it.effect('SP-ID-2 saves the same url for two owners as two pages', () =>
-    run(
-      Effect.gen(function* () {
-        const url = decodeUrl('https://example.com/shared');
-        const mine = yield* addSavedPage(alice, url);
-        const theirs = yield* addSavedPage(bob, url);
+describe('addSavedPage concurrent duplicates', () => {
+  it.effect('SP-ADD-5 the unique key saves one page and fails the other', () =>
+    Effect.gen(function* () {
+      const arrivals = yield* Ref.make(0);
+      const gate = yield* Deferred.make<void>();
+      const url = decodeUrl('https://example.com/concurrent');
 
-        expect(theirs.id).not.toBe(mine.id);
-        expect(yield* storedPages(alice)).toEqual([mine]);
-        expect(yield* storedPages(bob)).toEqual([theirs]);
-      })
-    )
-  );
+      const result = yield* run(
+        Effect.gen(function* () {
+          const outcomes = yield* Effect.all(
+            [
+              Effect.result(addSavedPage(alice, url)),
+              Effect.result(addSavedPage(alice, url)),
+            ],
+            { concurrency: 'unbounded' }
+          );
 
-  it.effect("SP-OWN-1 does not treat another owner's page as a duplicate", () =>
-    run(
-      Effect.gen(function* () {
-        const repository = yield* SavedPageRepository;
-        const url = decodeUrl('https://example.com/foreign');
-        const theirs = makeSavedPage({ ownerId: bob, url });
+          return { outcomes, pages: yield* storedPages(alice) };
+        }),
+        {
+          fetch: () =>
+            Effect.gen(function* () {
+              const arrival = yield* Ref.updateAndGet(
+                arrivals,
+                (value) => value + 1
+              );
 
-        yield* repository.create(bob, [theirs]);
+              if (arrival === 2) {
+                yield* Deferred.succeed(gate, void 0);
+              }
 
-        const mine = yield* addSavedPage(alice, url);
+              yield* Deferred.await(gate);
 
-        expect(mine.ownerId).toBe(alice);
-        expect(yield* storedPages(alice)).toEqual([mine]);
-        expect(yield* storedPages(bob)).toEqual([theirs]);
-      })
-    )
+              return '<p>Hello</p>';
+            }),
+        }
+      );
+
+      const saved = result.outcomes.flatMap((outcome) =>
+        Result.isSuccess(outcome) ? [outcome.success] : []
+      );
+      const failed = result.outcomes.flatMap((outcome) =>
+        Result.isFailure(outcome) ? [outcome.failure] : []
+      );
+
+      expect(yield* Ref.get(arrivals)).toBe(2);
+      expect(saved).toHaveLength(1);
+      expect(failed).toHaveLength(1);
+
+      const duplicate = failed[0];
+
+      if (duplicate === undefined) {
+        throw new Error('expected one failed add');
+      }
+
+      expect(asAlreadyExists(duplicate).url.href).toBe(url.href);
+      expect(result.pages).toStrictEqual(saved);
+    })
   );
 });

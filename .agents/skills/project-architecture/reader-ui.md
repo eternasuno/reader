@@ -34,6 +34,7 @@ Read this reference when changing the reader workspace, sidebar navigation, list
 ## List reloading and read state
 
 - A list reloads, from the first page, only when the user enters it, selects a feed, changes the filter, or presses the toolbar refresh button. It never reloads in the background or when the user comes back from reading.
+- Each scope loads through its own request: all subscriptions, one feed and one folder each call their own list endpoint, and later-reading calls the saved-page list (routes in `README.md`). The scope picks the request; it is never sent as a parameter.
 - Refresh is ignored while a read mark, a delete, or a whole-scope mark is in flight; the refresh button is disabled then.
 - Opening an article from the unread list marks it read but keeps it listed, shown as read, until the list reloads.
 - Moving a feed, creating a folder or renaming a folder never reloads the list; counts and the sidebar update at once.
@@ -61,7 +62,7 @@ Read this reference when changing the reader workspace, sidebar navigation, list
 ## Settings page
 
 - Show only whether a Jina key and a browser service address are configured, never their values.
-- Picking a provider only changes which field the form shows; nothing is saved until Save. A blank field keeps the stored value. Show the message of `BrowserEndpointRequired` when the browser provider has no address.
+- Picking a provider only changes which field the form shows; nothing is saved until Save. Save calls the request of the picked provider: "use Jina" with the key, or "use browser" with the address (routes in `README.md`). A blank field keeps the stored value. Show the message of `BrowserEndpointRequired` when the browser provider has no address.
 - Clearing the Jina key asks for confirmation; cancelling keeps it, and clearing leaves the provider unchanged.
 - Offer no way to remove the browser address; typing a new one replaces it.
 

@@ -1,4 +1,4 @@
-import { RegisterForm } from '../components/organisms/register-form';
+import { RegisterForm } from '../components/organisms/auth/register-form';
 import { AuthPage } from '../components/templates/auth-page';
 
 const Register = () => {

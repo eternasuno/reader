@@ -1,57 +1,61 @@
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import type { OwnerId } from '../../entity/common/owner-id';
-import { FeedId } from '../../entity/feed/feed';
+import type { FeedId } from '../../entity/feed/feed';
 import type { FeedItem, FeedItemId } from '../../entity/feed/feed-item';
-import { FolderId } from '../../entity/feed/folder';
+import type { FolderId } from '../../entity/feed/folder';
 import {
-  type FeedItemQuery,
   FeedItemRepository,
   type FeedItemRepositoryError,
 } from '../../port/feed-item-repository';
+import { type Page, type PageInput, pageOf, pageQuery } from '../common/paging';
 
-export const FeedItemScope = Schema.TaggedUnion({
-  All: {},
-  Feed: { feedId: FeedId },
-  Folder: { folderId: FolderId },
-});
-
-export type FeedItemScope = typeof FeedItemScope.Type;
-
-export type FeedItemListInput = {
-  readonly scope: FeedItemScope;
-  readonly unreadOnly: boolean;
-  readonly limit: number;
-  readonly cursor?: FeedItemId;
-};
-
-export const listItems = (
+export const listAllItems = (
   owner: OwnerId,
-  input: FeedItemListInput
+  page: PageInput<FeedItemId>
 ): Effect.Effect<
-  {
-    readonly items: ReadonlyArray<FeedItem>;
-    readonly cursor: FeedItemId | null;
-  },
+  Page<FeedItem, FeedItemId>,
   FeedItemRepositoryError,
   FeedItemRepository
 > =>
   Effect.gen(function* () {
     const repository = yield* FeedItemRepository;
-    const query: FeedItemQuery = {
-      unreadOnly: input.unreadOnly,
-      limit: input.limit + 1,
-      ...(input.cursor === undefined ? {} : { after: input.cursor }),
-    };
-    const rows = yield* FeedItemScope.match(input.scope, {
-      All: () => repository.listAll(owner, query),
-      Feed: ({ feedId }) => repository.listByFeed(owner, feedId, query),
-      Folder: ({ folderId }) => repository.listByFolder(owner, folderId, query),
-    });
-    const items = rows.slice(0, input.limit);
-    const last = items.at(-1);
+    const rows = yield* repository.listAll(owner, pageQuery(page));
 
-    return {
-      items,
-      cursor: rows.length > input.limit && last !== undefined ? last.id : null,
-    };
+    return pageOf<FeedItemId, FeedItem>(rows, page.limit);
+  });
+
+export const listFeedItems = (
+  owner: OwnerId,
+  feedId: FeedId,
+  page: PageInput<FeedItemId>
+): Effect.Effect<
+  Page<FeedItem, FeedItemId>,
+  FeedItemRepositoryError,
+  FeedItemRepository
+> =>
+  Effect.gen(function* () {
+    const repository = yield* FeedItemRepository;
+    const rows = yield* repository.listByFeed(owner, feedId, pageQuery(page));
+
+    return pageOf<FeedItemId, FeedItem>(rows, page.limit);
+  });
+
+export const listFolderItems = (
+  owner: OwnerId,
+  folderId: FolderId,
+  page: PageInput<FeedItemId>
+): Effect.Effect<
+  Page<FeedItem, FeedItemId>,
+  FeedItemRepositoryError,
+  FeedItemRepository
+> =>
+  Effect.gen(function* () {
+    const repository = yield* FeedItemRepository;
+    const rows = yield* repository.listByFolder(
+      owner,
+      folderId,
+      pageQuery(page)
+    );
+
+    return pageOf<FeedItemId, FeedItem>(rows, page.limit);
   });

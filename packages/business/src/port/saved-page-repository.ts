@@ -1,24 +1,11 @@
-import {
-  Context,
-  Data,
-  type Effect,
-  type Option,
-  Schema,
-  Struct,
-} from 'effect';
+import { Context, Data, type Effect, type Option } from 'effect';
 import type { NormalizedUrl } from '../entity/common/normalized-url';
 import type { OwnerId } from '../entity/common/owner-id';
-import { SavedPage, type SavedPageId } from '../entity/saved-page/saved-page';
+import type { SavedPage, SavedPageId } from '../entity/saved-page/saved-page';
 
 export class SavedPageRepositoryError extends Data.TaggedError(
   'SavedPageRepositoryError'
 )<{ readonly message: string }> {}
-
-export const SavedPagePatch = SavedPage.mapFields((fields) =>
-  Struct.map(Struct.pick(fields, ['read']), Schema.optionalKey)
-);
-
-export type SavedPagePatch = typeof SavedPagePatch.Type;
 
 export type SavedPageQuery = {
   readonly unreadOnly: boolean;
@@ -43,14 +30,13 @@ export interface ISavedPageRepository {
     owner: OwnerId,
     pages: ReadonlyArray<SavedPage>
   ) => Effect.Effect<ReadonlyArray<SavedPageId>, SavedPageRepositoryError>;
-  readonly update: (
+  readonly markRead: (
     owner: OwnerId,
     ids: ReadonlyArray<SavedPageId>,
-    patch: SavedPagePatch
-  ) => Effect.Effect<ReadonlyArray<SavedPageId>, SavedPageRepositoryError>;
-  readonly updateAll: (
-    owner: OwnerId,
-    patch: SavedPagePatch
+    read: boolean
+  ) => Effect.Effect<void, SavedPageRepositoryError>;
+  readonly markAllRead: (
+    owner: OwnerId
   ) => Effect.Effect<void, SavedPageRepositoryError>;
   readonly remove: (
     owner: OwnerId,

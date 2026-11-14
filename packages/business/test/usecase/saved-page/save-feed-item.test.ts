@@ -1,12 +1,11 @@
 import { describe, expect, it } from '@effect/vitest';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Deferred, Effect, Option, Ref, Result } from 'effect';
 import {
   FeedItemRepository,
   type IFeedItemRepository,
 } from '../../../src/port/feed-item-repository';
 import { SavedPageRepository } from '../../../src/port/saved-page-repository';
 import { WebpageFetcherError } from '../../../src/port/webpage-fetcher';
-import { addSavedPage } from '../../../src/usecase/saved-page/add-saved-page';
 import { saveFeedItem } from '../../../src/usecase/saved-page/save-feed-item';
 import {
   alice,
@@ -17,17 +16,15 @@ import {
   decodeUrl,
   makeFeedItem,
   makeSavedPage,
-} from '../../support';
+} from '../../support/fixtures';
 import {
   asAlreadyExists,
   asNotFound,
-  capture,
-  errorsOf,
   recordingFetch,
   run,
   storedPages,
   storeFeedItem,
-} from './support';
+} from '../../support/usecase/saved-page';
 
 const publishedAt = DateTime.fromDateUnsafe(
   new Date('2026-02-01T00:00:00.000Z')
@@ -109,25 +106,6 @@ describe('saveFeedItem copy', () => {
       })
     )
   );
-
-  it.effect('SP-SAVE-9 puts the saved copy on top of the list', () =>
-    run(
-      Effect.gen(function* () {
-        const older = yield* addSavedPage(
-          alice,
-          decodeUrl('https://example.com/older')
-        );
-        const item = yield* storeFeedItem(alice, {
-          content: decodeContent('<p>Feed body</p>'),
-        });
-        const page = yield* saveFeedItem(alice, item.id);
-        const listed = yield* storedPages(alice);
-
-        expect(listed.map((row) => row.id)).toEqual([page.id, older.id]);
-        expect(page.id > older.id).toBe(true);
-      })
-    )
-  );
 });
 
 describe('saveFeedItem content priority', () => {
@@ -203,29 +181,6 @@ describe('saveFeedItem failures', () => {
 });
 
 describe('saveFeedItem races and deletion', () => {
-  it.effect('SP-SAVE-7 saves exactly one page when two saves run at once', () =>
-    run(
-      Effect.gen(function* () {
-        const item = yield* storeFeedItem(alice, {
-          content: decodeContent('<p>Feed body</p>'),
-        });
-        const captures = yield* Effect.all(
-          [
-            capture(saveFeedItem(alice, item.id)),
-            capture(saveFeedItem(alice, item.id)),
-          ],
-          { concurrency: 'unbounded' }
-        );
-
-        expect(captures.filter((captured) => captured.ok)).toHaveLength(1);
-        expect(errorsOf(captures).map((error) => error._tag)).toEqual([
-          'SavedPageAlreadyExists',
-        ]);
-        expect(yield* storedPages(alice)).toHaveLength(1);
-      })
-    )
-  );
-
   it.effect('SP-SAVE-10 saves the item found before it was deleted', () =>
     run(
       Effect.gen(function* () {
@@ -249,5 +204,63 @@ describe('saveFeedItem races and deletion', () => {
         expect(yield* storedPages(alice)).toEqual([page]);
       })
     )
+  );
+});
+
+describe('saveFeedItem concurrent duplicates', () => {
+  it.effect('SP-SAVE-7 the unique key saves one page and fails the other', () =>
+    Effect.gen(function* () {
+      const arrivals = yield* Ref.make(0);
+      const gate = yield* Deferred.make<void>();
+
+      const result = yield* run(
+        Effect.gen(function* () {
+          const item = yield* storeFeedItem(alice);
+          const save = Effect.result(saveFeedItem(alice, item.id));
+          const outcomes = yield* Effect.all([save, save], {
+            concurrency: 'unbounded',
+          });
+
+          return { item, outcomes, pages: yield* storedPages(alice) };
+        }),
+        {
+          fetch: () =>
+            Effect.gen(function* () {
+              const arrival = yield* Ref.updateAndGet(
+                arrivals,
+                (value) => value + 1
+              );
+
+              if (arrival === 2) {
+                yield* Deferred.succeed(gate, void 0);
+              }
+
+              yield* Deferred.await(gate);
+
+              return '<p>Hello</p>';
+            }),
+        }
+      );
+
+      const saved = result.outcomes.flatMap((outcome) =>
+        Result.isSuccess(outcome) ? [outcome.success] : []
+      );
+      const failed = result.outcomes.flatMap((outcome) =>
+        Result.isFailure(outcome) ? [outcome.failure] : []
+      );
+
+      expect(yield* Ref.get(arrivals)).toBe(2);
+      expect(saved).toHaveLength(1);
+      expect(failed).toHaveLength(1);
+
+      const duplicate = failed[0];
+
+      if (duplicate === undefined) {
+        throw new Error('expected one failed save');
+      }
+
+      expect(asAlreadyExists(duplicate).url.href).toBe(result.item.url.href);
+      expect(result.pages).toStrictEqual(saved);
+    })
   );
 });

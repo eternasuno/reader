@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@reader/api": "workspace:*",
+    "@reader/business": "workspace:*",
     "@solidjs/router": "1.0.1",
     "@tanstack/solid-virtual": "3.13.53",
     "better-auth": "catalog:",

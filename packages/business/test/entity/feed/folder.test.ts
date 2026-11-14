@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Result, Schema } from 'effect';
 import { Folder, FolderId, FolderName } from '../../../src/entity/feed/folder';
-import { alice, makeFolder } from '../../support';
+import { alice, makeFolder } from '../../support/fixtures';
 
 describe('FolderName', () => {
   it('FD-FOLDER-2 trims the name', () => {

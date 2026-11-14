@@ -1,8 +1,8 @@
 import { useNavigate } from '@solidjs/router';
 import { createEffect } from 'solid-js';
-import { LoginForm } from '../components/organisms/login-form';
+import { authClient } from '../api/auth';
+import { LoginForm } from '../components/organisms/auth/login-form';
 import { AuthPage } from '../components/templates/auth-page';
-import { authClient } from '../lib/auth';
 
 const Login = () => {
   const navigate = useNavigate();

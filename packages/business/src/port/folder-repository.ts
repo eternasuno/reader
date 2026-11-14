@@ -1,23 +1,10 @@
-import {
-  Context,
-  Data,
-  type Effect,
-  type Option,
-  Schema,
-  Struct,
-} from 'effect';
+import { Context, Data, type Effect, type Option } from 'effect';
 import type { OwnerId } from '../entity/common/owner-id';
-import { Folder, type FolderId } from '../entity/feed/folder';
+import type { Folder, FolderId, FolderName } from '../entity/feed/folder';
 
 export class FolderRepositoryError extends Data.TaggedError(
   'FolderRepositoryError'
 )<{ readonly message: string }> {}
-
-export const FolderPatch = Folder.mapFields((fields) =>
-  Struct.map(Struct.pick(fields, ['name']), Schema.optionalKey)
-);
-
-export type FolderPatch = typeof FolderPatch.Type;
 
 export interface IFolderRepository {
   readonly find: (
@@ -31,11 +18,11 @@ export interface IFolderRepository {
     owner: OwnerId,
     folders: ReadonlyArray<Folder>
   ) => Effect.Effect<ReadonlyArray<FolderId>, FolderRepositoryError>;
-  readonly update: (
+  readonly rename: (
     owner: OwnerId,
-    ids: ReadonlyArray<FolderId>,
-    patch: FolderPatch
-  ) => Effect.Effect<ReadonlyArray<FolderId>, FolderRepositoryError>;
+    id: FolderId,
+    name: FolderName
+  ) => Effect.Effect<boolean, FolderRepositoryError>;
   readonly remove: (
     owner: OwnerId,
     ids: ReadonlyArray<FolderId>

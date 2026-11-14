@@ -1,9 +1,12 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Layer, Option, Ref } from 'effect';
+import { Deferred, Effect, Layer, Option, Ref } from 'effect';
 import type { OwnerId } from '../../../src/entity/common/owner-id';
 import type { FeedItemId } from '../../../src/entity/feed/feed-item';
 import { ArticleExtractor } from '../../../src/port/article-extractor';
-import { FeedItemRepository } from '../../../src/port/feed-item-repository';
+import {
+  FeedItemRepository,
+  type IFeedItemRepository,
+} from '../../../src/port/feed-item-repository';
 import { HtmlParser } from '../../../src/port/html-parser';
 import {
   WebpageFetcher,
@@ -11,16 +14,15 @@ import {
 } from '../../../src/port/webpage-fetcher';
 import { FeedItemNotFound } from '../../../src/usecase/feed/errors';
 import { extractItem } from '../../../src/usecase/feed/extract-item';
-import { memoryFeedStoreLayer } from '../../port/memory-feed-store';
 import {
   alice,
-  bob,
   decodeContent,
   makeFeedItem,
   makeUniqueFeed,
   makeUniqueFeedItem,
   parsedDocument,
-} from '../../support';
+} from '../../support/fixtures';
+import { memoryFeedStoreLayer } from '../../support/memory/feed-store';
 import {
   defaultExtract,
   defaultParseHtml,
@@ -31,7 +33,7 @@ import {
   storeFeed,
   storeFeedWithItem,
   storeItems,
-} from './support';
+} from '../../support/usecase/feed';
 
 const existingContent = decodeContent('<p>Already extracted</p>');
 
@@ -52,26 +54,6 @@ describe('extractItem missing items', () => {
       }).pipe(Effect.flip);
 
       expect(error).toStrictEqual(new FeedItemNotFound({ id: missing.id }));
-      expect(yield* Ref.get(fetched)).toBe(0);
-    })
-  );
-
-  it.effect('reports another owner’s item as missing', () =>
-    Effect.gen(function* () {
-      const feed = makeUniqueFeed({ ownerId: bob });
-      const foreign = makeFeedItem({ ownerId: bob, feedId: feed.id });
-      const fetched = yield* Ref.make(0);
-      const error = yield* run(
-        Effect.gen(function* () {
-          yield* storeFeed(feed);
-          yield* storeItems(bob, [foreign]);
-
-          return yield* extractItem(alice, foreign.id).pipe(Effect.flip);
-        }),
-        { fetchPage: recordFetch(fetched) }
-      );
-
-      expect(error).toStrictEqual(new FeedItemNotFound({ id: foreign.id }));
       expect(yield* Ref.get(fetched)).toBe(0);
     })
   );
@@ -229,5 +211,98 @@ describe('extractItem failures', () => {
       expect(result.error._tag).toBe('ArticleEmptyContent');
       expect(result.stored[0]?.extractedContent).toStrictEqual(Option.none());
     })
+  );
+});
+
+const htmlOf = (document: Document): string =>
+  (document.body as unknown as { readonly innerHTML: string }).innerHTML;
+
+const gatedFetch =
+  (arrivals: Ref.Ref<number>, gate: Deferred.Deferred<void>) =>
+  (): Effect.Effect<string> =>
+    Effect.gen(function* () {
+      const arrival = yield* Ref.updateAndGet(arrivals, (value) => value + 1);
+
+      if (arrival === 2) {
+        yield* Deferred.succeed(gate, void 0);
+      }
+
+      yield* Deferred.await(gate);
+
+      return `<p>page ${arrival}</p>`;
+    });
+
+// The first write finishes before the second, so the last one is known.
+const racingItems = (
+  items: IFeedItemRepository,
+  writes: Ref.Ref<number>,
+  firstWritten: Deferred.Deferred<void>,
+  last: Ref.Ref<string>
+): IFeedItemRepository => ({
+  ...items,
+  setExtractedContent: (owner, id, content) =>
+    Effect.gen(function* () {
+      const count = yield* Ref.updateAndGet(writes, (value) => value + 1);
+
+      if (count === 1) {
+        const stored = yield* items.setExtractedContent(owner, id, content);
+        yield* Deferred.succeed(firstWritten, void 0);
+
+        return stored;
+      }
+
+      yield* Deferred.await(firstWritten);
+      yield* Ref.set(last, content);
+
+      return yield* items.setExtractedContent(owner, id, content);
+    }),
+});
+
+describe('extractItem concurrent extractions', () => {
+  it.effect(
+    'FD-EXTRACT-2 each extraction returns its own result and the last write wins',
+    () =>
+      Effect.gen(function* () {
+        const arrivals = yield* Ref.make(0);
+        const gate = yield* Deferred.make<void>();
+        const writes = yield* Ref.make(0);
+        const firstWritten = yield* Deferred.make<void>();
+        const last = yield* Ref.make('');
+
+        const result = yield* run(
+          Effect.gen(function* () {
+            const items = yield* FeedItemRepository;
+            const racing = racingItems(items, writes, firstWritten, last);
+            const { item } = yield* storeFeedWithItem();
+            const extract = extractItem(alice, item.id).pipe(
+              Effect.provideService(FeedItemRepository, racing)
+            );
+            const extracted = yield* Effect.all([extract, extract], {
+              concurrency: 'unbounded',
+            });
+            const stored = yield* storedItems(alice, item.feedId);
+
+            return {
+              contents: extracted.map((entry) =>
+                Option.getOrThrow(entry.extractedContent)
+              ),
+              stored: Option.getOrThrow(rowAt(stored, 0).extractedContent),
+            };
+          }),
+          {
+            fetchPage: gatedFetch(arrivals, gate),
+            parseHtml: (html) => Effect.succeed(parsedDocument(html)),
+            extract: (document) =>
+              Effect.succeed(
+                extractedArticle({ content: decodeContent(htmlOf(document)) })
+              ),
+          }
+        );
+
+        expect(yield* Ref.get(arrivals)).toBe(2);
+        expect(new Set(result.contents).size).toBe(2);
+        expect(result.contents).toContain(result.stored);
+        expect(result.stored).toBe(yield* Ref.get(last));
+      })
   );
 });

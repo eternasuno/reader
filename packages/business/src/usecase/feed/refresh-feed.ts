@@ -69,10 +69,9 @@ export const selectItems = (
   const retained = inventory.filter((item) => listedUrls.has(item.url.href));
   const others = inventory.filter((item) => !listedUrls.has(item.url.href));
   const keptIds = new Set(
-    [
-      ...retained,
-      ...others.slice(0, Math.max(retention - listed.length, 0)),
-    ].map((item) => item.id)
+    [...retained, ...others.slice(0, retention - listed.length)].map(
+      (item) => item.id
+    )
   );
 
   return {
@@ -217,8 +216,5 @@ export const refreshFeed = (
 
     const now = yield* DateTime.now;
 
-    yield* feeds.update(feed.ownerId, [feed.id], {
-      title: parsed.title,
-      updatedAt: Option.some(now),
-    });
+    yield* feeds.recordSync(feed.ownerId, feed.id, parsed.title, now);
   });
