@@ -2,7 +2,6 @@ import { type LibraryClientOptions, makeRunner } from '../client';
 import { readerMethods } from './read';
 import { articleMethods, feedMethods, folderMethods } from './write';
 
-export type { LibraryClientOptions } from '../client';
 export * from '../errors';
 export * from '../types';
 export { refOf } from '../views';

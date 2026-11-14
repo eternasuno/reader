@@ -239,7 +239,7 @@ const call = (handler: RequestHandler) => (options: CallOptions) =>
     })
   );
 
-export type HarnessOptions = {
+type HarnessOptions = {
   readonly webpage?: WebpageStub;
   readonly feed?: FeedStub;
   readonly parsedFeed?: ParsedFeedStub;

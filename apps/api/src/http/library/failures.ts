@@ -35,6 +35,24 @@ export const settingRepositoryFailure = {
     Effect.fail(new ApiError.SettingRepositoryError()),
 };
 
+const savedPageAlreadyExists = {
+  SavedPageAlreadyExists: withUrl(
+    (url) => new ApiError.SavedPageAlreadyExists({ url })
+  ),
+};
+
+const feedItemNotFound = {
+  FeedItemNotFound: withId((id) => new ApiError.FeedItemNotFound({ id })),
+};
+
+const folderNotFound = {
+  FolderNotFound: withId((id) => new ApiError.FolderNotFound({ id })),
+};
+
+const folderAlreadyExists = {
+  FolderAlreadyExists: () => Effect.fail(new ApiError.FolderAlreadyExists()),
+};
+
 const extractionFailure = {
   ArticleEmptyContent: () => Effect.fail(new ApiError.ArticleEmptyContent()),
   WebpageFetcherError: () => Effect.fail(new ApiError.WebpageFetcherError()),
@@ -50,49 +68,45 @@ export const previewFailure = {
 };
 
 export const addSavedPageFailure = {
-  SavedPageAlreadyExists: withUrl(
-    (url) => new ApiError.SavedPageAlreadyExists({ url })
-  ),
+  ...savedPageAlreadyExists,
   ...extractionFailure,
   ...savedPageRepositoryFailure,
 };
 
 export const saveFeedItemFailure = {
-  FeedItemNotFound: withId((id) => new ApiError.FeedItemNotFound({ id })),
-  SavedPageAlreadyExists: withUrl(
-    (url) => new ApiError.SavedPageAlreadyExists({ url })
-  ),
+  ...feedItemNotFound,
+  ...savedPageAlreadyExists,
   ...extractionFailure,
   ...feedItemRepositoryFailure,
   ...savedPageRepositoryFailure,
 };
 
 export const extractFeedItemFailure = {
-  FeedItemNotFound: withId((id) => new ApiError.FeedItemNotFound({ id })),
+  ...feedItemNotFound,
   ...extractionFailure,
   ...feedItemRepositoryFailure,
 };
 
 export const subscribeFailure = {
   FeedAlreadyExists: withUrl((url) => new ApiError.FeedAlreadyExists({ url })),
-  FolderNotFound: withId((id) => new ApiError.FolderNotFound({ id })),
+  ...folderNotFound,
   ...feedRepositoryFailure,
   ...folderRepositoryFailure,
 };
 
 export const createFolderFailure = {
-  FolderAlreadyExists: () => Effect.fail(new ApiError.FolderAlreadyExists()),
+  ...folderAlreadyExists,
   ...folderRepositoryFailure,
 };
 
 export const renameFolderFailure = {
-  FolderAlreadyExists: () => Effect.fail(new ApiError.FolderAlreadyExists()),
-  FolderNotFound: withId((id) => new ApiError.FolderNotFound({ id })),
+  ...folderAlreadyExists,
+  ...folderNotFound,
   ...folderRepositoryFailure,
 };
 
 export const moveFeedFailure = {
-  FolderNotFound: withId((id) => new ApiError.FolderNotFound({ id })),
+  ...folderNotFound,
   ...feedRepositoryFailure,
   ...folderRepositoryFailure,
 };

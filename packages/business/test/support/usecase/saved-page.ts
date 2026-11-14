@@ -63,7 +63,7 @@ export const fetchedArticle = (
   ...overrides,
 });
 
-export type SavedPageServices =
+type SavedPageServices =
   | SavedPageRepository
   | FeedRepository
   | FeedItemRepository
@@ -71,7 +71,7 @@ export type SavedPageServices =
   | HtmlParser
   | ArticleExtractor;
 
-export type Doubles = {
+type Doubles = {
   readonly fetch?: IWebpageFetcher['fetch'];
   readonly parse?: IHtmlParser['parse'];
   readonly extract?: IArticleExtractor['extract'];

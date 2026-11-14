@@ -4,13 +4,11 @@ const PAGE_SIZE = 30;
 
 type PageQuery = { readonly unreadOnly: boolean; readonly limit: number };
 
-export type SavedPageQuery =
+type SavedPageQuery =
   | PageQuery
   | (PageQuery & { readonly cursor: SavedPageId });
 
-export type FeedItemQuery =
-  | PageQuery
-  | (PageQuery & { readonly cursor: FeedItemId });
+type FeedItemQuery = PageQuery | (PageQuery & { readonly cursor: FeedItemId });
 
 export const savedPageQuery = (
   unreadOnly: boolean,

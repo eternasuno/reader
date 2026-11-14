@@ -10,11 +10,9 @@ import {
 } from '../../port/saved-page-repository';
 import { type Page, type PageInput, pageOf, pageQuery } from '../common/paging';
 
-export type SavedPageListQuery = PageInput<SavedPageId>;
-
 export const listSavedPages = (
   owner: OwnerId,
-  query: SavedPageListQuery
+  query: PageInput<SavedPageId>
 ): Effect.Effect<
   Page<SavedPage, SavedPageId>,
   SavedPageRepositoryError,

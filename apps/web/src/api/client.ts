@@ -29,7 +29,7 @@ const makeClient = () =>
     )
   );
 
-export type LibraryApiClient = ReturnType<typeof makeClient>;
+type LibraryApiClient = ReturnType<typeof makeClient>;
 
 /** Builds the derived client once and runs each call as a promise. */
 export const makeRunner = (options: LibraryClientOptions) => {

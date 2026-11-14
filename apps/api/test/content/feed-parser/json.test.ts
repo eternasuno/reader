@@ -9,6 +9,16 @@ import {
   isoOf,
 } from '../../support/feed-parser';
 
+it('FD-PARSE-1 parses a JSON Feed that starts with a byte order mark', () => {
+  const json = JSON.stringify({
+    version: 'https://jsonfeed.org/version/1.1',
+    title: 'JSON BOM',
+    items: [{ id: '1', url: 'https://example.com/a', title: 'A' }],
+  });
+
+  expect(parseFeed(`\uFEFF${json}`, base).title).toBe('JSON BOM');
+});
+
 it('FD-PARSE-7 uses only date_published for JSON Feed dates', () => {
   const json = JSON.stringify({
     version: 'https://jsonfeed.org/version/1.1',

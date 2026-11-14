@@ -12,7 +12,7 @@ import {
   rss,
 } from '../../support/feed-parser';
 
-it('FD-PARSE-2 FD-PARSE-1 drops RSS items without a valid URL and resolves relative links', () => {
+it('FD-PARSE-2 drops RSS items without a valid URL and resolves relative links', () => {
   const feed = parseFeed(rss, base);
   expect(feed.title).toBe('News');
   expect(feed.description).toEqual(Option.some('Daily'));
@@ -25,7 +25,6 @@ it('FD-PARSE-2 FD-PARSE-1 drops RSS items without a valid URL and resolves relat
   expect(isoOf(first)).toBe('2026-01-01T00:00:00.000Z');
   expectLink(second, 'https://example.com/b');
   expectNoPublishedAt(second);
-  expect(parseFeed(`\uFEFF${rss}`, base).title).toBe('News');
 });
 
 it('FD-PARSE-6 never uses the RSS description as content', () => {

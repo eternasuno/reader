@@ -1,6 +1,6 @@
 import type { JSX } from 'solid-js';
 
-export type LibraryLayoutProps = {
+type LibraryLayoutProps = {
   readonly reading: boolean;
   readonly navOpen: boolean;
   readonly mobileBar: JSX.Element;

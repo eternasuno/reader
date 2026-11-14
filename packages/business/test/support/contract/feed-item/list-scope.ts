@@ -42,8 +42,13 @@ const feedEmptyCases = (layer: FeedStoreLayer) => (): void => {
       const items = yield* FeedItemRepository;
       const feed = yield* storedFeed();
       const bobFeed = yield* storedFeed(bob);
+      const bobRow = makeUniqueFeedItem({ ownerId: bob, feedId: bobFeed.id });
       yield* items.create(alice, [makeUniqueFeedItem({ feedId: feed.id })]);
+      yield* items.create(bob, [bobRow]);
 
+      expect(idsOf(yield* items.listByFeed(bob, bobFeed.id, query))).toEqual([
+        bobRow.id,
+      ]);
       expect(
         yield* items.listByFeed(alice, makeUniqueFeed().id, query)
       ).toEqual([]);

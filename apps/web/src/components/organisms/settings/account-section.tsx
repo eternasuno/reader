@@ -1,7 +1,6 @@
+import type { PasswordField } from '../../../models/settings/section';
 import { SubmitButton } from '../../atoms/submit-button';
 import { FormInput } from '../../molecules/form-input';
-
-type PasswordField = 'current' | 'next' | 'confirm';
 
 type AccountSectionProps = {
   readonly class?: string;

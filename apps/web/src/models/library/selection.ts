@@ -96,7 +96,7 @@ type SavedPageLookup =
   | { readonly kind: 'missing' }
   | { readonly kind: 'unavailable'; readonly error: unknown };
 
-export type DuplicateOutcome =
+type DuplicateOutcome =
   | { readonly kind: 'unrelated' }
   | { readonly kind: 'opened' }
   | SavedPageLookup;

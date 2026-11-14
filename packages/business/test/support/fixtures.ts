@@ -50,7 +50,7 @@ export const parsedDocument = (html = ''): Document =>
 
 const defaultFeedUrl = decodeUrl('https://example.com/feed.xml');
 
-export type FeedOverrides = {
+type FeedOverrides = {
   readonly id?: FeedId;
   readonly ownerId?: OwnerId;
   readonly url?: NormalizedUrl;
@@ -98,7 +98,7 @@ export const makeFeedItem = (overrides: FeedItemOverrides = {}): FeedItem =>
     ...overrides,
   });
 
-export type SavedPageOverrides = {
+type SavedPageOverrides = {
   readonly id?: SavedPageId;
   readonly ownerId?: OwnerId;
   readonly url?: NormalizedUrl;
@@ -121,7 +121,7 @@ export const makeSavedPage = (overrides: SavedPageOverrides = {}): SavedPage =>
     ...overrides,
   });
 
-export type FolderOverrides = {
+type FolderOverrides = {
   readonly id?: FolderId;
   readonly ownerId?: OwnerId;
   readonly name?: FolderName;

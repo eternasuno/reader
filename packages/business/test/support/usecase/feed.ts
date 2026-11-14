@@ -54,7 +54,7 @@ import {
 import { MemoryFeedStoreLive } from '../memory/feed-store';
 import { MemorySettingRepositoryLive } from '../memory/setting';
 
-export type EntryOverrides = {
+type EntryOverrides = {
   readonly title?: string;
   readonly description?: Option.Option<string>;
   readonly content?: Option.Option<string>;
@@ -74,7 +74,7 @@ export const parsedEntry = (
     url: decodeUrl(url),
   });
 
-export type ParsedFeedOverrides = {
+type ParsedFeedOverrides = {
   readonly title?: string;
   readonly description?: Option.Option<string>;
   readonly entries?: ReadonlyArray<ParsedFeedEntry>;
@@ -113,7 +113,7 @@ export const extractedArticle = (
 export const defaultExtract: IArticleExtractor['extract'] = () =>
   Effect.succeed(extractedArticle());
 
-export type FeedResponseOverrides = {
+type FeedResponseOverrides = {
   readonly url?: string;
   readonly body?: string;
   readonly status?: number;
@@ -160,7 +160,7 @@ export type Doubles = {
   readonly extract?: IArticleExtractor['extract'];
 };
 
-export type TestEnv =
+type TestEnv =
   | FeedRepository
   | FeedItemRepository
   | FolderRepository
