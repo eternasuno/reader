@@ -1,7 +1,15 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option } from 'effect';
+import { FeedRepository } from '../../../../src/port/feed-repository';
 import { FolderRepository } from '../../../../src/port/folder-repository';
-import { alice, bob, folderRow, idsOf, makeUniqueFolder } from '../../fixtures';
+import {
+  alice,
+  bob,
+  folderRow,
+  idsOf,
+  makeUniqueFolder,
+  storedFolderFeed,
+} from '../../fixtures';
 import type { FeedStoreLayer } from '../feed';
 import { createCases } from './create';
 import { removalCases } from './removal';
@@ -53,6 +61,31 @@ const listCases = (layer: FeedStoreLayer) => (): void => {
       ]);
       expect(idsOf(listed)).toEqual([alpha.id, beta.id, gamma.id]);
     }).pipe(Effect.provide(layer))
+  );
+
+  it.effect(
+    'FD-FOLDER-8 lists every folder, including one that lost its last feed',
+    () =>
+      Effect.gen(function* () {
+        const folders = yield* FolderRepository;
+        const feeds = yield* FeedRepository;
+        const alpha = folderRow('Alpha');
+        const movedOut = folderRow('Beta');
+        const unsubscribed = folderRow('Gamma');
+        const delta = folderRow('Delta');
+        yield* folders.create(alice, [alpha, movedOut, unsubscribed, delta]);
+        const moved = yield* storedFolderFeed(movedOut.id);
+        const removed = yield* storedFolderFeed(unsubscribed.id);
+        yield* feeds.moveToFolder(alice, moved.id, Option.none());
+        yield* feeds.remove(alice, [removed.id]);
+
+        expect(idsOf(yield* folders.list(alice))).toEqual([
+          alpha.id,
+          movedOut.id,
+          delta.id,
+          unsubscribed.id,
+        ]);
+      }).pipe(Effect.provide(layer))
   );
 };
 

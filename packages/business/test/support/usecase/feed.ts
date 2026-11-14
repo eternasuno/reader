@@ -37,6 +37,7 @@ import {
 } from '../../../src/port/feed-repository';
 import type { FolderRepository } from '../../../src/port/folder-repository';
 import { HtmlParser, type IHtmlParser } from '../../../src/port/html-parser';
+import type { SavedPageRepository } from '../../../src/port/saved-page-repository';
 import type { SettingRepository } from '../../../src/port/setting-repository';
 import {
   type IWebpageFetcher,
@@ -52,6 +53,7 @@ import {
   parsedDocument,
 } from '../fixtures';
 import { MemoryFeedStoreLive } from '../memory/feed-store';
+import { MemorySavedPageRepositoryLive } from '../memory/saved-page';
 import { MemorySettingRepositoryLive } from '../memory/setting';
 
 type EntryOverrides = {
@@ -164,6 +166,7 @@ type TestEnv =
   | FeedRepository
   | FeedItemRepository
   | FolderRepository
+  | SavedPageRepository
   | SettingRepository
   | HttpClient.HttpClient
   | FeedParser
@@ -175,6 +178,7 @@ type TestEnv =
 const testLayer = (doubles: Doubles = {}) =>
   Layer.mergeAll(
     MemoryFeedStoreLive,
+    MemorySavedPageRepositoryLive,
     MemorySettingRepositoryLive,
     Layer.succeed(
       HttpClient.HttpClient,

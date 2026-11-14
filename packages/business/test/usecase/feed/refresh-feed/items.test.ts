@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { DateTime, Effect, Option } from 'effect';
+import { Clock, DateTime, Effect, Option, Ref } from 'effect';
 import { TestClock } from 'effect/testing';
 import type { Feed } from '../../../../src/entity/feed/feed';
 import type { FeedItem } from '../../../../src/entity/feed/feed-item';
@@ -79,6 +79,19 @@ const refreshWithStored = (
 const isDescending = (ids: ReadonlyArray<string>): boolean =>
   ids.every((id, index) => index === 0 || (ids[index - 1] ?? '') > id);
 
+const countingClock = (
+  clock: Clock.Clock,
+  reads: Ref.Ref<number>
+): Clock.Clock => ({
+  ...clock,
+  get currentTimeMillis() {
+    return Effect.flatMap(
+      Ref.update(reads, (count) => count + 1),
+      () => clock.currentTimeMillis
+    );
+  },
+});
+
 describe('refreshFeed stored values', () => {
   it.effect('imports the listed entries in source order', () =>
     Effect.gen(function* () {
@@ -117,6 +130,19 @@ describe('refreshFeed feed update', () => {
       expect(DateTime.toEpochMillis(Option.getOrThrow(updated.updatedAt))).toBe(
         Date.UTC(2026, 0, 1)
       );
+    })
+  );
+
+  it.effect('CM-TIME-2 reads the injected clock once for the whole sync', () =>
+    Effect.gen(function* () {
+      const reads = yield* Ref.make(0);
+      const clock = yield* Clock.Clock;
+      const { items } = yield* refreshAndRead(feedOf(), sourceEntries()).pipe(
+        Effect.provideService(Clock.Clock, countingClock(clock, reads))
+      );
+
+      expect(items).toHaveLength(3);
+      expect(yield* Ref.get(reads)).toBe(1);
     })
   );
 });

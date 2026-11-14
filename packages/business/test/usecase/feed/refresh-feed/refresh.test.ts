@@ -1,9 +1,16 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option, Ref } from 'effect';
 import { FeedParserError } from '../../../../src/port/feed-parser';
+import { SavedPageRepository } from '../../../../src/port/saved-page-repository';
 import { FetchFeedError } from '../../../../src/usecase/feed/errors';
 import { refreshFeed } from '../../../../src/usecase/feed/refresh-feed';
-import { alice, bob, makeUniqueFeed } from '../../../support/fixtures';
+import {
+  alice,
+  bob,
+  makeFeedItem,
+  makeUniqueFeed,
+  makeUniqueSavedPage,
+} from '../../../support/fixtures';
 import {
   feedResponse,
   findFeed,
@@ -12,6 +19,7 @@ import {
   run,
   storedItems,
   storeFeed,
+  storeItems,
   transportFailure,
   urlsOf,
 } from '../../../support/usecase/feed';
@@ -93,6 +101,40 @@ describe('refreshFeed success', () => {
       expect(urlsOf(result.items)).toEqual([`${base}/a`]);
       expect(stored.title).toBe('Source title');
       expect(Option.isSome(stored.updatedAt)).toBe(true);
+    })
+  );
+});
+
+describe('refreshFeed isolation', () => {
+  it.effect('FD-SYNC-3 leaves other feeds and saved pages unchanged', () =>
+    Effect.gen(function* () {
+      const first = makeUniqueFeed({ ownerId: alice });
+      const second = makeUniqueFeed({ ownerId: alice });
+      const otherItem = makeFeedItem({ ownerId: alice, feedId: second.id });
+      const page = makeUniqueSavedPage({ ownerId: alice });
+
+      const result = yield* run(
+        Effect.gen(function* () {
+          const pages = yield* SavedPageRepository;
+
+          yield* storeFeed(first);
+          yield* storeFeed(second);
+          yield* storeItems(alice, [otherItem]);
+          yield* pages.create(alice, [page]);
+          yield* refreshFeed(alice, first.id);
+
+          return {
+            second: Option.getOrThrow(yield* findFeed(alice, second.id)),
+            otherItems: yield* storedItems(alice, second.id),
+            pages: yield* pages.list(alice, { unreadOnly: false, limit: 100 }),
+          };
+        }),
+        { parseFeed: () => Effect.succeed(parsed) }
+      );
+
+      expect(result.second).toStrictEqual(second);
+      expect(result.otherItems).toStrictEqual([otherItem]);
+      expect(result.pages).toStrictEqual([page]);
     })
   );
 });

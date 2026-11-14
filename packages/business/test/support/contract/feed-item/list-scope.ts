@@ -148,6 +148,50 @@ const folderMovedOutCases = (layer: FeedStoreLayer) => (): void => {
   );
 };
 
+const crossScopeCases = (layer: FeedStoreLayer) => (): void => {
+  it.effect(
+    'CM-PAGE-7 reads on from a cursor taken under another selection',
+    () =>
+      Effect.gen(function* () {
+        const items = yield* FeedItemRepository;
+        const first = yield* storedFeed();
+        const second = yield* storedFeed();
+        const bobFeed = yield* storedFeed(bob);
+        const read = makeUniqueFeedItem({ feedId: second.id, read: true });
+        const unread = makeUniqueFeedItem({ feedId: second.id });
+        yield* items.create(alice, [read, unread]);
+        yield* items.create(bob, [
+          makeUniqueFeedItem({ feedId: bobFeed.id, ownerId: bob }),
+        ]);
+        const cursor = makeUniqueFeedItem({ feedId: first.id });
+        yield* items.create(alice, [cursor]);
+        const newer = makeUniqueFeedItem({ feedId: second.id });
+        yield* items.create(alice, [newer]);
+
+        expect(
+          idsOf(
+            yield* items.listByFeed(alice, second.id, {
+              ...query,
+              after: cursor.id,
+            })
+          )
+        ).toEqual([unread.id, read.id]);
+        expect(
+          idsOf(
+            yield* items.listByFeed(alice, second.id, {
+              after: cursor.id,
+              limit: 10,
+              unreadOnly: true,
+            })
+          )
+        ).toEqual([unread.id]);
+        expect(
+          idsOf(yield* items.listAll(alice, { ...query, after: cursor.id }))
+        ).toEqual([unread.id, read.id]);
+      }).pipe(Effect.provide(layer))
+  );
+};
+
 const allFolderCases = (layer: FeedStoreLayer) => (): void => {
   it.effect('lists the items of feeds in folders too', () =>
     Effect.gen(function* () {
@@ -169,6 +213,7 @@ const allFolderCases = (layer: FeedStoreLayer) => (): void => {
 
 export {
   allFolderCases,
+  crossScopeCases,
   feedEmptyCases,
   feedExclusionCases,
   folderEmptyCases,

@@ -15,6 +15,7 @@ import {
   makeFeed,
   makeUniqueFeedItem,
   storedFeed,
+  uniqueUrl,
 } from '../../fixtures';
 import type { FeedStoreLayer } from '.';
 
@@ -123,8 +124,29 @@ const removalRaceCases = (layer: FeedStoreLayer) => (): void => {
   );
 };
 
+const resubscribeCases = (layer: FeedStoreLayer) => (): void => {
+  it.effect('FD-UNSUB-5 subscribes again with a new feed and a new id', () =>
+    Effect.gen(function* () {
+      const feeds = yield* FeedRepository;
+      const url = uniqueUrl('feed');
+      const first = makeFeed({ ownerId: alice, url });
+      yield* feeds.create(alice, [first]);
+      yield* feeds.remove(alice, [first.id]);
+      const second = makeFeed({ ownerId: alice, url });
+      yield* feeds.create(alice, [second]);
+
+      const listed = yield* feeds.list(alice);
+
+      expect(listed).toEqual([second]);
+      expect(second.id).not.toBe(first.id);
+      expect(second.id > first.id).toBe(true);
+    }).pipe(Effect.provide(layer))
+  );
+};
+
 export const removalCases = (layer: FeedStoreLayer) => (): void => {
   describe('cascade to items', removeCascadeCases(layer));
   describe('unknown and foreign ids', removeIgnoreCases(layer));
   describe('concurrent item create', removalRaceCases(layer));
+  describe('resubscribe', resubscribeCases(layer));
 };

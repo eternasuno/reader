@@ -111,6 +111,43 @@ describe('refreshFeed cleaning failures', () => {
   );
 });
 
+describe('refreshFeed cleaning base', () => {
+  it.effect('FD-IMPORT-2 cleans each entry with its own url as the base', () =>
+    Effect.gen(function* () {
+      const description = '<a href="relative">x</a>';
+      const content = '<a href="/root">y</a>';
+      const calls: Array<readonly [string, string]> = [];
+      const items = yield* refreshOnce(
+        feedOf(),
+        parsedFeed({
+          entries: [
+            parsedEntry(`${base}/a`, {
+              description: Option.some(description),
+            }),
+            parsedEntry(`${base}/b`, { content: Option.some(content) }),
+          ],
+        }),
+        {
+          parseHtml: (html, url) => {
+            calls.push([url.href, html]);
+
+            return Effect.succeed(parsedDocument(html));
+          },
+        }
+      );
+
+      expect(calls).toHaveLength(2);
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          [`${base}/a`, description],
+          [`${base}/b`, content],
+        ])
+      );
+      expect(urlsOf(items)).toEqual([`${base}/a`, `${base}/b`]);
+    })
+  );
+});
+
 describe('refreshFeed sanitized text', () => {
   it.effect('trims the sanitized text', () =>
     Effect.gen(function* () {

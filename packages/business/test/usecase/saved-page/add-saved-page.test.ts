@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Deferred, Effect, Option, Ref, Result } from 'effect';
 import { HtmlParserError } from '../../../src/port/html-parser';
 import { SavedPageRepository } from '../../../src/port/saved-page-repository';
 import { WebpageFetcherError } from '../../../src/port/webpage-fetcher';
@@ -133,5 +133,66 @@ describe('addSavedPage failures', () => {
           Effect.succeed(fetchedArticle({ content: Option.none() })),
       }
     )
+  );
+});
+
+describe('addSavedPage concurrent duplicates', () => {
+  it.effect('SP-ADD-5 the unique key saves one page and fails the other', () =>
+    Effect.gen(function* () {
+      const arrivals = yield* Ref.make(0);
+      const gate = yield* Deferred.make<void>();
+      const url = decodeUrl('https://example.com/concurrent');
+
+      const result = yield* run(
+        Effect.gen(function* () {
+          const outcomes = yield* Effect.all(
+            [
+              Effect.result(addSavedPage(alice, url)),
+              Effect.result(addSavedPage(alice, url)),
+            ],
+            { concurrency: 'unbounded' }
+          );
+
+          return { outcomes, pages: yield* storedPages(alice) };
+        }),
+        {
+          fetch: () =>
+            Effect.gen(function* () {
+              const arrival = yield* Ref.updateAndGet(
+                arrivals,
+                (value) => value + 1
+              );
+
+              if (arrival === 2) {
+                yield* Deferred.succeed(gate, void 0);
+              }
+
+              yield* Deferred.await(gate);
+
+              return '<p>Hello</p>';
+            }),
+        }
+      );
+
+      const saved = result.outcomes.flatMap((outcome) =>
+        Result.isSuccess(outcome) ? [outcome.success] : []
+      );
+      const failed = result.outcomes.flatMap((outcome) =>
+        Result.isFailure(outcome) ? [outcome.failure] : []
+      );
+
+      expect(yield* Ref.get(arrivals)).toBe(2);
+      expect(saved).toHaveLength(1);
+      expect(failed).toHaveLength(1);
+
+      const duplicate = failed[0];
+
+      if (duplicate === undefined) {
+        throw new Error('expected one failed add');
+      }
+
+      expect(asAlreadyExists(duplicate).url.href).toBe(url.href);
+      expect(result.pages).toStrictEqual(saved);
+    })
   );
 });

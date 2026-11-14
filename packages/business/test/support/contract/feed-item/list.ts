@@ -29,6 +29,7 @@ import {
 import type { FeedStoreLayer } from '../feed';
 import {
   allFolderCases,
+  crossScopeCases,
   feedEmptyCases,
   feedExclusionCases,
   folderEmptyCases,
@@ -223,6 +224,7 @@ const everyRowCases = (layer: FeedStoreLayer, scope: ListScope) => (): void => {
 
 const allCases = (layer: FeedStoreLayer) => (): void => {
   describe('order and limit', orderCases(layer, listAllScope));
+  describe('cursor from another selection', crossScopeCases(layer));
   describe('unread', unreadCases(layer, listAllScope));
   describe('deleted cursor', deletedCursorCases(layer, listAllScope));
   describe('every row', everyRowCases(layer, listAllScope));

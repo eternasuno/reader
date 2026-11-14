@@ -231,24 +231,36 @@ it.effect('reports a page without an article', () =>
   )
 );
 
-it.effect('rejects a malformed limit or cursor', () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const session = yield* sessionFor(harness, 'alice@example.com');
-      const badLimit = yield* call(harness, {
-        path: SAVED_PAGES,
-        cookie: session.cookie,
-        query: { limit: 'abc' },
-      });
-      const badCursor = yield* call(harness, {
-        path: SAVED_PAGES,
-        cookie: session.cookie,
-        query: { limit: 10, cursor: 'not-a-cursor' },
-      });
+it.effect(
+  'CM-PAGE-2 rejects a zero, negative or non-integer limit and a malformed cursor',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const session = yield* sessionFor(harness, 'alice@example.com');
+        const statuses = [];
+        for (const limit of ['abc', '0', '-1', '1.5']) {
+          const response = yield* call(harness, {
+            path: SAVED_PAGES,
+            cookie: session.cookie,
+            query: { limit },
+          });
+          statuses.push(response.status);
+        }
+        const badCursor = yield* call(harness, {
+          path: SAVED_PAGES,
+          cookie: session.cookie,
+          query: { limit: 10, cursor: 'not-a-cursor' },
+        });
+        const smallest = yield* call(harness, {
+          path: SAVED_PAGES,
+          cookie: session.cookie,
+          query: { limit: 1 },
+        });
 
-      expect(badLimit.status).toBe(400);
-      expect(badCursor.status).toBe(400);
-    })
-  )
+        expect(statuses).toEqual([400, 400, 400, 400]);
+        expect(badCursor.status).toBe(400);
+        expect(smallest.status).toBe(200);
+      })
+    )
 );

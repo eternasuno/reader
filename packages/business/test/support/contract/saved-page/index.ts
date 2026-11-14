@@ -4,12 +4,12 @@ import { SavedPageRepository } from '../../../../src/port/saved-page-repository'
 import {
   alice,
   bob,
-  idsOf,
   makeUniqueSavedPage,
   pageRow,
   uniqueUrl,
 } from '../../fixtures';
 import { createCases } from './create';
+import { listCases } from './list';
 import { updateCases } from './read';
 
 export type SavedPageStoreLayer = Layer.Layer<SavedPageRepository, unknown>;
@@ -51,46 +51,6 @@ const findCases = (layer: SavedPageStoreLayer) => (): void => {
       expect(
         Option.isNone(yield* pages.findByUrl(alice, uniqueUrl('page')))
       ).toBe(true);
-    }).pipe(Effect.provide(layer))
-  );
-};
-
-const listCases = (layer: SavedPageStoreLayer) => (): void => {
-  it.effect('lists the owner pages newest first at most limit', () =>
-    Effect.gen(function* () {
-      const pages = yield* SavedPageRepository;
-      const first = pageRow();
-      const second = pageRow();
-      const third = pageRow();
-      yield* pages.create(alice, [first, second, third]);
-      yield* pages.create(bob, [pageRow(bob)]);
-
-      const page = yield* pages.list(alice, { limit: 2, unreadOnly: false });
-
-      expect(idsOf(page)).toEqual([third.id, second.id]);
-    }).pipe(Effect.provide(layer))
-  );
-
-  it.effect('applies the cursor, the limit and the unread filter', () =>
-    Effect.gen(function* () {
-      const pages = yield* SavedPageRepository;
-      const first = pageRow();
-      const second = pageRow();
-      const third = pageRow();
-      yield* pages.create(alice, [first, second, third]);
-      yield* pages.markRead(alice, [third.id], true);
-      yield* pages.create(bob, [pageRow(bob)]);
-
-      const after = yield* pages.list(alice, {
-        after: third.id,
-        limit: 1,
-        unreadOnly: false,
-      });
-
-      expect(idsOf(after)).toEqual([second.id]);
-      expect(
-        idsOf(yield* pages.list(alice, { limit: 10, unreadOnly: true }))
-      ).toEqual([second.id, first.id]);
     }).pipe(Effect.provide(layer))
   );
 };

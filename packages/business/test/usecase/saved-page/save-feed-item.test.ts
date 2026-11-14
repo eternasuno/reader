@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Deferred, Effect, Option, Ref, Result } from 'effect';
 import {
   FeedItemRepository,
   type IFeedItemRepository,
@@ -204,5 +204,63 @@ describe('saveFeedItem races and deletion', () => {
         expect(yield* storedPages(alice)).toEqual([page]);
       })
     )
+  );
+});
+
+describe('saveFeedItem concurrent duplicates', () => {
+  it.effect('SP-SAVE-7 the unique key saves one page and fails the other', () =>
+    Effect.gen(function* () {
+      const arrivals = yield* Ref.make(0);
+      const gate = yield* Deferred.make<void>();
+
+      const result = yield* run(
+        Effect.gen(function* () {
+          const item = yield* storeFeedItem(alice);
+          const save = Effect.result(saveFeedItem(alice, item.id));
+          const outcomes = yield* Effect.all([save, save], {
+            concurrency: 'unbounded',
+          });
+
+          return { item, outcomes, pages: yield* storedPages(alice) };
+        }),
+        {
+          fetch: () =>
+            Effect.gen(function* () {
+              const arrival = yield* Ref.updateAndGet(
+                arrivals,
+                (value) => value + 1
+              );
+
+              if (arrival === 2) {
+                yield* Deferred.succeed(gate, void 0);
+              }
+
+              yield* Deferred.await(gate);
+
+              return '<p>Hello</p>';
+            }),
+        }
+      );
+
+      const saved = result.outcomes.flatMap((outcome) =>
+        Result.isSuccess(outcome) ? [outcome.success] : []
+      );
+      const failed = result.outcomes.flatMap((outcome) =>
+        Result.isFailure(outcome) ? [outcome.failure] : []
+      );
+
+      expect(yield* Ref.get(arrivals)).toBe(2);
+      expect(saved).toHaveLength(1);
+      expect(failed).toHaveLength(1);
+
+      const duplicate = failed[0];
+
+      if (duplicate === undefined) {
+        throw new Error('expected one failed save');
+      }
+
+      expect(asAlreadyExists(duplicate).url.href).toBe(result.item.url.href);
+      expect(result.pages).toStrictEqual(saved);
+    })
   );
 });
