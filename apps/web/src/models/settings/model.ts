@@ -9,7 +9,7 @@ import {
   saveRetention,
   useBrowserFetcher,
   useJinaFetcher,
-} from '../../api/settings';
+} from '../../api/setting';
 
 export type SettingsSection = 'account' | 'articles' | 'extraction';
 

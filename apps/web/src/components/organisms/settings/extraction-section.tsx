@@ -1,5 +1,5 @@
 import { Show } from 'solid-js';
-import type { FetcherProvider } from '../../../api/settings';
+import type { FetcherProvider } from '../../../api/setting';
 import { Button } from '../../atoms/button';
 import { SubmitButton } from '../../atoms/submit-button';
 import { FormInput } from '../../molecules/form-input';

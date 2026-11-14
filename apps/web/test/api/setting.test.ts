@@ -3,7 +3,7 @@ import {
   getSettings,
   useBrowserFetcher,
   useJinaFetcher,
-} from '../../src/api/settings';
+} from '../../src/api/setting';
 
 const fetchMock = vi.fn();
 
