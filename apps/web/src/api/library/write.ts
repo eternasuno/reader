@@ -1,5 +1,4 @@
 import { FeedId, FeedItemId, FolderId, SavedPageId } from '@reader/business';
-import { Option } from 'effect';
 import type { Runner } from '../client';
 import type { Article, ArticleRef } from '../types';
 import {
@@ -71,10 +70,6 @@ const addArticle = async (run: Runner, url: string): Promise<Article> =>
   );
 
 const saveArticle = async (run: Runner, article: Article): Promise<Article> => {
-  if (Option.isNone(article.feedId)) {
-    return article;
-  }
-
   const { item } = await run((client) =>
     client.library.saveFeedItem({
       payload: { id: FeedItemId.make(article.id) },
@@ -88,10 +83,6 @@ const extractArticle = async (
   run: Runner,
   article: Article
 ): Promise<Article> => {
-  if (Option.isNone(article.feedId)) {
-    return article;
-  }
-
   const { item } = await run((client) =>
     client.library.extractFeedItem({
       payload: { id: FeedItemId.make(article.id) },
