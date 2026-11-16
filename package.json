@@ -2,7 +2,7 @@
   "name": "template",
   "version": "0.1.0",
   "private": true,
-  "description": "SolidJS SPA and Effect HTTP API starter with Better Auth and embedded SurrealDB.",
+  "description": "SolidJS SPA and Effect HTTP API starter with Better Auth and embedded SQLite.",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@12.3.4",

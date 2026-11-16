@@ -16,7 +16,7 @@
     "@solidjs/router": "1.0.1",
     "@tanstack/solid-virtual": "3.13.53",
     "better-auth": "catalog:",
-    "effect": "4.1.2",
+    "effect": "4.1.4",
     "solid-js": "1.9.18"
   },
   "devDependencies": {

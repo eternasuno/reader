@@ -1,20 +1,74 @@
-export const readerStoreSchema = `
-DEFINE TABLE IF NOT EXISTS folder SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS folder_owner_name ON folder FIELDS owner, name UNIQUE;
-DEFINE TABLE IF NOT EXISTS feed SCHEMALESS;
-DEFINE FIELD IF NOT EXISTS updatedAt ON TABLE feed TYPE option<datetime>;
-DEFINE INDEX IF NOT EXISTS feed_owner_url ON feed FIELDS owner, url UNIQUE;
-DEFINE INDEX IF NOT EXISTS feed_owner_folder ON feed FIELDS owner, folderId;
-DEFINE TABLE IF NOT EXISTS feed_item SCHEMALESS;
-DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE feed_item TYPE option<datetime>;
-DEFINE INDEX IF NOT EXISTS feed_item_feed_url ON feed_item FIELDS feedId, url UNIQUE;
-DEFINE INDEX IF NOT EXISTS feed_item_owner_item ON feed_item FIELDS owner, itemId;
-DEFINE INDEX IF NOT EXISTS feed_item_owner_feed_item ON feed_item FIELDS owner, feedId, itemId;
-DEFINE INDEX IF NOT EXISTS feed_item_owner_read_item ON feed_item FIELDS owner, read, itemId;
-DEFINE TABLE IF NOT EXISTS saved_page SCHEMALESS;
-DEFINE FIELD IF NOT EXISTS publishedAt ON TABLE saved_page TYPE option<datetime>;
-DEFINE INDEX IF NOT EXISTS saved_page_owner_url ON saved_page FIELDS owner, url UNIQUE;
-DEFINE INDEX IF NOT EXISTS saved_page_owner_page ON saved_page FIELDS owner, pageId;
-DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS setting_owner ON setting FIELDS owner UNIQUE;
-`;
+import { Effect } from 'effect';
+import { Migrator, SqlClient } from 'effect/sql';
+
+const READER_TABLES = [
+  `CREATE TABLE folder (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (owner, name),
+    UNIQUE (owner, id)
+  ) STRICT`,
+  `CREATE TABLE feed (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    folder_id TEXT,
+    updated_at INTEGER,
+    UNIQUE (owner, url),
+    UNIQUE (owner, id),
+    FOREIGN KEY (owner, folder_id) REFERENCES folder (owner, id) ON DELETE CASCADE
+  ) STRICT`,
+  'CREATE INDEX feed_owner_folder ON feed (owner, folder_id)',
+  'CREATE INDEX feed_owner_title ON feed (owner, title, id)',
+  `CREATE TABLE feed_item (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    feed_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    content TEXT,
+    extracted_content TEXT,
+    published_at INTEGER,
+    read INTEGER NOT NULL CHECK (read IN (0, 1)),
+    UNIQUE (feed_id, url),
+    FOREIGN KEY (owner, feed_id) REFERENCES feed (owner, id) ON DELETE CASCADE
+  ) STRICT`,
+  'CREATE INDEX feed_item_owner_id ON feed_item (owner, id)',
+  'CREATE INDEX feed_item_owner_feed_id ON feed_item (owner, feed_id, id)',
+  'CREATE INDEX feed_item_owner_read_id ON feed_item (owner, read, id)',
+  `CREATE TABLE saved_page (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    content TEXT NOT NULL,
+    published_at INTEGER,
+    read INTEGER NOT NULL CHECK (read IN (0, 1)),
+    UNIQUE (owner, url)
+  ) STRICT`,
+  'CREATE INDEX saved_page_owner_id ON saved_page (owner, id)',
+  'CREATE INDEX saved_page_owner_read_id ON saved_page (owner, read, id)',
+  `CREATE TABLE setting (
+    owner TEXT PRIMARY KEY,
+    retention INTEGER,
+    provider TEXT,
+    jina_key TEXT,
+    browser_endpoint TEXT
+  ) STRICT`,
+];
+
+const createReaderTables = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* Effect.forEach(READER_TABLES, (statement) => sql.unsafe(statement), {
+    discard: true,
+  });
+});
+
+export const readerMigrations = Migrator.fromRecord({
+  '0001_reader': createReaderTables,
+});

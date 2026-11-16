@@ -1,47 +1,32 @@
 import { NodeRuntime } from '@effect/platform-node';
-import { Data, Effect, Runtime } from 'effect';
+import { SqliteMigrator } from '@effect/sql-sqlite-node';
+import { getMigrations } from 'better-auth/db/migration';
+import { Effect, Layer, Runtime } from 'effect';
 import { authOptions } from './auth.ts';
-import { Database, DatabaseLive } from './db';
-import { readerStoreSchema } from './store/schema';
-
-class SchemaUnsupported extends Data.TaggedError('SchemaUnsupported')<{
-  message: string;
-}> {}
+import { AuthDatabaseLive, ReaderDatabaseLive } from './db';
+import { readerMigrations } from './store/schema';
 
 export const migrate = Effect.gen(function* () {
-  const db = yield* Database;
   const options = yield* authOptions;
-  const createSchema = options.database(options).createSchema;
+  const auth = yield* Effect.tryPromise(() => getMigrations(options));
 
-  if (createSchema === undefined) {
-    return yield* new SchemaUnsupported({
-      message: 'The auth adapter does not support schema generation',
-    });
-  }
+  yield* Effect.tryPromise(() => auth.runMigrations());
+  yield* Effect.logInfo(
+    `auth schema: ${auth.toBeCreated.length} tables created, ${auth.toBeAdded.length} tables altered, ${auth.toBeAddedIndexes.length} indexes added`
+  );
 
-  return yield* Effect.tryPromise(async () => {
-    const schema = await createSchema(options);
-    await db.query(readerStoreSchema);
-
-    if (schema.code.length > 0) {
-      await db.query(schema.code);
-
-      return true;
-    }
-
-    return false;
-  });
+  const applied = yield* SqliteMigrator.run({ loader: readerMigrations });
+  yield* Effect.logInfo(
+    applied.length > 0
+      ? `reader schema: ${applied.map(([id, name]) => `${id}_${name}`).join(', ')}`
+      : 'reader schema up to date'
+  );
 });
 
 if (import.meta.main) {
   NodeRuntime.runMain(
     migrate.pipe(
-      Effect.tap((result) =>
-        Effect.logInfo(
-          result ? 'auth schema migrated' : 'auth schema up to date'
-        )
-      ),
-      Effect.provide(DatabaseLive)
+      Effect.provide(Layer.merge(ReaderDatabaseLive, AuthDatabaseLive))
     ),
     {
       teardown: (exit) => {

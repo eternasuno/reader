@@ -51,9 +51,8 @@ const repositoryFailureRows: ReadonlyArray<RepositoryFailureRow> = [
     _tag: 'FolderRepositoryError',
     path: '/api/library/folders',
     stub: async (harness, session) => {
-      await harness.db.query(
-        `CREATE folder SET folderId = '01234567-89ab-7cde-8123-456789abcdef', owner = $owner, name = '';`,
-        { owner: session.owner }
+      await Effect.runPromise(
+        harness.sql`INSERT INTO folder (id, owner, name) VALUES (${'01234567-89ab-7cde-8123-456789abcdef'}, ${session.owner}, ${''})`
       );
     },
   },

@@ -5,208 +5,184 @@ import {
   FeedItemId,
   type FeedItemQuery,
   FeedItemRepository,
+  FeedItemRepositoryError,
   type FolderId,
+  type IFeedItemRepository,
   NormalizedUrl,
   type OwnerId,
 } from '@reader/business';
-import { Effect, Option, Schema, type Semaphore } from 'effect';
-import { RecordId, type Surreal } from 'surrealdb';
+import { Effect, Option, Schema } from 'effect';
+import { SqlClient, type SqlError, type Statement } from 'effect/sql';
 import {
-  afterClause,
-  type Bindings,
-  createRows,
-  feedItemRepositoryError,
-  readRows,
-  recordsOf,
-  run,
-  write,
+  createEach,
+  cursorClause,
+  dateFromMillis,
+  decodeRows,
+  inList,
+  unreadClause,
 } from './sql';
 
+type Sql = SqlClient.SqlClient;
+
+type Row = Readonly<Record<string, unknown>>;
+
+const feedItemRepositoryError = () =>
+  new FeedItemRepositoryError({ message: 'Failed to access feed items' });
+
+const fail = <A>(effect: Effect.Effect<A, SqlError.SqlError>) =>
+  effect.pipe(Effect.mapError(feedItemRepositoryError));
+
 const COLUMNS =
-  'itemId AS id, owner AS ownerId, feedId, url, title, description, content, extractedContent, publishedAt, read';
+  'id, owner AS ownerId, feed_id AS feedId, url, title, description, content, extracted_content AS extractedContent, published_at AS publishedAt, read';
 
-const ORDER = 'ORDER BY itemId DESC';
+const ORDER = 'ORDER BY id DESC';
 
-const encodeFeedItem = Schema.encodeSync(FeedItem);
+const storedRow = (row: Row): Row => ({
+  ...row,
+  publishedAt: dateFromMillis(row['publishedAt']),
+  read: row['read'] === 1,
+});
 
-const findFeedItem = (db: Surreal, owner: OwnerId, id: FeedItemId) =>
-  readRows(
-    db,
-    `SELECT ${COLUMNS} FROM feed_item WHERE owner = $owner AND itemId = $id LIMIT 1;`,
-    { owner, id },
-    FeedItem,
-    feedItemRepositoryError
-  ).pipe(Effect.map((items) => Option.fromUndefinedOr(items[0])));
+const decodeItems = (rows: ReadonlyArray<Row>) =>
+  decodeRows(rows.map(storedRow), FeedItem, feedItemRepositoryError);
 
-type QueryBindings = {
-  owner: OwnerId;
-  limit: number;
-  feedId?: FeedId;
-  folderId?: FolderId;
-  after?: FeedItemId;
-};
-
-type Scope = {
-  readonly clause: string;
-  readonly bindings: Bindings;
-};
+const findFeedItem = (sql: Sql, owner: OwnerId, id: FeedItemId) =>
+  sql`SELECT ${sql.literal(COLUMNS)} FROM feed_item WHERE owner = ${owner} AND id = ${id} LIMIT 1`.pipe(
+    fail,
+    Effect.flatMap(decodeItems),
+    Effect.map((items) => Option.fromUndefinedOr(items[0]))
+  );
 
 const listFeedItems = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   query: FeedItemQuery,
-  scope: Scope
-) => {
-  const readClause = query.unreadOnly ? ' AND read = false' : '';
-  const bindings: QueryBindings = {
-    ...scope.bindings,
-    owner,
-    limit: query.limit,
-  };
-
-  if (query.after !== undefined) {
-    bindings.after = query.after;
-  }
-
-  return readRows(
-    db,
-    `SELECT ${COLUMNS} FROM feed_item WHERE owner = $owner${scope.clause}${readClause}${afterClause('itemId', query.after)} ${ORDER} LIMIT $limit;`,
-    bindings,
-    FeedItem,
-    feedItemRepositoryError
+  scope: Statement.Fragment
+) =>
+  sql`SELECT ${sql.literal(COLUMNS)} FROM feed_item WHERE owner = ${owner}${scope}${unreadClause(sql, query.unreadOnly)}${cursorClause(sql, query.after)} ${sql.literal(ORDER)} LIMIT ${query.limit}`.pipe(
+    fail,
+    Effect.flatMap(decodeItems)
   );
-};
 
-const listAll = (db: Surreal, owner: OwnerId, query: FeedItemQuery) =>
-  listFeedItems(db, owner, query, { clause: '', bindings: {} });
+const listAll = (sql: Sql, owner: OwnerId, query: FeedItemQuery) =>
+  listFeedItems(sql, owner, query, sql.literal(''));
 
 const listByFeed = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   feedId: FeedId,
   query: FeedItemQuery
-) =>
-  listFeedItems(db, owner, query, {
-    clause: ' AND feedId = $feedId',
-    bindings: { feedId },
-  });
+) => listFeedItems(sql, owner, query, sql` AND feed_id = ${feedId}`);
 
 const listByFolder = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   folderId: FolderId,
   query: FeedItemQuery
 ) =>
-  listFeedItems(db, owner, query, {
-    clause:
-      ' AND feedId IN (SELECT VALUE feedId FROM feed WHERE owner = $owner AND folderId = $folderId)',
-    bindings: { folderId },
-  });
+  listFeedItems(
+    sql,
+    owner,
+    query,
+    sql` AND feed_id IN (SELECT id FROM feed WHERE owner = ${owner} AND folder_id = ${folderId})`
+  );
 
-const insertStatement = (row: string, index: number) => `
-LET $f${index} = SELECT VALUE id FROM feed WHERE owner = $owner AND id = type::record("feed", ${row}.feedId);
-LET $i${index} = SELECT VALUE id FROM feed_item WHERE id = type::record("feed_item", ${row}.id);
-LET $u${index} = SELECT VALUE itemId FROM feed_item WHERE feedId = ${row}.feedId AND url = ${row}.url;
-LET $r${index} = IF array::len($f${index}) > 0 AND array::len($i${index}) = 0 AND array::len($u${index}) = 0 { CREATE type::record("feed_item", ${row}.id) SET owner = $owner, feedId = ${row}.feedId, itemId = ${row}.id, url = ${row}.url, title = ${row}.title, description = ${row}.description, content = ${row}.content, extractedContent = ${row}.extractedContent, publishedAt = ${row}.publishedAt, read = ${row}.read } ELSE { [] };
-LET $created = array::append($created, array::len($r${index}) > 0);`;
+const encodeFeedItem = Schema.encodeSync(FeedItem);
+
+const itemValues = (row: FeedItem) => {
+  const encoded = encodeFeedItem(row);
+
+  return {
+    id: encoded.id,
+    owner: encoded.ownerId,
+    feedId: encoded.feedId,
+    url: encoded.url,
+    title: encoded.title,
+    description: encoded.description ?? null,
+    content: encoded.content ?? null,
+    extractedContent: encoded.extractedContent ?? null,
+    publishedAt:
+      encoded.publishedAt === undefined ? null : encoded.publishedAt.getTime(),
+    read: encoded.read ? 1 : 0,
+  };
+};
+
+const insertItem = (sql: Sql) => (row: FeedItem) => {
+  const value = itemValues(row);
+
+  return sql`INSERT INTO feed_item (id, owner, feed_id, url, title, description, content, extracted_content, published_at, read) SELECT ${value.id}, ${value.owner}, ${value.feedId}, ${value.url}, ${value.title}, ${value.description}, ${value.content}, ${value.extractedContent}, ${value.publishedAt}, ${value.read} WHERE EXISTS (SELECT 1 FROM feed WHERE owner = ${value.owner} AND id = ${value.feedId}) ON CONFLICT DO NOTHING RETURNING id`;
+};
 
 const createFeedItems = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   items: ReadonlyArray<FeedItem>
-) =>
-  createRows(db, owner, items, {
-    prefix: 'a',
-    encode: encodeFeedItem,
-    statement: insertStatement,
-    onError: feedItemRepositoryError,
-  });
+) => createEach(sql, owner, items, insertItem(sql)).pipe(fail);
 
 const markFeedItems = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   ids: ReadonlyArray<FeedItemId>,
   read: boolean
 ) =>
   ids.length === 0
     ? Effect.void
-    : write(
-        db,
-        'UPDATE feed_item SET read = $read WHERE owner = $owner AND id IN $records;',
-        { owner, read, records: recordsOf('feed_item', ids) },
-        feedItemRepositoryError
+    : sql`UPDATE feed_item SET read = ${read ? 1 : 0} WHERE owner = ${owner} AND ${inList(sql, 'id', ids)}`.pipe(
+        fail,
+        Effect.asVoid
       );
 
 const markFeedItemsByFeeds = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   feedIds: ReadonlyArray<FeedId>
 ) =>
   feedIds.length === 0
     ? Effect.void
-    : write(
-        db,
-        'UPDATE feed_item SET read = true WHERE owner = $owner AND feedId IN $feedIds;',
-        { owner, feedIds: [...feedIds] },
-        feedItemRepositoryError
+    : sql`UPDATE feed_item SET read = 1 WHERE owner = ${owner} AND ${inList(sql, 'feed_id', feedIds)}`.pipe(
+        fail,
+        Effect.asVoid
       );
 
 const markFeedItemsByFolders = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   folderIds: ReadonlyArray<FolderId>
 ) =>
   folderIds.length === 0
     ? Effect.void
-    : write(
-        db,
-        'UPDATE feed_item SET read = true WHERE owner = $owner AND feedId IN (SELECT VALUE feedId FROM feed WHERE owner = $owner AND folderId IN $folderIds);',
-        { owner, folderIds: [...folderIds] },
-        feedItemRepositoryError
+    : sql`UPDATE feed_item SET read = 1 WHERE owner = ${owner} AND feed_id IN (SELECT id FROM feed WHERE owner = ${owner} AND ${inList(sql, 'folder_id', folderIds)})`.pipe(
+        fail,
+        Effect.asVoid
       );
 
-const markAllFeedItems = (db: Surreal, owner: OwnerId) =>
-  write(
-    db,
-    'UPDATE feed_item SET read = true WHERE owner = $owner;',
-    { owner },
-    feedItemRepositoryError
+const markAllFeedItems = (sql: Sql, owner: OwnerId) =>
+  sql`UPDATE feed_item SET read = 1 WHERE owner = ${owner}`.pipe(
+    fail,
+    Effect.asVoid
   );
 
 const setExtractedContent = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   id: FeedItemId,
   content: ArticleContent
 ) =>
-  run(
-    db,
-    'UPDATE feed_item SET extractedContent = $content WHERE owner = $owner AND id = $record RETURN itemId;',
-    { owner, content, record: new RecordId('feed_item', id) },
-    feedItemRepositoryError
-  ).pipe(
-    Effect.map((results) => {
-      const rows = results[0];
-
-      return Array.isArray(rows) && rows.length > 0;
-    })
+  sql`UPDATE feed_item SET extracted_content = ${content} WHERE owner = ${owner} AND id = ${id} RETURNING id`.pipe(
+    fail,
+    Effect.map((rows) => rows.length > 0)
   );
 
 const UnreadCountRow = Schema.Struct({
   feedId: FeedId,
-  total: Schema.Int,
+  count: Schema.Int,
 });
 
-const readUnreadCounts = (db: Surreal, owner: OwnerId) =>
-  readRows(
-    db,
-    'SELECT feedId, count() AS total FROM feed_item WHERE owner = $owner AND read = false GROUP BY feedId ORDER BY feedId;',
-    { owner },
-    UnreadCountRow,
-    feedItemRepositoryError
-  ).pipe(
-    Effect.map((rows) =>
-      rows.map((row) => ({ feedId: row.feedId, count: row.total }))
+const readUnreadCounts = (sql: Sql, owner: OwnerId) =>
+  sql`SELECT feed_id AS feedId, count(*) AS count FROM feed_item WHERE owner = ${owner} AND read = 0 GROUP BY feed_id ORDER BY feed_id`.pipe(
+    fail,
+    Effect.flatMap((rows) =>
+      decodeRows(rows, UnreadCountRow, feedItemRepositoryError)
     )
   );
 
@@ -215,52 +191,50 @@ const FeedItemKeyRow = Schema.Struct({
   url: NormalizedUrl,
 });
 
-const readInventory = (db: Surreal, owner: OwnerId, feedId: FeedId) =>
-  readRows(
-    db,
-    `SELECT itemId AS id, url FROM feed_item WHERE owner = $owner AND feedId = $feedId ${ORDER};`,
-    { owner, feedId },
-    FeedItemKeyRow,
-    feedItemRepositoryError
+const readInventory = (sql: Sql, owner: OwnerId, feedId: FeedId) =>
+  sql`SELECT id, url FROM feed_item WHERE owner = ${owner} AND feed_id = ${feedId} ${sql.literal(ORDER)}`.pipe(
+    fail,
+    Effect.flatMap((rows) =>
+      decodeRows(rows, FeedItemKeyRow, feedItemRepositoryError)
+    )
   );
 
 const removeFeedItems = (
-  db: Surreal,
+  sql: Sql,
   owner: OwnerId,
   ids: ReadonlyArray<FeedItemId>
 ) =>
   ids.length === 0
     ? Effect.void
-    : write(
-        db,
-        'DELETE feed_item WHERE owner = $owner AND id IN $records;',
-        { owner, records: recordsOf('feed_item', ids) },
-        feedItemRepositoryError
+    : sql`DELETE FROM feed_item WHERE owner = ${owner} AND ${inList(sql, 'id', ids)}`.pipe(
+        fail,
+        Effect.asVoid
       );
 
-export const makeFeedItemRepository = (
-  db: Surreal,
-  lock: Semaphore.Semaphore
-) =>
-  FeedItemRepository.of({
-    find: (owner, id) => findFeedItem(db, owner, id),
-    listAll: (owner, query) => listAll(db, owner, query),
-    listByFeed: (owner, feedId, query) => listByFeed(db, owner, feedId, query),
+export const makeFeedItemRepository: Effect.Effect<
+  IFeedItemRepository,
+  never,
+  SqlClient.SqlClient
+> = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  return FeedItemRepository.of({
+    find: (owner, id) => findFeedItem(sql, owner, id),
+    listAll: (owner, query) => listAll(sql, owner, query),
+    listByFeed: (owner, feedId, query) => listByFeed(sql, owner, feedId, query),
     listByFolder: (owner, folderId, query) =>
-      listByFolder(db, owner, folderId, query),
-    create: (owner, items) =>
-      createFeedItems(db, owner, items).pipe(lock.withPermit),
-    markRead: (owner, ids, read) =>
-      markFeedItems(db, owner, ids, read).pipe(lock.withPermit),
+      listByFolder(sql, owner, folderId, query),
+    create: (owner, items) => createFeedItems(sql, owner, items),
+    markRead: (owner, ids, read) => markFeedItems(sql, owner, ids, read),
     markReadByFeeds: (owner, feedIds) =>
-      markFeedItemsByFeeds(db, owner, feedIds).pipe(lock.withPermit),
+      markFeedItemsByFeeds(sql, owner, feedIds),
     markReadByFolders: (owner, folderIds) =>
-      markFeedItemsByFolders(db, owner, folderIds).pipe(lock.withPermit),
-    markAllRead: (owner) => markAllFeedItems(db, owner).pipe(lock.withPermit),
+      markFeedItemsByFolders(sql, owner, folderIds),
+    markAllRead: (owner) => markAllFeedItems(sql, owner),
     setExtractedContent: (owner, id, content) =>
-      setExtractedContent(db, owner, id, content).pipe(lock.withPermit),
-    unreadCounts: (owner) => readUnreadCounts(db, owner),
-    inventory: (owner, feedId) => readInventory(db, owner, feedId),
-    remove: (owner, ids) =>
-      removeFeedItems(db, owner, ids).pipe(lock.withPermit),
+      setExtractedContent(sql, owner, id, content),
+    unreadCounts: (owner) => readUnreadCounts(sql, owner),
+    inventory: (owner, feedId) => readInventory(sql, owner, feedId),
+    remove: (owner, ids) => removeFeedItems(sql, owner, ids),
   });
+});

@@ -2,20 +2,16 @@ import { expect, it } from '@effect/vitest';
 import {
   BrowserEndpoint,
   JinaKey,
+  OwnerId,
   Retention,
   SettingRepository,
 } from '@reader/business';
 import { settingRepositoryContract } from '@reader/business/testing';
 import { Effect, Schema } from 'effect';
-import { Database } from '../../src/db';
-import {
-  owner,
-  query,
-  settingStoreDatabaseLayer,
-  settingStoreLayer,
-} from '../support/store';
+import { SqlClient } from 'effect/sql';
+import { readerStoreDatabaseLayer, settingStoreLayer } from '../support/store';
 
-const alice = owner('alice');
+const alice = OwnerId.make('alice');
 
 const decodeRetention = Schema.decodeSync(Retention);
 
@@ -28,7 +24,7 @@ settingRepositoryContract(settingStoreLayer);
 it.effect('stores the fetcher leaves as plain text in one row', () =>
   Effect.gen(function* () {
     const settings = yield* SettingRepository;
-    const db = yield* Database;
+    const sql = yield* SqlClient.SqlClient;
 
     yield* settings.setRetention(alice, decodeRetention(60));
     yield* settings.selectJinaWithKey(alice, decodeJinaKey('alice-secret'));
@@ -37,12 +33,10 @@ it.effect('stores the fetcher leaves as plain text in one row', () =>
       decodeEndpoint('http://127.0.0.1:9222')
     );
 
-    expect(
-      yield* query(
-        db,
-        'SELECT owner, provider, jinaKey, browserEndpoint, retention FROM setting;'
-      )
-    ).toEqual([
+    const rows =
+      yield* sql`SELECT owner, provider, jina_key AS jinaKey, browser_endpoint AS browserEndpoint, retention FROM setting`;
+
+    expect(rows).toEqual([
       {
         owner: alice,
         provider: 'browser',
@@ -51,16 +45,16 @@ it.effect('stores the fetcher leaves as plain text in one row', () =>
         retention: 60,
       },
     ]);
-  }).pipe(Effect.provide(settingStoreDatabaseLayer))
+  }).pipe(Effect.provide(readerStoreDatabaseLayer))
 );
 
 it.effect('reads the defaults without writing a row', () =>
   Effect.gen(function* () {
     const settings = yield* SettingRepository;
-    const db = yield* Database;
+    const sql = yield* SqlClient.SqlClient;
 
     yield* settings.get(alice);
 
-    expect(yield* query(db, 'SELECT VALUE id FROM setting;')).toEqual([]);
-  }).pipe(Effect.provide(settingStoreDatabaseLayer))
+    expect(yield* sql`SELECT owner FROM setting`).toEqual([]);
+  }).pipe(Effect.provide(readerStoreDatabaseLayer))
 );

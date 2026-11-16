@@ -1,7 +1,6 @@
-import { surrealAdapter } from '@surrealdb/better-auth';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
 import { Config, Context, Data, Effect, Layer, Redacted } from 'effect';
-import { Database } from './db';
+import { AuthDatabase } from './db';
 
 export class Auth extends Context.Service<
   Auth,
@@ -13,7 +12,7 @@ export class AuthUnavailable extends Data.TaggedError('AuthUnavailable')<{
 }> {}
 
 export const authOptions = Effect.gen(function* () {
-  const db = yield* Database;
+  const database = yield* AuthDatabase;
   const authConfig = yield* Config.all({
     url: Config.URL('URL').pipe(
       Config.withDefault(new URL('http://localhost:3000'))
@@ -22,12 +21,12 @@ export const authOptions = Effect.gen(function* () {
   }).pipe(Config.nested('BETTER_AUTH'));
 
   return {
-    appName: 'Solid Surreal API',
+    appName: 'Reader API',
     emailAndPassword: { enabled: true, autoSignIn: false },
     telemetry: { enabled: false },
     baseURL: authConfig.url.toString(),
     secret: Redacted.value(authConfig.secret),
-    database: surrealAdapter({ db }),
+    database,
   } satisfies BetterAuthOptions;
 });
 

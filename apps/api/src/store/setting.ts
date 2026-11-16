@@ -1,16 +1,17 @@
-import { createHash } from 'node:crypto';
 import {
   BrowserEndpoint,
   FetcherProvider,
+  type ISettingRepository,
   JinaKey,
   OwnerId,
   Retention,
   type Setting,
   SettingRepository,
+  SettingRepositoryError,
 } from '@reader/business';
 import { Effect, Redacted, Schema } from 'effect';
-import type { Surreal } from 'surrealdb';
-import { type Bindings, readRows, settingRepositoryError, write } from './sql';
+import { SqlClient } from 'effect/sql';
+import { decodeRows } from './sql';
 
 const StoredSetting = Schema.Struct({
   ownerId: OwnerId,
@@ -30,74 +31,61 @@ const settingOf = (stored: typeof StoredSetting.Type): Setting => ({
   },
 });
 
-const ownerHash = (owner: OwnerId) =>
-  createHash('sha256').update(owner).digest('hex');
+const settingRepositoryError = () =>
+  new SettingRepositoryError({
+    message: 'Failed to access extraction settings',
+  });
 
 const defaultRow = (owner: OwnerId) =>
-  Schema.decodeUnknownSync(StoredSetting)({ ownerId: owner });
+  Schema.decodeSync(StoredSetting)({ ownerId: owner });
 
-const load = (db: Surreal, owner: OwnerId) =>
-  readRows(
-    db,
-    'SELECT owner AS ownerId, jinaKey, provider, browserEndpoint, retention FROM setting WHERE owner = $owner;',
-    { owner },
-    StoredSetting,
-    settingRepositoryError
-  ).pipe(Effect.map((rows) => settingOf(rows[0] ?? defaultRow(owner))));
-
-const save = (
-  db: Surreal,
-  owner: OwnerId,
-  sql: string,
-  bindings: Bindings = {}
-) =>
-  write(
-    db,
-    sql,
-    { owner, id: ownerHash(owner), ...bindings },
-    settingRepositoryError
+const loadSetting = (sql: SqlClient.SqlClient, owner: OwnerId) =>
+  sql`SELECT owner AS ownerId, retention, provider, jina_key AS jinaKey, browser_endpoint AS browserEndpoint FROM setting WHERE owner = ${owner}`.pipe(
+    Effect.flatMap((rows) =>
+      decodeRows(rows, StoredSetting, settingRepositoryError)
+    ),
+    Effect.map((rows) => settingOf(rows[0] ?? defaultRow(owner))),
+    Effect.mapError(settingRepositoryError)
   );
 
-export const makeSettingRepository = (db: Surreal) =>
-  SettingRepository.of({
-    get: (owner) => load(db, owner),
+export const makeSettingRepository: Effect.Effect<
+  ISettingRepository,
+  never,
+  SqlClient.SqlClient
+> = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  return SettingRepository.of({
+    get: (owner) => loadSetting(sql, owner),
     setRetention: (owner, retention) =>
-      save(
-        db,
-        owner,
-        'UPSERT type::record("setting", $id) SET owner = $owner, retention = $retention;',
-        { retention }
+      sql`INSERT INTO setting (owner, retention) VALUES (${owner}, ${retention}) ON CONFLICT (owner) DO UPDATE SET retention = excluded.retention`.pipe(
+        Effect.asVoid,
+        Effect.mapError(settingRepositoryError)
       ),
     selectJina: (owner) =>
-      save(
-        db,
-        owner,
-        'UPSERT type::record("setting", $id) SET owner = $owner, provider = \'jina\';'
+      sql`INSERT INTO setting (owner, provider) VALUES (${owner}, 'jina') ON CONFLICT (owner) DO UPDATE SET provider = excluded.provider`.pipe(
+        Effect.asVoid,
+        Effect.mapError(settingRepositoryError)
       ),
     selectJinaWithKey: (owner, key) =>
-      save(
-        db,
-        owner,
-        'UPSERT type::record("setting", $id) SET owner = $owner, provider = \'jina\', jinaKey = $jinaKey;',
-        { jinaKey: Redacted.value(key) }
+      sql`INSERT INTO setting (owner, provider, jina_key) VALUES (${owner}, 'jina', ${Redacted.value(key)}) ON CONFLICT (owner) DO UPDATE SET provider = excluded.provider, jina_key = excluded.jina_key`.pipe(
+        Effect.asVoid,
+        Effect.mapError(settingRepositoryError)
       ),
     clearJinaKey: (owner) =>
-      save(
-        db,
-        owner,
-        'UPSERT type::record("setting", $id) SET owner = $owner, jinaKey = NONE;'
+      sql`INSERT INTO setting (owner, jina_key) VALUES (${owner}, NULL) ON CONFLICT (owner) DO UPDATE SET jina_key = NULL`.pipe(
+        Effect.asVoid,
+        Effect.mapError(settingRepositoryError)
       ),
     selectBrowser: (owner) =>
-      save(
-        db,
-        owner,
-        'UPSERT type::record("setting", $id) SET owner = $owner, provider = \'browser\';'
+      sql`INSERT INTO setting (owner, provider) VALUES (${owner}, 'browser') ON CONFLICT (owner) DO UPDATE SET provider = excluded.provider`.pipe(
+        Effect.asVoid,
+        Effect.mapError(settingRepositoryError)
       ),
     selectBrowserWithEndpoint: (owner, endpoint) =>
-      save(
-        db,
-        owner,
-        'UPSERT type::record("setting", $id) SET owner = $owner, provider = \'browser\', browserEndpoint = $browserEndpoint;',
-        { browserEndpoint: Redacted.value(endpoint).href }
+      sql`INSERT INTO setting (owner, provider, browser_endpoint) VALUES (${owner}, 'browser', ${Redacted.value(endpoint).href}) ON CONFLICT (owner) DO UPDATE SET provider = excluded.provider, browser_endpoint = excluded.browser_endpoint`.pipe(
+        Effect.asVoid,
+        Effect.mapError(settingRepositoryError)
       ),
   });
+});

@@ -1,20 +1,21 @@
-import { randomUUID } from 'node:crypto';
 import { expect, it } from '@effect/vitest';
 import { FeedId, type OwnerId } from '@reader/business';
-import { Deferred, Effect, Layer, Logger } from 'effect';
+import { Context, Deferred, Effect, Layer, Logger } from 'effect';
+import { SqlClient } from 'effect/sql';
 import { TestClock } from 'effect/testing';
-import type { Surreal } from 'surrealdb';
-import { createSurreal, Database } from '../../src/db';
 import { FeedRefreshQueue } from '../../src/refresh/queue';
 import {
   FEED_REFRESH_INTERVAL,
   feedRefreshSchedulerLayer,
 } from '../../src/refresh/scheduler';
+import { readerDatabaseLayer } from '../support/store';
 
 type Enqueued = {
   readonly owner: OwnerId;
   readonly feedId: FeedId;
 };
+
+type Sql = SqlClient.SqlClient;
 
 const feedId = (suffix: string) =>
   FeedId.make(`0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5${suffix}`);
@@ -22,31 +23,26 @@ const feedId = (suffix: string) =>
 const feedA = feedId('a');
 const feedB = feedId('b');
 
-const insertFeed = (db: Surreal, owner: string, feedId: FeedId) =>
-  Effect.promise(() =>
-    db.query('CREATE feed SET owner = $owner, feedId = $feedId;', {
-      owner,
-      feedId,
-    })
+const insertFeed = (sql: Sql, owner: string, id: string) =>
+  sql`INSERT INTO feed (id, owner, url, title) VALUES (${id}, ${owner}, ${`https://example.com/${id}`}, ${'Example feed'})`.pipe(
+    Effect.asVoid
   );
 
-const removeFeeds = (db: Surreal) =>
-  Effect.promise(() => db.query('DELETE feed;'));
+const removeFeeds = (sql: Sql) => sql`DELETE FROM feed`.pipe(Effect.asVoid);
 
 const useDatabase = <A, E>(
-  seed: (db: Surreal) => Effect.Effect<unknown>,
-  run: (db: Surreal) => Effect.Effect<A, E>
+  seed: (sql: Sql) => Effect.Effect<void, E>,
+  run: (sql: Sql) => Effect.Effect<A, E>
 ) =>
-  Effect.acquireUseRelease(
-    Effect.promise(() =>
-      createSurreal({
-        endpoint: 'mem://',
-        namespace: `reader-refresh-${randomUUID()}`,
-        database: 'test',
-      })
-    ),
-    (db) => seed(db).pipe(Effect.andThen(run(db))),
-    (db) => Effect.promise(() => db.close())
+  Effect.scoped(
+    Effect.gen(function* () {
+      const context = yield* Layer.build(readerDatabaseLayer);
+      const sql = Context.get(context, SqlClient.SqlClient);
+
+      yield* seed(sql);
+
+      return yield* run(sql);
+    })
   );
 
 const makeSignals = (count: number) =>
@@ -94,12 +90,12 @@ const logged = (logs: ReadonlyArray<unknown>) =>
 
 it.effect('enqueues every feed at start and again after the interval', () =>
   useDatabase(
-    (db) =>
+    (sql) =>
       Effect.gen(function* () {
-        yield* insertFeed(db, 'alice', feedA);
-        yield* insertFeed(db, 'bob', feedB);
+        yield* insertFeed(sql, 'alice', feedA);
+        yield* insertFeed(sql, 'bob', feedB);
       }),
-    (db) =>
+    (sql) =>
       Effect.gen(function* () {
         const recorded: Array<Enqueued> = [];
         const signals = yield* makeSignals(4);
@@ -124,15 +120,18 @@ it.effect('enqueues every feed at start and again after the interval', () =>
             `bob/${feedB}`,
             `bob/${feedB}`,
           ]);
-        }).pipe(Effect.provide(layer), Effect.provideService(Database, db));
+        }).pipe(
+          Effect.provide(layer),
+          Effect.provideService(SqlClient.SqlClient, sql)
+        );
       })
   )
 );
 
 it.effect('picks up feeds added after the start', () =>
   useDatabase(
-    (db) => insertFeed(db, 'alice', feedA),
-    (db) =>
+    (sql) => insertFeed(sql, 'alice', feedA),
+    (sql) =>
       Effect.gen(function* () {
         const recorded: Array<Enqueued> = [];
         const signals = yield* makeSignals(4);
@@ -144,7 +143,7 @@ it.effect('picks up feeds added after the start', () =>
           yield* awaitEnqueue(signals, 0);
           expect(enqueued(recorded)).toEqual([`alice/${feedA}`]);
 
-          yield* insertFeed(db, 'bob', feedB);
+          yield* insertFeed(sql, 'bob', feedB);
           yield* TestClock.adjust(FEED_REFRESH_INTERVAL);
           yield* awaitEnqueue(signals, 2);
 
@@ -153,7 +152,10 @@ it.effect('picks up feeds added after the start', () =>
             `alice/${feedA}`,
             `bob/${feedB}`,
           ]);
-        }).pipe(Effect.provide(layer), Effect.provideService(Database, db));
+        }).pipe(
+          Effect.provide(layer),
+          Effect.provideService(SqlClient.SqlClient, sql)
+        );
       })
   )
 );
@@ -162,11 +164,8 @@ it.effect('logs a failed listing and retries at the next interval', () => {
   const logs: Array<unknown> = [];
 
   return useDatabase(
-    (db) =>
-      Effect.promise(() =>
-        db.query("CREATE feed SET owner = 'alice', feedId = 'invalid';")
-      ),
-    (db) =>
+    (sql) => insertFeed(sql, 'alice', 'invalid'),
+    (sql) =>
       Effect.gen(function* () {
         const recorded: Array<Enqueued> = [];
         const signals = yield* makeSignals(2);
@@ -178,13 +177,16 @@ it.effect('logs a failed listing and retries at the next interval', () => {
           expect(recorded).toHaveLength(0);
           expect(logged(logs)).toContain('Feed refresh listing failed');
 
-          yield* removeFeeds(db);
-          yield* insertFeed(db, 'alice', feedA);
+          yield* removeFeeds(sql);
+          yield* insertFeed(sql, 'alice', feedA);
           yield* TestClock.adjust(FEED_REFRESH_INTERVAL);
           yield* awaitEnqueue(signals, 0);
 
           expect(enqueued(recorded)).toEqual([`alice/${feedA}`]);
-        }).pipe(Effect.provide(layer), Effect.provideService(Database, db));
+        }).pipe(
+          Effect.provide(layer),
+          Effect.provideService(SqlClient.SqlClient, sql)
+        );
       })
   ).pipe(Effect.provide(Logger.layer([collector(logs)])));
 });

@@ -1,6 +1,6 @@
 # Solid Effect Starter
 
-A self-hosted pnpm/Turborepo starter with a pure SolidJS 1 client application and a separate Effect HTTP API backed by Better Auth and embedded SurrealDB/SurrealKV. The UI uses Tailwind CSS v4 and DaisyUI v5.
+A self-hosted pnpm/Turborepo starter with a pure SolidJS 1 client application and a separate Effect HTTP API backed by Better Auth and SQLite. The UI uses Tailwind CSS v4 and DaisyUI v5.
 
 ## Prerequisites
 
@@ -55,7 +55,7 @@ Maintainers should read [`AGENTS.md`](AGENTS.md) first, then read the relevant p
 - [`project-business`](.agents/skills/project-business/SKILL.md) — business rules: feeds, feed items, saved pages, settings, ids, paging, refresh and retention, with numbered rules that tests refer to.
 - [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — architecture, reader and settings UI behavior, browser/API boundaries, session subscriptions, or deployment topology.
 - [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, sessions, protected APIs, HTTP handlers and error mapping, the feed refresh queue, Effect services, or Layer composition.
-- [`project-database`](.agents/skills/project-database/SKILL.md) — SurrealDB/SurrealKV connections, queries, schema migrations, or database deployment configuration.
+- [`project-database`](.agents/skills/project-database/SKILL.md) — SQLite connections, queries, schema migrations, or database deployment configuration.
 - [`project-testing`](.agents/skills/project-testing/SKILL.md) — tests, test doubles, Effect Layers, or in-memory database schema setup.
 
 ## Architecture
@@ -66,13 +66,13 @@ Browser
   -> credentialed HTTP requests
   -> apps/api: Effect HttpServer
        -> Better Auth
-       -> SurrealDB / SurrealKV
+       -> SQLite (reader.db, auth.db)
 ```
 
 - `apps/web` contains browser-only routes, components, and the Better Auth client. Vite builds static assets with `ssr: false`; there are no server functions or server runtime modules.
 - `apps/api/src/http` owns HTTP routing: the library handlers under `http/library/`, the Better Auth and static routes, and the origin and session middleware. Better Auth handles `/api/auth/*`.
-- `apps/api/src` is grouped by responsibility: `store/` holds the SurrealDB repositories and schema, `content/` the feed parser, HTML parser, article extractor and sanitizer, `refresh/` the feed refresh queue and scheduler, `auth.ts` the Better Auth layer and `db/` the database connection. `apps/api/src/app.ts` composes them into the HTTP `AppLive`, and `apps/api/src/server.ts` is the process entry that launches it. The server entry owns layer acquisition and graceful shutdown via `NodeRuntime`.
-- `apps/api/test` tests the database, the authentication protocol, and HTTP handlers against `mem://`.
+- `apps/api/src` is grouped by responsibility: `store/` holds the SQLite repositories and schema, `content/` the feed parser, HTML parser, article extractor and sanitizer, `refresh/` the feed refresh queue and scheduler, `auth.ts` the Better Auth layer and `db/` the database files and connections. `apps/api/src/app.ts` composes them into the HTTP `AppLive`, and `apps/api/src/server.ts` is the process entry that launches it. The server entry owns layer acquisition and graceful shutdown via `NodeRuntime`.
+- `apps/api/test` tests the database against SQLite in memory, the authentication protocol, and HTTP handlers.
 
 ### Security boundaries
 
@@ -80,19 +80,19 @@ The backend derives identity only from the Better Auth session cookie on the inc
 
 Better Auth owns `/api/auth/*`; application endpoints should not reimplement its protocol. Protected endpoints use the `Authentication` middleware declared in `packages/api/src/middleware.ts` and derive identity from `Session`; its implementation lives in `apps/api/src/http/middleware/session.ts`.
 
-### Embedded SurrealDB
+### SQLite
 
-`apps/api/src/db/index.ts` connects to the configured database and selects its namespace and database. Runtime startup does not generate or apply schema.
+`apps/api/src/db/index.ts` opens two SQLite files in `DATA_DIR`: the reader store in `reader.db` and Better Auth's data in `auth.db`. `DATA_DIR` defaults to `.data` relative to the process working directory and is created if missing. The files are separate because two connections to one file would contend for SQLite's single write lock. Runtime startup does not generate or apply schema.
 
-Better Auth's `auth migrate` command only supports its built-in Kysely adapter, so for the SurrealDB adapter the CLI can only emit DDL. Apply the schema with the package script:
+Apply the schema with the package script:
 
 ```sh
 pnpm --filter api db:migrate
 ```
 
-The script derives the DDL from the adapter and applies it to the configured database. Apply schema during deployment rather than at startup, so changes are applied once instead of racing across restarted instances. Tests initialize the adapter schema directly against `mem://`.
+The script runs Better Auth's migrations against `auth.db` and the reader migrations (`apps/api/src/store/schema.ts`) against `reader.db`. Apply schema during deployment rather than at startup, so changes are applied once instead of racing across restarted instances. Tests apply both migrations to in-memory databases instead of running `db:migrate`.
 
-The project is in development and keeps no database compatibility or data migration path. `@surrealdb/node` 3.2 embeds SurrealDB 4.0, which refuses to open a SurrealKV directory written by SurrealDB 3.x. After an engine or schema change that makes existing data unusable, delete the directory named by `SURREAL_ENDPOINT` (for example `.data/database`) and run `pnpm db:migrate` again.
+The project is in development and keeps no database compatibility or data migration path. After a schema change that makes existing data unusable, edit migration `0001_reader` in place, delete the database files in `DATA_DIR` (for example `.data/reader.db` and `.data/auth.db`) and run `pnpm db:migrate` again.
 
 ## Environment variables
 
@@ -104,14 +104,12 @@ Web variables belong in `apps/web/.env`:
 
 API variables belong in `apps/api/.env`:
 
-| Variable             | Default                 | Purpose                                                                                                              |
-| -------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `API_PORT`           | `3001`                  | Effect HTTP server port                                                                                              |
-| `SURREAL_ENDPOINT`   | `mem://`                | Database endpoint; defaults to ephemeral `mem://`; use an absolute SurrealKV path or managed endpoint in production. |
-| `SURREAL_NAMESPACE`  | `app`                   | SurrealDB namespace                                                                                                  |
-| `SURREAL_DATABASE`   | `app`                   | SurrealDB database                                                                                                   |
-| `BETTER_AUTH_SECRET` | —                       | Better Auth signing secret                                                                                           |
-| `BETTER_AUTH_URL`    | `http://localhost:3000` | Canonical public site origin used for auth URLs                                                                      |
+| Variable             | Default                 | Purpose                                                          |
+| -------------------- | ----------------------- | ---------------------------------------------------------------- |
+| `API_PORT`           | `3001`                  | Effect HTTP server port                                          |
+| `DATA_DIR`           | `.data`                 | Directory holding `reader.db` and `auth.db`; created if missing. |
+| `BETTER_AUTH_SECRET` | —                       | Better Auth signing secret                                       |
+| `BETTER_AUTH_URL`    | `http://localhost:3000` | Canonical public site origin used for auth URLs                  |
 
 Deploy the frontend and `/api` on the same public origin. In development and preview, Vite provides the `/api` proxy.
 
@@ -177,7 +175,7 @@ docker run --rm --init \
   -e BETTER_AUTH_SECRET \
   -e API_PORT=3001 \
   -e BETTER_AUTH_URL=http://localhost:3001 \
-  -e SURREAL_ENDPOINT=surrealkv:///data/database \
+  -e DATA_DIR=/data \
   -v starter-data:/data \
   solid-effect-starter
 ```
@@ -190,12 +188,10 @@ Apply migrations once before starting the service. The minimal runtime image doe
 docker build --target build -t solid-effect-starter-migrate .
 docker run --rm --init \
   -e BETTER_AUTH_SECRET \
-  -e SURREAL_ENDPOINT=surrealkv:///data/database \
+  -e DATA_DIR=/data \
   -v starter-data:/data \
   --user 1000:1000 \
   solid-effect-starter-migrate pnpm --filter api db:migrate
 ```
 
-Run this with the application stopped and the same namespace/database configuration. Create the named volume with writable ownership for UID 1000 before migration (for example, using the runtime image's `/data` directory). Never apply migrations automatically at startup.
-
-A volume written by an image built with SurrealDB 3.x hits the same refusal described in Embedded SurrealDB: remove the old volume (or use a new one) and run the migration again.
+Run this with the application stopped and the same `DATA_DIR`. Create the named volume with writable ownership for UID 1000 before migration (for example, using the runtime image's `/data` directory). Never apply migrations automatically at startup.

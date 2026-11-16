@@ -8,11 +8,10 @@ import { HtmlParserLive } from './content/html-parser';
 import { authRoutes } from './http/auth';
 import { libraryRoutes } from './http/library';
 import type { FeedRefreshQueue } from './refresh/queue';
-import { ReaderStoreLive, SettingRepositoryLive } from './store';
+import { ReaderStoreLive } from './store';
 
 export const LibraryServicesLive = Layer.mergeAll(
   ReaderStoreLive,
-  SettingRepositoryLive,
   ArticleExtractorLive,
   HtmlParserLive,
   FetchHttpClient.layer,

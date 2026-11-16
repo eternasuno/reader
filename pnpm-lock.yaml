@@ -143,8 +143,11 @@ importers:
   apps/api:
     dependencies:
       '@effect/platform-node':
-        specifier: 4.1.2
-        version: 4.1.2(effect@4.1.2)(redis@6.2.1)
+        specifier: 4.1.4
+        version: 4.1.4(effect@4.1.4)(redis@6.2.1)
+      '@effect/sql-sqlite-node':
+        specifier: 4.1.4
+        version: 4.1.4(effect@4.1.4)
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
@@ -157,12 +160,6 @@ importers:
       '@reader/webpage':
         specifier: workspace:*
         version: link:../../packages/webpage
-      '@surrealdb/better-auth':
-        specifier: 0.1.0
-        version: 0.1.0(solid-js@1.9.17)(tslib@2.8.1)(typescript@7.0.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
-      '@surrealdb/node':
-        specifier: 3.2.0
-        version: 3.2.0(@surrealdb/node-native@4.0.0)(surrealdb@2.2.2(tslib@2.8.1)(typescript@7.0.2))
       better-auth:
         specifier: 'catalog:'
         version: 1.7.18(solid-js@1.9.17)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
@@ -170,21 +167,18 @@ importers:
         specifier: ^3.4.17
         version: 3.4.17
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.4
+        version: 4.1.4
       feedsmith:
         specifier: ^3.0.1
         version: 3.0.1
       jsdom:
         specifier: ^31.0.0
         version: 31.0.0(@noble/hashes@2.4.0)
-      surrealdb:
-        specifier: 2.2.2
-        version: 2.2.2(tslib@2.8.1)(typescript@7.0.2)
     devDependencies:
       '@effect/vitest':
-        specifier: 4.1.2
-        version: 4.1.2(effect@4.1.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
+        specifier: 4.1.4
+        version: 4.1.4(effect@4.1.4)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
       '@types/jsdom':
         specifier: ^30.0.0
         version: 30.0.0
@@ -222,8 +216,8 @@ importers:
         specifier: 'catalog:'
         version: 1.7.18(solid-js@1.9.18)(vitest@5.1.0(@types/node@26.6.6)(jsdom@30.1.3(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)))
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.4
+        version: 4.1.4
       solid-js:
         specifier: 1.9.18
         version: 1.9.18
@@ -259,18 +253,18 @@ importers:
         specifier: workspace:*
         version: link:../business
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.4
+        version: 4.1.4
 
   packages/business:
     dependencies:
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.4
+        version: 4.1.4
     devDependencies:
       '@effect/vitest':
-        specifier: 4.1.2
-        version: 4.1.2(effect@4.1.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@30.1.3(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
+        specifier: 4.1.4
+        version: 4.1.4(effect@4.1.4)(vitest@5.1.0(@types/node@26.6.6)(jsdom@30.1.3(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6
@@ -287,8 +281,8 @@ importers:
         specifier: workspace:*
         version: link:../business
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.4
+        version: 4.1.4
       puppeteer-core:
         specifier: 25.16.0
         version: 25.16.0
@@ -297,8 +291,8 @@ importers:
         version: 8.22.1
     devDependencies:
       '@effect/vitest':
-        specifier: 4.1.2
-        version: 4.1.2(effect@4.1.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@30.1.3(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
+        specifier: 4.1.4
+        version: 4.1.4(effect@4.1.4)(vitest@5.1.0(@types/node@26.6.6)(jsdom@30.1.3(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6
@@ -594,18 +588,23 @@ packages:
     resolution: {integrity: sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==}
     engines: {node: '>=20.19.0'}
 
-  '@effect/platform-node-shared@4.1.2':
-    resolution: {integrity: sha512-wSwl9A/G1hcVvF8nLI+YfB3EyOIDvWS6+lsTZBkmgDnPBL7m8YWZF+1HD+mdEsb52SUGfukip46Q3gRwSdk3QA==}
+  '@effect/platform-node-shared@4.1.4':
+    resolution: {integrity: sha512-DWdfphHGOFJNj/mYadgpT3jIm8aRXDcPrQiGXFBH4p2H4XmA7iYMrPsI8NxVgZ7kNX0q1+FGJZJama0tINHRAg==}
     engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: ^4.1.2
+      effect: ^4.1.4
 
-  '@effect/platform-node@4.1.2':
-    resolution: {integrity: sha512-ye0UjxORdd5Qu3paZ1LljgGOALWHt7muP9VTpjUSCNfcesiB/Hm7wPJIvZeu4gnwpTe5BtEnO1VHngWqjJp8mA==}
+  '@effect/platform-node@4.1.4':
+    resolution: {integrity: sha512-h7QExTPq/RfYtHP/8tMlgfBvqYsuJKhxfkU6w0+NaF/ihqQ8Y3GH9t28ltupQjoqMM7P6W5gy8rOji7F0qVrmg==}
     engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: ^4.1.2
+      effect: ^4.1.4
       redis: '>=5.1.0 <7.0.0'
+
+  '@effect/sql-sqlite-node@4.1.4':
+    resolution: {integrity: sha512-vEB3Xv7TftvZscuyee8doM1rXr0Dle5jxpuvjaEBlZkGAsUt0YvGudnOfEvUHMicE8wEuDQfpjWXM1q9HjNKUA==}
+    peerDependencies:
+      effect: ^4.1.4
 
   '@effect/tsgo-darwin-arm64@0.67.5':
     resolution: {integrity: sha512-wCtc/UafbsiWDZlDboVqW6qZI4PdlJzWnK1M29KgJVrey0E6yvGA9YV0ak+38cVqcAaXm1azL9qgI0IKwgNk8A==}
@@ -646,10 +645,10 @@ packages:
     resolution: {integrity: sha512-uL3mf3Q6F3aFOZK/qLb3eHUcztmgTIbabk0enTiA3t8nZm5EygE3eYT4+XQCp+aWCEzYcc2C3b6sljlsFGzTHg==}
     hasBin: true
 
-  '@effect/vitest@4.1.2':
-    resolution: {integrity: sha512-JJPwAHkJHxvM/woW9mMW/khjasAHcmwWdOMAgMy16rfqsxcVhFDnrRsvN9VI2+kMv8zDCCyBE2q1n5hzZlfE0w==}
+  '@effect/vitest@4.1.4':
+    resolution: {integrity: sha512-AKpZ6zKihCRhY7hDbiQ2yp/krw+afIkxDRjFMwwzMiyhd0iYk0WaHa9J6GGC7TUF/C7HP2dZyMVq5xC0Qm/2/g==}
     peerDependencies:
-      effect: ^4.1.2
+      effect: ^4.1.4
       vitest: '>=5.0.0 <6.0.0'
 
   '@esbuild/aix-ppc64@0.28.2':
@@ -1006,72 +1005,6 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
-
-  '@surrealdb/better-auth@0.1.0':
-    resolution: {integrity: sha512-fqvYs3GObX02Ei7I0V2JuV5r1l2pqu5BJ+59C4NLJ44Z8oxZ4EAI0QEO7rFGRAyK63gJVpj7oKXgoBcVDLkgng==}
-
-  '@surrealdb/cbor@2.0.0-alpha.4':
-    resolution: {integrity: sha512-l/hNZ3ZCOJq8rzwx1y5ZV/8b2bYCWdhGqRVY33Pu50NAHyAW5qLsMn3ZBkZow77mAKwNCsbDsRGnyYEuU95mjw==}
-    engines: {node: '>=18.0.0'}
-
-  '@surrealdb/node-native-darwin-arm64@4.0.0':
-    resolution: {integrity: sha512-nQ0+aq1TxLO+M/YtS9hZxhNwCbK0izKpLMdflK8WoSYMvrti6NkdewXiFCp23fq0US/gBf1D0v0jEzSGVNyRNg==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@surrealdb/node-native-darwin-x64@4.0.0':
-    resolution: {integrity: sha512-4Aq4BMRoPPgD/TeqpTpoKhJDs6I0NIf07l3nHf6FWJ1uCnMF6Gcp3aZo3qh4fSvsIJCS91/nb/dbsljKcl2C2A==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@surrealdb/node-native-linux-arm64-gnu@4.0.0':
-    resolution: {integrity: sha512-wBiACtQnQcRNNrzxmuo9heJ0PWajUKfVm8MExIr6F1NFEPM6wUA3wTMLpKhnc9jcGCJshS4OmJW69Q/xDcf2pQ==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@surrealdb/node-native-linux-arm64-musl@4.0.0':
-    resolution: {integrity: sha512-IDtf/RuBfUEbaxHbmAPKX92HVL8I8mlkkkOFaT5b6XZm/4UVs1ILCF8U6wTJP1khFYC8bJFZnRdiUMJcI2vTIA==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [musl]
-
-  '@surrealdb/node-native-linux-x64-gnu@4.0.0':
-    resolution: {integrity: sha512-sLTShlm5KOqcTm16K0Ap4wtAj+9rvHYL51lb/Cl2NAvlXkKNDSkqgX8eR+E+DWotsu0cdc2S+PixoSYDSjBM/Q==}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@surrealdb/node-native-linux-x64-musl@4.0.0':
-    resolution: {integrity: sha512-ySZhm+RQKjqfm8bMAyyGjjR3LRkPBMxjf/duOI/WWYI87t8GYeuBD4UPdDYlk23FSdlrVt7JIzIBwTGRmk6jJA==}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
-  '@surrealdb/node-native-win32-arm64-msvc@4.0.0':
-    resolution: {integrity: sha512-DCbyC/s6du52CQI4DwNHk7RXfLP8o9TLwzkTGIVw1XaYH+Swq6lVapmtOl2dfuxoyY49GMuMbIyyBTdwgkgO7g==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@surrealdb/node-native-win32-x64-msvc@4.0.0':
-    resolution: {integrity: sha512-DGVPo+XhgLVH6hdb/9JydOigau3zscg6hsJWW3bO4wWAwc+rTTuksWyQg0QAZZyGQm+iDfX/Kir5KAJBxesriA==}
-    cpu: [x64]
-    os: [win32]
-
-  '@surrealdb/node-native@4.0.0':
-    resolution: {integrity: sha512-nLf8j44D/4bqIAWd4wlEPFx1qlIoSAQe6Q0P5ygwslnltNqafhG+OSRgOlby77GD8iVSHhZkh+5cu1SfkOQKWg==}
-
-  '@surrealdb/node@3.2.0':
-    resolution: {integrity: sha512-ha8pr6rrDtfTuWYeb9WveAZmHMAbGJkFBwpKrKUFOv+3EmiCH/16TFXiQFOrmKu+JWXwbmva6Nd8QMP+jOlZEQ==}
-    peerDependencies:
-      '@surrealdb/node-native': ^3.3.0-beta.3 || ^4.0.0
-      surrealdb: ^2.0.1
-
-  '@surrealdb/sqon@0.2.1':
-    resolution: {integrity: sha512-syLKHRHMoyzbimUAOni3Jn8oeEIGXpsHJjIOaZ5qJ17BQHXQvlvlhqRL5/r83YKWz7ptgt2lVNyoU857lOfvAQ==}
-    peerDependencies:
-      tslib: ^2.6.3
-      typescript: ^5.0.0
 
   '@tailwindcss/node@4.3.5':
     resolution: {integrity: sha512-yT53FzV4ke0cr/BguDxhWMpm5MJu1O2muzk+tKw6lKHjODAsYArBbWwFbJiaksfzFv1tpkO9QHGzmfs1hJT66g==}
@@ -1552,8 +1485,8 @@ packages:
   dompurify@3.4.17:
     resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
-  effect@4.1.2:
-    resolution: {integrity: sha512-d3Oah1WyKxFLFh19yWheS5IXIVaITzxZ71JkE1rkUozq/6EcJSU5nPk5bF2QrSygZ3SQoiNQB8TsxFriyMeMaQ==}
+  effect@4.1.4:
+    resolution: {integrity: sha512-Tgrv/9FN+TZYyOn8XSli+fVqAfwDrDAkiX5Uu9vztINb675VTQdhD0gWI5Kzvhlh9QqzjZvw72iugqw5pwoghQ==}
 
   electron-to-chromium@1.5.423:
     resolution: {integrity: sha512-rRZfTSY8ptHYMQxa+uIycJMFKmY1T0GIApNMXJYGehguTZa56TEEl19pKPCoBqk5Gpf7QizZn/jt7xur+DYxag==}
@@ -1938,12 +1871,6 @@ packages:
   strnum@2.5.1:
     resolution: {integrity: sha512-UM4nTLWzQiDBseVxUGxN0wJzIk0UU89Qi7pKXz9qISo+lhviJikTuikBsK/oFRlpvYHvSdz0TVoLyQ+sEpYwxA==}
 
-  surrealdb@2.2.2:
-    resolution: {integrity: sha512-AYgr3NlNAeTO0HHe4TIVTXJbTEOJUeEuffMuHzq7VmHdcwy5YKWizADpM+R7rQODNYJXEOaGTx92nsaAXOL29Q==}
-    peerDependencies:
-      tslib: ^2.6.3
-      typescript: ^5.0.0 || ^6.0.0
-
   tailwindcss@4.3.5:
     resolution: {integrity: sha512-FcQk9BuffmEHJP2G0XmB2SplU1aLTI7j07Kunk+U74Ny+XiWOtzXz9aujFZ/avntw1e2cOv/3PkgzflQ7gX2vQ==}
 
@@ -1977,9 +1904,6 @@ packages:
   tr46@7.0.0:
     resolution: {integrity: sha512-BcDSDW+SIGWVOns1Zm6Yg91q9AEj7eaID0QDY9oIqJD1A8dscNwMcl9Sms2DeuWCNov1X0/oXanHGYQBSLwZsg==}
     engines: {node: ^22.14.0 || >=24.0.0}
-
-  tslib@2.8.1:
-    resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
   tsx@4.23.1:
     resolution: {integrity: sha512-GQHnkIfxyx1wYCOS/wonik5MVRZU9hi1TEZmzGZSCJB1y9YgoZ8H6itNE/u4suE+yLmOzuE4E5S4TZ/ZX2wcWQ==}
@@ -2015,10 +1939,6 @@ packages:
     hasBin: true
     peerDependencies:
       browserslist: '>= 4.21.0'
-
-  uuidv7@1.2.1:
-    resolution: {integrity: sha512-4kPkK3/XTQW9Hbm4CaqfICn+kY9LJtDVEOfgsRRra/+n2Ofg4NqzRFceAkxvQ/Ud/6BpHOPzj8cirqM7TzTN5Q==}
-    hasBin: true
 
   vite-plugin-solid@2.11.15:
     resolution: {integrity: sha512-twDNPdUDbhem+UOXVu5PyRJvwHFmxSJ3+NxbCgT9iFL42EmWS7lBfFskVM/HXLwd86fh1BgHKJBfGCWkTu2zEg==}
@@ -2455,24 +2375,28 @@ snapshots:
   '@csstools/css-tokenizer@4.0.2':
     optional: true
 
-  '@effect/platform-node-shared@4.1.2(effect@4.1.2)':
+  '@effect/platform-node-shared@4.1.4(effect@4.1.4)':
     dependencies:
       '@types/ws': 8.18.2
-      effect: 4.1.2
+      effect: 4.1.4
       ws: 8.22.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.2.1)':
+  '@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.2.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(effect@4.1.2)
-      effect: 4.1.2
+      '@effect/platform-node-shared': 4.1.4(effect@4.1.4)
+      effect: 4.1.4
       redis: 6.2.1
       undici: 8.12.4
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@effect/sql-sqlite-node@4.1.4(effect@4.1.4)':
+    dependencies:
+      effect: 4.1.4
 
   '@effect/tsgo-darwin-arm64@0.67.5':
     optional: true
@@ -2505,14 +2429,14 @@ snapshots:
       '@effect/tsgo-win32-arm64': 0.67.5
       '@effect/tsgo-win32-x64': 0.67.5
 
-  '@effect/vitest@4.1.2(effect@4.1.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@30.1.3(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))':
+  '@effect/vitest@4.1.4(effect@4.1.4)(vitest@5.1.0(@types/node@26.6.6)(jsdom@30.1.3(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))':
     dependencies:
-      effect: 4.1.2
+      effect: 4.1.4
       vitest: 5.1.0(@types/node@26.6.6)(jsdom@30.1.3(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
-  '@effect/vitest@4.1.2(effect@4.1.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))':
+  '@effect/vitest@4.1.4(effect@4.1.4)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))':
     dependencies:
-      effect: 4.1.2
+      effect: 4.1.4
       vitest: 5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
   '@esbuild/aix-ppc64@0.28.2':
@@ -2703,82 +2627,6 @@ snapshots:
       solid-js: 1.9.18
 
   '@standard-schema/spec@1.1.0': {}
-
-  '@surrealdb/better-auth@0.1.0(solid-js@1.9.17)(tslib@2.8.1)(typescript@7.0.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))':
-    dependencies:
-      better-auth: 1.7.18(solid-js@1.9.17)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.0(@noble/hashes@2.4.0))(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
-      surrealdb: 2.2.2(tslib@2.8.1)(typescript@7.0.2)
-    transitivePeerDependencies:
-      - '@lynx-js/react'
-      - '@opentelemetry/api'
-      - '@prisma/client'
-      - '@sveltejs/kit'
-      - '@tanstack/react-start'
-      - '@tanstack/solid-start'
-      - drizzle-kit
-      - drizzle-orm
-      - mongodb
-      - mysql2
-      - next
-      - pg
-      - prisma
-      - react
-      - react-dom
-      - solid-js
-      - svelte
-      - tslib
-      - typescript
-      - vitest
-      - vue
-
-  '@surrealdb/cbor@2.0.0-alpha.4': {}
-
-  '@surrealdb/node-native-darwin-arm64@4.0.0':
-    optional: true
-
-  '@surrealdb/node-native-darwin-x64@4.0.0':
-    optional: true
-
-  '@surrealdb/node-native-linux-arm64-gnu@4.0.0':
-    optional: true
-
-  '@surrealdb/node-native-linux-arm64-musl@4.0.0':
-    optional: true
-
-  '@surrealdb/node-native-linux-x64-gnu@4.0.0':
-    optional: true
-
-  '@surrealdb/node-native-linux-x64-musl@4.0.0':
-    optional: true
-
-  '@surrealdb/node-native-win32-arm64-msvc@4.0.0':
-    optional: true
-
-  '@surrealdb/node-native-win32-x64-msvc@4.0.0':
-    optional: true
-
-  '@surrealdb/node-native@4.0.0':
-    optionalDependencies:
-      '@surrealdb/node-native-darwin-arm64': 4.0.0
-      '@surrealdb/node-native-darwin-x64': 4.0.0
-      '@surrealdb/node-native-linux-arm64-gnu': 4.0.0
-      '@surrealdb/node-native-linux-arm64-musl': 4.0.0
-      '@surrealdb/node-native-linux-x64-gnu': 4.0.0
-      '@surrealdb/node-native-linux-x64-musl': 4.0.0
-      '@surrealdb/node-native-win32-arm64-msvc': 4.0.0
-      '@surrealdb/node-native-win32-x64-msvc': 4.0.0
-
-  '@surrealdb/node@3.2.0(@surrealdb/node-native@4.0.0)(surrealdb@2.2.2(tslib@2.8.1)(typescript@7.0.2))':
-    dependencies:
-      '@surrealdb/node-native': 4.0.0
-      surrealdb: 2.2.2(tslib@2.8.1)(typescript@7.0.2)
-
-  '@surrealdb/sqon@0.2.1(tslib@2.8.1)(typescript@7.0.2)':
-    dependencies:
-      '@surrealdb/cbor': 2.0.0-alpha.4
-      tslib: 2.8.1
-      typescript: 7.0.2
-      uuidv7: 1.2.1
 
   '@tailwindcss/node@4.3.5':
     dependencies:
@@ -3162,7 +3010,7 @@ snapshots:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
-  effect@4.1.2: {}
+  effect@4.1.4: {}
 
   electron-to-chromium@1.5.423: {}
 
@@ -3564,12 +3412,6 @@ snapshots:
     dependencies:
       anynum: 1.0.1
 
-  surrealdb@2.2.2(tslib@2.8.1)(typescript@7.0.2):
-    dependencies:
-      '@surrealdb/sqon': 0.2.1(tslib@2.8.1)(typescript@7.0.2)
-      tslib: 2.8.1
-      typescript: 7.0.2
-
   tailwindcss@4.3.5: {}
 
   tapable@2.3.3: {}
@@ -3596,8 +3438,6 @@ snapshots:
   tr46@7.0.0:
     dependencies:
       punycode: 2.3.1
-
-  tslib@2.8.1: {}
 
   tsx@4.23.1:
     dependencies:
@@ -3655,8 +3495,6 @@ snapshots:
       browserslist: 4.28.9
       escalade: 3.2.0
       picocolors: 1.1.1
-
-  uuidv7@1.2.1: {}
 
   vite-plugin-solid@2.11.15(solid-js@1.9.18)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)):
     dependencies:

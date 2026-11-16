@@ -6,6 +6,10 @@ import {
   type FeedParserError,
   FeedRepository,
   type IArticleExtractor,
+  type IFeedItemRepository,
+  type IFeedRepository,
+  type ISavedPageRepository,
+  type ISettingRepository,
   makeFeedTitle,
   OwnerId,
   type ParsedFeed,
@@ -13,28 +17,21 @@ import {
   SettingRepository,
 } from '@reader/business';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
-import {
-  type Context,
-  Effect,
-  Layer,
-  Option,
-  type Scope,
-  Semaphore,
-} from 'effect';
+import { Context, Effect, Layer, Option, type Scope } from 'effect';
 import { FetchHttpClient, HttpClient, HttpRouter } from 'effect/http';
-import type { Surreal } from 'surrealdb';
+import { SqlClient } from 'effect/sql';
 import { AppLive, LibraryServicesLive } from '../../src/app';
 import { Auth } from '../../src/auth';
-import { Database } from '../../src/db';
 import {
   FeedRefreshQueue,
   type IFeedRefreshQueue,
 } from '../../src/refresh/queue';
-import { makeFeedRepository } from '../../src/store/feed';
-import { makeFeedItemRepository } from '../../src/store/feed-item';
-import { makeSavedPageRepository } from '../../src/store/saved-page';
-import { makeSettingRepository } from '../../src/store/setting';
-import { authOptions, openDatabase, TEST_ORIGIN } from './database';
+import {
+  authOptions,
+  migrateAuth,
+  openAuthDatabase,
+  TEST_ORIGIN,
+} from './database';
 import {
   asEffect,
   defaultArticle,
@@ -43,6 +40,7 @@ import {
   type WebpageStub,
   webpageFetch,
 } from './network-stubs';
+import { readerDatabaseLayer } from './store';
 
 const TEST_PASSWORD = 'test-password-123';
 
@@ -58,10 +56,10 @@ type HarnessStubs = {
 };
 
 type HarnessRepositories = {
-  readonly feed: ReturnType<typeof makeFeedRepository>;
-  readonly feedItem: ReturnType<typeof makeFeedItemRepository>;
-  readonly savedPage: ReturnType<typeof makeSavedPageRepository>;
-  readonly setting: ReturnType<typeof makeSettingRepository>;
+  readonly feed: IFeedRepository;
+  readonly feedItem: IFeedItemRepository;
+  readonly savedPage: ISavedPageRepository;
+  readonly setting: ISettingRepository;
 };
 
 type EnqueuedFeed = {
@@ -91,16 +89,17 @@ export type CallOptions = {
 
 /**
  * Runs the real library routes (session middleware, origin check, HTTP
- * contract) over a fresh `mem://` database.
+ * contract) over a fresh in-memory SQLite database.
  *
  * `stubs` may be reassigned at any time to control the webpage transport (the
  * target URL, with the Jina prefix removed), the feed response and the parsed
  * feed. `repositories` are the same store instances the routes use, so a test
  * can arrange rows through them and may replace a method to inject a failure.
+ * `sql` is the client of the same database, for rows only SQL can produce.
  */
 export type Harness = {
-  readonly db: Surreal;
   readonly auth: ReturnType<typeof betterAuth>;
+  readonly sql: SqlClient.SqlClient;
   readonly handler: RequestHandler;
   readonly repositories: HarnessRepositories;
   readonly stubs: HarnessStubs;
@@ -129,17 +128,13 @@ const recordingQueue = (enqueued: Array<EnqueuedFeed>): IFeedRefreshQueue => ({
 });
 
 const buildServices = (
-  db: Surreal,
-  repositories: HarnessRepositories,
+  auth: ReturnType<typeof betterAuth>,
   stubs: HarnessStubs,
   enqueued: Array<EnqueuedFeed>
 ) =>
   Layer.mergeAll(
     LibraryServicesLive,
-    Layer.succeed(FeedRepository, repositories.feed),
-    Layer.succeed(FeedItemRepository, repositories.feedItem),
-    Layer.succeed(SavedPageRepository, repositories.savedPage),
-    Layer.succeed(SettingRepository, repositories.setting),
+    Layer.succeed(Auth, auth),
     Layer.succeed(FeedRefreshQueue, recordingQueue(enqueued)),
     Layer.succeed(
       FetchHttpClient.Fetch,
@@ -153,23 +148,7 @@ const buildServices = (
     stubs.articleExtractor === undefined
       ? Layer.empty
       : Layer.succeed(ArticleExtractor, stubs.articleExtractor)
-  ).pipe(Layer.provide(Layer.succeed(Database, db)));
-
-const buildApp = (
-  db: Surreal,
-  auth: ReturnType<typeof betterAuth>,
-  repositories: HarnessRepositories,
-  stubs: HarnessStubs,
-  enqueued: Array<EnqueuedFeed>
-) =>
-  AppLive.pipe(
-    Layer.provide(
-      Layer.merge(
-        Layer.succeed(Auth, auth),
-        buildServices(db, repositories, stubs, enqueued)
-      )
-    )
-  );
+  ).pipe(Layer.provideMerge(readerDatabaseLayer));
 
 const emailRequest = (path: string, email: string) =>
   new Request(`${TEST_ORIGIN}/api/auth/${path}`, {
@@ -250,9 +229,10 @@ export const makeHarness = (
   options: HarnessOptions = {}
 ): Effect.Effect<Harness, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const db = yield* openDatabase;
-    const auth = betterAuth<BetterAuthOptions>(authOptions(db));
-    const lock = yield* Semaphore.make(1);
+    const database = yield* openAuthDatabase;
+    const authConfig = authOptions(database);
+    yield* migrateAuth(authConfig);
+    const auth = betterAuth<BetterAuthOptions>(authConfig);
     const stubs: HarnessStubs = {
       webpage: options.webpage ?? (() => defaultArticle()),
       feed:
@@ -261,20 +241,23 @@ export const makeHarness = (
       articleExtractor: options.articleExtractor,
     };
     const enqueued: Array<EnqueuedFeed> = [];
+    const services = yield* Layer.build(
+      buildServices(auth, stubs, enqueued)
+    ).pipe(Effect.orDie);
     const repositories: HarnessRepositories = {
-      feed: makeFeedRepository(db, lock),
-      feedItem: makeFeedItemRepository(db, lock),
-      savedPage: makeSavedPageRepository(db, lock),
-      setting: makeSettingRepository(db),
+      feed: Context.get(services, FeedRepository),
+      feedItem: Context.get(services, FeedItemRepository),
+      savedPage: Context.get(services, SavedPageRepository),
+      setting: Context.get(services, SettingRepository),
     };
-    const app = buildApp(db, auth, repositories, stubs, enqueued);
+    const app = AppLive.pipe(Layer.provide(Layer.succeedContext(services)));
     const web = HttpRouter.toWebHandler(app, { disableLogger: true });
 
     yield* Effect.addFinalizer(() => Effect.promise(() => web.dispose()));
 
     return {
-      db,
       auth,
+      sql: Context.get(services, SqlClient.SqlClient),
       handler: web.handler,
       repositories,
       stubs,

@@ -7,36 +7,30 @@ import {
   FeedItemRepository,
   FeedRepository,
   FeedTitle,
+  NormalizedUrl,
+  OwnerId,
 } from '@reader/business';
 import { feedItemRepositoryContract } from '@reader/business/testing';
 import { Effect, Option, Schema } from 'effect';
-import { Database } from '../../src/db';
-import {
-  feedStoreLayer,
-  owner,
-  query,
-  readerStoreDatabaseLayer,
-  url,
-} from '../support/store';
+import { SqlClient } from 'effect/sql';
+import { feedStoreLayer, readerStoreDatabaseLayer } from '../support/store';
 
-const alice = owner('alice');
+const alice = OwnerId.make('alice');
+
+const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
 const decodeTitle = Schema.decodeSync(ArticleTitle);
 
-let counter = 0;
+const feedUrl = decodeUrl('https://example.com/feed.xml');
 
-const uniquePath = (path: string) => {
-  counter += 1;
-
-  return `https://example.com/${path}/${counter}`;
-};
+const itemUrl = decodeUrl('https://example.com/item');
 
 const storedFeed = () =>
   Effect.gen(function* () {
     const feeds = yield* FeedRepository;
     const feed = Feed.make({
       ownerId: alice,
-      url: url(uniquePath('feed')),
+      url: feedUrl,
       title: FeedTitle.make('Feed'),
       folderId: Option.none(),
       updatedAt: Option.none(),
@@ -46,11 +40,11 @@ const storedFeed = () =>
     return feed;
   });
 
-const itemRow = (feedId: FeedId) =>
+const clearedItem = (feedId: FeedId) =>
   FeedItem.make({
     ownerId: alice,
     feedId,
-    url: url(uniquePath('item')),
+    url: itemUrl,
     title: decodeTitle('Item'),
     description: Option.none(),
     content: Option.none(),
@@ -59,23 +53,24 @@ const itemRow = (feedId: FeedId) =>
     read: false,
   });
 
-feedItemRepositoryContract('SurrealDB FeedItemRepository', feedStoreLayer);
+feedItemRepositoryContract('SQLite FeedItemRepository', feedStoreLayer);
 
 it.effect('decodes a stored row without optional fields as none', () =>
   Effect.gen(function* () {
     const items = yield* FeedItemRepository;
-    const db = yield* Database;
+    const sql = yield* SqlClient.SqlClient;
     const feed = yield* storedFeed();
-    const item = itemRow(feed.id);
+    const item = clearedItem(feed.id);
     yield* items.create(alice, [item]);
 
-    expect(
-      yield* query(
-        db,
-        'SELECT description, content, extractedContent, publishedAt FROM feed_item WHERE itemId = $id;',
-        { id: item.id }
-      )
-    ).toEqual([{}]);
+    const rows =
+      yield* sql`SELECT description, content, extracted_content AS extractedContent, published_at AS publishedAt FROM feed_item WHERE id = ${item.id}`;
+    const row = Option.getOrThrow(Option.fromUndefinedOr(rows[0]));
+
+    expect(row['description']).toBeNull();
+    expect(row['content']).toBeNull();
+    expect(row['extractedContent']).toBeNull();
+    expect(row['publishedAt']).toBeNull();
 
     const stored = Option.getOrThrow(yield* items.find(alice, item.id));
 

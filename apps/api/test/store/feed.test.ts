@@ -7,65 +7,40 @@ import {
   FeedItemRepository,
   FeedRepository,
   FeedTitle,
+  NormalizedUrl,
+  OwnerId,
   SavedPage,
   SavedPageRepository,
 } from '@reader/business';
 import { feedRepositoryContract } from '@reader/business/testing';
-import { DateTime, Effect, Option, Schema } from 'effect';
-import { Database } from '../../src/db';
-import {
-  feedStoreLayer,
-  owner,
-  query,
-  readerStoreDatabaseLayer,
-  url,
-} from '../support/store';
+import { Effect, Option, Schema } from 'effect';
+import { feedStoreLayer, readerStoreDatabaseLayer } from '../support/store';
 
-const alice = owner('alice');
+const alice = OwnerId.make('alice');
+
+const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
 const decodeTitle = Schema.decodeSync(ArticleTitle);
 
-const feedRow = (path: string) =>
-  Feed.make({
-    ownerId: alice,
-    url: url(path),
-    title: FeedTitle.make('Feed'),
-    folderId: Option.none(),
-    updatedAt: Option.none(),
-  });
+feedRepositoryContract('SQLite FeedRepository', feedStoreLayer);
 
-feedRepositoryContract('SurrealDB FeedRepository', feedStoreLayer);
-
-it.effect('stores the feed id as the record id and the url as text', () =>
+it.effect('decodes a feed without folder and updated time as none', () =>
   Effect.gen(function* () {
     const feeds = yield* FeedRepository;
-    const db = yield* Database;
-    const feed = feedRow('https://example.com/feed.xml');
-    const updated = Feed.make({
-      ...feedRow('https://example.com/updated.xml'),
-      updatedAt: Option.some(
-        DateTime.fromDateUnsafe(new Date('2026-01-01T00:00:00.000Z'))
-      ),
+    const feed = Feed.make({
+      ownerId: alice,
+      url: decodeUrl('https://example.com/sqlite/feed.xml'),
+      title: FeedTitle.make('Feed'),
+      folderId: Option.none(),
+      updatedAt: Option.none(),
     });
-
     yield* feeds.create(alice, [feed]);
-    yield* feeds.create(alice, [updated]);
 
-    expect(
-      yield* query(db, 'SELECT VALUE id FROM feed WHERE feedId = $id;', {
-        id: updated.id,
-      })
-    ).toEqual([updated.id]);
-    expect(
-      yield* query(db, 'SELECT VALUE url FROM feed ORDER BY url;')
-    ).toEqual([feed.url.href, updated.url.href].sort());
-    expect(
-      yield* query(
-        db,
-        'SELECT VALUE type::is_datetime(updatedAt) FROM feed WHERE updatedAt != NONE;'
-      )
-    ).toEqual([true]);
-  }).pipe(Effect.provide(readerStoreDatabaseLayer))
+    const stored = Option.getOrThrow(yield* feeds.find(alice, feed.id));
+
+    expect(Option.isNone(stored.folderId)).toBe(true);
+    expect(Option.isNone(stored.updatedAt)).toBe(true);
+  }).pipe(Effect.provide(feedStoreLayer))
 );
 
 it.effect('FD-UNSUB-3 keeps saved pages made from a removed feed', () =>
@@ -73,11 +48,17 @@ it.effect('FD-UNSUB-3 keeps saved pages made from a removed feed', () =>
     const feeds = yield* FeedRepository;
     const items = yield* FeedItemRepository;
     const pages = yield* SavedPageRepository;
-    const feed = feedRow('https://example.com/unsub/feed.xml');
+    const feed = Feed.make({
+      ownerId: alice,
+      url: decodeUrl('https://example.com/unsub/feed.xml'),
+      title: FeedTitle.make('Feed'),
+      folderId: Option.none(),
+      updatedAt: Option.none(),
+    });
     const item = FeedItem.make({
       ownerId: alice,
       feedId: feed.id,
-      url: url('https://example.com/unsub/item'),
+      url: decodeUrl('https://example.com/unsub/item'),
       title: decodeTitle('Item'),
       description: Option.none(),
       content: Option.none(),
@@ -101,6 +82,6 @@ it.effect('FD-UNSUB-3 keeps saved pages made from a removed feed', () =>
     yield* feeds.remove(alice, [feed.id]);
 
     expect(Option.isNone(yield* items.find(alice, item.id))).toBe(true);
-    expect(Option.getOrThrow(yield* pages.find(alice, page.id))).toEqual(page);
+    expect(yield* pages.find(alice, page.id)).toStrictEqual(Option.some(page));
   }).pipe(Effect.provide(readerStoreDatabaseLayer))
 );

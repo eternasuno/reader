@@ -8,23 +8,22 @@ import {
   Folder,
   FolderName,
   FolderRepository,
+  NormalizedUrl,
+  OwnerId,
   SavedPage,
   SavedPageRepository,
 } from '@reader/business';
 import { folderRepositoryContract } from '@reader/business/testing';
 import { Effect, Option, Schema } from 'effect';
-import {
-  feedStoreLayer,
-  owner,
-  readerStoreDatabaseLayer,
-  url,
-} from '../support/store';
+import { feedStoreLayer, readerStoreDatabaseLayer } from '../support/store';
 
-const alice = owner('alice');
+const alice = OwnerId.make('alice');
+
+const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
 const decodeTitle = Schema.decodeSync(ArticleTitle);
 
-folderRepositoryContract('SurrealDB FolderRepository', feedStoreLayer);
+folderRepositoryContract('SQLite FolderRepository', feedStoreLayer);
 
 it.effect('FD-FOLDER-7 keeps saved pages when a folder is removed', () =>
   Effect.gen(function* () {
@@ -37,14 +36,14 @@ it.effect('FD-FOLDER-7 keeps saved pages when a folder is removed', () =>
     });
     const feed = Feed.make({
       ownerId: alice,
-      url: url('https://example.com/folder/feed.xml'),
+      url: decodeUrl('https://example.com/folder/feed.xml'),
       title: FeedTitle.make('Feed'),
       folderId: Option.some(folder.id),
       updatedAt: Option.none(),
     });
     const page = SavedPage.make({
       ownerId: alice,
-      url: url('https://example.com/folder/saved'),
+      url: decodeUrl('https://example.com/folder/saved'),
       title: decodeTitle('Saved'),
       description: Option.none(),
       content: ArticleContent.make('<p>Body</p>'),

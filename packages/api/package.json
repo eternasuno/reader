@@ -4,7 +4,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "effect": "4.1.2",
+    "effect": "4.1.4",
     "@reader/business": "workspace:*"
   }
 }

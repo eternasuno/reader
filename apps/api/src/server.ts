@@ -11,7 +11,7 @@ import { Config, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
 import { AppLive, LibraryServicesLive } from './app';
 import { AuthLive } from './auth';
-import { DatabaseLive } from './db';
+import { AuthDatabaseLive, ReaderDatabaseLive } from './db';
 import { staticRoutes } from './http/static';
 import { feedRefreshQueueLayer } from './refresh/queue';
 import {
@@ -25,7 +25,7 @@ const server = NodeHttpServer.layerConfig(createServer, {
   port: Config.Port('API_PORT').pipe(Config.withDefault(DEFAULT_PORT)),
 });
 
-const library = LibraryServicesLive.pipe(Layer.provide(DatabaseLive));
+const library = LibraryServicesLive.pipe(Layer.provide(ReaderDatabaseLive));
 
 const queue = feedRefreshQueueLayer({ refresh: refreshFeed }).pipe(
   Layer.provide(library)
@@ -33,13 +33,13 @@ const queue = feedRefreshQueueLayer({ refresh: refreshFeed }).pipe(
 
 const scheduler = feedRefreshSchedulerLayer({
   interval: FEED_REFRESH_INTERVAL,
-}).pipe(Layer.provide(Layer.merge(DatabaseLive, queue)));
+}).pipe(Layer.provide(Layer.merge(ReaderDatabaseLive, queue)));
 
 const dependencies = Layer.mergeAll(
   library,
   queue,
   scheduler,
-  AuthLive.pipe(Layer.provide(DatabaseLive)),
+  AuthLive.pipe(Layer.provide(AuthDatabaseLive)),
   NodeFileSystem.layer,
   NodePath.layer,
   NodeHttpPlatform.layer
