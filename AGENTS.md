@@ -2,28 +2,34 @@
 
 ## Purpose
 
-A self-hosted read-later and feed reader: a user saves web pages to read later, subscribes to feeds and groups them into folders, and reads the articles in one place. It is a pnpm workspace managed with Turborepo:
+留白 is a self-hosted read-later and feed reader: a user saves web pages to read later, subscribes to feeds and groups them into folders, and reads the articles in one place. It is a pnpm workspace managed with Turborepo:
 
-- `apps/web` — a pure SolidJS 1 SPA.
-- `apps/api` — an Effect HttpServer API with Better Auth and embedded SQLite via `node:sqlite`; it also runs the feed refresh queue and scheduler.
-- `packages/business` — the business core: entities, ports and use cases for feeds, feed folders, saved pages and settings.
-- `packages/sqlite` — the `@reader/sqlite` adapter for the business ports: the reader and Better Auth SQLite connections, reader store schemas and repositories, the feed refresh listing query, and the test setup exported from `@reader/sqlite/testing`.
-- `packages/api` — the library HTTP contract shared by the API and the web client.
+- `apps/reader` — the product: the HTTP contract (`src/contract`), the Effect HttpServer with Better Auth and the refresh queue and scheduler (`src/server`), and the SolidJS 1 SPA (`src/web`).
+- `packages/business` — the business core: entities, ports and use cases for feeds, folders, feed items, saved pages and settings.
+- `packages/sqlite` — the SQLite adapters: connections, migrations, repositories, in-memory test setup.
+- `packages/content` — feed parsing, HTML parsing, article extraction and sanitizing.
 - `packages/webpage` — page fetching through Jina or a browser service.
 
-`README.md` is the source of truth for setup, commands, environment variables, routes and deployment.
+The code is being rewritten to this layout from the skills below. Until the rewrite lands, the repository still holds the previous code (`apps/api`, `apps/web`, `packages/api`); where it disagrees with the skills, the skills are right. The previous skills and code are in commit `b31a80f` (`chore: baseline before rewrite`).
+
+`reader-engineering/deployment.md` is the source of truth for setup, commands, environment variables and deployment; `README.md` is written from it.
 
 ## Project skills
 
-Read the relevant skill first when the task involves:
+Read the relevant skill first:
 
-- [`project-business`](.agents/skills/project-business/SKILL.md) — business behavior: the numbered rules (`FD-`, `SP-`, `SET-`, `CM-`) for feeds, folders, feed items, saved pages and settings, and the decisions behind them.
-- [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — SolidJS routes, components and models; reader and settings UI behavior and its acceptance scenarios; accounts in the browser; deployment topology.
-- [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, session identity, HTTP handlers and error mapping, adapters, the refresh queue and scheduler, Layer composition.
-- [`project-database`](.agents/skills/project-database/SKILL.md) — the `@reader/sqlite` package: SQLite connections, queries, indexes, migrations and database deployment configuration.
-- [`project-testing`](.agents/skills/project-testing/SKILL.md) — where each rule is tested, contract suites, test doubles and in-memory database setup.
+- [`reader-spec`](.agents/skills/reader-spec/SKILL.md) — what the product does: every domain's numbered rules, screens and interactions, HTTP endpoints, user-visible messages and acceptance scenarios. Its `SKILL.md` indexes the domain files and says when to read each.
+- [`reader-engineering`](.agents/skills/reader-engineering/SKILL.md) — how it is built: technology choices and their reasons, packages and dependency direction, the app's internal layout, server assembly, web state and components, testing; database, UI styling and deployment in conditional files.
 
-Skills hold what the code cannot say: rules, the reasons behind them, and traps found by running the app. They do not restate signatures, field lists or directory trees; read the code for those.
+## Maintaining skills
+
+Skills are organized so that a task needs as few files as possible. A change usually stays inside one domain, so knowledge is grouped by domain, not by layer.
+
+- `reader-spec` has one file per domain. Each domain file uses the same sections, and each fact is written in exactly one of them: **Rules** (numbered, ids stable, never reused), **Interface** (what the user sees and does), **API** (resource paths, parameters, responses, errors and status codes), **Messages** (the Chinese copy: errors, toasts, confirmations, empty states), **Acceptance** (Gherkin scenarios in fenced code blocks). Rules shared by all domains live in `reader-spec/SKILL.md`.
+- `reader-engineering/SKILL.md` holds what most code changes need; material needed only for one kind of change (database, styling, deployment) lives in a conditional file that `SKILL.md` names together with when to read it.
+- Skills hold what the code cannot say: rules, the reasons behind them, and traps found by running the app. They do not restate signatures, field lists or directory trees; port contracts and entity field notes are JSDoc in the code. Exception while the rewrite is in progress: `reader-engineering` keeps the target directory layout and `database.md` keeps the schema as blueprints; once the code exists, trim them to what the code cannot say.
+- Change the skill in the same change as the behavior it describes, and keep a domain's rules, interface, API, messages and scenarios consistent with each other.
+- Improve the structure when real tasks show it is costly: when a task needed several files that are always read together, merge them; when a file is long and part of it is read only for one kind of change, move that part into a conditional file named from the parent with its reading condition. Split by what is read together, never by layer. Prefer a few long files to many short ones; there is no line cap for skill files. Record a structural change in the summary of the change that makes it.
 
 ## Writing Effect code (Effect 4)
 
@@ -37,9 +43,9 @@ This project uses Effect **4** (see `packages/*/package.json` for the exact vers
 
 ## Workflow
 
-- Business behavior is defined by the numbered rules in the `project-business` skill. Change its rule files in the same change as the behavior they describe.
+- Business behavior is defined by the numbered rules in the `reader-spec` skill. Change its domain files in the same change as the behavior they describe.
 - Add no length, size, batch, page-size, timeout or concurrency limit and no defensive policy until running the application shows it is needed.
-- One domain has one name in every layer: `feed`, `folder`, `feed-item`, `saved-page` and `setting` in `packages/business`, `packages/sqlite`, `apps/api` and `apps/web`.
+- One domain has one name in every layer: `feed`, `folder`, `feed-item`, `saved-page` and `setting` in every package and in `apps/reader` (including the web modules). User-facing names (`稍后阅读`, routes such as `/later`) may differ.
 - The project is in development: do not add data migrations or backward compatibility for stored data. When a schema or embedded-engine change makes an existing database unusable, delete it and rebuild with `pnpm db:migrate`.
 - Before finishing changes, run `pnpm check`, `pnpm typecheck`, `pnpm test` and `pnpm build`.
 
@@ -47,7 +53,7 @@ This project uses Effect **4** (see `packages/*/package.json` for the exact vers
 
 Import direction between layers is enforced by `noRestrictedImports` overrides in `biome.json`, and `pnpm check` fails on a violation. Each message names the skill that explains the boundary.
 
-- Package direction: `packages/business` imports only `effect`; `packages/sqlite` imports `packages/business`, `effect`, `@effect/sql-sqlite-node` and `node:` modules, never `apps/api`; `apps/api` depends on `@reader/sqlite` for its databases, but `http/` never imports it. The API alone owns the Better Auth integration, the migration orchestration and the refresh loop.
+- The dependency direction is in the `reader-engineering` skill (Packages); `biome.json` must match it. Until the rewrite lands, `biome.json` still encodes the previous layout.
 - Do not silence a boundary with `biome-ignore`. If a boundary blocks an import that the design needs, change the boundary in `biome.json` and the skill that describes it in the same change, and say so in the summary.
 - When adding a package or a directory that is a new layer, add its override in the same change.
 
@@ -63,7 +69,7 @@ When a file outgrows the cap:
 
 ## Docker
 
-Keep the Docker runtime independent of the workspace: compiled API, Web assets in `public/`, and API production dependencies only; start Node directly and inject configuration through Docker environment variables. See README for the maintained layout and commands.
+Keep the Docker runtime independent of the workspace: compiled server, web assets in `public/`, and the server's production dependencies only; start Node directly and inject configuration through Docker environment variables. See `reader-engineering/deployment.md` for the layout and commands.
 
 <!-- BEGIN:turborepo-agent-rules -->
 

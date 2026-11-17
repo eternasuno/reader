@@ -1,3 +1,155 @@
+# Folders
+
+Folders (`目录`) group one owner's feeds so they can be listed, counted and marked read together, and a feed can be moved between them. This file covers folder rules, the sidebar folder rows, the folder scope, the folder and move dialogs, and the folder choice made when subscribing. Feeds themselves, subscribing, the plan of a feed's items and the item lists are in [feeds.md](feeds.md); the refresh in [feeds-refresh.md](feeds-refresh.md); the library screen, sidebar rows as a whole, the article list and read marking in [library.md](library.md).
+
+## Rules
+
+### FD-FOLDER — Folders
+
+A folder groups some of one owner's feeds so they can be listed, counted and marked read together.
+
+- FD-FOLDER-1 A folder's id is a new id (CM-ID), made when the folder is created. Folders are unique per owner and name (CM-ID-6); two owners may each have a folder of the same name.
+- FD-FOLDER-2 The name is a `FolderName`: trimmed, and not empty after trimming; the boundary rejects an empty name. Names are compared exactly as stored, so they are case-sensitive: `Tech` and `tech` are two folders.
+- FD-FOLDER-3 Folders are one level deep: a folder holds feeds only. A feed is in at most one folder (`Feed.folderId`); a feed with none is at the top level.
+- FD-FOLDER-4 Create (`createFolder(owner, name)`): build the folder with its constructor, which makes the id (CM-ID-3), and create it with `FolderRepository.create`. If nothing was created, fail `FolderAlreadyExists(folderName)`. Two creates of one name at once create one folder. A new folder is empty.
+- FD-FOLDER-5 Rename (`renameFolder(owner, folderId, name)`): `FolderRepository.rename(owner, folderId, name)`. If it returns `false`, find the folder: none fails `FolderNotFound(folderId)`, some fails `FolderAlreadyExists(folderName)`. Renaming a folder to its current name succeeds and changes nothing. Renaming changes no feed and no item.
+- FD-FOLDER-6 A feed's `folderId` always names an existing folder of the same owner. `FeedRepository.create` skips a row whose folder is not the owner's, and `FeedRepository.moveToFolder` writes nothing when given such a folder; in both the folder check and the write are one atomic write, so no feed is ever left pointing at a removed folder.
+- FD-FOLDER-7 Removing folders (`FolderRepository.remove`, a single port call) removes the owner's listed folders, every feed in them and those feeds' items, in one atomic write: removing a folder unsubscribes its feeds (FD-UNSUB). Saved pages stay (FD-UNSUB-3). Unknown and foreign ids succeed and change nothing. A feed moved into the folder at the same time is either removed with it or not moved (FD-MOVE-3).
+- FD-FOLDER-8 `FolderRepository.list(owner)` returns the owner's folders by name, then id, ascending, names compared in UTF-8 byte order (SQLite `BINARY`; test doubles must match), the same order the client shows; it is not paged. An empty folder is kept and listed, also after its last feed left it.
+- FD-FOLDER-9 Refresh never changes a feed's folder: the sync writes only `title` and `updatedAt` through `recordSync` (FD-SYNC step 5).
+
+### FD-MOVE — Move a feed
+
+`moveFeed(owner, feedId, folderId)`, where `folderId` is an `Option`: some folder puts the feed in it, none takes it out to the top level. The request carries the folder id, and `null` for none.
+
+1. `FeedRepository.moveToFolder(owner, feedId, folderId)`.
+2. If it returns `true`, the feed was moved.
+3. Otherwise, when `folderId` is some folder that `FolderRepository.find` does not return, fail `FolderNotFound(folderId)`.
+4. Otherwise the feed does not exist for the owner: succeed without change (FD-OWN-2).
+
+- FD-MOVE-1 Moving a feed to the folder it is already in, or taking a top-level feed out, succeeds and changes nothing.
+- FD-MOVE-2 Moving keeps the feed's items, their ids and read state, and the feed's title and `updatedAt`.
+- FD-MOVE-3 A target folder that does not exist or is not the owner's fails `FolderNotFound` and moves nothing (FD-FOLDER-6).
+- FD-MOVE-4 A move is visible at once to the folder scope: listing, marking and counting by folder resolve the folder's feeds when they run (FD-LIST-6, FD-READ-5, FD-COUNT-3).
+
+## Interface
+
+- Order: the sidebar shows folders and feeds in the order the server returns them (FD-FOLDER-8, FD-LIST-3); the client never sorts them itself. After creating or renaming a folder, moving a feed or subscribing, it lists folders and feeds again (`GET /api/folders`, `GET /api/feeds`) to place the row; the article list is not reloaded.
+
+### Sidebar folder rows
+
+- Folder rows and feed rows share one row and one menu behavior (see `library.md` for the row slot, hover/focus replacement of the count by the `⋯` trigger, and coarse-pointer behavior). A folder row shows a folder icon, the folder name, and on the right its unread count: the sum of the unread counts of the feeds whose folder it is (FD-COUNT-3); a zero count is shown the way a feed with no unread items shows it (LIB-COUNT-3).
+- A chevron button starts each folder row. It toggles the folder's collapse state and never selects the folder or changes the current scope. It exposes `aria-expanded` and is labeled `折叠目录「name」` while expanded and `展开目录「name」` while collapsed.
+- The `订阅源` section lists the folders first, by name then id, and under each folder its feeds by title, indented relative to the folder row; after the folders, the feeds that belong to no folder, by title. A collapsed folder hides its feed rows and keeps its count. A feed that names no existing folder is shown at the top level.
+- Collapse state is kept per browser: the ids of collapsed folders are stored under the localStorage key `reader.collapsedFolders` as a JSON array of ids; a missing or undecodable value is no state. A folder with no stored state is expanded, so every folder is expanded in a browser that has not collapsed one. Collapse state belongs to the folder id, so renaming a folder keeps it.
+- Selecting a feed that is inside a collapsed folder expands that folder; the feed is then selected in the usual way. This also covers a feed that arrives already selected, such as the feed created by subscribing into a collapsed folder.
+- The always-visible plus to the right of the `订阅源` label opens a popup with `新增 RSS 订阅` (`feeds.md`) and `新建目录`, in this order. Its accessible label is `新增订阅源或目录`. Choosing an item closes the popup before opening the dialog.
+
+### The sidebar folder menu
+
+The folder row's `⋯` menu shows, in this order, `只显示未读` (a checkbox item reflecting the shared unread filter), `全部标记为已读`, `重命名目录`, and then, separated from the items above and in the destructive color, `删除目录`. The menu's labels are `目录「name」菜单` for the trigger and `「name」目录操作` for the popover. The menu items are not operable while a folder write is pending.
+
+- `只显示未读` and `全部标记为已读` act on the clicked folder, even when another scope is selected: the folder scope is selected first and the item is applied only if that selection completed, so a delayed action cannot target a scope the user chose meanwhile. `全部标记为已读` marks every item of the folder's current feeds (FD-READ-5). Both are the shared scope-menu actions of `library.md`.
+- `重命名目录` opens the folder dialog for that folder; `删除目录` asks for confirmation and deletes it (below). Neither changes the selected scope.
+
+### The folder scope
+
+- A folder is a scope with its own URL, `/folder/:folderId`, and optionally an open article at `/folder/:folderId/:itemId`. Selecting the folder name navigates there and lists the items of the feeds that are in the folder when the page is listed, in arrival order (FD-LIST-4, FD-LIST-6); the unread filter applies as in every scope. An unknown or foreign folder id in the URL shows the scope's empty state, not an error (FD-LIST-7).
+- The list heading shows the folder name and the folder's unread count. The sidebar folder row is shown selected. The list reloads from the first page when the scope is entered or the filter changes, and on the toolbar refresh, as for every scope (`library.md`).
+- The list's `⋯` menu offers only `只显示未读` and `全部标记为已读` (FD-READ-5). It has no `新增文章链接`, no `删除 RSS 源`, and no folder rename or delete; those live in the sidebar.
+- The empty state depends on the folder: a folder without feeds shows the no-feeds empty state of Messages, and a folder with feeds but no articles the no-articles one. Under the unread filter the shared filtered empty state applies (`library.md`).
+- Marking the loaded articles as read affects every loaded unread item of the list, as in every scope (`library.md`); marking the whole folder read affects the items of the folder's current feeds, including unloaded ones, so a moved-out feed's items still shown are not marked. Both show their effect and roll back on failure as in `library.md`.
+
+### Creating and renaming a folder
+
+- `新建目录` and `重命名目录` use the shared dialog with one required name field: label `目录名称`, the hint of Messages, focus in the field when the dialog opens, native required validation, Esc and the close button. The rename dialog is prefilled with the current name.
+- When the dialog opens, the name is reset to empty for create and to the current name for rename. Submitting sends the name as typed; the server trims it (FD-FOLDER-2), so `  Design  ` creates `Design`.
+- While the request is in flight the field and the submit button are disabled and the button reads `创建中…` or `保存中…`. On success the dialog closes, the sidebar shows the created or renamed folder in name order, a success toast appears, and the current scope and the article list are unchanged (renaming the selected folder only updates the list title): creating or renaming never reloads the list.
+- On failure the toast shows the wording of the error (a taken name, an empty name, a folder removed meanwhile) and the dialog stays open with the typed name, so the user can correct it.
+- Closing an unsubmitted dialog creates and renames nothing, and focus returns to the control that opened it.
+
+### Moving a feed
+
+- A single feed's sidebar menu offers `移动到目录` between `全部标记为已读` and `删除 RSS 源`, and only when at least one folder exists.
+- `移动到目录` opens a dialog titled `移动到目录` with the line naming the feed (Messages) and a `目录` select. The select lists `不放入目录` first and then the folders by name; it preselects the feed's current folder, or `不放入目录` for a feed at the top level. The submit button reads `移动`, or `移动中…` while the request is in flight, when the select and the button are disabled.
+- On success the dialog closes, the toast says `已移动`, and the sidebar regroups at once: the feed appears under its new folder (or among the top-level feeds) by title, and both folders' counts change. The feed's items, their read state and the feed's title are unchanged (FD-MOVE-2). Confirming the feed's current folder closes the dialog and changes nothing (FD-MOVE-1).
+- Moving never reloads the article list, so a list that has loaded articles of the moved feed still shows them until it is reloaded, while the folders' counts already reflect the move. Marking the old folder read afterwards leaves those still-shown items of the moved-out feed unread (FD-MOVE-4).
+- On failure the toast shows the error, the dialog stays open, and the feed stays where it was.
+
+### Choosing a folder when subscribing
+
+- The `新增 RSS 订阅` address form has only the address field and `预览订阅`; the folder is chosen at the confirmation step, not in the address form (see `feeds.md` for the dialog and the preview).
+- When folders exist, the confirmation area shows a `目录` select below the previewed feed information and above the confirmation buttons (their labels are in `feeds.md`). It lists `不放入目录` first, preselected, then the folders by name, and is disabled while the subscription is being confirmed. Without folders the confirmation shows no select.
+- The choice is kept when the user returns to edit and previews again, and it is reset to `不放入目录` when the dialog opens.
+- Confirming subscribes into the chosen folder (FD-SUB-6), closes the dialog, selects the new feed at `/feed/:feedId`, and expands the folder if it was collapsed. A feed that already exists is opened instead and keeps its folder (FD-SUB-7).
+
+### Deleting a folder
+
+- `删除目录` asks through the browser's confirm dialog: a folder with feeds gets the wording that names the folder and the number of feeds in it, a folder without feeds the shorter one (Messages). Cancelling changes nothing.
+- Confirming deletes the folder, unsubscribes its feeds and removes their items (FD-FOLDER-7); saved pages made from those items stay. The sidebar loses the folder and its feeds, the counts update, and a `目录已删除` toast appears.
+- If the current scope is that folder, or a feed that was in it, the app returns to `全部订阅` at `/all` and reloads the list from the first page. Any other scope stays selected and the list is not reloaded (the sidebar itself is reloaded in both cases).
+- On failure the toast shows the error and the folder, its feeds and their articles are all kept.
+
+## API
+
+Folder JSON, as returned by `POST /api/folders` and inside the list: `{ "id": FolderId, "ownerId": OwnerId, "name": string }`.
+
+| Method | Path | Request | Success | Errors |
+| --- | --- | --- | --- | --- |
+| GET | `/api/folders` | — | 200 `{ items: Folder[] }` | `FolderRepositoryError` 500 |
+| POST | `/api/folders` | body `{ name: string }` | 201 `{ item: Folder }` | `InvalidFolderName` 400, `FolderAlreadyExists` 409, `FolderRepositoryError` 500 |
+| PATCH | `/api/folders/:id` | path `FolderId`; body `{ name: string }` | 204 | `InvalidFolderName` 400, `FolderNotFound` 404 (`id`), `FolderAlreadyExists` 409, `FolderRepositoryError` 500 |
+| DELETE | `/api/folders/:id` | path `FolderId` | 204 | `FolderRepositoryError` 500 |
+| POST | `/api/folders/:id/read-all` | path `FolderId` | 204 | `FeedItemRepositoryError` 500 |
+| GET | `/api/folders/:id/items` | path `FolderId`; query `limit` (required positive integer), `unread` (boolean, default `false`), `cursor` (optional `FeedItemId`) | 200 `{ items: FeedItem[], cursor: FeedItemId \| null }` | `FeedItemRepositoryError` 500 |
+| PATCH | `/api/feeds/:id` | path `FeedId`; body `{ folderId: FolderId \| null }` | 204 | `FolderNotFound` 404 (`id`), `FeedRepositoryError` 500, `FolderRepositoryError` 500 |
+
+- `GET /api/folders` returns the owner's folders by name, then id, ascending (FD-FOLDER-8). It is not paged and empty folders are included.
+- `POST /api/folders` names the folder: the name is trimmed and must not be blank after trimming (`InvalidFolderName` otherwise, FD-FOLDER-2). A duplicate name of the owner is `FolderAlreadyExists`, and two concurrent creates of one name make one folder, the other answering 409 (FD-FOLDER-4).
+- `PATCH /api/folders/:id` renames (FD-FOLDER-5). Renaming to the folder's current name answers 204 and changes nothing. An id that does not exist for the owner answers `FolderNotFound` carrying the `id`.
+- `DELETE /api/folders/:id` removes the folder, its feeds and their items in one write (FD-FOLDER-7); saved pages of those items stay. An unknown or foreign id answers 204 and changes nothing.
+- `POST /api/folders/:id/read-all` marks every item of the feeds that are in the folder when it runs; a feed that has left the folder is untouched (FD-READ-5). An unknown or foreign folder answers 204 and marks nothing.
+- `GET /api/folders/:id/items` is the folder scope's list (FD-LIST-6, FD-LIST-7) and follows the paging conventions (CM-PAGE): `unread` is the unread filter, `cursor` is the id to pass for the next page, and the answer's `cursor` is that id or `null`. An unknown, foreign or empty folder answers 200 with an empty `items` and `cursor: null`.
+- `PATCH /api/feeds/:id` with a `folderId` moves the feed: a folder id puts it there, `null` takes it to the top level (FD-MOVE). The field is required; a request without it is a decode failure (400). A target folder that does not exist or is not the owner's answers `FolderNotFound` with the folder `id`; when the target is `null` or a folder of the owner, a feed that does not exist for the owner answers 204 and changes nothing (FD-MOVE). The move is one atomic write (FD-FOLDER-6), changes no item, dispatches nothing and reloads nothing.
+- Creating, renaming and deleting a folder and moving a feed enqueue no refresh and touch no item except where the rules say so (FD-FOLDER-7, FD-FOLDER-9).
+
+## Messages
+
+| Situation or error tag | Text |
+| --- | --- |
+| `InvalidFolderName` (400) | 请输入目录名称 |
+| `FolderAlreadyExists` (409) | 该目录名称已存在 |
+| `FolderNotFound` (404) | 目录不存在，可能已被删除 |
+| `FolderRepositoryError` (500) | 暂时无法访问目录，请稍后重试 |
+| folder created | 目录已创建 |
+| folder renamed | 目录已重命名 |
+| folder deleted | 目录已删除 |
+| feed moved | 已移动 |
+| delete confirm, folder with N feeds | 删除目录「name」并取消订阅其中的 N 个订阅源？这些源的文章会被删除，已保存的稍后阅读不会删除。 |
+| delete confirm, folder without feeds | 删除目录「name」？ |
+| collapse toggle, expanded | 折叠目录「name」 |
+| collapse toggle, collapsed | 展开目录「name」 |
+| folder menu popover / trigger | 「name」目录操作 / 目录「name」菜单 |
+| folder menu item | 重命名目录 |
+| folder menu item, danger | 删除目录 |
+| subscribe section plus, trigger | 新增订阅源或目录 |
+| plus menu item | 新建目录 |
+| folder dialog title, create / rename | 新建目录 / 重命名目录 |
+| name field label | 目录名称 |
+| name field hint (also the native missing-name message) | 请输入目录名称 |
+| folder dialog submit, create | 创建 / 创建中… |
+| folder dialog submit, rename | 保存 / 保存中… |
+| move dialog title | 移动到目录 |
+| move dialog text | 将「feed title」移动到： |
+| folder select label (move dialog and subscribe confirmation) | 目录 |
+| folder select option, top level | 不放入目录 |
+| move dialog submit | 移动 / 移动中… |
+| empty folder, no feeds | 这个目录还没有订阅源 / 可以从订阅源的菜单把订阅源移动到这里。 |
+| empty folder, feeds but no articles | 这个目录还没有文章 / 订阅源刷新后，新的文章会出现在这里。 |
+
+## Acceptance
+
+```gherkin
 Feature: RSS feed folders
   To read subscriptions grouped by topic
   As a signed-in user
@@ -8,7 +160,7 @@ Feature: RSS feed folders
   A folder name must not be empty after trimming leading and trailing spaces, and must not duplicate
   another folder of the same user.
   The article list reloads from the first page only when I enter a scope, select a scope, switch a filter
-  or click refresh (following the existing rules).
+  or click refresh (the list rules of the library screen, see library.md).
 
   Background:
     Given I am signed in
@@ -90,6 +242,7 @@ Feature: RSS feed folders
     Scenario: Clicking a folder name lists the articles of all feeds in the folder
       When I click the name of the folder "Tech"
       Then the folder "Tech" is selected
+      And the address is /folder/:folderId
       And the article list reloads from the first page
       And the article list contains only the articles of Go Blog and Rust Blog, ordered from newest to oldest by arrival order
       And the list title shows "Tech" and unread count 5
@@ -225,6 +378,7 @@ Feature: RSS feed folders
       Given the current reading scope is the folder "Tech"
       When I rename the folder "Tech" to "Engineering"
       Then the list title shows "Engineering"
+      And the address still names the same folder
       And the article list does not reload
 
     Scenario: Renaming to an existing name
@@ -279,7 +433,7 @@ Feature: RSS feed folders
       When I move the feed "Go Blog" to "不放入目录"
       Then the unread count of the folder "Tech" immediately becomes 2
       But the article list does not reload and still shows the loaded articles of Go Blog
-      When I click the refresh button
+      When I select another scope and then the folder "Tech" again
       Then the article list no longer contains the articles of Go Blog
 
     Scenario: Marking the original folder as read after moving a feed out does not affect the moved-out articles that are still shown
@@ -325,6 +479,7 @@ Feature: RSS feed folders
       When I choose the folder "Tech" in the preview area and confirm the subscription
       Then the dialog closes
       And the new feed is shown under the folder "Tech" and is selected
+      And the address is /feed/:feedId
       And the new feed has no articles before its first refresh
 
     Scenario: Subscribing without putting the feed into a folder
@@ -387,7 +542,7 @@ Feature: RSS feed folders
     Scenario Outline: Deleting a folder that contains the current reading scope returns to "全部订阅"
       Given the current reading scope is <scope>
       When I confirm deleting the folder "Tech"
-      Then the current reading scope becomes "全部订阅"
+      Then the current reading scope becomes "全部订阅", at /all
       And the article list reloads from the first page
 
       Examples:
@@ -406,3 +561,4 @@ Feature: RSS feed folders
       When I confirm deleting the folder "Tech"
       Then an error is shown
       And the folder "Tech", Go Blog and Rust Blog are all kept
+```
