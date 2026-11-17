@@ -9,7 +9,7 @@ import {
 import { settingRepositoryContract } from '@reader/business/testing';
 import { Effect, Schema } from 'effect';
 import { SqlClient } from 'effect/sql';
-import { readerStoreDatabaseLayer, settingStoreLayer } from '../support/store';
+import { readerStoreDatabaseLayer, settingStoreLayer } from '../support';
 
 const alice = OwnerId.make('alice');
 

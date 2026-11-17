@@ -21,9 +21,15 @@ export const SavedPage = Schema.Struct({
   ownerId: OwnerId,
   url: NormalizedUrl,
   title: ArticleTitle,
+  /** Sanitized. */
   description: OptionFromOptionalNonEmpty(ArticleDescription),
+  /** Required, non-empty and sanitized. */
   content: ArticleContent,
+  /**
+   * The article's publish time, if any. Display only; it is the time reported when the page was fetched or saved from a feed item (SP-ADD-4, SP-SAVE-5).
+   */
   publishedAt: Schema.OptionFromOptional(Schema.DateTimeUtcFromDate),
+  /** `false` when created. */
   read: Schema.Boolean,
 });
 

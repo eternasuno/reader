@@ -39,6 +39,10 @@ export const BrowserSetting = Schema.Struct({
 
 export type BrowserSetting = typeof BrowserSetting.Type;
 
+/**
+ * Both providers' configuration is stored at the same time (SET-FETCH-5); a
+ * stored endpoint stays while the provider is `jina` (SET-ENDPOINT-2).
+ */
 export const FetcherSetting = Schema.Struct({
   provider: FetcherProvider,
   jina: JinaSetting,

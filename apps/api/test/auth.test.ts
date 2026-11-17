@@ -1,7 +1,7 @@
 import { expect, it } from '@effect/vitest';
+import { AuthDatabase } from '@reader/sqlite';
 import { ConfigProvider, Effect } from 'effect';
 import { authOptions } from '../src/auth';
-import { AuthDatabase } from '../src/db';
 import { openAuthDatabase } from './support/database';
 
 const TestConfigLive = ConfigProvider.layer(

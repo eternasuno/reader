@@ -6,18 +6,7 @@ Scope: business contract only. The HTTP interface, how values are written in a r
 
 ## Entity
 
-```text
-Setting
-  ownerId
-  feed
-    retention        Retention        positive integer, default 100
-  fetcher
-    provider         FetcherProvider  "jina" | "browser", default "jina"
-    jina
-      key            Option<JinaKey>             default none
-    browser
-      endpoint       Option<BrowserEndpoint>     default none
-```
+The schema is in `packages/business/src/entity/setting/`: `Setting`, `FeedSetting` and `FetcherSetting` with the value types `Retention`, `JinaKey` and `BrowserEndpoint`. Field defaults are written in the schema.
 
 The rules of the value types are in SET-VAL. Values are decoded into them at the boundary. Both providers' configuration is stored at the same time.
 
@@ -34,7 +23,7 @@ The rules of the value types are in SET-VAL. Values are decoded into them at the
 
 ### SET-GET — Read
 
-- SET-GET-1 A user without stored settings reads the defaults above.
+- SET-GET-1 A user without stored settings reads the schema defaults (retention 100, provider `jina`, no key, no endpoint).
 - SET-GET-2 `get` returns the full `Setting`. What of it is shown to the user is decided at the boundary, which never reveals the key or the endpoint (SET-VAL-4).
 
 ### SET-FEED — Retention
@@ -79,51 +68,9 @@ Two operations, one per provider, because they write different fields and fail d
 
 Two use cases exist, `useJina` and `useBrowser` (`usecase/setting/use-jina.ts`, `use-browser.ts`). The other operations call the port directly.
 
-| Operation       | Input                | Output    | Errors                                              | Implementation                   |
-| --------------- | -------------------- | --------- | --------------------------------------------------- | -------------------------------- |
-| Read            | `owner`              | `Setting` | `SettingRepositoryError`                            | `SettingRepository.get`          |
-| Fetcher in effect | `setting`          | `Effect<ActiveFetcher>` | none (a broken SET-FETCH-4 dies as a defect) | `activeFetcher` (SET-ACTIVE), reads no port |
-| Set retention   | `owner`, `retention` | nothing   | `SettingRepositoryError`                            | `SettingRepository.setRetention` |
-| Clear Jina key  | `owner`              | nothing   | `SettingRepositoryError`                            | `SettingRepository.clearJinaKey` |
-| **Use Jina**    | `owner`, `key?`      | nothing   | `SettingRepositoryError`                            | Use case `useJina` (below)       |
-| **Use browser** | `owner`, `endpoint?` | nothing   | `SettingRepositoryError`, `BrowserEndpointRequired` | Use case `useBrowser` (below)    |
+The only branch is on whether the optional input was given, at the place where that difference arises; below the use case every call is one fixed write (CM-PORT-3).
 
-```text
-useJina(owner, key?)
-  key given:   selectJinaWithKey(owner, key)
-  key omitted: selectJina(owner)
-
-useBrowser(owner, endpoint?)
-  endpoint given:   selectBrowserWithEndpoint(owner, endpoint)
-  endpoint omitted: current = get(owner)
-                    if current.fetcher.browser.endpoint is none: fail BrowserEndpointRequired
-                    selectBrowser(owner)
-```
-
-The only branch is on whether the optional input was given, at the place where that difference arises; below the use case every call is one fixed write.
-
-## Errors
-
-| Error                     | Carries | Meaning                                                            | Raised by                |
-| ------------------------- | ------- | ------------------------------------------------------------------ | ------------------------ |
-| `BrowserEndpointRequired` | nothing | The browser provider was chosen and no endpoint is given or stored | SET-FETCH-3              |
-| `SettingRepositoryError`  | message | Storage failure                                                    | `SettingRepository` port |
-
-## Port: SettingRepository
-
-- `get(owner)`: returns the stored `Setting` with defaults filled in for anything not stored.
-- Six writers, each one fixed write of the named fields that leaves every other field as it is (CM-PORT-3); none returns anything. The first write creates the owner's row with the defaults for the other fields. Two concurrent writers of different fields both survive; for the same field the last write wins.
-
-| Writer                                       | Writes                                                                      |
-| -------------------------------------------- | --------------------------------------------------------------------------- |
-| `setRetention(owner, retention)`             | `feed.retention`                                                            |
-| `selectJina(owner)`                          | `fetcher.provider = "jina"`                                                 |
-| `selectJinaWithKey(owner, key)`              | `fetcher.provider = "jina"`, `fetcher.jina.key = some(key)`                 |
-| `clearJinaKey(owner)`                        | `fetcher.jina.key = none`                                                   |
-| `selectBrowser(owner)`                       | `fetcher.provider = "browser"`                                              |
-| `selectBrowserWithEndpoint(owner, endpoint)` | `fetcher.provider = "browser"`, `fetcher.browser.endpoint = some(endpoint)` |
-
-- The port does not check SET-FETCH-4; the operations that write these fields hold it. There is no writer that clears the endpoint (SET-ENDPOINT-1).
+`activeFetcher` (SET-ACTIVE) reads no port, and a broken SET-FETCH-4 dies as a defect.
 
 ## Known risk
 

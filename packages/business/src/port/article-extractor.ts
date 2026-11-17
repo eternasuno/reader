@@ -22,6 +22,12 @@ export const ExtractedArticle = Schema.Struct({
 export type ExtractedArticle = typeof ExtractedArticle.Type;
 
 export interface IArticleExtractor {
+  /**
+   * Extracts the article from the parsed document. The content is already
+   * sanitized (CM-ART-4) and a missing publish time is none. The adapter
+   * decodes its own output into `ExtractedArticle`; that is its boundary
+   * (CM-FETCH-3, CM-ART).
+   */
   readonly extract: (
     document: Document
   ) => Effect.Effect<ExtractedArticle, ArticleExtractorError>;

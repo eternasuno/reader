@@ -1,3 +1,4 @@
+import { SqliteMigrator } from '@effect/sql-sqlite-node';
 import { Effect } from 'effect';
 import { Migrator, SqlClient } from 'effect/sql';
 
@@ -71,4 +72,10 @@ const createReaderTables = Effect.gen(function* () {
 
 export const readerMigrations = Migrator.fromRecord({
   '0001_reader': createReaderTables,
+});
+
+export const migrateReader = SqliteMigrator.run({ loader: readerMigrations });
+
+export const readerMigrationLayer = SqliteMigrator.layer({
+  loader: readerMigrations,
 });

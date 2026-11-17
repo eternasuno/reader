@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
-import { SqliteMigrator } from '@effect/sql-sqlite-node';
 import {
   ArticleTitle,
   Feed,
@@ -16,9 +15,11 @@ import {
   OwnerId,
 } from '@reader/business';
 import { DateTime, Effect, Fiber, Layer, Option, Schema } from 'effect';
-import { ReaderStoreLive } from '../../src/store';
-import { readerSqliteLayer } from '../../src/store/client';
-import { readerMigrations } from '../../src/store/schema';
+import {
+  ReaderStoreLive,
+  readerMigrationLayer,
+  readerSqliteLayer,
+} from '../../src';
 
 const FEEDS = 200;
 const ITEMS_PER_FEED = 100;
@@ -43,7 +44,7 @@ const directory = mkdtempSync(join(tmpdir(), 'reader-bench-'));
 
 const layer = ReaderStoreLive.pipe(
   Layer.provide(
-    SqliteMigrator.layer({ loader: readerMigrations }).pipe(
+    readerMigrationLayer.pipe(
       Layer.provideMerge(readerSqliteLayer(join(directory, 'reader.db')))
     )
   )

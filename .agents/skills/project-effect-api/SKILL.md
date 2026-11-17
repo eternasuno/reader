@@ -7,6 +7,8 @@ description: Follow the server API constraints when working on this repository's
 
 Business rules (entities, use cases, ports, repository contracts) are in the `project-business` skill. This skill covers the server around them.
 
+- `apps/api` depends on `@reader/sqlite`; `@reader/sqlite` depends on `packages/business` and never on `apps/api`. The API owns the Better Auth integration, the migration orchestration (`migrate.ts`) and the refresh loop; the SQLite connection and store Layers come from `@reader/sqlite` and are provided in `app.ts`, `server.ts` and `migrate.ts`.
+
 ## Authentication and Identity
 
 - Better Auth exclusively owns `/api/auth/*`; do not reimplement the Better Auth protocol in application routes. Use Effect HTTP routes for other business operations.
@@ -17,11 +19,9 @@ Business rules (entities, use cases, ports, repository contracts) are in the `pr
 
 ## Shared Effect Services
 
-- For application- or system-scoped capabilities that must be shared across multiple Layers without explicit parameter threading, define a `Context.Service` and provide it from the root `Layer`.
 - Use the `Live` suffix for effective runtime Layers (for example, `AuthLive`). Construct the Effect only once in the Service Layer; consumers obtain the capability with `yield* Service`.
-- A Service is a shared dependency within the current Effect scope, not a permanently global process singleton; include root Layer composition in the application runtime.
 - Abstract a Service or Layer only for meaningful, reusable capability boundaries; avoid one-off `make*` wrappers, duplicate service types, and unnecessary Layers.
-- Keep route composition separate from runtime dependency provision in `server.ts`. Merge independent dependencies into one named Layer; retain provider nesting for real dependencies such as AuthLive requiring DatabaseLive, not for one-use category groups.
+- Keep route composition separate from runtime dependency provision in `server.ts`. Merge independent dependencies into one named Layer; retain provider nesting for real dependencies such as AuthLive requiring the `AuthDatabaseLive` connection from `@reader/sqlite`, not for one-use category groups.
 - Prefer framework-provided route Layers over manually constructing equivalent handlers.
 - After composing multiple dependency Layers, call `Effect.provide` only once on the target Effect.
 - The app provides Effect's plain `FetchHttpClient.layer` as the `HttpClient` business uses for feeds. Add no transport policy (address checks, redirect handling, size caps, timeouts) without a requirement.
@@ -30,7 +30,7 @@ Business rules (entities, use cases, ports, repository contracts) are in the `pr
 
 The endpoint contract lives in `packages/api`; handlers live in `apps/api/src/http/library/`, one file per domain (`feed.ts`, `feed-item.ts`, `folder.ts`, `saved-page.ts`, `setting.ts`), with input decoding in `input.ts`, the error table in `failures.ts` and the session helpers in `session.ts`.
 
-- `http/` does not import the `store/`, `content/` or `refresh/` implementations. Handlers reach repositories, parsers, extractors and fetchers only through the business ports and the `FeedRefreshQueue` service; the implementations are assembled only in `app.ts` and `server.ts`. The one exception is `http/library/session.ts`, which maps `activeFetcher` to a `@reader/webpage` Layer per request (see extraction below), because the fetcher depends on the owner's setting. Check this on every new import under `http/`.
+- `http/` does not import the `content/` or `refresh/` implementations and never imports `@reader/sqlite`; the store implementations live in `packages/sqlite`. Handlers reach repositories, parsers, extractors and fetchers only through the business ports and the `FeedRefreshQueue` service; the implementations are assembled only in `app.ts` and `server.ts`. The one exception is `http/library/session.ts`, which maps `activeFetcher` to a `@reader/webpage` Layer per request (see extraction below), because the fetcher depends on the owner's setting. `biome.json` enforces these imports, with `refresh/queue` and `session.ts` as its only exceptions.
 - Error responses carry only `_tag` and, where the contract declares it, `id` or `url`. They carry no message: the user-visible wording lives in the web client (`project-architecture`), so the server source holds no user-facing text. Contract errors are `Schema.TaggedError` classes in `packages/api/src/errors.ts`; 401 and 403 are Effect's `HttpApiError.Unauthorized` and `HttpApiError.Forbidden`. Nothing writes `_tag` by hand: handlers fail with a contract error instance and the schema machinery encodes the body. Business errors map to contract errors through one table from business `_tag` to contract error.
 
 - Decode request input into the business types once in the handler (`http/library/input.ts`): a page URL into `NormalizedUrl` (failure `InvalidPageUrl`), a feed URL into `NormalizedUrl` (`FeedUrlInvalid`), the subscribe title with `makeFeedTitle(title ?? '', url)` so a blank title becomes the host, the retention into `Retention` (`InvalidRetention`, a positive integer), a given Jina key into `JinaKey` (which cannot fail, because a blank key already counts as absent), a given browser endpoint into `BrowserEndpoint` (`InvalidEndpoint`: http, https, ws or wss). The provider is never an input: `PUT /settings/fetcher/jina` and `PUT /settings/fetcher/browser` are two endpoints calling `useJina` and `useBrowser`.
@@ -50,8 +50,8 @@ The endpoint contract lives in `packages/api`; handlers live in `apps/api/src/ht
 
 ## Feed refresh queue and scheduler
 
-- The queue and scheduler live in `apps/api/src/refresh`, not in the packages (FD-SCHED). `FeedRefreshQueue.enqueue(owner, feedId)` drops a request for a feed that already has a refresh running, otherwise runs business `refreshFeed(owner, feedId)` in the queue's scope. Refreshes of different feeds run at the same time without a bound; a failure or defect is logged with owner and feed id and never stops the others.
-- The scheduler lists every feed with its own query at start and every 30 minutes and enqueues each; a listing failure is logged and retried at the next interval.
+- The queue and scheduler live in `apps/api/src/refresh`, not in the packages (FD-SCHED); the feed listing query they use is `listRefreshFeeds` from `@reader/sqlite`. `FeedRefreshQueue.enqueue(owner, feedId)` drops a request for a feed that already has a refresh running, otherwise runs business `refreshFeed(owner, feedId)` in the queue's scope. Refreshes of different feeds run at the same time without a bound; a failure or defect is logged with owner and feed id and never stops the others.
+- The scheduler lists every feed through `listRefreshFeeds` at start and every 30 minutes and enqueues each; a listing failure is logged and retried at the next interval.
 
 ## API Details
 

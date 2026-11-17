@@ -44,7 +44,7 @@ Every id (`FeedId`, `FeedItemId`, `FolderId`, `SavedPageId`) is a branded string
 `fetchAndExtract(url)`. Used by SavedPage (add a link, save a feed item without content) and by Feed (extract an item).
 
 1. Fetch the page text through `WebpageFetcher`, given `url.href`.
-2. Parse it through `HtmlParser`, with `url` as the base. The parsed document lives in a resource scope opened by `fetchAndExtract`; see the port contracts below.
+2. Parse it through `HtmlParser`, with `url` as the base. The parsed document lives in a resource scope opened by `fetchAndExtract`; see the `HtmlParser` JSDoc in `packages/business/src/port/html-parser.ts`.
 3. Extract through `ArticleExtractor`: title, description, content, and the publish time as an `Option`.
 4. If the content is empty (CM-ART-5), fail `ArticleEmptyContent`.
 5. Return title, description, the non-empty content, and the publish time as an `Option` (CM-FETCH-1): the extracted one, or none.
@@ -105,36 +105,9 @@ An operation that only forwards one port call gets no use case. So part of the b
 - CM-PORT-5 The single-row writes the use cases must tell apart (`FeedRepository.moveToFolder`, `FolderRepository.rename`, `FeedItemRepository.setExtractedContent`) return whether the row was written: `false` when the row does not exist for the owner and, for the two guarded writes, when the guard fails (`FeedRepository.moveToFolder` with a folder that is not the owner's, `FolderRepository.rename` to a name another folder of the owner has); the guard and the write are one atomic write. `FeedRepository.recordSync` returns nothing: refresh treats a feed removed during the run as done (FD-REFRESH-1). Writes over an id list (`markRead`, `remove`) and over a scope (`markReadByFeeds`, `markAllRead`) return nothing; unknown and foreign ids are ignored and an empty list changes nothing.
 - CM-PORT-6 `create(owner, rows)` returns the ids actually created. A row is skipped, never overwritten, when its id exists, when its unique URL key exists (CM-ID-6), when its `ownerId` differs from `owner`, (for feed items) when its feed does not exist for the owner, and (for feeds) when its `folderId` is a folder that does not exist for the owner. Concurrent creates of the same URL key: exactly one succeeds.
 
-## Functions
+## Ports
 
-| Function          | Input           | Output                                                                               | Errors                                                                                   |
-| ----------------- | --------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `fetchAndExtract` | `NormalizedUrl` | title, optional description, `ArticleContent`, publish time as `Option<DateTimeUtc>` | `WebpageFetcherError`, `HtmlParserError`, `ArticleExtractorError`, `ArticleEmptyContent` |
-
-## Errors
-
-| Error                    | Carries | Meaning                                   | Raised by                |
-| ------------------------ | ------- | ----------------------------------------- | ------------------------ |
-| `WebpageFetcherError`    | message | The page could not be fetched             | `WebpageFetcher` port    |
-| `HtmlParserError`        | message | The text could not be parsed              | `HtmlParser` port        |
-| `DocumentSanitizerError` | message | The document could not be sanitized       | `DocumentSanitizer` port |
-| `ArticleExtractorError`  | message | The article could not be extracted        | `ArticleExtractor` port  |
-| `ArticleEmptyContent`    | nothing | The extracted content is empty (CM-ART-5) | CM-FETCH step 4          |
-
-## Port contracts
-
-The shapes below are what business depends on. The adapter decodes its own output into these values; that is its boundary (CM-FETCH-3, CM-ART).
-
-| Port                | Operation  | Input                   | Output                                                                                                          | Errors                   |
-| ------------------- | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `WebpageFetcher`    | `fetch`    | the URL text            | the page text                                                                                                   | `WebpageFetcherError`    |
-| `HtmlParser`        | `parse`    | HTML text, the base URL | the parsed document, alive in the caller's resource scope (see below)                                           | `HtmlParserError`        |
-| `DocumentSanitizer` | `sanitize` | the parsed document     | `Option<string>` of sanitized HTML                                                                              | `DocumentSanitizerError` |
-| `ArticleExtractor`  | `extract`  | the parsed document     | `title: ArticleTitle`, optional `description`, optional sanitized `content`, `publishedAt: Option<DateTimeUtc>` | `ArticleExtractorError`  |
-
-The parsed document lives in a resource scope opened by `fetchAndExtract` or by the cleaning step of the feed refresh. The scope covers the parse and the following extract or sanitize step, and is released when that step ends.
-
-Redirects, timeouts, size limits and which addresses may be reached are the adapters' concern.
+The ports Common depends on (`WebpageFetcher`, `HtmlParser`, `DocumentSanitizer`, `ArticleExtractor`) state their contracts as JSDoc in `packages/business/src/port/`. Each adapter decodes its own output into the port's values; that is its boundary (CM-FETCH-3, CM-ART).
 
 ## Not common
 

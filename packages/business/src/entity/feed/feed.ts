@@ -27,9 +27,22 @@ export const makeFeedTitle = (text: string, url: URL): FeedTitle => {
 export const Feed = Schema.Struct({
   id: Model.UuidV7WithGenerate(FeedId),
   ownerId: OwnerId,
+  /** The submitted address after normalization, not a redirect target. */
   url: NormalizedUrl,
+  /**
+   * The preview title at subscribe, then the source's title on every
+   * successful sync; trimmed; empty becomes the URL's host.
+   */
   title: FeedTitle,
+  /**
+   * The folder the feed is in; none at the top level. Always a folder of the
+   * same owner (FD-FOLDER-6).
+   */
   folderId: Schema.OptionFromOptional(FolderId),
+  /**
+   * The time of the last successful sync; none until the first one (FD-SYNC
+   * step 5).
+   */
   updatedAt: Schema.OptionFromOptional(Schema.DateTimeUtcFromDate),
 });
 

@@ -7,6 +7,11 @@ export class WebpageFetcherError extends Data.TaggedError(
 }> {}
 
 export interface IWebpageFetcher {
+  /**
+   * Fetches the page at the URL text and returns the page text. Redirects,
+   * timeouts, size limits and which addresses may be reached are the
+   * adapter's concern (CM-FETCH).
+   */
   readonly fetch: (url: string) => Effect.Effect<string, WebpageFetcherError>;
 }
 

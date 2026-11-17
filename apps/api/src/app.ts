@@ -1,3 +1,4 @@
+import { ReaderStoreLive } from '@reader/sqlite';
 import { Effect, Layer } from 'effect';
 import { FetchHttpClient, HttpRouter } from 'effect/http';
 import type { Auth } from './auth';
@@ -8,7 +9,6 @@ import { HtmlParserLive } from './content/html-parser';
 import { authRoutes } from './http/auth';
 import { libraryRoutes } from './http/library';
 import type { FeedRefreshQueue } from './refresh/queue';
-import { ReaderStoreLive } from './store';
 
 export const LibraryServicesLive = Layer.mergeAll(
   ReaderStoreLive,

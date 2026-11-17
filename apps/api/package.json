@@ -13,10 +13,10 @@
   },
   "dependencies": {
     "@effect/platform-node": "4.1.4",
-    "@effect/sql-sqlite-node": "4.1.4",
     "@mozilla/readability": "^0.6.0",
     "@reader/api": "workspace:*",
     "@reader/business": "workspace:*",
+    "@reader/sqlite": "workspace:*",
     "@reader/webpage": "workspace:*",
     "better-auth": "catalog:",
     "dompurify": "^3.4.17",

@@ -16,6 +16,7 @@ import {
   SavedPageRepository,
   SettingRepository,
 } from '@reader/business';
+import { readerDatabaseLayer } from '@reader/sqlite/testing';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
 import { Context, Effect, Layer, Option, type Scope } from 'effect';
 import { FetchHttpClient, HttpClient, HttpRouter } from 'effect/http';
@@ -40,7 +41,6 @@ import {
   type WebpageStub,
   webpageFetch,
 } from './network-stubs';
-import { readerDatabaseLayer } from './store';
 
 const TEST_PASSWORD = 'test-password-123';
 

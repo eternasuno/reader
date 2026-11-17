@@ -7,11 +7,11 @@ import {
   NodeRuntime,
 } from '@effect/platform-node';
 import { refreshFeed } from '@reader/business';
+import { AuthDatabaseLive, ReaderDatabaseLive } from '@reader/sqlite';
 import { Config, Layer } from 'effect';
 import { HttpRouter } from 'effect/http';
 import { AppLive, LibraryServicesLive } from './app';
 import { AuthLive } from './auth';
-import { AuthDatabaseLive, ReaderDatabaseLive } from './db';
 import { staticRoutes } from './http/static';
 import { feedRefreshQueueLayer } from './refresh/queue';
 import {

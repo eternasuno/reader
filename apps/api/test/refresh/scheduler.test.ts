@@ -1,5 +1,6 @@
 import { expect, it } from '@effect/vitest';
 import { FeedId, type OwnerId } from '@reader/business';
+import { readerDatabaseLayer } from '@reader/sqlite/testing';
 import { Context, Deferred, Effect, Layer, Logger } from 'effect';
 import { SqlClient } from 'effect/sql';
 import { TestClock } from 'effect/testing';
@@ -8,7 +9,6 @@ import {
   FEED_REFRESH_INTERVAL,
   feedRefreshSchedulerLayer,
 } from '../../src/refresh/scheduler';
-import { readerDatabaseLayer } from '../support/store';
 
 type Enqueued = {
   readonly owner: OwnerId;

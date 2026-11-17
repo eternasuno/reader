@@ -1,10 +1,12 @@
 import { NodeRuntime } from '@effect/platform-node';
-import { SqliteMigrator } from '@effect/sql-sqlite-node';
+import {
+  AuthDatabaseLive,
+  migrateReader,
+  ReaderDatabaseLive,
+} from '@reader/sqlite';
 import { getMigrations } from 'better-auth/db/migration';
 import { Effect, Layer, Runtime } from 'effect';
 import { authOptions } from './auth.ts';
-import { AuthDatabaseLive, ReaderDatabaseLive } from './db';
-import { readerMigrations } from './store/schema';
 
 export const migrate = Effect.gen(function* () {
   const options = yield* authOptions;
@@ -15,7 +17,7 @@ export const migrate = Effect.gen(function* () {
     `auth schema: ${auth.toBeCreated.length} tables created, ${auth.toBeAdded.length} tables altered, ${auth.toBeAddedIndexes.length} indexes added`
   );
 
-  const applied = yield* SqliteMigrator.run({ loader: readerMigrations });
+  const applied = yield* migrateReader;
   yield* Effect.logInfo(
     applied.length > 0
       ? `reader schema: ${applied.map(([id, name]) => `${id}_${name}`).join(', ')}`

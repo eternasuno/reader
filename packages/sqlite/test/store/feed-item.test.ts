@@ -13,7 +13,7 @@ import {
 import { feedItemRepositoryContract } from '@reader/business/testing';
 import { Effect, Option, Schema } from 'effect';
 import { SqlClient } from 'effect/sql';
-import { feedStoreLayer, readerStoreDatabaseLayer } from '../support/store';
+import { feedStoreLayer, readerStoreDatabaseLayer } from '../support';
 
 const alice = OwnerId.make('alice');
 
@@ -65,12 +65,15 @@ it.effect('decodes a stored row without optional fields as none', () =>
 
     const rows =
       yield* sql`SELECT description, content, extracted_content AS extractedContent, published_at AS publishedAt FROM feed_item WHERE id = ${item.id}`;
-    const row = Option.getOrThrow(Option.fromUndefinedOr(rows[0]));
 
-    expect(row['description']).toBeNull();
-    expect(row['content']).toBeNull();
-    expect(row['extractedContent']).toBeNull();
-    expect(row['publishedAt']).toBeNull();
+    expect(rows).toEqual([
+      {
+        description: null,
+        content: null,
+        extractedContent: null,
+        publishedAt: null,
+      },
+    ]);
 
     const stored = Option.getOrThrow(yield* items.find(alice, item.id));
 

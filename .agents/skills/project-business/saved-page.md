@@ -6,16 +6,7 @@ Scope: business contract only. Front-end behavior (auto-marking a page read when
 
 ## Entity
 
-| Field         | Type                         | Notes                                                                     |
-| ------------- | ---------------------------- | ------------------------------------------------------------------------- |
-| `id`          | `SavedPageId`                | A new UUIDv7 (SP-ID-1)                                                    |
-| `ownerId`     | `OwnerId`                    |                                                                           |
-| `url`         | `NormalizedUrl`              | Required                                                                  |
-| `title`       | `ArticleTitle`               |                                                                           |
-| `description` | `Option<ArticleDescription>` | Sanitized                                                                 |
-| `content`     | `ArticleContent`             | Required, non-empty, sanitized                                            |
-| `publishedAt` | `Option<DateTimeUtc>`        | The article's publish time, if any. Display only. See SP-ADD-4, SP-SAVE-5 |
-| `read`        | `boolean`                    | `false` when created                                                      |
+See `packages/business/src/entity/saved-page/saved-page.ts`.
 
 ## Rules
 
@@ -101,36 +92,6 @@ Each operation is a single port call, so there is no use case. They are listed s
 
 ## Use cases
 
-| Use case         | Input                                     | Output                    | Errors (besides repository errors)                                  |
-| ---------------- | ----------------------------------------- | ------------------------- | ------------------------------------------------------------------- |
-| `addSavedPage`   | `owner`, `url`                            | `SavedPage`               | `SavedPageAlreadyExists`, and those of CM-FETCH                     |
-| `saveFeedItem`   | `owner`, `itemId`                         | `SavedPage`               | `FeedItemNotFound`, `SavedPageAlreadyExists`, and those of CM-FETCH |
-| `listSavedPages` | `owner`, `unreadOnly`, `limit`, `cursor?` | pages, `cursor` or `null` | none                                                                |
-
-Find one, mark by ids, mark all, remove and unread count are one port call each and have no use case.
-
-## Errors
-
-| Error                      | Carries          | Meaning                          | Raised by                  |
-| -------------------------- | ---------------- | -------------------------------- | -------------------------- |
-| `SavedPageAlreadyExists`   | normalized `url` | The owner already saved this URL | SP-ADD, SP-SAVE            |
-| `SavedPageRepositoryError` | message          | Storage failure                  | `SavedPageRepository` port |
+`addSavedPage`, `saveFeedItem` and `listSavedPages` are the use cases. Find one, mark by ids, mark all, remove and unread count are one port call each and have no use case; the port contracts, including the write semantics of CM-PORT, are on `SavedPageRepository` in `packages/business/src/port/saved-page-repository.ts`.
 
 `FeedItemNotFound` belongs to the Feed domain (see `feed.md`). `ArticleEmptyContent` and the fetch and extraction errors belong to Common (CM-FETCH-4).
-
-## Port: SavedPageRepository
-
-All methods are scoped by `ownerId`.
-
-| Method                                       | Contract                                                                                                                                     |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `find(owner, id)`                            | `Option` of the page                                                                                                                         |
-| `findByUrl(owner, url)`                      | `Option` of the owner's page with that URL (SP-ID-4)                                                                                         |
-| `list(owner, { unreadOnly, after?, limit })` | Pages ordered by `id` desc, newest saved first; those with a smaller id than `after` when given; at most `limit`                             |
-| `create(owner, pages)`                       | CM-PORT: returns the ids actually created; a row is skipped, never overwritten, when its id exists or its URL is already saved for the owner |
-| `markRead(owner, ids, read)`                 | Sets `read` on the owner's pages among `ids`; unknown and foreign ids ignored, an empty list changes nothing (SP-READ-1)                     |
-| `markAllRead(owner)`                         | Sets `read = true` on every page of the owner                                                                                                |
-| `remove(owner, ids)`                         | Removes the owner's pages among `ids`; unknown ids ignored                                                                                   |
-| `unreadCount(owner)`                         | Count of unread pages                                                                                                                        |
-
-From other domains: `FeedItemRepository.find` (Feed); `WebpageFetcher`, `HtmlParser`, `ArticleExtractor` (Common).

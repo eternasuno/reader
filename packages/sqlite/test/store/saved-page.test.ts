@@ -10,10 +10,7 @@ import {
 import { savedPageRepositoryContract } from '@reader/business/testing';
 import { Effect, Option, Schema } from 'effect';
 import { SqlClient } from 'effect/sql';
-import {
-  readerStoreDatabaseLayer,
-  savedPageStoreLayer,
-} from '../support/store';
+import { readerStoreDatabaseLayer, savedPageStoreLayer } from '../support';
 
 const alice = OwnerId.make('alice');
 
@@ -42,10 +39,8 @@ it.effect('decodes a stored row without optional fields as none', () =>
 
     const rows =
       yield* sql`SELECT description, published_at AS publishedAt FROM saved_page WHERE id = ${page.id}`;
-    const row = Option.getOrThrow(Option.fromUndefinedOr(rows[0]));
 
-    expect(row['description']).toBeNull();
-    expect(row['publishedAt']).toBeNull();
+    expect(rows).toEqual([{ description: null, publishedAt: null }]);
 
     const stored = Option.getOrThrow(yield* pages.find(alice, page.id));
 

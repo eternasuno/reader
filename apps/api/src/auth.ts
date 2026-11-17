@@ -1,6 +1,6 @@
+import { AuthDatabase } from '@reader/sqlite';
 import { type BetterAuthOptions, betterAuth } from 'better-auth';
 import { Config, Context, Data, Effect, Layer, Redacted } from 'effect';
-import { AuthDatabase } from './db';
 
 export class Auth extends Context.Service<
   Auth,

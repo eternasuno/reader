@@ -71,18 +71,19 @@ Browser
 
 - `apps/web` contains browser-only routes, components, and the Better Auth client. Vite builds static assets with `ssr: false`; there are no server functions or server runtime modules.
 - `apps/api/src/http` owns HTTP routing: the library handlers under `http/library/`, the Better Auth and static routes, and the origin and session middleware. Better Auth handles `/api/auth/*`.
-- `apps/api/src` is grouped by responsibility: `store/` holds the SQLite repositories and schema, `content/` the feed parser, HTML parser, article extractor and sanitizer, `refresh/` the feed refresh queue and scheduler, `auth.ts` the Better Auth layer and `db/` the database files and connections. `apps/api/src/app.ts` composes them into the HTTP `AppLive`, and `apps/api/src/server.ts` is the process entry that launches it. The server entry owns layer acquisition and graceful shutdown via `NodeRuntime`.
-- `apps/api/test` tests the database against SQLite in memory, the authentication protocol, and HTTP handlers.
+- `apps/api/src` keeps the HTTP handlers under `http/`, the feed parser, HTML parser, article extractor and sanitizer in `content/`, the feed refresh queue and scheduler in `refresh/`, and the Better Auth layer in `auth.ts`. `apps/api/src/app.ts` composes them into the HTTP `AppLive`, and `apps/api/src/server.ts` is the process entry that launches it. The server entry owns layer acquisition and graceful shutdown via `NodeRuntime`.
+- `packages/sqlite` (`@reader/sqlite`) is the SQLite adapter for the business ports: `database.ts` holds the reader and Better Auth connections, `store/` the reader store schemas and repositories, `feed-refresh.ts` the feed listing query of the refresh loop, and `test/support/` the in-memory test Layers exported as `@reader/sqlite/testing`. It depends on `packages/business` and imports nothing from `apps/api`; the API depends on it and composes its Layers in `app.ts`, `server.ts` and `migrate.ts`.
+- `apps/api/test` tests the authentication protocol and the HTTP handlers; the reader store is tested in `packages/sqlite/test` against SQLite in memory.
 
 ### Security boundaries
 
-The backend derives identity only from the Better Auth session cookie on the incoming request. It never accepts a client-supplied user ID as identity. Database clients, embedded engines, secrets, and Better Auth server configuration stay in `apps/api` and cannot enter the browser bundle.
+The backend derives identity only from the Better Auth session cookie on the incoming request. It never accepts a client-supplied user ID as identity. Database clients, embedded engines, secrets, and Better Auth server configuration stay on the server, in `apps/api` and `@reader/sqlite`, and cannot enter the browser bundle.
 
 Better Auth owns `/api/auth/*`; application endpoints should not reimplement its protocol. Protected endpoints use the `Authentication` middleware declared in `packages/api/src/middleware.ts` and derive identity from `Session`; its implementation lives in `apps/api/src/http/middleware/session.ts`.
 
 ### SQLite
 
-`apps/api/src/db/index.ts` opens two SQLite files in `DATA_DIR`: the reader store in `reader.db` and Better Auth's data in `auth.db`. `DATA_DIR` defaults to `.data` relative to the process working directory and is created if missing. The files are separate because two connections to one file would contend for SQLite's single write lock. Runtime startup does not generate or apply schema.
+`packages/sqlite/src/database.ts` opens two SQLite files in `DATA_DIR`: the reader store in `reader.db` and Better Auth's data in `auth.db`. `DATA_DIR` defaults to `.data` relative to the process working directory and is created if missing. The files are separate because two connections to one file would contend for SQLite's single write lock. Runtime startup does not generate or apply schema.
 
 Apply the schema with the package script:
 
@@ -90,7 +91,7 @@ Apply the schema with the package script:
 pnpm --filter api db:migrate
 ```
 
-The script runs Better Auth's migrations against `auth.db` and the reader migrations (`apps/api/src/store/schema.ts`) against `reader.db`. Apply schema during deployment rather than at startup, so changes are applied once instead of racing across restarted instances. Tests apply both migrations to in-memory databases instead of running `db:migrate`.
+The script runs in the API (`apps/api/src/migrate.ts`) and orchestrates both: Better Auth's migrations against `auth.db` and `migrateReader` from `@reader/sqlite` (`packages/sqlite/src/store/schema.ts`) against `reader.db`. Apply schema during deployment rather than at startup, so changes are applied once instead of racing across restarted instances. Tests apply both migrations to in-memory databases instead of running `db:migrate`.
 
 The project is in development and keeps no database compatibility or data migration path. After a schema change that makes existing data unusable, edit migration `0001_reader` in place, delete the database files in `DATA_DIR` (for example `.data/reader.db` and `.data/auth.db`) and run `pnpm db:migrate` again.
 

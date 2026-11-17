@@ -7,6 +7,10 @@ export class DocumentSanitizerError extends Data.TaggedError(
 }> {}
 
 export interface IDocumentSanitizer {
+  /**
+   * Returns the sanitized HTML of the parsed document, or none. The allowed
+   * markup is the adapter's concern (CM-HTML).
+   */
   readonly sanitize: (
     document: Document
   ) => Effect.Effect<Option.Option<string>, DocumentSanitizerError>;

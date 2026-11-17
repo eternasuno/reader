@@ -32,32 +32,13 @@ Dependencies point one way: `SavedPage -> Feed -> Setting -> Common`. SavedPage 
 
 ## Code layout
 
-```text
-packages/business/src/
-  entity/
-    common/        normalized-url, owner-id, article, option-from-optional-non-empty
-    feed/          feed, feed-item, folder
-    saved-page/    saved-page
-    setting/       setting, retention, fetcher
-  port/            webpage-fetcher, html-parser, document-sanitizer, article-extractor,
-                   feed-repository, feed-item-repository, folder-repository,
-                   feed-parser, saved-page-repository, setting-repository
-  usecase/
-    common/        fetch-and-extract, paging, errors
-    feed/          fetch-parsed-feed, preview-feed, subscribe-feed, refresh-feed,
-                   list-items, extract-item, create-folder, rename-folder,
-                   move-feed, errors
-    saved-page/    add-saved-page, save-feed-item, list-saved-pages, errors
-    setting/       use-jina, use-browser, active-fetcher, errors
-  index.ts         re-exports the public modules
-```
+`packages/business/src` is grouped by layer first: `entity/` and `usecase/` are split by domain (`common`, `feed`, `saved-page`, `setting`); `port/` is flat because port interfaces are generic. Read the directories for the file list.
 
-- Group by layer first. `entity/` and `usecase/` are split by domain; `port/` is flat because port interfaces are generic.
-- `entity/` holds only business entities and the value types of their fields; article values shared by feed items and saved pages live in `entity/common`. Paging, cursors, queries, use-case inputs and values a port returns (`ParsedFeed`, `ExtractedArticle`) are not entities.
-- A port file holds the port interface (`interface I<Port>` next to its `Context.Service` class, key `@reader/business/<Port>`), the types it takes and returns (`FeedItemQuery`, `ParsedFeed`), and its own error. Use-case errors live in `usecase/<domain>/errors.ts`.
+- `entity/` holds only business entities and the value types of their fields; article values shared by feed items and saved pages live in `entity/common`. Paging, cursors, queries, use-case inputs and values a port returns (`ParsedFeed`, `ExtractedArticle`) are not entities. Field notes that the types cannot say are JSDoc on the schema fields.
+- A port file holds the port interface (`interface I<Port>` next to its `Context.Service` class, key `@reader/business/<Port>`), the types it takes and returns (`FeedItemQuery`, `ParsedFeed`), and its own error. Each method's contract is JSDoc on the interface method and names its rule ids; change the JSDoc and the rule file together. Use-case errors live in `usecase/<domain>/errors.ts`.
 - `usecase/` holds every core function, pure or effectful. A function only one use case calls lives in that use case's module (the sync, the selection and the text cleaning are inside `refresh-feed`); `selectItems` is exported from that module only for its FD-SEL unit tests, not from the barrel. The paging arithmetic of CM-PAGE-4 (`pageQuery`, `pageOf`) is shared by the four list use cases from `usecase/common/paging.ts`; a few lines shared by only two use cases are repeated (the saved-page duplicate check).
 - Inside the package, modules import each other by relative path. Every other package imports `@reader/business`; tests import the in-memory doubles and contract suites from `@reader/business/testing` (`packages/business/test/support/index.ts`).
-- `packages/business/src` imports only `effect` and its submodules (`effect/schema`, `effect/http`): no other package, no `node:` module, nothing from `test/`. Check this on every new import.
+- `packages/business/src` imports only `effect` and its submodules; `biome.json` enforces this.
 
 ## Implementation rules
 

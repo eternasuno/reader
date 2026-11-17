@@ -14,7 +14,7 @@ import {
 } from '@reader/business';
 import { feedRepositoryContract } from '@reader/business/testing';
 import { Effect, Option, Schema } from 'effect';
-import { feedStoreLayer, readerStoreDatabaseLayer } from '../support/store';
+import { feedStoreLayer, readerStoreDatabaseLayer } from '../support';
 
 const alice = OwnerId.make('alice');
 

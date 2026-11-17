@@ -1,4 +1,3 @@
-import { SqliteMigrator } from '@effect/sql-sqlite-node';
 import type {
   FeedStoreLayer,
   SavedPageStoreLayer,
@@ -6,15 +5,15 @@ import type {
 import { Layer } from 'effect';
 import {
   ReaderStoreLive,
+  readerMigrationLayer,
+  readerSqliteLayer,
   SavedPageRepositoryLive,
   SettingRepositoryLive,
-} from '../../src/store';
-import { readerSqliteLayer } from '../../src/store/client';
-import { readerMigrations } from '../../src/store/schema';
+} from '../../src';
 
-export const readerDatabaseLayer = SqliteMigrator.layer({
-  loader: readerMigrations,
-}).pipe(Layer.provideMerge(readerSqliteLayer(':memory:')));
+export const readerDatabaseLayer = readerMigrationLayer.pipe(
+  Layer.provideMerge(readerSqliteLayer(':memory:'))
+);
 
 export const feedStoreLayer: FeedStoreLayer = ReaderStoreLive.pipe(
   Layer.provide(readerDatabaseLayer)

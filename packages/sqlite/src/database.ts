@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Config, Context, Data, Effect, Layer } from 'effect';
-import { readerSqliteLayer } from '../store/client';
+import { readerSqliteLayer } from './store/client';
 
 class DatabaseConnectError extends Data.TaggedError('DatabaseConnectError')<{
   readonly path: string;
