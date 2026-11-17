@@ -119,9 +119,9 @@ Every id (`FeedId`, `FeedItemId`, `FolderId`, `SavedPageId`) is a branded string
 5. Return title, description, the non-empty content, and the publish time.
 
 - CM-FETCH-1 The extractor reports a missing publish time as none, and nobody invents one.
-- CM-FETCH-2 Which provider fetches the page depends on the owner's fetcher setting. Business decides which one is in effect (`activeFetcher`, SET-ACTIVE); the server reads the setting, maps the result to a `WebpageFetcher` by exhaustive match with no condition of its own, and provides it when it runs the use case. Business takes no owner or provider parameter for fetching.
+- CM-FETCH-2 Which provider fetches the page depends on the owner's fetcher setting. Business decides which one is in effect (`activeFetcher`, SET-ACTIVE); the server provides a `WebpageFetcher` for the owner that reads the setting when the page is fetched (not before the use case runs), maps the result to the provider's `WebpageFetcher` by exhaustive match with no condition of its own, and delegates the fetch. Business takes no owner or provider parameter for fetching.
 - CM-FETCH-3 The extractor returns sanitized description and content (CM-ART-4). Sanitizing is part of the port's contract, not a step of the use case. Redirects, timeouts, size limits and which addresses may be reached are the fetcher's concern.
-- CM-FETCH-4 Errors: `WebpageFetcherError`, `HtmlParserError`, `ArticleExtractorError`, `ArticleEmptyContent`. Over HTTP every endpoint that extracts answers them with status 422 and the tags `WebpageFetcherError`, `ArticleExtractorError` (also for `HtmlParserError`, which has no contract tag) and `ArticleEmptyContent`; domain API tables list only the contract tags. Nothing is stored on failure.
+- CM-FETCH-4 Errors: `WebpageFetcherError`, `SettingRepositoryError`, `HtmlParserError`, `ArticleExtractorError`, `ArticleEmptyContent`. Over HTTP every endpoint that extracts answers `SettingRepositoryError` with status 500, and the other four with status 422 and the tags `WebpageFetcherError`, `ArticleExtractorError` (also for `HtmlParserError`, which has no contract tag) and `ArticleEmptyContent`; domain API tables list only the contract tags. Nothing is stored on failure.
 
 ### CM-HTML — Clean feed text before storing
 

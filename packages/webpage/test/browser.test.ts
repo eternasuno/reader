@@ -1,221 +1,271 @@
-import { EventEmitter } from 'node:events';
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
+import { createServer } from 'node:net';
+import { setImmediate as nextTick } from 'node:timers/promises';
 import { expect, it } from '@effect/vitest';
-import { Effect } from 'effect';
-import { beforeEach, vi } from 'vitest';
-import type { ClientOptions } from 'ws';
-import { fetchBrowser } from '../src/browser';
-
-type Listener = (...args: Array<unknown>) => void;
-
-type SocketStub = {
-  readonly url: string;
-  readyState: number;
-  closeCalls: number;
-  terminateCalls: number;
-  readonly close: () => void;
-  readonly terminate: () => void;
-};
-
-const { connectMock, fetchMock, sockets, realSockets } = vi.hoisted(() => ({
-  connectMock: vi.fn(),
-  fetchMock: vi.fn(),
-  sockets: [] as Array<SocketStub>,
-  realSockets: { value: false },
-}));
-
-const createFakeSocket = (url: string): SocketStub => {
-  const emitter = new EventEmitter();
-  const finish = (key: 'closeCalls' | 'terminateCalls') => {
-    socket[key] += 1;
-    socket.readyState = 3;
-    emitter.emit('close');
-  };
-  const socket: SocketStub = {
-    url,
-    readyState: 0,
-    closeCalls: 0,
-    terminateCalls: 0,
-    close: () => finish('closeCalls'),
-    terminate: () => finish('terminateCalls'),
-  };
-
-  Object.assign(socket, {
-    on: (event: string, listener: Listener) => emitter.on(event, listener),
-    once: (event: string, listener: Listener) => emitter.once(event, listener),
-    send: () => {},
-    emit: (event: string, ...args: Array<unknown>) =>
-      emitter.emit(event, ...args),
-  });
-  sockets.push(socket);
-  queueMicrotask(() => {
-    socket.readyState = 1;
-    emitter.emit('open');
-  });
-
-  return socket;
-};
-
-vi.mock('puppeteer-core', () => ({ connect: connectMock }));
-
-vi.mock('ws', async () => {
-  const actual = await vi.importActual<{
-    default: new (
-      url: string,
-      protocols: Array<string>,
-      options: ClientOptions
-    ) => unknown;
-  }>('ws');
-  function Delegating(
-    url: string,
-    protocols: Array<string>,
-    options: ClientOptions
-  ) {
-    return realSockets.value
-      ? new actual.default(url, protocols, options)
-      : createFakeSocket(url);
-  }
-
-  Object.assign(Delegating, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
-
-  return { default: Delegating };
-});
-
-const pageFixture = (html = '<html>ok</html>') => ({
-  goto: vi.fn(async (_url: string, _options?: unknown) => undefined),
-  waitForNetworkIdle: vi.fn(async (_options?: unknown) => {}),
-  content: vi.fn(async () => html),
-  close: vi.fn(async () => {}),
-});
-
-const browserFixture = (html?: string) => {
-  const page = pageFixture(html);
-  const browser = {
-    newPage: vi.fn(async () => page),
-    disconnect: vi.fn(async () => {}),
-  };
-
-  return { browser, page };
-};
-
-type Fixture = ReturnType<typeof browserFixture>;
+import {
+  BrowserEndpoint,
+  WebpageFetcher,
+  WebpageFetcherError,
+} from '@reader/business';
+import { Effect, Schema } from 'effect';
+import { type WebSocket, WebSocketServer } from 'ws';
+import { BrowserWebpageFetcherLive } from '../src/browser';
 
 const article = 'https://example.com/article';
 
-const endpoint = 'http://127.0.0.1:9222';
+const portOf = (address: ReturnType<WebSocketServer['address']>): number =>
+  typeof address === 'object' && address !== null ? address.port : 0;
 
-const websocketUrl = 'ws://127.0.0.1:9222/devtools/browser/test';
+/** A port nothing listens on: opened and closed again before the fetch. */
+const closedPort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const port = portOf(server.address());
+      server.close((error) => (error ? reject(error) : resolve(port)));
+    });
+  });
 
-const discoveryResponse = (payload: unknown, status = 200): Response =>
-  new Response(JSON.stringify(payload), { status });
+const startSocketServer = (
+  onConnection: (socket: WebSocket, request: IncomingMessage) => void
+): Promise<{ readonly server: WebSocketServer; readonly port: number }> =>
+  new Promise((resolve, reject) => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    server.on('connection', onConnection);
+    server.once('error', reject);
+    server.once('listening', () => {
+      resolve({ server, port: portOf(server.address()) });
+    });
+  });
 
-const expectTeardown = ({ browser, page }: Fixture): void => {
-  expect(page.close).toHaveBeenCalled();
-  expect(browser.disconnect).toHaveBeenCalled();
+const closeSocketServer = (server: WebSocketServer): Promise<void> =>
+  new Promise((resolve) => {
+    for (const client of server.clients) {
+      client.terminate();
+    }
+    server.close(() => resolve());
+  });
 
-  for (const socket of sockets) {
-    expect(socket.readyState).toBe(3);
-    expect(socket.closeCalls + socket.terminateCalls).toBeGreaterThan(0);
-  }
-};
+const socketServerPort = (
+  onConnection: (socket: WebSocket, request: IncomingMessage) => void
+) =>
+  Effect.acquireRelease(
+    Effect.promise(() => startSocketServer(onConnection)),
+    ({ server }) => Effect.promise(() => closeSocketServer(server))
+  ).pipe(Effect.map(({ port }) => port));
 
-beforeEach(() => {
-  connectMock.mockReset();
-  fetchMock.mockReset();
-  fetchMock.mockImplementation(async () =>
-    discoveryResponse({ webSocketDebuggerUrl: websocketUrl })
+const startHttpServer = (
+  onRequest: (request: IncomingMessage, response: ServerResponse) => void
+): Promise<{
+  readonly server: ReturnType<typeof createHttpServer>;
+  readonly port: number;
+}> =>
+  new Promise((resolve, reject) => {
+    const server = createHttpServer(onRequest);
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      resolve({ server, port: portOf(server.address()) });
+    });
+  });
+
+const closeHttpServer = (
+  server: ReturnType<typeof createHttpServer>
+): Promise<void> =>
+  new Promise((resolve) => {
+    server.close(() => resolve());
+  });
+
+const httpServerPort = (
+  onRequest: (request: IncomingMessage, response: ServerResponse) => void
+) =>
+  Effect.acquireRelease(
+    Effect.promise(() => startHttpServer(onRequest)),
+    ({ server }) => Effect.promise(() => closeHttpServer(server))
+  ).pipe(Effect.map(({ port }) => port));
+
+const fetchPage = (endpoint: string) =>
+  Effect.flatMap(WebpageFetcher, (fetcher) => fetcher.fetch(article)).pipe(
+    Effect.provide(
+      BrowserWebpageFetcherLive(Schema.decodeSync(BrowserEndpoint)(endpoint))
+    )
   );
-  vi.stubGlobal('fetch', fetchMock);
-  sockets.length = 0;
-  realSockets.value = false;
-});
 
-const actualPuppeteer =
-  await vi.importActual<typeof import('puppeteer-core')>('puppeteer-core');
-
-it.effect('discovers the debugger socket and returns the page html', () =>
+const fetchWithoutUnhandled = (endpoint: string) =>
   Effect.gen(function* () {
-    const fixture = browserFixture();
-    connectMock.mockResolvedValue(fixture.browser);
-
-    expect(yield* fetchBrowser(article, endpoint)).toBe('<html>ok</html>');
-
-    const [target, init] = fetchMock.mock.calls[0] ?? [];
-
-    expect(String(target)).toBe('http://127.0.0.1:9222/json/version');
-    expect(init).toMatchObject({ method: 'GET' });
-    expect(sockets[0]?.url).toBe(websocketUrl);
-    expect(connectMock).toHaveBeenCalledWith({
-      transport: expect.anything(),
+    const unhandled: Array<unknown> = [];
+    let notifyUnhandled: (() => void) | undefined;
+    const onUnhandled = (cause: unknown) => {
+      unhandled.push(cause);
+      notifyUnhandled?.();
+    };
+    const waitForUnhandled = Effect.callback<WebpageFetcherError>((resume) => {
+      notifyUnhandled = () =>
+        resume(
+          Effect.succeed(
+            new WebpageFetcherError({ message: 'Unhandled process error' })
+          )
+        );
     });
-    expect(fixture.page.goto).toHaveBeenCalledWith(article, {
-      waitUntil: 'domcontentloaded',
-    });
-    expect(fixture.page.waitForNetworkIdle).toHaveBeenCalled();
-    expectTeardown(fixture);
-  })
-);
 
-it.effect('sends basic auth credentials to discovery and the socket', () =>
-  Effect.gen(function* () {
-    const fixture = browserFixture();
-    connectMock.mockResolvedValue(fixture.browser);
+    process.on('unhandledRejection', onUnhandled);
+    process.on('uncaughtException', onUnhandled);
 
-    yield* fetchBrowser(article, 'http://user:secret@127.0.0.1:9222');
-
-    const [target, init] = fetchMock.mock.calls[0] ?? [];
-
-    expect(String(target)).toBe('http://127.0.0.1:9222/json/version');
-    expect(new Headers(init?.headers).get('authorization')).toBe(
-      `Basic ${Buffer.from('user:secret').toString('base64')}`
-    );
-    expect(sockets[0]?.url).toBe(
-      'ws://user:secret@127.0.0.1:9222/devtools/browser/test'
-    );
-    expectTeardown(fixture);
-  })
-);
-
-it.effect('uses a WebSocket endpoint without discovery', () =>
-  Effect.gen(function* () {
-    const fixture = browserFixture();
-    connectMock.mockResolvedValue(fixture.browser);
-
-    yield* fetchBrowser(article, websocketUrl);
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(sockets[0]?.url).toBe(websocketUrl);
-    expectTeardown(fixture);
-  })
-);
-
-it.effect('closes the page and connection after a failed extraction', () =>
-  Effect.gen(function* () {
-    const fixture = browserFixture();
-    fixture.page.content.mockRejectedValue(new Error('Target closed'));
-    connectMock.mockResolvedValue(fixture.browser);
-
-    const failure = yield* Effect.flip(fetchBrowser(article, endpoint));
-
-    expect(failure.message).toBe('Page content read failed');
-    expectTeardown(fixture);
-  })
-);
-
-const { OBSCURA_WS_ENDPOINT: obscuraEndpoint } = process.env;
-
-it.effect.runIf(obscuraEndpoint)(
-  'renders JavaScript content against a real obscura browser',
-  () =>
-    Effect.gen(function* () {
-      vi.unstubAllGlobals();
-      realSockets.value = true;
-      connectMock.mockImplementation(actualPuppeteer.connect);
-      const html = yield* fetchBrowser(
-        'https://quotes.toscrape.com/js/',
-        obscuraEndpoint ?? ''
+    try {
+      const failure = yield* Effect.raceFirst(
+        Effect.flip(fetchPage(endpoint)),
+        waitForUnhandled
       );
+      yield* Effect.promise(() => nextTick());
 
-      expect(html).toContain('class="quote"');
-    }),
-  { timeout: 60_000 }
+      return { failure, unhandled };
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      process.off('uncaughtException', onUnhandled);
+    }
+  });
+
+it.effect('CM-FETCH-4 reports an unreachable browser service', () =>
+  Effect.gen(function* () {
+    const port = yield* Effect.promise(closedPort);
+    const failure = yield* Effect.flip(fetchPage(`http://127.0.0.1:${port}`));
+
+    expect(failure._tag).toBe('WebpageFetcherError');
+    expect(failure.message).toBe('Browser discovery failed');
+    expect(failure.message).not.toContain(String(port));
+    expect(failure.message).not.toContain('127.0.0.1');
+  })
+);
+
+it.effect('CM-FETCH-4 reports an unreachable debugger socket', () =>
+  Effect.gen(function* () {
+    const port = yield* Effect.promise(closedPort);
+    const failure = yield* Effect.flip(
+      fetchPage(`ws://127.0.0.1:${port}/devtools/browser/reader`)
+    );
+
+    expect(failure._tag).toBe('WebpageFetcherError');
+    expect(failure.message).toBe('Browser connection failed');
+    expect(failure.message).not.toContain(String(port));
+  })
+);
+
+it.effect('SET-VAL-4 keeps the endpoint credentials out of the message', () =>
+  Effect.gen(function* () {
+    const port = yield* Effect.promise(closedPort);
+    const failure = yield* Effect.flip(
+      fetchPage(`http://user:secret@127.0.0.1:${port}`)
+    );
+
+    expect(failure._tag).toBe('WebpageFetcherError');
+    expect(failure.message).not.toContain('user');
+    expect(failure.message).not.toContain('secret');
+    expect(failure.message).not.toContain(String(port));
+  })
+);
+
+it.effect(
+  'CM-FETCH-4 catches malformed CDP frames without an unhandled rejection',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const replyPort = yield* socketServerPort((socket) => {
+          socket.on('message', () => socket.send('{not-json'));
+        });
+        const replyResult = yield* fetchWithoutUnhandled(
+          `ws://127.0.0.1:${replyPort}/devtools/browser/reader`
+        );
+
+        expect(replyResult.unhandled).toEqual([]);
+        expect(replyResult.failure._tag).toBe('WebpageFetcherError');
+        expect(replyResult.failure.message).toBe('Browser connection failed');
+        expect(replyResult.failure.message).not.toContain(String(replyPort));
+
+        const greetPort = yield* socketServerPort((socket) => {
+          socket.send('{not-json');
+        });
+        const greetResult = yield* fetchWithoutUnhandled(
+          `ws://127.0.0.1:${greetPort}/devtools/browser/reader`
+        );
+
+        expect(greetResult.unhandled).toEqual([]);
+        expect(greetResult.failure._tag).toBe('WebpageFetcherError');
+        expect(greetResult.failure.message).toBe('Browser connection failed');
+        expect(greetResult.failure.message).not.toContain(String(greetPort));
+      })
+    )
+);
+
+it.effect(
+  'SET-VAL-3 discovers the debugger socket for http and root ws endpoints',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connectedPaths: Array<string | undefined> = [];
+        const wsPort = yield* socketServerPort((socket, request) => {
+          connectedPaths.push(request.url);
+          socket.close();
+        });
+        const discoveryRequests: Array<string | undefined> = [];
+        const httpPort = yield* httpServerPort((request, response) => {
+          discoveryRequests.push(request.url);
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(
+            JSON.stringify({
+              webSocketDebuggerUrl: `ws://127.0.0.1:${wsPort}/devtools/browser/reader`,
+            })
+          );
+        });
+
+        const httpFailure = yield* Effect.flip(
+          fetchPage(`http://127.0.0.1:${httpPort}`)
+        );
+        const wsFailure = yield* Effect.flip(
+          fetchPage(`ws://127.0.0.1:${httpPort}`)
+        );
+
+        expect(discoveryRequests).toEqual(['/json/version', '/json/version']);
+        expect(connectedPaths).toEqual([
+          '/devtools/browser/reader',
+          '/devtools/browser/reader',
+        ]);
+        expect(httpFailure.message).toBe('Browser connection failed');
+        expect(wsFailure.message).toBe('Browser connection failed');
+      })
+    )
+);
+
+it.effect(
+  'CM-URL-4 decodes percent-encoded credentials in the discovery request',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let authorization: string | undefined;
+        const port = yield* httpServerPort((request, response) => {
+          authorization = request.headers.authorization;
+          response.writeHead(500);
+          response.end();
+        });
+
+        const failure = yield* Effect.flip(
+          fetchPage(`http://user:p%40ss@127.0.0.1:${port}`)
+        );
+        const decoded = authorization?.startsWith('Basic ')
+          ? Buffer.from(
+              authorization.slice('Basic '.length),
+              'base64'
+            ).toString('utf8')
+          : undefined;
+
+        expect(decoded).toBe('user:p@ss');
+        expect(failure._tag).toBe('WebpageFetcherError');
+        expect(failure.message).toBe('Browser discovery failed');
+        expect(failure.message).not.toContain('p@ss');
+        expect(failure.message).not.toContain('p%40ss');
+      })
+    )
 );

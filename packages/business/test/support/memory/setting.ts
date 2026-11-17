@@ -1,73 +1,74 @@
 import { Effect, Layer, Option, Ref, Schema } from 'effect';
 import type { OwnerId } from '../../../src/entity/common/owner-id';
+import type {
+  BrowserEndpoint,
+  JinaKey,
+} from '../../../src/entity/setting/fetcher';
+import type { Retention } from '../../../src/entity/setting/retention';
 import { Setting } from '../../../src/entity/setting/setting';
-import { SettingRepository } from '../../../src/port/setting-repository';
+import {
+  type ISettingRepository,
+  SettingRepository,
+} from '../../../src/port/setting-repository';
 
-const decodeSetting = Schema.decodeSync(Setting);
-
+/** A user without stored settings reads the value the schema decodes (SET-GET-1). */
 const defaultSetting = (ownerId: OwnerId): Setting =>
-  decodeSetting({
-    ownerId,
-    feed: {},
-    fetcher: { jina: {}, browser: {} },
-  });
+  Schema.decodeSync(Setting)({ ownerId });
 
 type StoredSettings = Map<OwnerId, Setting>;
 
+type SettingsRef = Ref.Ref<StoredSettings>;
+
 const write = (
-  rows: Ref.Ref<StoredSettings>,
+  rows: SettingsRef,
   owner: OwnerId,
   change: (current: Setting) => Setting
 ): Effect.Effect<void> =>
-  Ref.update(rows, (map) =>
-    new Map(map).set(owner, change(map.get(owner) ?? defaultSetting(owner)))
+  Ref.update(rows, (stored) =>
+    new Map(stored).set(
+      owner,
+      change(stored.get(owner) ?? defaultSetting(owner))
+    )
   );
 
-export const MemorySettingRepositoryLive = Layer.effect(
-  SettingRepository,
-  Effect.gen(function* () {
-    const rows = yield* Ref.make<StoredSettings>(new Map());
+const makeSettingRepository = (rows: SettingsRef): ISettingRepository => ({
+  get: (owner) =>
+    Ref.get(rows).pipe(
+      Effect.map((stored) => stored.get(owner) ?? defaultSetting(owner))
+    ),
+  setRetention: (owner: OwnerId, retention: Retention) =>
+    write(rows, owner, (setting) => ({ ...setting, retention })),
+  selectJina: (owner) =>
+    write(rows, owner, (setting) => ({ ...setting, provider: 'jina' })),
+  selectJinaWithKey: (owner, key: JinaKey) =>
+    write(rows, owner, (setting) => ({
+      ...setting,
+      provider: 'jina',
+      jinaKey: Option.some(key),
+    })),
+  clearJinaKey: (owner) =>
+    write(rows, owner, (setting) => ({ ...setting, jinaKey: Option.none() })),
+  selectBrowser: (owner) =>
+    write(rows, owner, (setting) => ({ ...setting, provider: 'browser' })),
+  selectBrowserWithEndpoint: (owner, endpoint: BrowserEndpoint) =>
+    write(rows, owner, (setting) => ({
+      ...setting,
+      provider: 'browser',
+      browserEndpoint: Option.some(endpoint),
+    })),
+});
 
-    return SettingRepository.of({
-      get: (owner) =>
-        Ref.get(rows).pipe(
-          Effect.map((current) => current.get(owner) ?? defaultSetting(owner))
-        ),
-      setRetention: (owner, retention) =>
-        write(rows, owner, (s) => ({ ...s, feed: { retention } })),
-      selectJina: (owner) =>
-        write(rows, owner, (s) => ({
-          ...s,
-          fetcher: { ...s.fetcher, provider: 'jina' },
-        })),
-      selectJinaWithKey: (owner, key) =>
-        write(rows, owner, (s) => ({
-          ...s,
-          fetcher: {
-            ...s.fetcher,
-            provider: 'jina',
-            jina: { key: Option.some(key) },
-          },
-        })),
-      clearJinaKey: (owner) =>
-        write(rows, owner, (s) => ({
-          ...s,
-          fetcher: { ...s.fetcher, jina: { key: Option.none() } },
-        })),
-      selectBrowser: (owner) =>
-        write(rows, owner, (s) => ({
-          ...s,
-          fetcher: { ...s.fetcher, provider: 'browser' },
-        })),
-      selectBrowserWithEndpoint: (owner, endpoint) =>
-        write(rows, owner, (s) => ({
-          ...s,
-          fetcher: {
-            ...s.fetcher,
-            provider: 'browser',
-            browser: { endpoint: Option.some(endpoint) },
-          },
-        })),
-    });
-  })
-);
+/** Builds a fresh, empty store per call, so each test gets its own state. */
+export const memorySettingLayer = (
+  decorate: (settings: ISettingRepository) => ISettingRepository = (settings) =>
+    settings
+): Layer.Layer<SettingRepository> =>
+  Layer.effect(
+    SettingRepository,
+    Effect.map(Ref.make<StoredSettings>(new Map()), (rows) =>
+      decorate(makeSettingRepository(rows))
+    )
+  );
+
+export const MemorySettingRepositoryLive: Layer.Layer<SettingRepository> =
+  memorySettingLayer();

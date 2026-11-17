@@ -1,19 +1,8 @@
 {
   "$schema": "node_modules/@biomejs/biome/configuration_schema.json",
-  "files": {
-    "ignoreUnknown": true,
-    "includes": ["**", "!!.agents/skills"]
-  },
-  "formatter": {
-    "indentStyle": "space",
-    "indentWidth": 2,
-    "lineWidth": 80
-  },
-  "css": {
-    "parser": {
-      "tailwindDirectives": true
-    }
-  },
+  "files": { "ignoreUnknown": true, "includes": ["**", "!!.agents/skills"] },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 80 },
+  "css": { "parser": { "tailwindDirectives": true } },
   "javascript": {
     "formatter": {
       "quoteStyle": "single",
@@ -22,24 +11,17 @@
     }
   },
   "linter": {
-    "domains": {
-      "solid": "all"
-    },
+    "domains": { "solid": "all" },
     "rules": {
       "preset": "recommended",
       "complexity": {
         "noExcessiveCognitiveComplexity": {
           "level": "error",
-          "options": {
-            "maxAllowedComplexity": 10
-          }
+          "options": { "maxAllowedComplexity": 10 }
         },
         "noExcessiveLinesPerFunction": {
           "level": "error",
-          "options": {
-            "maxLines": 40,
-            "skipBlankLines": true
-          }
+          "options": { "maxLines": 40, "skipBlankLines": true }
         },
         "useMathMinMax": "off"
       },
@@ -55,44 +37,29 @@
         "noAccumulatingSpread": "error",
         "useSolidForComponent": "error"
       },
-      "security": {
-        "noSecrets": "off"
-      },
+      "security": { "noSecrets": "off" },
       "style": {
         "useConsistentArrayType": {
           "level": "error",
-          "options": {
-            "syntax": "generic"
-          }
+          "options": { "syntax": "generic" }
         },
         "noExcessiveLinesPerFile": {
           "level": "error",
-          "options": {
-            "maxLines": 300,
-            "skipBlankLines": true
-          }
+          "options": { "maxLines": 300, "skipBlankLines": true }
         },
         "noExportedImports": "error",
         "noNestedTernary": "error",
         "noParameterAssign": {
           "level": "error",
-          "options": {
-            "propertyAssignment": "deny"
-          }
+          "options": { "propertyAssignment": "deny" }
         },
         "noUselessElse": "error",
         "useReadonlyClassProperties": "error"
       },
-      "suspicious": {
-        "noVar": "error"
-      }
+      "suspicious": { "noVar": "error" }
     }
   },
-  "vcs": {
-    "clientKind": "git",
-    "enabled": true,
-    "useIgnoreFile": true
-  },
+  "vcs": { "clientKind": "git", "enabled": true, "useIgnoreFile": true },
   "overrides": [
     {
       "includes": ["packages/business/src/**"],
@@ -113,7 +80,7 @@
                       "!../**",
                       "**/apps/**"
                     ],
-                    "message": "packages/business 只能依赖 effect 及其子模块（project-business）"
+                    "message": "packages/business depends on effect only; no package imports apps/reader (reader-engineering: Packages)"
                   },
                   {
                     "group": [
@@ -122,15 +89,13 @@
                       "@reader/business/testing",
                       "@reader/sqlite/testing"
                     ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
                   }
                 ]
               }
             }
           },
-          "correctness": {
-            "noNodejsModules": "error"
-          }
+          "correctness": { "noNodejsModules": "error" }
         }
       }
     },
@@ -157,7 +122,7 @@
                       "!../**",
                       "**/apps/**"
                     ],
-                    "message": "packages/sqlite 只能依赖 effect、@effect/sql-sqlite-node、@reader/business 和 node: 模块，不能依赖 apps/api（project-database）"
+                    "message": "packages/sqlite depends on effect, @effect/sql-sqlite-node, @reader/business and node: modules only; no package imports apps/reader (reader-engineering: Packages)"
                   },
                   {
                     "group": [
@@ -166,7 +131,7 @@
                       "@reader/business/testing",
                       "@reader/sqlite/testing"
                     ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
                   }
                 ]
               }
@@ -176,7 +141,7 @@
       }
     },
     {
-      "includes": ["apps/api/src/http/**"],
+      "includes": ["packages/content/src/**"],
       "linter": {
         "rules": {
           "style": {
@@ -186,17 +151,20 @@
                 "patterns": [
                   {
                     "group": [
-                      "**/content/**",
-                      "**/refresh/**",
-                      "!**/refresh/queue",
-                      "@reader/sqlite",
-                      "@reader/sqlite/**"
+                      "*",
+                      "**",
+                      "!effect",
+                      "!effect/**",
+                      "!@reader/business",
+                      "!feedsmith",
+                      "!jsdom",
+                      "!@mozilla/readability",
+                      "!dompurify",
+                      "!./**",
+                      "!../**",
+                      "**/apps/**"
                     ],
-                    "message": "http/ 只通过业务端口和 FeedRefreshQueue 访问实现，不导入 content/、refresh/ 实现或 @reader/sqlite（project-effect-api）"
-                  },
-                  {
-                    "group": ["@reader/webpage", "@reader/webpage/**"],
-                    "message": "只有 http/library/session.ts 可以选择抓取器 Layer（project-effect-api）"
+                    "message": "packages/content depends on effect, @reader/business, feedsmith, jsdom, @mozilla/readability and dompurify only; no package imports apps/reader (reader-engineering: Packages)"
                   },
                   {
                     "group": [
@@ -205,7 +173,7 @@
                       "@reader/business/testing",
                       "@reader/sqlite/testing"
                     ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
                   }
                 ]
               }
@@ -215,7 +183,7 @@
       }
     },
     {
-      "includes": ["apps/api/src/http/library/session.ts"],
+      "includes": ["packages/webpage/src/**"],
       "linter": {
         "rules": {
           "style": {
@@ -225,13 +193,19 @@
                 "patterns": [
                   {
                     "group": [
-                      "**/content/**",
-                      "**/refresh/**",
-                      "!**/refresh/queue",
-                      "@reader/sqlite",
-                      "@reader/sqlite/**"
+                      "*",
+                      "**",
+                      "!effect",
+                      "!effect/**",
+                      "!@reader/business",
+                      "!puppeteer-core",
+                      "!ws",
+                      "!node:*",
+                      "!./**",
+                      "!../**",
+                      "**/apps/**"
                     ],
-                    "message": "http/ 只通过业务端口和 FeedRefreshQueue 访问实现，不导入 content/、refresh/ 实现或 @reader/sqlite（project-effect-api）"
+                    "message": "packages/webpage depends on effect, @reader/business, puppeteer-core, ws and node: modules only; no package imports apps/reader (reader-engineering: Packages)"
                   },
                   {
                     "group": [
@@ -240,7 +214,7 @@
                       "@reader/business/testing",
                       "@reader/sqlite/testing"
                     ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
                   }
                 ]
               }
@@ -250,12 +224,7 @@
       }
     },
     {
-      "includes": [
-        "apps/api/src/**",
-        "!apps/api/src/http/**",
-        "packages/api/src/**",
-        "packages/webpage/src/**"
-      ],
+      "includes": ["apps/reader/src/contract/**"],
       "linter": {
         "rules": {
           "style": {
@@ -263,6 +232,18 @@
               "level": "error",
               "options": {
                 "patterns": [
+                  {
+                    "group": [
+                      "*",
+                      "**",
+                      "!effect",
+                      "!effect/**",
+                      "!@reader/business",
+                      "!./**",
+                      "!../**"
+                    ],
+                    "message": "src/contract depends on effect and @reader/business only (reader-engineering: Packages)"
+                  },
                   {
                     "group": [
                       "**/test/**",
@@ -270,7 +251,7 @@
                       "@reader/business/testing",
                       "@reader/sqlite/testing"
                     ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
                   }
                 ]
               }
@@ -280,7 +261,7 @@
       }
     },
     {
-      "includes": ["apps/web/src/api/**"],
+      "includes": ["apps/reader/src/web/**"],
       "linter": {
         "rules": {
           "style": {
@@ -290,30 +271,100 @@
                 "patterns": [
                   {
                     "group": [
+                      "**/server/**",
                       "@reader/sqlite",
                       "@reader/sqlite/**",
-                      "@effect/sql-*",
+                      "@reader/content",
+                      "@reader/content/**",
+                      "@reader/webpage",
+                      "@reader/webpage/**",
+                      "@reader/business",
+                      "@reader/business/**",
+                      "node:*",
                       "@effect/platform-node",
                       "@effect/platform-node/**",
-                      "node:*",
+                      "@effect/sql-*",
                       "better-auth",
                       "better-auth/*",
-                      "!better-auth/solid",
-                      "**/apps/api/**"
+                      "!better-auth/solid"
                     ],
-                    "message": "apps/web 不能引入服务端代码、数据库或 Better Auth 服务端（project-architecture）"
+                    "message": "src/web must not import the server, the adapter packages, node: modules or Better Auth's server entry; entity types reach it through the contract (reader-engineering: Packages)"
+                  },
+                  {
+                    "group": ["effect", "effect/*", "effect/**"],
+                    "message": "Only api/ may import Effect in the web client; stores and components await its Promise-returning functions (reader-engineering: apps/reader)"
+                  },
+                  {
+                    "group": [
+                      "**/test/**",
+                      "**/test",
+                      "@reader/business/testing",
+                      "@reader/sqlite/testing"
+                    ],
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/reader/src/web/api/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/server/**",
+                      "@reader/sqlite",
+                      "@reader/sqlite/**",
+                      "@reader/content",
+                      "@reader/content/**",
+                      "@reader/webpage",
+                      "@reader/webpage/**",
+                      "@reader/business",
+                      "@reader/business/**",
+                      "node:*",
+                      "@effect/platform-node",
+                      "@effect/platform-node/**",
+                      "@effect/sql-*",
+                      "better-auth",
+                      "better-auth/*",
+                      "!better-auth/solid"
+                    ],
+                    "message": "src/web must not import the server, the adapter packages, node: modules or Better Auth's server entry; entity types reach it through the contract (reader-engineering: Packages)"
                   },
                   {
                     "group": [
                       "solid-js",
                       "solid-js/*",
                       "@solidjs/*",
-                      "**/models/**",
-                      "**/components/**",
-                      "**/pages/**",
-                      "**/router"
+                      "**/library/**",
+                      "**/library",
+                      "**/saved-page/**",
+                      "**/saved-page",
+                      "**/feed/**",
+                      "**/feed",
+                      "**/folder/**",
+                      "**/folder",
+                      "**/setting/**",
+                      "**/setting",
+                      "**/reader/**",
+                      "**/reader",
+                      "**/account/**",
+                      "**/account",
+                      "**/ui/**",
+                      "**/ui",
+                      "**/routes",
+                      "**/routes/**"
                     ],
-                    "message": "api/ 不依赖 Solid、router、models、components 或 pages（project-architecture）"
+                    "message": "api/ must not use Solid or the router, nor the other web modules; it only exposes Promise-returning functions (reader-engineering: apps/reader)"
                   },
                   {
                     "group": [
@@ -322,7 +373,7 @@
                       "@reader/business/testing",
                       "@reader/sqlite/testing"
                     ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
                   }
                 ]
               }
@@ -332,7 +383,7 @@
       }
     },
     {
-      "includes": ["apps/web/src/models/**"],
+      "includes": ["apps/reader/src/web/ui/**"],
       "linter": {
         "rules": {
           "style": {
@@ -342,74 +393,51 @@
                 "patterns": [
                   {
                     "group": [
+                      "**/server/**",
                       "@reader/sqlite",
                       "@reader/sqlite/**",
-                      "@effect/sql-*",
+                      "@reader/content",
+                      "@reader/content/**",
+                      "@reader/webpage",
+                      "@reader/webpage/**",
+                      "@reader/business",
+                      "@reader/business/**",
+                      "node:*",
                       "@effect/platform-node",
                       "@effect/platform-node/**",
-                      "node:*",
-                      "better-auth",
-                      "better-auth/*",
-                      "!better-auth/solid",
-                      "**/apps/api/**"
-                    ],
-                    "message": "apps/web 不能引入服务端代码、数据库或 Better Auth 服务端（project-architecture）"
-                  },
-                  {
-                    "group": ["**/components/**", "**/pages/**"],
-                    "message": "models/ 不能依赖 components 或 pages（project-architecture）"
-                  },
-                  {
-                    "group": [
-                      "**/test/**",
-                      "**/test",
-                      "@reader/business/testing",
-                      "@reader/sqlite/testing"
-                    ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": ["apps/web/src/components/atoms/**"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noRestrictedImports": {
-              "level": "error",
-              "options": {
-                "patterns": [
-                  {
-                    "group": [
-                      "@reader/sqlite",
-                      "@reader/sqlite/**",
                       "@effect/sql-*",
-                      "@effect/platform-node",
-                      "@effect/platform-node/**",
-                      "node:*",
                       "better-auth",
                       "better-auth/*",
-                      "!better-auth/solid",
-                      "**/apps/api/**"
+                      "!better-auth/solid"
                     ],
-                    "message": "apps/web 不能引入服务端代码、数据库或 Better Auth 服务端（project-architecture）"
+                    "message": "src/web must not import the server, the adapter packages, node: modules or Better Auth's server entry; entity types reach it through the contract (reader-engineering: Packages)"
+                  },
+                  {
+                    "group": ["effect", "effect/*", "effect/**"],
+                    "message": "Only api/ may import Effect in the web client; stores and components await its Promise-returning functions (reader-engineering: apps/reader)"
                   },
                   {
                     "group": [
+                      "**/library/**",
+                      "**/library",
+                      "**/saved-page/**",
+                      "**/saved-page",
+                      "**/feed/**",
+                      "**/feed",
+                      "**/folder/**",
+                      "**/folder",
+                      "**/setting/**",
+                      "**/setting",
+                      "**/reader/**",
+                      "**/reader",
+                      "**/account/**",
+                      "**/account",
+                      "**/routes",
+                      "**/routes/**",
                       "**/api/**",
-                      "**/api",
-                      "**/models/**",
-                      "**/molecules/**",
-                      "**/organisms/**",
-                      "**/templates/**",
-                      "**/pages/**"
+                      "**/api"
                     ],
-                    "message": "atoms 不含领域，只通过 props 接收数据，不依赖更高层组件（project-architecture）"
+                    "message": "ui/ carries no domain: it may not use the api client or the domain modules, and receives data through props (reader-engineering: apps/reader)"
                   },
                   {
                     "group": [
@@ -418,7 +446,7 @@
                       "@reader/business/testing",
                       "@reader/sqlite/testing"
                     ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
                   }
                 ]
               }
@@ -428,7 +456,7 @@
       }
     },
     {
-      "includes": ["apps/web/src/components/molecules/**"],
+      "includes": ["apps/reader/src/server/**"],
       "linter": {
         "rules": {
           "style": {
@@ -438,175 +466,12 @@
                 "patterns": [
                   {
                     "group": [
-                      "@reader/sqlite",
-                      "@reader/sqlite/**",
-                      "@effect/sql-*",
-                      "@effect/platform-node",
-                      "@effect/platform-node/**",
-                      "node:*",
-                      "better-auth",
-                      "better-auth/*",
-                      "!better-auth/solid",
-                      "**/apps/api/**"
-                    ],
-                    "message": "apps/web 不能引入服务端代码、数据库或 Better Auth 服务端（project-architecture）"
-                  },
-                  {
-                    "group": [
-                      "**/api/**",
-                      "**/api",
-                      "**/models/**",
-                      "**/organisms/**",
-                      "**/templates/**",
-                      "**/pages/**"
-                    ],
-                    "message": "molecules 不含领域，只通过 props 接收数据，不依赖更高层组件（project-architecture）"
-                  },
-                  {
-                    "group": [
                       "**/test/**",
                       "**/test",
                       "@reader/business/testing",
                       "@reader/sqlite/testing"
                     ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": ["apps/web/src/components/organisms/**"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noRestrictedImports": {
-              "level": "error",
-              "options": {
-                "patterns": [
-                  {
-                    "group": [
-                      "@reader/sqlite",
-                      "@reader/sqlite/**",
-                      "@effect/sql-*",
-                      "@effect/platform-node",
-                      "@effect/platform-node/**",
-                      "node:*",
-                      "better-auth",
-                      "better-auth/*",
-                      "!better-auth/solid",
-                      "**/apps/api/**"
-                    ],
-                    "message": "apps/web 不能引入服务端代码、数据库或 Better Auth 服务端（project-architecture）"
-                  },
-                  {
-                    "group": ["**/templates/**", "**/pages/**"],
-                    "message": "organisms 不能依赖 templates 或 pages（project-architecture）"
-                  },
-                  {
-                    "group": [
-                      "**/test/**",
-                      "**/test",
-                      "@reader/business/testing",
-                      "@reader/sqlite/testing"
-                    ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": ["apps/web/src/components/templates/**"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noRestrictedImports": {
-              "level": "error",
-              "options": {
-                "patterns": [
-                  {
-                    "group": [
-                      "@reader/sqlite",
-                      "@reader/sqlite/**",
-                      "@effect/sql-*",
-                      "@effect/platform-node",
-                      "@effect/platform-node/**",
-                      "node:*",
-                      "better-auth",
-                      "better-auth/*",
-                      "!better-auth/solid",
-                      "**/apps/api/**"
-                    ],
-                    "message": "apps/web 不能引入服务端代码、数据库或 Better Auth 服务端（project-architecture）"
-                  },
-                  {
-                    "group": [
-                      "**/api/**",
-                      "**/api",
-                      "**/models/**",
-                      "**/pages/**"
-                    ],
-                    "message": "templates 只通过 props 接收内容（project-architecture）"
-                  },
-                  {
-                    "group": [
-                      "**/test/**",
-                      "**/test",
-                      "@reader/business/testing",
-                      "@reader/sqlite/testing"
-                    ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "apps/web/src/pages/**",
-        "apps/web/src/*.ts",
-        "apps/web/src/*.tsx"
-      ],
-      "linter": {
-        "rules": {
-          "style": {
-            "noRestrictedImports": {
-              "level": "error",
-              "options": {
-                "patterns": [
-                  {
-                    "group": [
-                      "@reader/sqlite",
-                      "@reader/sqlite/**",
-                      "@effect/sql-*",
-                      "@effect/platform-node",
-                      "@effect/platform-node/**",
-                      "node:*",
-                      "better-auth",
-                      "better-auth/*",
-                      "!better-auth/solid",
-                      "**/apps/api/**"
-                    ],
-                    "message": "apps/web 不能引入服务端代码、数据库或 Better Auth 服务端（project-architecture）"
-                  },
-                  {
-                    "group": [
-                      "**/test/**",
-                      "**/test",
-                      "@reader/business/testing",
-                      "@reader/sqlite/testing"
-                    ],
-                    "message": "src 不能导入 test/ 下的代码或 */testing 入口（project-testing）"
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
                   }
                 ]
               }

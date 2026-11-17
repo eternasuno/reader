@@ -41,7 +41,7 @@ Each package has one job. Adapters are separate packages so that each brings onl
 | Package | Job | Depends on |
 | --- | --- | --- |
 | `packages/business` (`@reader/business`) | entities, ports, use cases; `./testing` exports the in-memory doubles and the contract suites | `effect` only |
-| `packages/sqlite` (`@reader/sqlite`) | SQLite connections (`reader.db`, `auth.db`), reader migrations, the repository adapters, the cross-owner feed listing for the scheduler; `./testing` exports in-memory database Layers | `@reader/business`, `effect`, `@effect/sql-sqlite-node`, `node:` modules |
+| `packages/sqlite` (`@reader/sqlite`) | reader SQLite connection (`reader.db`), reader migrations, the repository adapters, the cross-owner feed listing for the scheduler; `./testing` exports in-memory database Layers | `@reader/business`, `effect`, `@effect/sql-sqlite-node`, `node:` modules |
 | `packages/content` (`@reader/content`) | `FeedParser` (feedsmith), `HtmlParser` (jsdom), `ArticleExtractor` (Readability + DOMPurify), `DocumentSanitizer` (DOMPurify) | `@reader/business`, `effect`, those libraries |
 | `packages/webpage` (`@reader/webpage`) | `WebpageFetcher` Layers for Jina and for a browser service | `@reader/business`, `effect`, `puppeteer-core`, `ws` |
 | `apps/reader` | the product: HTTP contract, server, web client | everything above |
@@ -57,55 +57,34 @@ apps/reader/src/contract ──> @reader/business (entity and value schemas)
 ```
 
 - No package imports `apps/reader`. Adapter packages do not import each other.
-- `src/web` imports nothing from `src/server`, from the adapter packages, from `node:` modules or from Better Auth's server entry (`better-auth/solid` is the client). Entity types reach the web through `src/contract`.
+- `src/web` imports nothing from `src/server`, from the adapter packages, from `node:` modules or from Better Auth's server entry (`better-auth/solid` is the client), and only `src/web/api` imports `effect`. Entity types reach the web through `src/contract`.
 - `src/` never imports `test/` or a `*/testing` entry.
 - Inside a package, modules import each other by relative path; across packages only through the package name.
 
 ## apps/reader
 
-```text
-apps/reader/src/
-  contract/   the HttpApi definition, one module per domain (saved-page, feed, feed-item, folder, setting),
-              the contract errors, the Authentication and OriginCheck middleware declarations
-  server/     main (Layer composition and launch), auth (Better Auth instance and /api/auth/* route),
-              http/ (one handler module per domain, input decoding, error mapping, middleware),
-              refresh/ (queue and scheduler), migrate (the db:migrate entry), static serving
-  web/        the SolidJS client (below)
-```
+`src/contract` defines the shared `HttpApi` (one group per domain, the contract errors, and the `Authentication` and `OriginCheck` middleware declarations) so `src/server` and `src/web` share one wire contract without sharing runtime code.
 
 Two tsconfig files, both extending the root `tsconfig.json` (which keeps the shared strict flags and the Effect language-service settings): `tsconfig.server.json` (Node types; `src/server`, `src/contract`, `test/server`) and `tsconfig.web.json` (DOM types, JSX; `src/web`, `src/contract`, `test/web`). `pnpm typecheck` runs both.
 
 ### Server
 
-- **Composition.** `main` builds every dependency Layer once and provides it once: the reader database and repositories from `@reader/sqlite`, the content adapters, `FetchHttpClient.layer`, the Better Auth instance over the auth database, the refresh queue and the scheduler. Route composition is separate from dependency provision. Effective Layers carry the `Live` suffix. No one-off `make*` wrappers or Layers for one-use groupings; nest providers only for real dependencies.
+- **Composition.** `main` builds every dependency Layer once and provides it once: the reader database and repositories from `@reader/sqlite`, the content adapters, `FetchHttpClient.layer`, the Better Auth instance over the auth database, the refresh queue and the scheduler. Route composition is separate from dependency provision, and dependencies are provided outside `HttpRouter.serve` so one reader connection and one queue serve the routes, the refreshes and the scheduler. Effective Layers carry the `Live` suffix. No one-off `make*` wrappers or Layers for one-use groupings; nest providers only for real dependencies.
 - **Auth.** Better Auth alone serves `/api/auth/*` through one wildcard route that converts the request to a Web `Request` and the answer back. Identity comes only from the session cookie (`getSession`); the `Authentication` middleware provides `Session` and forwards the headers Better Auth returns (renewed or cleared cookies) through a pre-response handler, so they reach error responses too. `OriginCheck` is attached to every state-changing endpoint.
-- **Handlers.** One module per domain implements its contract group. A handler decodes input into business types once (`reader-spec` says which error each failed decoding returns), calls one use case or one port method, and maps business errors to contract errors through one table from business `_tag` to contract error. Handlers reach repositories, adapters and the queue only through business ports and the `FeedRefreshQueue` service. The only implementation a handler chooses is the `WebpageFetcher`: it reads the owner's setting, asks `activeFetcher` and maps the result exhaustively to `JinaWebpageFetcherLive(key)` or `BrowserWebpageFetcherLive(endpoint)` for that request. Layer factories never query the database.
+- **Handlers.** One module per domain in `http/` implements its contract group. A handler decodes input into business types once (`reader-spec` says which error each failed decoding returns), calls one use case or one port method, and maps business errors to contract errors through one table from business `_tag` to contract error. Handlers reach repositories, adapters and the queue only through business ports and the `FeedRefreshQueue` service. The only implementation a handler chooses is the `WebpageFetcher` (`http/fetcher.ts`, the only module in `http/` that imports `@reader/webpage`): inside the fetch it reads the owner's setting, asks `activeFetcher` and maps the result exhaustively to `JinaWebpageFetcherLive(key)` or `BrowserWebpageFetcherLive(endpoint)` for that request. Layer factories never query the database.
 - **Errors.** Contract errors are `Schema.TaggedError` classes whose status is an annotation; nothing writes `_tag` by hand. The business-to-contract table maps `HtmlParserError` to `ArticleExtractorError` (CM-FETCH-4). The `Authentication` middleware fails with the empty-body 401 `Unauthorized` when there is no session and with 500 `AuthUnavailable` when Better Auth's session check itself fails; `OriginCheck` fails with the empty-body 403 `Forbidden`. These two empty bodies are the only failures without a `_tag`. The server holds no user-facing text.
 - **Refresh.** `FeedRefreshQueue.enqueue(owner, feedId)` drops a request for a feed whose refresh is running, otherwise forks `refreshFeed` in the queue's scope; refreshes of different feeds run concurrently without a bound; a failure or defect is logged with owner and feed id and never stops the others. The scheduler enqueues every feed (through the cross-owner listing of `@reader/sqlite`) at start and every 30 minutes; a listing failure is logged and retried at the next tick. Both stop with the server scope.
 - **Adapters.** Adapter failures are typed errors with a message safe to log; secrets (Jina key, browser endpoint) are `Redacted` and never logged.
 
 ### Web
 
-The URL is the source of truth for what is shown: the scope, the open article and the unread filter come from the route (`reader-spec` Routes). State lives in feature modules, each owning its own store and exposing actions; components render state and call actions.
+The URL is the source of truth for what is shown: the scope, the open article and the unread filter come from the route (`reader-spec` Routes). Every protected route sits under one `SessionGuard` (`account/session-guard.tsx`), and the library paths sit under one `LibraryPage` shell (`library/`) so switching scope or article only changes route parameters without remounting the shell. State lives in feature modules (`library/`, `saved-page/`, `feed/`, `folder/`, `setting/`, `reader/`, `account/`), each owning its own state and exposing actions; components render state and call actions.
 
-```text
-apps/reader/src/web/
-  main.tsx, routes.tsx   entry, router, session guard (one guard component for every protected route)
-  api/                   the client derived from the contract with Effect's HttpApiClient, the Better Auth
-                         Solid client, the table from contract error tag to wording, and the
-                         Better Auth wording keyed by operation and code (account.md)
-  ui/                    domain-free components: Button, Input, FormField, Dialog, Menu, MenuCheckbox,
-                         Icon, Toast, VirtualList, ArticleFrame
-  library/               layout, sidebar, article list, list paging and read marking shared by scopes
-  saved-page/  feed/  folder/  setting/  reader/  account/
-                         one module per domain: its store, actions and components
-```
-
-- **Stores.** One store per concept, owned by one module: the feed and folder lists with unread counts (`feed/`, `folder/`), the article list of the current scope (`library/`), the open article and its mode (`reader/`), toasts (`ui/`), settings drafts (`setting/`). A module that needs another's data calls its exported accessor or action; no two modules write the same store. When a file outgrows the cap, split by concept, never into `mutations`/`read`/`loading` files sharing one store (`AGENTS.md`).
-- **Requests.** `api/` exposes Promise-returning functions; the Effect client runs once inside `api/`. Stores await those functions; they do not touch Effect. Every request goes through the derived client: no hand-written path, method or response schema. `api/` imports no Solid API or router.
+- **Stores.** One store or signal group per concept, owned by one module: the feed list and feed unread counts (`feed/`), the folder list and collapsed state (`folder/`), the saved-page unread count (`saved-page/`), the article list of the current scope (`library/`), the open article and its mode (`reader/`), toasts (`ui/`), settings state and drafts (`setting/`). A module that needs another's data calls its exported accessor or action; no two modules write the same store. When a file outgrows the cap, split by concept, never into `mutations`/`read`/`loading` files sharing one store (`AGENTS.md`).
+- **Requests.** `api/` is the only module in `src/web` that imports `effect`, and it imports no Solid API, router or other `src/web` module (`biome.json`). It exposes Promise-returning functions and plain wire types: the Effect `HttpApiClient` runs once inside `api/` and encodes decoded responses back to their wire JSON form (`Schema.encodeEffect` over `Schema.toCodecJson`). It also owns the one table from contract error tag to Chinese wording (`api/messages.ts`) and the Better Auth operation-and-code error wording (`api/auth.ts`). Stores and components await those functions; they do not touch Effect, and every request goes through the derived client: no hand-written path, method or response schema.
 - **Quick actions.** Follow `reader-spec` Client conventions: quick actions are never disabled and the stores keep no per-row pending tokens, in-flight sets or counters to decide what may be clicked; forms keep their validation, and a submit shows a spinner and is disabled while its request runs.
-- **Components.** `ui/` components carry no domain and receive data through props. Feature components may use their own module's store and other modules' exported accessors. Components own presentation, native form validation, conversion of form data to action parameters, and navigation; business decisions live in stores and actions.
-- **Session.** One Better Auth Solid client (`createAuthClient` from `better-auth/solid`); `useSession()` is called inside a component's owned scope and its accessor read directly; no separate signal bridge.
+- **Components.** `ui/` components carry no domain: `ui/` may not import `api/`, `routes` or any feature module (`biome.json`), and receives data through props (`ui.md`). Feature components may use their own module's store and other modules' exported accessors. Components own presentation, native form validation, conversion of form data to action parameters, and navigation; business decisions live in stores and actions.
+- **Session.** One Better Auth Solid client (`createAuthClient` from `better-auth/solid` in `api/auth.ts`); `useSession()` is called inside a component's owned scope and its accessor read directly; no separate signal bridge.
 - **Rendering.** Client rendering only; no SSR, no server functions. Article HTML is shown only inside the sandboxed iframe (`ui.md`).
 
 ## Biome boundaries

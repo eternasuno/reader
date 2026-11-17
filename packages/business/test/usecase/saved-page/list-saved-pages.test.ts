@@ -1,42 +1,152 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect } from 'effect';
-import { SavedPageRepository } from '../../../src/port/saved-page-repository';
+import { Effect, Option } from 'effect';
+import {
+  type ISavedPageRepository,
+  type SavedPageQuery,
+  SavedPageRepository,
+} from '../../../src/port/saved-page-repository';
 import { listSavedPages } from '../../../src/usecase/saved-page/list-saved-pages';
-import { alice, idsOf, makeUniqueSavedPage } from '../../support/fixtures';
-import { run } from '../../support/usecase/saved-page';
+import { alice, bob, idsOf, makeUniqueSavedPage } from '../../support/fixtures';
+import { run } from './harness';
 
-describe('listSavedPages cursor', () => {
-  it.effect('CM-PAGE-4 pages with the id of the last returned row', () =>
+describe('listSavedPages order', () => {
+  it.effect('SP-LIST-1 lists the newest page first', () =>
     run(
       Effect.gen(function* () {
-        const repository = yield* SavedPageRepository;
-        const first = makeUniqueSavedPage();
-        const second = makeUniqueSavedPage();
-        const third = makeUniqueSavedPage();
+        const pages = yield* SavedPageRepository;
+        const older = makeUniqueSavedPage();
+        const newer = makeUniqueSavedPage();
 
-        yield* repository.create(alice, [first, second, third]);
+        yield* pages.create(alice, [older, newer]);
 
-        const head = yield* listSavedPages(alice, {
-          unreadOnly: false,
-          limit: 2,
+        const page = yield* listSavedPages(alice, {
+          limit: 10,
+          unread: false,
+          cursor: Option.none(),
         });
 
-        expect(idsOf(head.items)).toEqual([third.id, second.id]);
-        expect(head.cursor).toBe(second.id);
-
-        if (head.cursor === null) {
-          throw new Error('expected a cursor');
-        }
-
-        const tail = yield* listSavedPages(alice, {
-          unreadOnly: false,
-          limit: 2,
-          cursor: head.cursor,
-        });
-
-        expect(idsOf(tail.items)).toEqual([first.id]);
-        expect(tail.cursor).toBeNull();
+        expect(idsOf(page.items)).toStrictEqual([newer.id, older.id]);
+        expect(page.cursor).toBeNull();
       })
     )
+  );
+
+  it.effect('SP-LIST-2 never lists another owner’s pages', () =>
+    run(
+      Effect.gen(function* () {
+        const pages = yield* SavedPageRepository;
+        const mine = makeUniqueSavedPage();
+        const theirs = makeUniqueSavedPage({ ownerId: bob });
+
+        yield* pages.create(alice, [mine]);
+        yield* pages.create(bob, [theirs]);
+
+        const page = yield* listSavedPages(alice, {
+          limit: 10,
+          unread: false,
+          cursor: Option.none(),
+        });
+
+        expect(idsOf(page.items)).toStrictEqual([mine.id]);
+      })
+    )
+  );
+});
+
+describe('listSavedPages paging', () => {
+  it.effect('CM-PAGE-4 asks the repository for one row more than asked', () =>
+    run(
+      Effect.gen(function* () {
+        const pages = yield* SavedPageRepository;
+        const queries: Array<SavedPageQuery> = [];
+        const recording: ISavedPageRepository = {
+          ...pages,
+          list: (owner, query) => {
+            queries.push(query);
+
+            return pages.list(owner, query);
+          },
+        };
+
+        yield* pages.create(alice, [makeUniqueSavedPage()]);
+
+        const page = yield* listSavedPages(alice, {
+          limit: 1,
+          unread: true,
+          cursor: Option.none(),
+        }).pipe(Effect.provideService(SavedPageRepository, recording));
+
+        expect(queries).toStrictEqual([
+          { limit: 2, unread: true, cursor: Option.none() },
+        ]);
+        expect(page.items).toHaveLength(1);
+        expect(page.cursor).toBeNull();
+      })
+    )
+  );
+});
+
+describe('listSavedPages cursor', () => {
+  it.effect(
+    'CM-PAGE-4 pages after the cursor and ends with a null cursor',
+    () =>
+      run(
+        Effect.gen(function* () {
+          const pages = yield* SavedPageRepository;
+          const oldest = makeUniqueSavedPage();
+          const middle = makeUniqueSavedPage();
+          const newest = makeUniqueSavedPage();
+
+          yield* pages.create(alice, [oldest, middle, newest]);
+
+          const first = yield* listSavedPages(alice, {
+            limit: 2,
+            unread: false,
+            cursor: Option.none(),
+          });
+          const second = yield* listSavedPages(alice, {
+            limit: 2,
+            unread: false,
+            cursor: Option.some(first.cursor ?? oldest.id),
+          });
+
+          expect(idsOf(first.items)).toStrictEqual([newest.id, middle.id]);
+          expect(first.cursor).toBe(middle.id);
+          expect(idsOf(second.items)).toStrictEqual([oldest.id]);
+          expect(second.cursor).toBeNull();
+        })
+      )
+  );
+});
+
+describe('listSavedPages unread filter', () => {
+  it.effect(
+    'SP-LIST-3 applies the unread filter afresh from the first page',
+    () =>
+      run(
+        Effect.gen(function* () {
+          const pages = yield* SavedPageRepository;
+          const read = makeUniqueSavedPage({ read: true });
+          const unread = makeUniqueSavedPage();
+
+          yield* pages.create(alice, [read, unread]);
+          yield* pages.markRead(alice, [unread.id], true);
+
+          const filtered = yield* listSavedPages(alice, {
+            limit: 10,
+            unread: true,
+            cursor: Option.none(),
+          });
+          const all = yield* listSavedPages(alice, {
+            limit: 10,
+            unread: false,
+            cursor: Option.none(),
+          });
+
+          expect(filtered.items).toStrictEqual([]);
+          expect(filtered.cursor).toBeNull();
+          expect(idsOf(all.items)).toStrictEqual([unread.id, read.id]);
+        })
+      )
   );
 });

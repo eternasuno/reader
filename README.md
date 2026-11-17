@@ -1,198 +1,112 @@
-# Solid Effect Starter
+# 留白
 
-A self-hosted pnpm/Turborepo starter with a pure SolidJS 1 client application and a separate Effect HTTP API backed by Better Auth and SQLite. The UI uses Tailwind CSS v4 and DaisyUI v5.
+留白 is a self-hosted read-later and feed reader. Save web pages to read later, subscribe to RSS, Atom, RDF and JSON feeds, group feeds into folders, and read everything in one place. Each account sees only its own data, and the UI is in Chinese.
 
-## Prerequisites
+## Workspace
 
-- Node.js **22.19 or newer**
-- pnpm **12.3.4**
+One pnpm workspace (`reader-workspace`) managed with Turborepo; one app, `reader`, ships everything (package and image name `reader`).
 
-Install dependencies and create the local configuration files:
+- `apps/reader` — the product: the HTTP contract (`src/contract`), the Effect HttpServer with Better Auth and the feed refresh queue and scheduler (`src/server`), and the SolidJS 1 SPA (`src/web`).
+- `packages/business` — the business core: entities, ports and use cases for feeds, folders, feed items, saved pages and settings.
+- `packages/sqlite` — the SQLite adapters: connections, migrations, repositories and the in-memory test setup.
+- `packages/content` — feed parsing, HTML parsing, article extraction and sanitizing.
+- `packages/webpage` — page fetching through Jina or a browser service.
+
+See [`AGENTS.md`](AGENTS.md) for the project guide and the skills that describe the product and the engineering rules.
+
+## Requirements
+
+- Node `>=22.19` (the `engines` floor that `node:sqlite` requires; the container builds on Node 24).
+- pnpm `12.3.4`, pinned in the root `package.json`.
+
+## Setup
 
 ```sh
 pnpm install
-cp apps/api/.env.example apps/api/.env
-cp apps/web/.env.example apps/web/.env
+cp apps/reader/.env.example apps/reader/.env
 ```
 
-Replace `BETTER_AUTH_SECRET` in `apps/api/.env` with a long random value, for example from `openssl rand -base64 32`.
-
-## Development
-
-```sh
-pnpm dev
-```
-
-By default:
-
-- Web SPA: `http://localhost:3000`
-- Effect API: `http://localhost:3001`
-
-Both applications run as independent Turborepo tasks. Vite proxies `/api` to the Effect server during development and preview, so browser authentication remains same-origin without API CORS middleware.
-
-Jina is the default extraction provider and supports anonymous access; an API key is optional. To use browser extraction, install and start a CDP-compatible browser service separately, such as Obscura with `obscura serve --port 9222`, then save its address in the standalone settings page. Switching providers preserves their saved configuration and extracted articles.
-
-The server uses `puppeteer-core` to connect to the configured browser and opens a page for each extraction. Both providers return HTML to the same local Readability extraction and sanitization pipeline. The implementations live in `packages/webpage`. Browser extraction waits for network activity to settle; pages with long polling or delayed rendering can still time out or need the original site.
-
-Production browser extraction requires a separately running CDP-compatible browser service such as Obscura, Lightpanda, or Chromium. The API image does not install or launch a browser. Each user saves their browser service address in the reader settings, using an HTTP discovery URL or a full WebSocket endpoint. The API connects to that address; in Docker, localhost refers to the API container, so use the browser service's reachable address. Keep browser services private and expose this self-hosted application only to trusted users who may configure endpoints reachable from the API. The API adds no address, size, time or concurrency limits to page or feed fetching.
+Replace `BETTER_AUTH_SECRET` in `apps/reader/.env` with a long random value, for example from `openssl rand -base64 32`.
 
 ## Commands
 
-```sh
-pnpm dev        # run the web and API development servers
-pnpm build      # build both applications
-pnpm start      # run the built API server
-pnpm test       # run all Vitest suites
-pnpm check      # run Biome checks, including Markdown and YAML formatting
-pnpm check --fix  # run Biome checks and apply fixes
-pnpm typecheck  # run TypeScript checks for both applications
-```
+| Command            | Does                                                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`         | `dev:web` (Vite) and `dev:server` (`tsx watch --env-file-if-exists=.env src/server/main.ts`), each as its own persistent task |
+| `pnpm build`       | the server bundle and the web build, both into `apps/reader/dist` (`dist/server.js`, `dist/public`)                           |
+| `pnpm start`       | the built server (`cd dist && node --env-file-if-exists=../.env server.js`)                                                   |
+| `pnpm db:migrate`  | Better Auth's migrations against `auth.db` and the reader migration against `reader.db`                                       |
+| `pnpm test`        | every Vitest suite                                                                                                            |
+| `pnpm typecheck`   | TypeScript across every package and both app tsconfig files, tests included                                                   |
+| `pnpm check`       | Biome lint and format for JavaScript, TypeScript, CSS and JSON                                                                |
+| `pnpm check --fix` | the same, applying safe fixes                                                                                                 |
 
-## Project guidance
+## Development
 
-Maintainers should read [`AGENTS.md`](AGENTS.md) first, then read the relevant project skill for the task:
+`pnpm dev` runs two persistent Turborepo tasks:
 
-- [`project-business`](.agents/skills/project-business/SKILL.md) — business rules: feeds, feed items, saved pages, settings, ids, paging, refresh and retention, with numbered rules that tests refer to.
-- [`project-architecture`](.agents/skills/project-architecture/SKILL.md) — architecture, reader and settings UI behavior, browser/API boundaries, session subscriptions, or deployment topology.
-- [`project-effect-api`](.agents/skills/project-effect-api/SKILL.md) — Better Auth, sessions, protected APIs, HTTP handlers and error mapping, the feed refresh queue, Effect services, or Layer composition.
-- [`project-database`](.agents/skills/project-database/SKILL.md) — SQLite connections, queries, schema migrations, or database deployment configuration.
-- [`project-testing`](.agents/skills/project-testing/SKILL.md) — tests, test doubles, Effect Layers, or in-memory database schema setup.
+- `dev:web` serves the web with Vite on `WEB_PORT` (default `3000`).
+- `dev:server` runs the server with `tsx watch --env-file-if-exists=.env src/server/main.ts` on `API_PORT` (default `3001`).
 
-## Architecture
+Vite proxies `/api` to the server, so the browser talks to one origin during development and the server needs no CORS middleware. The proxy target is read from the same `API_PORT` the server reads (the app's `.env`), so one value configures both.
 
-```text
-Browser
-  -> apps/web: static SolidJS SPA
-  -> credentialed HTTP requests
-  -> apps/api: Effect HttpServer
-       -> Better Auth
-       -> SQLite (reader.db, auth.db)
-```
+In development the server runs from `apps/reader` with `tsx`, so its working directory holds no `public/` unless a build ran there. The web comes from the Vite dev server and nothing is served statically, which makes the static layer irrelevant in development.
 
-- `apps/web` contains browser-only routes, components, and the Better Auth client. Vite builds static assets with `ssr: false`; there are no server functions or server runtime modules.
-- `apps/api/src/http` owns HTTP routing: the library handlers under `http/library/`, the Better Auth and static routes, and the origin and session middleware. Better Auth handles `/api/auth/*`.
-- `apps/api/src` keeps the HTTP handlers under `http/`, the feed parser, HTML parser, article extractor and sanitizer in `content/`, the feed refresh queue and scheduler in `refresh/`, and the Better Auth layer in `auth.ts`. `apps/api/src/app.ts` composes them into the HTTP `AppLive`, and `apps/api/src/server.ts` is the process entry that launches it. The server entry owns layer acquisition and graceful shutdown via `NodeRuntime`.
-- `packages/sqlite` (`@reader/sqlite`) is the SQLite adapter for the business ports: `database.ts` holds the reader and Better Auth connections, `store/` the reader store schemas and repositories, `feed-refresh.ts` the feed listing query of the refresh loop, and `test/support/` the in-memory test Layers exported as `@reader/sqlite/testing`. It depends on `packages/business` and imports nothing from `apps/api`; the API depends on it and composes its Layers in `app.ts`, `server.ts` and `migrate.ts`.
-- `apps/api/test` tests the authentication protocol and the HTTP handlers; the reader store is tested in `packages/sqlite/test` against SQLite in memory.
-
-### Security boundaries
-
-The backend derives identity only from the Better Auth session cookie on the incoming request. It never accepts a client-supplied user ID as identity. Database clients, embedded engines, secrets, and Better Auth server configuration stay on the server, in `apps/api` and `@reader/sqlite`, and cannot enter the browser bundle.
-
-Better Auth owns `/api/auth/*`; application endpoints should not reimplement its protocol. Protected endpoints use the `Authentication` middleware declared in `packages/api/src/middleware.ts` and derive identity from `Session`; its implementation lives in `apps/api/src/http/middleware/session.ts`.
-
-### SQLite
-
-`packages/sqlite/src/database.ts` opens two SQLite files in `DATA_DIR`: the reader store in `reader.db` and Better Auth's data in `auth.db`. `DATA_DIR` defaults to `.data` relative to the process working directory and is created if missing. The files are separate because two connections to one file would contend for SQLite's single write lock. Runtime startup does not generate or apply schema.
-
-Apply the schema with the package script:
-
-```sh
-pnpm --filter api db:migrate
-```
-
-The script runs in the API (`apps/api/src/migrate.ts`) and orchestrates both: Better Auth's migrations against `auth.db` and `migrateReader` from `@reader/sqlite` (`packages/sqlite/src/store/schema.ts`) against `reader.db`. Apply schema during deployment rather than at startup, so changes are applied once instead of racing across restarted instances. Tests apply both migrations to in-memory databases instead of running `db:migrate`.
-
-The project is in development and keeps no database compatibility or data migration path. After a schema change that makes existing data unusable, edit migration `0001_reader` in place, delete the database files in `DATA_DIR` (for example `.data/reader.db` and `.data/auth.db`) and run `pnpm db:migrate` again.
+The web's Vite config builds with the Solid plugin (`ssr: false`) and the Tailwind plugin, reads its environment from the app directory, and uses `strictPort` so a busy port fails loudly instead of silently moving to another one. Vitest runs from the same configs with `environment: 'node'`.
 
 ## Environment variables
 
-Web variables belong in `apps/web/.env`:
+| Variable             | Default                 | Read by                 | Purpose                                                                                                    |
+| -------------------- | ----------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `API_PORT`           | `3001`                  | server, Vite dev proxy  | port of the HTTP server (also the proxy target in development and the public port in the container)        |
+| `WEB_PORT`           | `3000`                  | Vite dev/preview server | dev and preview port for the web; not used by the built app                                                |
+| `DATA_DIR`           | `.data`                 | server, `db:migrate`    | directory holding `reader.db` and `auth.db`, relative to the process working directory, created if missing |
+| `BETTER_AUTH_SECRET` | — (required)            | server                  | Better Auth signing secret                                                                                 |
+| `BETTER_AUTH_URL`    | `http://localhost:3000` | server                  | canonical public origin used for auth URLs and the `Origin` check on state-changing requests               |
 
-| Variable   | Default | Purpose                      |
-| ---------- | ------- | ---------------------------- |
-| `WEB_PORT` | `3000`  | Web development/preview port |
+Deploy the web and `/api` on one public origin, set `BETTER_AUTH_URL` to it, and terminate HTTPS in a reverse proxy in front of the app.
 
-API variables belong in `apps/api/.env`:
+Local development reads `.env` files (`--env-file-if-exists`); the container never does. Inject every container value through Docker environment variables, and keep environment files out of the build context.
 
-| Variable             | Default                 | Purpose                                                          |
-| -------------------- | ----------------------- | ---------------------------------------------------------------- |
-| `API_PORT`           | `3001`                  | Effect HTTP server port                                          |
-| `DATA_DIR`           | `.data`                 | Directory holding `reader.db` and `auth.db`; created if missing. |
-| `BETTER_AUTH_SECRET` | —                       | Better Auth signing secret                                       |
-| `BETTER_AUTH_URL`    | `http://localhost:3000` | Canonical public site origin used for auth URLs                  |
+## Docker
 
-Deploy the frontend and `/api` on the same public origin. In development and preview, Vite provides the `/api` proxy.
+The build stage installs the pinned pnpm, runs `pnpm install --frozen-lockfile` and `pnpm build`, exports the server's production deployment directory (`pnpm --filter reader deploy --prod`) and creates `/data` owned by `node` (UID 1000). The runtime stage starts from `node:24-bookworm-slim`, copies only that `node_modules` and the build output (`dist/server.js` as `server.js`, `dist/public` as `public/`), sets `NODE_ENV=production`, creates `/data` owned by `node`, switches to the non-root `node` user and runs `node server.js`. Both stages create `/data` because a fresh named volume takes its ownership from the image that first mounts it, and that image is the build stage when the migration runs before the first start.
 
-## Routes
-
-### Web
-
-- `/register` — email/password registration
-- `/login` — email/password login
-- `/` — protected later reading list; redirects to `/login` when no session exists
-- `/rss` — subscribed Feed articles
-- `/read/link/:key` — selected saved page
-- `/read/feed/:feedId/:key` — selected feed item
-- `/settings` — account, article retention, and extraction settings
-
-### API
-
-- `/api/auth/*` — Better Auth protocol
-- `/api/library/saved-pages*` — authenticated read-later pages: list, find by id or URL, add a link, save a feed item, mark read, mark all read, remove, unread count
-- `/api/library/feeds*` — subscriptions: list, preview, subscribe (optionally into a folder), unsubscribe, move to a folder or the top level, mark feeds read, mark all read, per-feed unread counts; `/api/library/feeds/items*` — feed items: list all (`/items`), list one feed (`/items/by-feed?feedId`), list one folder (`/items/by-folder?folderId`), find, extract, mark read
-- `/api/library/folders*` — folders grouping feeds: list, create, rename, remove (unsubscribes its feeds), mark folders read
-- `/api/library/settings*` — read the settings (only whether the Jina key and the browser address are configured), set retention, use Jina (`/settings/fetcher/jina`, optional key), use the browser service (`/settings/fetcher/browser`, optional address), clear the Jina key
-
-The endpoint contract lives in `packages/api`. List endpoints take `limit` (a positive integer), `unreadOnly` and an optional `cursor`, which is the id of the last row of the previous page; feed items and saved pages are listed newest first by id. There is no background reload: clients list again from the first page to see new rows.
-
-Subscribing creates the feed with the previewed title and queues its first refresh; items arrive with that refresh. The API process refreshes every feed through one queue at start and every 30 minutes, at most 3 feeds at a time, and drops a request for a feed that already has a refresh queued or running.
-
-Business storage keeps `feed`, `folder`, `feed_item` and `saved_page` scoped by owner, with version-7 UUID ids and a unique URL per owner (feeds, saved pages) or per feed (items); folder names are unique per owner, and removing a folder removes its feeds and their items. Stored data is not migrated between schema changes; delete the database and run `pnpm db:migrate` against a fresh one.
-
-## Production
-
-Build both applications:
+The runtime image contains no migration tooling, so apply the schema with the application stopped, the same `DATA_DIR` and the build stage as a migration image. The order is: build both images, create the volume, migrate into it, then start the service.
 
 ```sh
-pnpm build
-```
-
-The API always mounts static routes for `public/`. Development uses Vite and its API proxy; Web builds remain in `apps/web/dist`, so the API's `public/` directory is absent during development. A missing static directory does not prevent startup; requests for missing files return 404. In production, assemble a single runtime directory containing the API build (`server.js`), API production `node_modules`, and the Web build in `public/`. The API serves `public/` relative to the process working directory alongside `/api`. The static layer does not validate `index.html` at startup.
-
-Start from the assembled runtime directory:
-
-```sh
-NODE_ENV=production node server.js
-```
-
-Unmatched extensionless GET/HEAD paths accepting HTML fall back to `index.html`, including paths under `/api/*` and `/assets/*`. Missing files with extensions return 404. All static files use `Cache-Control: no-cache` for revalidation. Set `BETTER_AUTH_URL` to the public site origin and use HTTPS through a reverse proxy in production.
-
-### Workspace packages
-
-Internal packages may use `workspace:*` dependencies and export TypeScript source (for example, `"exports": "./src/index.ts"`). Workspace package injection is not enabled. Vite normally bundles linked workspace dependencies in the API SSR build; when adding an internal source package, inspect the generated API output for remaining runtime imports. Add `ssr.noExternal` only if needed. TypeScript `include`/`exclude` does not control bundler externalization.
-
-The pinned pnpm 12.3.4 supports default `deploy` without workspace injection (available since 12.2.0), so Docker does not use `--legacy`. Injection controls dependency installation and peer resolution, not whether source or compiled entry points are used.
-
-### Docker
-
-The build stage uses `pnpm build` (Turbo) to build Web and API in parallel, then assembles them into a new runtime image: `/app/server.js`, `/app/public/`, and `/app/node_modules/`. `pnpm --filter api deploy --prod` exports an isolated API deployment directory without development dependencies; only its production `node_modules` are copied. The runtime starts Node directly and does not include workspace configuration, pnpm, Turbo, or project development dependencies.
-
-```sh
-docker build -t solid-effect-starter .
-docker volume create starter-data
+docker build -t reader .
+docker build --target build -t reader-migrate .
+docker volume create reader-data
+docker run --rm --init \
+  -e BETTER_AUTH_SECRET \
+  -e DATA_DIR=/data \
+  -v reader-data:/data \
+  --user 1000:1000 \
+  reader-migrate pnpm db:migrate
 docker run --rm --init \
   -p 3001:3001 \
   -e BETTER_AUTH_SECRET \
   -e API_PORT=3001 \
   -e BETTER_AUTH_URL=http://localhost:3001 \
   -e DATA_DIR=/data \
-  -v starter-data:/data \
-  solid-effect-starter
+  -v reader-data:/data \
+  reader
 ```
 
-Export a strong `BETTER_AUTH_SECRET` in the host environment before running these commands. Inject all container configuration through Docker environment variables; the runtime does not load `.env` files, and environment files are excluded from the build context. Set `API_PORT` and map the same container port with `-p` (for example, `-e API_PORT=8080 -p 3001:8080`). The image runs as the non-root `node` user. Named volumes inherit the writable `/data` directory; bind mounts must be writable by UID 1000. Replace the example public origin for your deployment. Do not mount the same embedded database into concurrent replicas.
+- Set `API_PORT` and map the same container port with `-p` (`-e API_PORT=8080 -p 8080:8080`).
+- Export a strong `BETTER_AUTH_SECRET` in the host environment before running these commands; `-e BETTER_AUTH_SECRET` without a value forwards it from the host.
+- The image ships no browser. Browser extraction connects to a CDP-compatible browser service the user runs and saves in the settings; inside the container `localhost` is the container, so the address must be reachable from it.
+- `/data` must be writable by UID 1000, the migration container's user and the runtime's `node`: a fresh named volume inherits the ownership the image gives `/data`, and a bind mount must be made writable by that uid.
+- Do not mount the same database into concurrent replicas: SQLite has one write lock and one file.
+- Never apply migrations automatically at startup: a restart loop would race the deployed instances instead of migrating once.
 
-Apply migrations once before starting the service. The minimal runtime image does not include TypeScript migration tooling or source; use the Docker build stage as a separate migration image:
+## Production serving
+
+Assemble the runtime directory (`server.js`, `public/`, production `node_modules`) and start it from there:
 
 ```sh
-docker build --target build -t solid-effect-starter-migrate .
-docker run --rm --init \
-  -e BETTER_AUTH_SECRET \
-  -e DATA_DIR=/data \
-  -v starter-data:/data \
-  --user 1000:1000 \
-  solid-effect-starter-migrate pnpm --filter api db:migrate
+NODE_ENV=production node server.js
 ```
 
-Run this with the application stopped and the same `DATA_DIR`. Create the named volume with writable ownership for UID 1000 before migration (for example, using the runtime image's `/data` directory). Never apply migrations automatically at startup.
+The server answers `/api/*` and the static routes on `API_PORT`; the browser loads the app from `/` and the article iframe loads the shared stylesheet from the same origin, so the app must not be split across two origins.

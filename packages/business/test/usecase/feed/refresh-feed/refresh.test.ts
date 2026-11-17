@@ -1,194 +1,335 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Option, Ref } from 'effect';
-import { FeedParserError } from '../../../../src/port/feed-parser';
-import { SavedPageRepository } from '../../../../src/port/saved-page-repository';
-import { FetchFeedError } from '../../../../src/usecase/feed/errors';
+import { Effect, Option } from 'effect';
+import { TestClock } from 'effect/testing';
+import type { Feed } from '../../../../src/entity/feed/feed';
+import { FeedTitle } from '../../../../src/entity/feed/feed';
+import { FeedParserError } from '../../../../src/error/feed';
+import { FeedItemRepositoryError } from '../../../../src/error/feed-item';
+import { FeedItemRepository } from '../../../../src/port/feed-item-repository';
+import { FeedRepository } from '../../../../src/port/feed-repository';
+import { SettingRepository } from '../../../../src/port/setting-repository';
 import { refreshFeed } from '../../../../src/usecase/feed/refresh-feed';
 import {
   alice,
   bob,
+  decodeRetention,
+  decodeTitle,
+  decodeUrl,
   makeFeedItem,
   makeUniqueFeed,
-  makeUniqueSavedPage,
+  updatedTime,
 } from '../../../support/fixtures';
 import {
+  decoratedStore,
   feedResponse,
-  findFeed,
   parsedEntry,
   parsedFeed,
   run,
   storedItems,
-  storeFeed,
-  storeItems,
+  storeItemsInListOrder,
   transportFailure,
   urlsOf,
-} from '../../../support/usecase/feed';
+} from '../support';
 
-const base = 'https://example.com';
+const rowsOf = (feedId: Feed['id']) => storedItems(alice, feedId);
 
-const parsed = parsedFeed({
-  title: 'Source title',
-  entries: [parsedEntry(`${base}/a`)],
-});
+describe('refreshFeed', () => {
+  it.effect(
+    'FD-REFRESH-1 a feed that does not exist does nothing and fetches nothing',
+    () =>
+      Effect.gen(function* () {
+        const targets: Array<string> = [];
 
-const recordFetch = (fetched: Ref.Ref<number>) => (url: URL) =>
-  Ref.update(fetched, (count) => count + 1).pipe(
-    Effect.as(feedResponse({ url: url.href }))
+        yield* run(refreshFeed(alice, makeUniqueFeed().id), {
+          fetchFeed: (target) => {
+            targets.push(target.href);
+
+            return Effect.succeed(feedResponse({ url: target.href }));
+          },
+        });
+
+        expect(targets).toEqual([]);
+      })
   );
 
-describe('refreshFeed without a feed', () => {
-  it.effect('succeeds without fetching when the feed does not exist', () =>
+  it.effect('FD-REFRESH-1 a feed of another owner is not refreshed', () =>
     Effect.gen(function* () {
-      const missing = makeUniqueFeed({ ownerId: alice });
-      const fetched = yield* Ref.make(0);
-
-      yield* run(refreshFeed(alice, missing.id), {
-        fetchFeed: recordFetch(fetched),
-      });
-
-      expect(yield* Ref.get(fetched)).toBe(0);
-    })
-  );
-
-  it.effect('succeeds without fetching for another owner’s feed', () =>
-    Effect.gen(function* () {
-      const foreign = makeUniqueFeed({ ownerId: bob });
-      const fetched = yield* Ref.make(0);
+      const targets: Array<string> = [];
 
       yield* run(
         Effect.gen(function* () {
-          yield* storeFeed(foreign);
-          yield* refreshFeed(alice, foreign.id);
-        }),
-        { fetchFeed: recordFetch(fetched) }
-      );
+          const feeds = yield* FeedRepository;
+          const feed = makeUniqueFeed({ ownerId: bob });
 
-      expect(yield* Ref.get(fetched)).toBe(0);
-    })
-  );
-});
-
-describe('refreshFeed success', () => {
-  it.effect('fetches the source, syncs its items and updates the feed', () =>
-    Effect.gen(function* () {
-      const feed = makeUniqueFeed({ ownerId: alice });
-      const fetched: Array<string> = [];
-
-      const result = yield* run(
-        Effect.gen(function* () {
-          yield* storeFeed(feed);
+          yield* feeds.create(bob, [feed]);
           yield* refreshFeed(alice, feed.id);
-
-          return {
-            items: yield* storedItems(alice, feed.id),
-            feed: yield* findFeed(alice, feed.id),
-          };
         }),
         {
-          fetchFeed: (url) => {
-            fetched.push(url.href);
+          fetchFeed: (target) => {
+            targets.push(target.href);
 
-            return Effect.succeed(
-              feedResponse({ url: `${base}/redirected.xml` })
-            );
+            return Effect.succeed(feedResponse({ url: target.href }));
           },
-          parseFeed: () => Effect.succeed(parsed),
         }
       );
-      const stored = Option.getOrThrow(result.feed);
 
-      expect(fetched).toEqual([feed.url.href]);
-      expect(urlsOf(result.items)).toEqual([`${base}/a`]);
-      expect(stored.title).toBe('Source title');
-      expect(Option.isSome(stored.updatedAt)).toBe(true);
+      expect(targets).toEqual([]);
     })
   );
 });
 
-describe('refreshFeed isolation', () => {
-  it.effect('FD-SYNC-3 leaves other feeds and saved pages unchanged', () =>
+describe('refreshFeed sync record', () => {
+  it.effect('FD-SYNC step 5 records the source title and the sync time', () =>
     Effect.gen(function* () {
-      const first = makeUniqueFeed({ ownerId: alice });
-      const second = makeUniqueFeed({ ownerId: alice });
-      const otherItem = makeFeedItem({ ownerId: alice, feedId: second.id });
-      const page = makeUniqueSavedPage({ ownerId: alice });
-
-      const result = yield* run(
+      const syncTime = updatedTime();
+      const feed = yield* run(
         Effect.gen(function* () {
-          const pages = yield* SavedPageRepository;
+          const feeds = yield* FeedRepository;
+          const row = makeUniqueFeed({
+            ownerId: alice,
+            title: FeedTitle.make('Preview title'),
+          });
 
-          yield* storeFeed(first);
-          yield* storeFeed(second);
-          yield* storeItems(alice, [otherItem]);
-          yield* pages.create(alice, [page]);
-          yield* refreshFeed(alice, first.id);
+          yield* feeds.create(alice, [row]);
+          yield* TestClock.setTime(syncTime.epochMilliseconds);
+          yield* refreshFeed(alice, row.id);
 
-          return {
-            second: Option.getOrThrow(yield* findFeed(alice, second.id)),
-            otherItems: yield* storedItems(alice, second.id),
-            pages: yield* pages.list(alice, { unreadOnly: false, limit: 100 }),
-          };
-        }),
-        { parseFeed: () => Effect.succeed(parsed) }
-      );
-
-      expect(result.second).toStrictEqual(second);
-      expect(result.otherItems).toStrictEqual([otherItem]);
-      expect(result.pages).toStrictEqual([page]);
-    })
-  );
-});
-
-describe('refreshFeed fetch failure', () => {
-  it.effect('propagates the error without updating the feed', () =>
-    Effect.gen(function* () {
-      const feed = makeUniqueFeed({ ownerId: alice });
-      const result = yield* run(
-        Effect.gen(function* () {
-          yield* storeFeed(feed);
-
-          return {
-            error: yield* refreshFeed(alice, feed.id).pipe(Effect.flip),
-            feed: yield* findFeed(alice, feed.id),
-          };
-        }),
-        { fetchFeed: (url) => Effect.fail(transportFailure(url)) }
-      );
-      const stored = Option.getOrThrow(result.feed);
-
-      expect(result.error).toStrictEqual(
-        new FetchFeedError({ message: 'Failed to fetch the feed' })
-      );
-      expect(stored.title).toBe(feed.title);
-      expect(Option.isNone(stored.updatedAt)).toBe(true);
-    })
-  );
-});
-
-describe('refreshFeed parse failure', () => {
-  it.effect('propagates the error without updating the feed', () =>
-    Effect.gen(function* () {
-      const feed = makeUniqueFeed({ ownerId: alice });
-      const result = yield* run(
-        Effect.gen(function* () {
-          yield* storeFeed(feed);
-
-          const error = yield* refreshFeed(alice, feed.id).pipe(Effect.flip);
-
-          return { error, feed: yield* findFeed(alice, feed.id) };
+          return yield* feeds.find(alice, row.id);
         }),
         {
           parseFeed: () =>
-            Effect.fail(new FeedParserError({ message: 'parse' })),
+            Effect.succeed(parsedFeed({ title: 'Source title' })),
         }
       );
-      const stored = Option.getOrThrow(result.feed);
 
-      expect(result.error).toStrictEqual(
-        new FeedParserError({ message: 'parse' })
-      );
-      expect(stored.title).toBe(feed.title);
-      expect(Option.isNone(stored.updatedAt)).toBe(true);
+      expect(Option.getOrThrow(feed).title).toBe('Source title');
+      expect(
+        Option.getOrThrow(Option.getOrThrow(feed).updatedAt).epochMilliseconds
+      ).toBe(syncTime.epochMilliseconds);
     })
+  );
+});
+
+const expectUnchangedPreview = (found: Option.Option<Feed>): void => {
+  const stored = Option.getOrThrow(found);
+
+  expect(stored.title).toBe('Preview title');
+  expect(Option.isNone(stored.updatedAt)).toBe(true);
+};
+
+describe('refreshFeed fetch failures', () => {
+  it.effect(
+    'FD-SYNC-4 a failed fetch leaves the title and the sync time as they were',
+    () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          Effect.gen(function* () {
+            const feeds = yield* FeedRepository;
+            const row = makeUniqueFeed({
+              ownerId: alice,
+              title: FeedTitle.make('Preview title'),
+            });
+
+            yield* feeds.create(alice, [row]);
+            const error = yield* refreshFeed(alice, row.id).pipe(Effect.flip);
+
+            return { error, found: yield* feeds.find(alice, row.id) };
+          }),
+          {
+            fetchFeed: (target) => Effect.fail(transportFailure(target)),
+          }
+        );
+
+        expect(outcome.error._tag).toBe('FetchFeedError');
+        expectUnchangedPreview(outcome.found);
+      })
+  );
+});
+
+describe('refreshFeed item create failures', () => {
+  it.effect(
+    'FD-SYNC-4 a failed item create propagates and skips recordSync',
+    () =>
+      Effect.gen(function* () {
+        const store = decoratedStore((items) => ({
+          ...items,
+          create: () =>
+            Effect.fail(new FeedItemRepositoryError({ message: 'create' })),
+        }));
+        const outcome = yield* run(
+          Effect.gen(function* () {
+            const feeds = yield* FeedRepository;
+            const row = makeUniqueFeed({
+              ownerId: alice,
+              title: FeedTitle.make('Preview title'),
+            });
+
+            yield* feeds.create(alice, [row]);
+            const error = yield* refreshFeed(alice, row.id).pipe(Effect.flip);
+
+            return { error, found: yield* feeds.find(alice, row.id) };
+          }),
+          {
+            parseFeed: () =>
+              Effect.succeed(
+                parsedFeed({
+                  title: 'Source title',
+                  entries: [parsedEntry('https://example.com/new')],
+                })
+              ),
+          },
+          store
+        );
+
+        expect(outcome.error._tag).toBe('FeedItemRepositoryError');
+        expectUnchangedPreview(outcome.found);
+      })
+  );
+});
+
+describe('refreshFeed item remove failures', () => {
+  it.effect(
+    'FD-SYNC-4 a failed item remove propagates and skips recordSync',
+    () =>
+      Effect.gen(function* () {
+        const store = decoratedStore((items) => ({
+          ...items,
+          remove: () =>
+            Effect.fail(new FeedItemRepositoryError({ message: 'remove' })),
+        }));
+        const outcome = yield* run(
+          Effect.gen(function* () {
+            const feeds = yield* FeedRepository;
+            const settings = yield* SettingRepository;
+            const row = makeUniqueFeed({
+              ownerId: alice,
+              title: FeedTitle.make('Preview title'),
+            });
+
+            yield* feeds.create(alice, [row]);
+            yield* storeItemsInListOrder(row, ['https://example.com/old']);
+            yield* settings.setRetention(alice, decodeRetention(1));
+            const error = yield* refreshFeed(alice, row.id).pipe(Effect.flip);
+
+            return { error, found: yield* feeds.find(alice, row.id) };
+          }),
+          {
+            parseFeed: () =>
+              Effect.succeed(
+                parsedFeed({
+                  title: 'Source title',
+                  entries: [parsedEntry('https://example.com/new')],
+                })
+              ),
+          },
+          store
+        );
+
+        expect(outcome.error._tag).toBe('FeedItemRepositoryError');
+        expectUnchangedPreview(outcome.found);
+      })
+  );
+});
+
+describe('refreshFeed stored items', () => {
+  it.effect(
+    'FD-SYNC-1 a stored item keeps its first-imported values and read state',
+    () =>
+      Effect.gen(function* () {
+        const rows = yield* run(
+          Effect.gen(function* () {
+            const feeds = yield* FeedRepository;
+            const items = yield* FeedItemRepository;
+            const feed = makeUniqueFeed({ ownerId: alice });
+
+            yield* feeds.create(alice, [feed]);
+            yield* items.create(alice, [
+              makeFeedItem({
+                ownerId: alice,
+                feedId: feed.id,
+                url: decodeUrl('https://example.com/a'),
+                title: decodeTitle('Old title'),
+                read: true,
+              }),
+            ]);
+            yield* refreshFeed(alice, feed.id);
+
+            return yield* rowsOf(feed.id);
+          }),
+          {
+            parseFeed: () =>
+              Effect.succeed(
+                parsedFeed({
+                  entries: [
+                    parsedEntry('https://example.com/a', {
+                      title: 'New title',
+                    }),
+                  ],
+                })
+              ),
+          }
+        );
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.title).toBe('Old title');
+        expect(rows[0]?.read).toBe(true);
+      })
+  );
+});
+
+describe('refreshFeed and other feeds', () => {
+  it.effect('FD-SYNC-3 syncing one feed leaves the other feeds alone', () =>
+    Effect.gen(function* () {
+      const outcome = yield* run(
+        Effect.gen(function* () {
+          const feeds = yield* FeedRepository;
+          const other = makeUniqueFeed({ ownerId: alice });
+          const feed = makeUniqueFeed({ ownerId: alice });
+
+          yield* feeds.create(alice, [other, feed]);
+          yield* storeItemsInListOrder(other, ['https://example.com/other']);
+          yield* refreshFeed(alice, feed.id);
+
+          return {
+            untouched: yield* rowsOf(other.id),
+            refreshed: yield* rowsOf(feed.id),
+          };
+        }),
+        {
+          parseFeed: () =>
+            Effect.succeed(
+              parsedFeed({ entries: [parsedEntry('https://example.com/a')] })
+            ),
+        }
+      );
+
+      expect(urlsOf(outcome.untouched)).toEqual(['https://example.com/other']);
+      expect(urlsOf(outcome.refreshed)).toEqual(['https://example.com/a']);
+    })
+  );
+});
+
+describe('refreshFeed parse failures', () => {
+  it.effect(
+    'FD-REFRESH-2 a source that cannot be parsed fails FeedParserError',
+    () =>
+      Effect.gen(function* () {
+        const error = yield* run(
+          Effect.gen(function* () {
+            const feeds = yield* FeedRepository;
+            const feed = makeUniqueFeed({ ownerId: alice });
+
+            yield* feeds.create(alice, [feed]);
+
+            return yield* refreshFeed(alice, feed.id);
+          }),
+          {
+            parseFeed: () =>
+              Effect.fail(new FeedParserError({ message: 'no feed' })),
+          }
+        ).pipe(Effect.flip);
+
+        expect(error._tag).toBe('FeedParserError');
+      })
   );
 });

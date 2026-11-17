@@ -1,87 +1,142 @@
 import { expect, it } from '@effect/vitest';
-import { Effect, Redacted } from 'effect';
-import { FetchHttpClient } from 'effect/http';
-import { fetchJina } from '../src/jina';
-
-type FetchInput = Parameters<typeof globalThis.fetch>[0];
-
-type FetchInit = Parameters<typeof globalThis.fetch>[1];
-
-const key = Redacted.make('secret');
+import { JinaKey, WebpageFetcher } from '@reader/business';
+import { Effect, Layer, Option, Schema } from 'effect';
+import {
+  HttpClientError as ClientError,
+  Headers,
+  HttpClient,
+  type HttpClientRequest,
+  HttpClientResponse,
+} from 'effect/http';
+import { JinaWebpageFetcherLive } from '../src/jina';
 
 const article = 'https://example.com/article';
 
 const html = '<html><body><p>Body</p></body></html>';
 
-const provideFetch = (impl: typeof globalThis.fetch) =>
-  Effect.provideService(FetchHttpClient.Fetch, impl);
+const secret = 'sk-secret';
 
-const textFetch =
-  (body: string, status = 200) =>
-  () =>
-    Promise.resolve(new Response(body, { status }));
+const key = Option.some(Schema.decodeSync(JinaKey)(secret));
 
-it.effect('requests Jina html for the target with the key', () =>
-  Effect.gen(function* () {
-    let seen: { url: string; init: FetchInit | undefined } | undefined;
-    const fetchImpl = (input: FetchInput, init?: FetchInit) => {
-      seen = { url: String(input), init };
+type Respond = (
+  request: HttpClientRequest.HttpClientRequest
+) => Effect.Effect<
+  HttpClientResponse.HttpClientResponse,
+  ClientError.HttpClientError
+>;
 
-      return textFetch(html)();
-    };
-    const result = yield* fetchJina(article, key).pipe(
-      provideFetch(fetchImpl as typeof globalThis.fetch)
+const stub = (respond: Respond): Layer.Layer<HttpClient.HttpClient> =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => respond(request))
+  );
+
+const fetchPage = (
+  storedKey: Option.Option<JinaKey>,
+  respond: Respond,
+  url = article
+) =>
+  Effect.flatMap(WebpageFetcher, (fetcher) => fetcher.fetch(url)).pipe(
+    Effect.provide(
+      Layer.provide(JinaWebpageFetcherLive(storedKey), stub(respond))
+    )
+  );
+
+const answer =
+  (body: string, status = 200): Respond =>
+  (request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(request, new Response(body, { status }))
     );
-    const headers = new Headers(seen?.init?.headers);
+
+const header = (
+  request: HttpClientRequest.HttpClientRequest | undefined,
+  name: string
+): string | undefined =>
+  request
+    ? Option.getOrUndefined(Headers.get(request.headers, name))
+    : undefined;
+
+it.effect('CM-FETCH-3 asks Jina for the page html with the stored key', () =>
+  Effect.gen(function* () {
+    let seen: HttpClientRequest.HttpClientRequest | undefined;
+    const result = yield* fetchPage(key, (request) => {
+      seen = request;
+
+      return answer(html)(request);
+    });
 
     expect(result).toBe(html);
     expect(seen?.url).toBe(`https://r.jina.ai/${article}`);
-    expect(headers.get('authorization')).toBe('Bearer secret');
-    expect(headers.get('accept')).toBe('text/html');
-    expect(headers.get('x-return-format')).toBe('html');
+    expect(header(seen, 'authorization')).toBe(`Bearer ${secret}`);
+    expect(header(seen, 'accept')).toBe('text/html');
+    expect(header(seen, 'x-return-format')).toBe('html');
   })
 );
 
-it.effect('omits credentials when no key is configured', () =>
+it.effect('SET-ACTIVE-1 asks Jina anonymously without a stored key', () =>
   Effect.gen(function* () {
-    let init: FetchInit | undefined;
-    const fetchImpl = (_input: FetchInput, options?: FetchInit) => {
-      init = options;
+    let seen: HttpClientRequest.HttpClientRequest | undefined;
+    const result = yield* fetchPage(Option.none(), (request) => {
+      seen = request;
 
-      return textFetch(html)();
-    };
-    const result = yield* fetchJina(article, undefined).pipe(
-      provideFetch(fetchImpl as typeof globalThis.fetch)
+      return answer(html)(request);
+    });
+
+    expect(result).toBe(html);
+    expect(seen?.url).toBe(`https://r.jina.ai/${article}`);
+    expect(header(seen, 'authorization')).toBeUndefined();
+  })
+);
+
+it.effect('CM-URL-4 passes a URL that carries credentials on unchanged', () =>
+  Effect.gen(function* () {
+    let seen: HttpClientRequest.HttpClientRequest | undefined;
+    const target = 'https://user:password@example.com/private';
+    const result = yield* fetchPage(
+      Option.none(),
+      (request) => {
+        seen = request;
+
+        return answer(html)(request);
+      },
+      target
     );
 
     expect(result).toBe(html);
-    expect(new Headers(init?.headers).get('authorization')).toBeNull();
+    expect(seen?.url).toBe(`https://r.jina.ai/${target}`);
   })
 );
 
-it.effect('fails with the response status on a non-2xx answer', () =>
+it.effect('CM-FETCH-4 reports a non-2xx answer without the key', () =>
   Effect.gen(function* () {
-    const fetchImpl = () => textFetch('denied', 403)();
     const failure = yield* Effect.flip(
-      fetchJina(article, key).pipe(
-        provideFetch(fetchImpl as typeof globalThis.fetch)
-      )
+      fetchPage(key, (request) => answer('denied', 403)(request))
     );
 
-    expect(failure._tag).toBe('FetchFailure');
+    expect(failure._tag).toBe('WebpageFetcherError');
     expect(failure.message).toBe('Jina request failed with status 403');
+    expect(failure.message).not.toContain(secret);
   })
 );
 
-it.effect('fails when the request cannot be sent', () =>
+it.effect('CM-FETCH-4 reports a transport failure without the key', () =>
   Effect.gen(function* () {
-    const fetchImpl = () => Promise.reject(new Error('Network down'));
     const failure = yield* Effect.flip(
-      fetchJina(article, key).pipe(
-        provideFetch(fetchImpl as typeof globalThis.fetch)
+      fetchPage(key, (request) =>
+        Effect.fail(
+          new ClientError.HttpClientError({
+            reason: new ClientError.TransportError({
+              request,
+              cause: new Error(`socket hang up for ${secret}`),
+            }),
+          })
+        )
       )
     );
 
+    expect(failure._tag).toBe('WebpageFetcherError');
     expect(failure.message).toBe('Jina request failed');
+    expect(failure.message).not.toContain(secret);
   })
 );

@@ -1,29 +1,34 @@
-import { Context, Data, type Effect, type Option } from 'effect';
+import { Context, type Effect, type Option } from 'effect';
 import type { OwnerId } from '../entity/common/owner-id';
-import type { Folder, FolderId, FolderName } from '../entity/feed/folder';
-
-export class FolderRepositoryError extends Data.TaggedError(
-  'FolderRepositoryError'
-)<{ readonly message: string }> {}
+import type { Folder, FolderId, FolderName } from '../entity/folder/folder';
+import type { FolderRepositoryError } from '../error/folder';
 
 /**
- * All methods are scoped by `ownerId`. Write semantics are those of CM-PORT.
+ * Every method is scoped to the owner passed in (CM-OWN-2); a row of another
+ * owner is absent, not an error (CM-OWN-3). Write semantics are those of
+ * CM-PORT-3, CM-PORT-5 and CM-PORT-6; every implementation satisfies them
+ * (CM-PORT-1).
  */
 export interface IFolderRepository {
-  /** `Option` of the folder. */
+  /** None for a folder that does not exist for the owner (FD-FOLDER-5, FD-SUB step 2). */
   readonly find: (
     owner: OwnerId,
     id: FolderId
   ) => Effect.Effect<Option.Option<Folder>, FolderRepositoryError>;
-  /** The owner's folders ordered by name, then id (FD-FOLDER-8). */
+  /**
+   * The owner's folders ordered by name, then id, compared in UTF-8 byte order
+   * (FD-FOLDER-8). Folders are not paged (CM-PAGE) and an empty folder is kept
+   * and listed.
+   */
   readonly list: (
     owner: OwnerId
   ) => Effect.Effect<ReadonlyArray<Folder>, FolderRepositoryError>;
   /**
-   * Returns the ids actually created (CM-PORT-6). A row is skipped when its id
-   * exists, when the owner already has a folder of that name (CM-ID-6), or
-   * when its `ownerId` differs from `owner`; two creates of one name at once:
-   * exactly one succeeds.
+   * Returns the ids actually created (CM-PORT-6). A row is skipped, never
+   * overwritten, when its id exists, when its `ownerId` differs from `owner`,
+   * or when the owner already has a folder of that name compared exactly as
+   * stored (CM-ID-6, FD-FOLDER-2); two creates of one name at once create one
+   * folder (FD-FOLDER-4).
    */
   readonly create: (
     owner: OwnerId,
@@ -31,10 +36,10 @@ export interface IFolderRepository {
   ) => Effect.Effect<ReadonlyArray<FolderId>, FolderRepositoryError>;
   /**
    * Sets the folder's `name` and returns `true`; renaming to the current name
-   * is `true` and changes nothing. Returns `false` and writes nothing when the
-   * folder is not the owner's or when another folder of the owner has the
-   * name; the name check and the write are one atomic write, so two renames to
-   * one name at once: exactly one succeeds.
+   * succeeds and changes nothing (FD-FOLDER-5). Returns `false` and writes
+   * nothing when the folder is not the owner's or when another folder of the
+   * owner has that name; the name check and the write are one atomic statement
+   * (CM-PORT-5).
    */
   readonly rename: (
     owner: OwnerId,
@@ -42,8 +47,10 @@ export interface IFolderRepository {
     name: FolderName
   ) => Effect.Effect<boolean, FolderRepositoryError>;
   /**
-   * Removes the owner's folders among `ids`, **their feeds and those feeds'
-   * items**, in one atomic write (FD-FOLDER-7); unknown ids ignored.
+   * Removes the owner's folders among `ids` with every feed in them and those
+   * feeds' items, in one atomic write; saved pages stay (FD-FOLDER-7,
+   * FD-UNSUB-3). Unknown and foreign ids are ignored and an empty list changes
+   * nothing.
    */
   readonly remove: (
     owner: OwnerId,

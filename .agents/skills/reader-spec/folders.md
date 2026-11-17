@@ -71,8 +71,9 @@ The folder row's `⋯` menu shows, in this order, `只显示未读` (a checkbox 
 ### Moving a feed
 
 - A single feed's sidebar menu offers `移动到目录` between `全部标记为已读` and `删除 RSS 源`, and only when at least one folder exists.
-- `移动到目录` opens a dialog titled `移动到目录` with the line naming the feed (Messages) and a `目录` select. The select lists `不放入目录` first and then the folders by name; it preselects the feed's current folder, or `不放入目录` for a feed at the top level. The submit button reads `移动`, or `移动中…` while the request is in flight, when the select and the button are disabled.
-- On success the dialog closes, the toast says `已移动`, and the sidebar regroups at once: the feed appears under its new folder (or among the top-level feeds) by title, and both folders' counts change. The feed's items, their read state and the feed's title are unchanged (FD-MOVE-2). Confirming the feed's current folder closes the dialog and changes nothing (FD-MOVE-1).
+- `移动到目录` opens a dialog titled `移动到目录` with the line naming the feed (Messages) and a `目录` select. The select lists `不放入目录` first and then the folders by name; it preselects the feed's current folder, or `不放入目录` for a feed at the top level. The submit button reads `移动`.
+- Moving is a quick action ([SKILL.md](SKILL.md) Client conventions): the select and the `移动` button stay enabled and keep no pending state or pending label, and every submit of the form sends the selected folder, the feed's current folder included.
+- On success the dialog closes, the toast says `已移动`, and the sidebar regroups at once: the feed appears under its new folder (or among the top-level feeds) by title, and both folders' counts change. The feed's items, their read state and the feed's title are unchanged (FD-MOVE-2). Confirming the feed's current folder takes the same success path — the dialog closes and the toast says `已移动` — and the server changes nothing (FD-MOVE-1).
 - Moving never reloads the article list, so a list that has loaded articles of the moved feed still shows them until it is reloaded, while the folders' counts already reflect the move. Marking the old folder read afterwards leaves those still-shown items of the moved-out feed unread (FD-MOVE-4).
 - On failure the toast shows the error, the dialog stays open, and the feed stays where it was.
 
@@ -143,7 +144,7 @@ Folder JSON, as returned by `POST /api/folders` and inside the list: `{ "id": Fo
 | move dialog text | 将「feed title」移动到： |
 | folder select label (move dialog and subscribe confirmation) | 目录 |
 | folder select option, top level | 不放入目录 |
-| move dialog submit | 移动 / 移动中… |
+| move dialog submit | 移动 |
 | empty folder, no feeds | 这个目录还没有订阅源 / 可以从订阅源的菜单把订阅源移动到这里。 |
 | empty folder, feeds but no articles | 这个目录还没有文章 / 订阅源刷新后，新的文章会出现在这里。 |
 
@@ -419,8 +420,15 @@ Feature: RSS feed folders
 
     Scenario: Confirming the original folder makes no change
       When I open the "移动到目录" dialog of the feed "Go Blog" and confirm directly
-      Then the dialog closes
+      Then the dialog closes and the toast says "已移动"
       And Go Blog is still under the folder "Tech"
+      And the unread count of the folder "Tech" is unchanged
+
+    Scenario: The move dialog stays enabled while a move is in flight
+      When I open the "移动到目录" dialog of the feed "Zeta Daily"
+      And I choose the folder "News" and click "移动"
+      Then the folder dropdown and the "移动" button are still enabled
+      And no pending label replaces "移动"
 
     Scenario: Moving a feed does not automatically reload the current list
       Given the current reading scope is the folder "Tech"

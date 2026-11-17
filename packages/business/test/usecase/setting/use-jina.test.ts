@@ -1,67 +1,63 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Option, Redacted } from 'effect';
-import type { Setting } from '../../../src/entity/setting/setting';
+import { Effect, Option } from 'effect';
 import { SettingRepository } from '../../../src/port/setting-repository';
 import { useJina } from '../../../src/usecase/setting/use-jina';
+import { alice } from '../../support/fixtures';
 import {
-  alice,
-  decodeBrowserEndpoint,
-  decodeJinaKey,
-} from '../../support/fixtures';
-import { MemorySettingRepositoryLive } from '../../support/memory/setting';
-
-const otherKey = decodeJinaKey('other-secret');
-
-const endpoint = decodeBrowserEndpoint('http://127.0.0.1:9222/devtools');
-
-const endpointHref = Redacted.value(endpoint).href;
-
-const storedKey = (setting: Setting): string | undefined => {
-  const key = setting.fetcher.jina.key;
-
-  return Option.isSome(key) ? Redacted.value(key.value) : undefined;
-};
-
-const storedEndpoint = (setting: Setting): string | undefined => {
-  const stored = setting.fetcher.browser.endpoint;
-
-  return Option.isSome(stored) ? Redacted.value(stored.value).href : undefined;
-};
-
-const run = <A, E>(effect: Effect.Effect<A, E, SettingRepository>) =>
-  effect.pipe(Effect.provide(MemorySettingRepositoryLive));
+  endpoint,
+  endpointHref,
+  jinaKey,
+  runSettings,
+  storedEndpoint,
+  storedKey,
+} from './harness';
 
 describe('useJina', () => {
-  it.effect('SET-FETCH-1 stores a given key and keeps the endpoint', () =>
-    Effect.gen(function* () {
-      const repository = yield* SettingRepository;
+  it.effect('SET-FETCH-1 stores the provider and the given key', () =>
+    runSettings(
+      Effect.gen(function* () {
+        const settings = yield* SettingRepository;
 
-      yield* repository.selectBrowserWithEndpoint(alice, endpoint);
-      yield* repository.selectJinaWithKey(alice, otherKey);
-      yield* repository.selectBrowser(alice);
-      yield* useJina(alice, decodeJinaKey('new-secret'));
+        yield* useJina(alice, Option.some(jinaKey));
 
-      const setting = yield* repository.get(alice);
+        const setting = yield* settings.get(alice);
 
-      expect(setting.fetcher.provider).toBe('jina');
-      expect(storedKey(setting)).toBe('new-secret');
-      expect(storedEndpoint(setting)).toBe(endpointHref);
-    }).pipe(run)
+        expect(setting.provider).toBe('jina');
+        expect(storedKey(setting)).toBe('jina-secret');
+      })
+    )
   );
 
-  it.effect('SET-FETCH-1 keeps a stored key when none is given', () =>
-    Effect.gen(function* () {
-      const repository = yield* SettingRepository;
+  it.effect('SET-FETCH-1 keeps the stored key when none is given', () =>
+    runSettings(
+      Effect.gen(function* () {
+        const settings = yield* SettingRepository;
 
-      yield* repository.selectJinaWithKey(alice, otherKey);
-      yield* repository.selectBrowserWithEndpoint(alice, endpoint);
-      yield* useJina(alice);
+        yield* settings.selectJinaWithKey(alice, jinaKey);
+        yield* useJina(alice, Option.none());
 
-      const setting = yield* repository.get(alice);
+        const setting = yield* settings.get(alice);
 
-      expect(setting.fetcher.provider).toBe('jina');
-      expect(storedKey(setting)).toBe('other-secret');
-      expect(storedEndpoint(setting)).toBe(endpointHref);
-    }).pipe(run)
+        expect(setting.provider).toBe('jina');
+        expect(storedKey(setting)).toBe('jina-secret');
+      })
+    )
+  );
+
+  it.effect('SET-FETCH-5 leaves the stored browser endpoint untouched', () =>
+    runSettings(
+      Effect.gen(function* () {
+        const settings = yield* SettingRepository;
+
+        yield* settings.selectBrowserWithEndpoint(alice, endpoint);
+        yield* useJina(alice, Option.some(jinaKey));
+
+        const setting = yield* settings.get(alice);
+
+        expect(setting.provider).toBe('jina');
+        expect(storedEndpoint(setting)).toBe(endpointHref);
+        expect(storedKey(setting)).toBe('jina-secret');
+      })
+    )
   );
 });

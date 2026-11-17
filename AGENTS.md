@@ -10,8 +10,6 @@
 - `packages/content` — feed parsing, HTML parsing, article extraction and sanitizing.
 - `packages/webpage` — page fetching through Jina or a browser service.
 
-The code is being rewritten to this layout from the skills below. Until the rewrite lands, the repository still holds the previous code (`apps/api`, `apps/web`, `packages/api`); where it disagrees with the skills, the skills are right. The previous skills and code are in commit `b31a80f` (`chore: baseline before rewrite`).
-
 `reader-engineering/deployment.md` is the source of truth for setup, commands, environment variables and deployment; `README.md` is written from it.
 
 ## Project skills
@@ -27,7 +25,7 @@ Skills are organized so that a task needs as few files as possible. A change usu
 
 - `reader-spec` has one file per domain. Each domain file uses the same sections, and each fact is written in exactly one of them: **Rules** (numbered, ids stable, never reused), **Interface** (what the user sees and does), **API** (resource paths, parameters, responses, errors and status codes), **Messages** (the Chinese copy: errors, toasts, confirmations, empty states), **Acceptance** (Gherkin scenarios in fenced code blocks). Rules shared by all domains live in `reader-spec/SKILL.md`.
 - `reader-engineering/SKILL.md` holds what most code changes need; material needed only for one kind of change (database, styling, deployment) lives in a conditional file that `SKILL.md` names together with when to read it.
-- Skills hold what the code cannot say: rules, the reasons behind them, and traps found by running the app. They do not restate signatures, field lists or directory trees; port contracts and entity field notes are JSDoc in the code. Exception while the rewrite is in progress: `reader-engineering` keeps the target directory layout and `database.md` keeps the schema as blueprints; once the code exists, trim them to what the code cannot say.
+- Skills hold what the code cannot say: rules, the reasons behind them, and traps found by running the app. They do not restate signatures, field lists or directory trees; port contracts and entity field notes are JSDoc in the code.
 - Change the skill in the same change as the behavior it describes, and keep a domain's rules, interface, API, messages and scenarios consistent with each other.
 - Improve the structure when real tasks show it is costly: when a task needed several files that are always read together, merge them; when a file is long and part of it is read only for one kind of change, move that part into a conditional file named from the parent with its reading condition. Split by what is read together, never by layer. Prefer a few long files to many short ones; there is no line cap for skill files. Record a structural change in the summary of the change that makes it.
 
@@ -54,7 +52,7 @@ This project uses Effect **4** (see `packages/*/package.json` for the exact vers
 
 Import direction between layers is enforced by `noRestrictedImports` overrides in `biome.json`, and `pnpm check` fails on a violation. Each message names the skill that explains the boundary.
 
-- The dependency direction is in the `reader-engineering` skill (Packages); `biome.json` must match it. Until the rewrite lands, `biome.json` still encodes the previous layout.
+- The dependency direction is in the `reader-engineering` skill (Packages); `biome.json` must match it.
 - Do not silence a boundary with `biome-ignore`. If a boundary blocks an import that the design needs, change the boundary in `biome.json` and the skill that describes it in the same change, and say so in the summary.
 - When adding a package or a directory that is a new layer, add its override in the same change.
 

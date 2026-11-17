@@ -5,22 +5,18 @@ import type { Feed, FeedId } from '../../../../src/entity/feed/feed';
 import type {
   FeedItem,
   FeedItemId,
-} from '../../../../src/entity/feed/feed-item';
-import type { FolderId } from '../../../../src/entity/feed/folder';
+} from '../../../../src/entity/feed-item/feed-item';
+import type { FolderId } from '../../../../src/entity/folder/folder';
 import type {
   FeedItemKey,
   FeedItemQuery,
   FeedUnreadCount,
   IFeedItemRepository,
 } from '../../../../src/port/feed-item-repository';
-import {
-  byIdDescending,
-  compareText,
-  type MemoryFeedState,
-  type Ref_,
-} from './state';
+import { byIdDescending, compareText } from '../text';
+import { type FeedStateRef, folderFeedIds } from './state';
 
-const isFeedItemTaken = (
+const isItemTaken = (
   feeds: ReadonlyArray<Feed>,
   items: ReadonlyArray<FeedItem>,
   owner: OwnerId,
@@ -34,29 +30,112 @@ const isFeedItemTaken = (
   ) ||
   !feeds.some((feed) => feed.id === row.feedId && feed.ownerId === owner);
 
-const insertFeedItems = (
-  feeds: ReadonlyArray<Feed>,
-  items: ReadonlyArray<FeedItem>,
+const insertItems = (
+  store: {
+    readonly feeds: ReadonlyArray<Feed>;
+    readonly items: ReadonlyArray<FeedItem>;
+  },
   owner: OwnerId,
   rows: ReadonlyArray<FeedItem>
-) => {
-  const stored: Array<FeedItem> = [...items];
+): {
+  readonly items: ReadonlyArray<FeedItem>;
+  readonly created: ReadonlyArray<FeedItemId>;
+} => {
+  const stored: Array<FeedItem> = [...store.items];
   const created: Array<FeedItemId> = [];
 
   for (const row of rows) {
-    if (isFeedItemTaken(feeds, stored, owner, row)) {
-      continue;
+    if (!isItemTaken(store.feeds, stored, owner, row)) {
+      stored.push(row);
+      created.push(row.id);
     }
-
-    stored.push(row);
-    created.push(row.id);
   }
 
   return { items: stored, created };
 };
 
-const markFeedItems =
-  (state: Ref_) =>
+const findItem =
+  (state: FeedStateRef) =>
+  (owner: OwnerId, id: FeedItemId): Effect.Effect<Option.Option<FeedItem>> =>
+    Effect.map(Ref.get(state), (store) =>
+      Option.fromUndefinedOr(
+        store.items.find((item) => item.ownerId === owner && item.id === id)
+      )
+    );
+
+/** One page: owner, scope, unread filter, strictly after the cursor, id descending (CM-PAGE). */
+const page = (
+  store: { readonly items: ReadonlyArray<FeedItem> },
+  owner: OwnerId,
+  inScope: (item: FeedItem) => boolean,
+  query: FeedItemQuery
+): ReadonlyArray<FeedItem> =>
+  store.items
+    .filter((item) => item.ownerId === owner && inScope(item))
+    .filter((item) => !query.unread || !item.read)
+    .filter(
+      (item) => !Option.exists(query.cursor, (cursor) => item.id >= cursor)
+    )
+    .sort(byIdDescending)
+    .slice(0, query.limit);
+
+const listAllItems =
+  (state: FeedStateRef) =>
+  (
+    owner: OwnerId,
+    query: FeedItemQuery
+  ): Effect.Effect<ReadonlyArray<FeedItem>> =>
+    Effect.map(Ref.get(state), (store) =>
+      page(store, owner, () => true, query)
+    );
+
+const listItemsByFeed =
+  (state: FeedStateRef) =>
+  (
+    owner: OwnerId,
+    feedId: FeedId,
+    query: FeedItemQuery
+  ): Effect.Effect<ReadonlyArray<FeedItem>> =>
+    Effect.map(Ref.get(state), (store) =>
+      page(store, owner, (item) => item.feedId === feedId, query)
+    );
+
+const listItemsByFolder =
+  (state: FeedStateRef) =>
+  (
+    owner: OwnerId,
+    folderId: FolderId,
+    query: FeedItemQuery
+  ): Effect.Effect<ReadonlyArray<FeedItem>> =>
+    Effect.map(Ref.get(state), (store) => {
+      const feedIds = folderFeedIds(store.folders, store.feeds, owner, [
+        folderId,
+      ]);
+
+      return page(store, owner, (item) => feedIds.has(item.feedId), query);
+    });
+
+const createItems =
+  (state: FeedStateRef) =>
+  (
+    owner: OwnerId,
+    items: ReadonlyArray<FeedItem>
+  ): Effect.Effect<ReadonlyArray<FeedItemId>> =>
+    Ref.modify(state, (store) => {
+      const inserted = insertItems(store, owner, items);
+
+      return [inserted.created, { ...store, items: inserted.items }];
+    });
+
+const markItems = (
+  store: { readonly items: ReadonlyArray<FeedItem> },
+  inScope: (item: FeedItem) => boolean,
+  read: boolean
+): ReadonlyArray<FeedItem> =>
+  store.items.map((item) => (inScope(item) ? { ...item, read } : item));
+
+const markReadItems =
+  (state: FeedStateRef) =>
   (
     owner: OwnerId,
     ids: ReadonlyArray<FeedItemId>,
@@ -67,171 +146,86 @@ const markFeedItems =
 
       return {
         ...store,
-        items: store.items.map((item) =>
-          item.ownerId === owner && wanted.has(item.id)
-            ? { ...item, read }
-            : item
+        items: markItems(
+          store,
+          (item) => item.ownerId === owner && wanted.has(item.id),
+          read
         ),
       };
     });
 
-const markFeedItemsByFeeds =
-  (state: Ref_) =>
+const markReadItemsByFeeds =
+  (state: FeedStateRef) =>
   (owner: OwnerId, feedIds: ReadonlyArray<FeedId>): Effect.Effect<void> =>
     Ref.update(state, (store) => {
       const wanted = new Set<string>(feedIds);
 
       return {
         ...store,
-        items: store.items.map((item) =>
-          item.ownerId === owner && wanted.has(item.feedId)
-            ? { ...item, read: true }
-            : item
+        items: markItems(
+          store,
+          (item) => item.ownerId === owner && wanted.has(item.feedId),
+          true
         ),
       };
     });
 
-const markFeedItemsByFolders =
-  (state: Ref_) =>
+const markReadItemsByFolders =
+  (state: FeedStateRef) =>
   (owner: OwnerId, folderIds: ReadonlyArray<FolderId>): Effect.Effect<void> =>
     Ref.update(state, (store) => {
-      const wanted = new Set<string>(folderIds);
-      const feedIds = new Set<string>(
-        store.feeds
-          .filter(
-            (feed) =>
-              feed.ownerId === owner &&
-              Option.exists(feed.folderId, (id) => wanted.has(id))
-          )
-          .map((feed) => feed.id)
+      const feedIds = folderFeedIds(
+        store.folders,
+        store.feeds,
+        owner,
+        folderIds
       );
 
       return {
         ...store,
-        items: store.items.map((item) =>
-          item.ownerId === owner && feedIds.has(item.feedId)
-            ? { ...item, read: true }
-            : item
+        items: markItems(
+          store,
+          (item) => item.ownerId === owner && feedIds.has(item.feedId),
+          true
         ),
       };
     });
 
-const markAllFeedItems =
-  (state: Ref_) =>
+const markAllItemsRead =
+  (state: FeedStateRef) =>
   (owner: OwnerId): Effect.Effect<void> =>
     Ref.update(state, (store) => ({
       ...store,
-      items: store.items.map((item) =>
-        item.ownerId === owner ? { ...item, read: true } : item
-      ),
+      items: markItems(store, (item) => item.ownerId === owner, true),
     }));
 
-const setExtractedContent =
-  (state: Ref_) =>
+const setItemExtractedContent =
+  (state: FeedStateRef) =>
   (
     owner: OwnerId,
     id: FeedItemId,
     content: ArticleContent
   ): Effect.Effect<boolean> =>
     Ref.modify(state, (store) => {
-      let found = false;
-      const items = store.items.map((item) => {
-        if (item.ownerId !== owner || item.id !== id) {
-          return item;
-        }
-
-        found = true;
-
-        return { ...item, extractedContent: Option.some(content) };
-      });
-
-      return [found, { ...store, items }];
-    });
-
-const findFeedItem =
-  (state: Ref_) =>
-  (owner: OwnerId, id: FeedItemId): Effect.Effect<Option.Option<FeedItem>> =>
-    Effect.map(Ref.get(state), (store) =>
-      Option.fromUndefinedOr(
-        store.items.find((item) => item.ownerId === owner && item.id === id)
-      )
-    );
-
-const filterFeedItems = (
-  store: MemoryFeedState,
-  owner: OwnerId,
-  scope: (item: FeedItem) => boolean,
-  query: FeedItemQuery
-): ReadonlyArray<FeedItem> =>
-  store.items
-    .filter((item) => item.ownerId === owner)
-    .filter(scope)
-    .filter((item) => !query.unreadOnly || !item.read)
-    .filter((item) => query.after === undefined || item.id < query.after)
-    .sort(byIdDescending)
-    .slice(0, query.limit);
-
-const listAllFeedItems =
-  (state: Ref_) =>
-  (
-    owner: OwnerId,
-    query: FeedItemQuery
-  ): Effect.Effect<ReadonlyArray<FeedItem>> =>
-    Effect.map(Ref.get(state), (store) =>
-      filterFeedItems(store, owner, () => true, query)
-    );
-
-const listFeedItemsByFeed =
-  (state: Ref_) =>
-  (
-    owner: OwnerId,
-    feedId: FeedId,
-    query: FeedItemQuery
-  ): Effect.Effect<ReadonlyArray<FeedItem>> =>
-    Effect.map(Ref.get(state), (store) =>
-      filterFeedItems(store, owner, (item) => item.feedId === feedId, query)
-    );
-
-const listFeedItemsByFolder =
-  (state: Ref_) =>
-  (
-    owner: OwnerId,
-    folderId: FolderId,
-    query: FeedItemQuery
-  ): Effect.Effect<ReadonlyArray<FeedItem>> =>
-    Effect.map(Ref.get(state), (store) => {
-      const feedIds = new Set<string>(
-        store.feeds
-          .filter(
-            (feed) =>
-              feed.ownerId === owner &&
-              Option.getOrUndefined(feed.folderId) === folderId
-          )
-          .map((feed) => feed.id)
+      const found = store.items.some(
+        (item) => item.ownerId === owner && item.id === id
       );
 
-      return filterFeedItems(
-        store,
-        owner,
-        (item) => feedIds.has(item.feedId),
-        query
-      );
+      return [
+        found,
+        {
+          ...store,
+          items: store.items.map((item) =>
+            item.ownerId === owner && item.id === id
+              ? { ...item, extractedContent: Option.some(content) }
+              : item
+          ),
+        },
+      ];
     });
 
-const createFeedItems =
-  (state: Ref_) =>
-  (
-    owner: OwnerId,
-    items: ReadonlyArray<FeedItem>
-  ): Effect.Effect<ReadonlyArray<FeedItemId>> =>
-    Ref.modify(state, (store) => {
-      const inserted = insertFeedItems(store.feeds, store.items, owner, items);
-
-      return [inserted.created, { ...store, items: inserted.items }];
-    });
-
-const unreadFeedCounts =
-  (state: Ref_) =>
+const countUnreadItems =
+  (state: FeedStateRef) =>
   (owner: OwnerId): Effect.Effect<ReadonlyArray<FeedUnreadCount>> =>
     Effect.map(Ref.get(state), (store) => {
       const counts = new Map<FeedId, number>();
@@ -248,7 +242,7 @@ const unreadFeedCounts =
     });
 
 const feedInventory =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (owner: OwnerId, feedId: FeedId): Effect.Effect<ReadonlyArray<FeedItemKey>> =>
     Effect.map(Ref.get(state), (store) =>
       store.items
@@ -257,8 +251,8 @@ const feedInventory =
         .map((item): FeedItemKey => ({ id: item.id, url: item.url }))
     );
 
-const removeFeedItems =
-  (state: Ref_) =>
+const removeItems =
+  (state: FeedStateRef) =>
   (owner: OwnerId, ids: ReadonlyArray<FeedItemId>): Effect.Effect<void> =>
     Ref.update(state, (store) => {
       const wanted = new Set<string>(ids);
@@ -272,19 +266,19 @@ const removeFeedItems =
     });
 
 export const makeMemoryFeedItemRepository = (
-  state: Ref_
+  state: FeedStateRef
 ): IFeedItemRepository => ({
-  find: findFeedItem(state),
-  listAll: listAllFeedItems(state),
-  listByFeed: listFeedItemsByFeed(state),
-  listByFolder: listFeedItemsByFolder(state),
-  create: createFeedItems(state),
-  markRead: markFeedItems(state),
-  markReadByFeeds: markFeedItemsByFeeds(state),
-  markReadByFolders: markFeedItemsByFolders(state),
-  markAllRead: markAllFeedItems(state),
-  setExtractedContent: setExtractedContent(state),
-  unreadCounts: unreadFeedCounts(state),
+  find: findItem(state),
+  listAll: listAllItems(state),
+  listByFeed: listItemsByFeed(state),
+  listByFolder: listItemsByFolder(state),
+  create: createItems(state),
+  markRead: markReadItems(state),
+  markReadByFeeds: markReadItemsByFeeds(state),
+  markReadByFolders: markReadItemsByFolders(state),
+  markAllRead: markAllItemsRead(state),
+  setExtractedContent: setItemExtractedContent(state),
+  unreadCounts: countUnreadItems(state),
   inventory: feedInventory(state),
-  remove: removeFeedItems(state),
+  remove: removeItems(state),
 });

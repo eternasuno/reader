@@ -1,238 +1,173 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Layer, Option } from 'effect';
-import { HttpClient } from 'effect/http';
-import type { Feed } from '../../../../src/entity/feed/feed';
-import { Retention } from '../../../../src/entity/setting/retention';
-import { DocumentSanitizer } from '../../../../src/port/document-sanitizer';
-import { FeedItemRepositoryError } from '../../../../src/port/feed-item-repository';
-import { FeedParser } from '../../../../src/port/feed-parser';
-import {
-  FeedRepository,
-  type IFeedRepository,
-} from '../../../../src/port/feed-repository';
-import { HtmlParser } from '../../../../src/port/html-parser';
+import { Effect } from 'effect';
+import type { FeedItem } from '../../../../src/entity/feed-item/feed-item';
+import { FeedItemRepository } from '../../../../src/port/feed-item-repository';
+import { FeedRepository } from '../../../../src/port/feed-repository';
 import { SettingRepository } from '../../../../src/port/setting-repository';
 import { refreshFeed } from '../../../../src/usecase/feed/refresh-feed';
 import {
   alice,
-  decodeUrl,
-  makeFeedItem,
+  decodeRetention,
   makeUniqueFeed,
 } from '../../../support/fixtures';
-import { memoryFeedStoreLayer } from '../../../support/memory/feed-store';
-import { MemorySettingRepositoryLive } from '../../../support/memory/setting';
 import {
-  defaultParseHtml,
-  defaultSanitize,
-  feedResponse,
-  findFeed,
   parsedEntry,
   parsedFeed,
   run,
   storedItems,
-  storeFeed,
-  storeItems,
+  storeItemsInListOrder,
   urlsOf,
-} from '../../../support/usecase/feed';
+} from '../support';
 
-const base = 'https://example.com';
-
-const feedOf = (): Feed => makeUniqueFeed({ ownerId: alice });
-
-describe('refreshFeed retention', () => {
-  it.effect('removes the stored items below the retention', () =>
-    Effect.gen(function* () {
-      const feed = feedOf();
-      const urls = Array.from(
-        { length: 31 },
-        (_, index) => `${base}/item/${index}`
-      );
-      const stored = [...urls]
-        .reverse()
-        .map((url) =>
-          makeFeedItem({ ownerId: alice, feedId: feed.id, url: decodeUrl(url) })
-        );
-      const parsed = parsedFeed({
-        entries: urls.map((url) => parsedEntry(url)),
-      });
-
-      const items = yield* run(
-        Effect.gen(function* () {
-          const settings = yield* SettingRepository;
-
-          yield* storeFeed(feed);
-          yield* storeItems(alice, stored);
-          yield* settings.setRetention(alice, Retention.make(30));
-          yield* refreshFeed(alice, feed.id);
-
-          return yield* storedItems(alice, feed.id);
-        }),
-        { parseFeed: () => Effect.succeed(parsed) }
-      );
-
-      expect(items).toHaveLength(30);
-      expect(urlsOf(items)).toEqual(urls.slice(0, 30));
-    })
-  );
-});
-
-const thirtyOneUrls = (): ReadonlyArray<string> =>
-  Array.from({ length: 31 }, (_, index) => `${base}/item/${index}`);
-
-const storedFor = (
-  feed: Feed,
-  urls: ReadonlyArray<string>,
-  read: (index: number) => boolean
-) =>
-  [...urls].reverse().map((url, index) =>
-    makeFeedItem({
-      ownerId: alice,
-      feedId: feed.id,
-      url: decodeUrl(url),
-      read: read(index),
-    })
-  );
-
-// Index 0 of the stored array is the first created, so it is the bottom row.
-const refreshWithRetention = (bottomRead: boolean, retention: number) => {
-  const feed = feedOf();
-  const urls = thirtyOneUrls();
-  const stored = storedFor(feed, urls, (index) =>
-    index === 0 ? bottomRead : true
-  );
-  const parsed = parsedFeed({ entries: urls.map((url) => parsedEntry(url)) });
-
-  return {
-    urls,
-    effect: run(
-      Effect.gen(function* () {
-        const settings = yield* SettingRepository;
-
-        yield* storeFeed(feed);
-        yield* storeItems(alice, stored);
-        yield* settings.setRetention(alice, Retention.make(retention));
-        const before = urlsOf(yield* storedItems(alice, feed.id));
-        yield* refreshFeed(alice, feed.id);
-
-        return { before, after: urlsOf(yield* storedItems(alice, feed.id)) };
-      }),
-      { parseFeed: () => Effect.succeed(parsed) }
-    ),
-  };
+type Scenario = {
+  /** The stored items in list order, newest first, before the sync. */
+  readonly stored: ReadonlyArray<string>;
+  /** The entries the source lists, in source order. */
+  readonly listed: ReadonlyArray<string>;
+  readonly retention: number;
+  readonly readAll?: boolean;
 };
 
-describe('refreshFeed retention and read state', () => {
+const markAllRead = (feedId: FeedItem['feedId']) =>
+  Effect.gen(function* () {
+    const items = yield* FeedItemRepository;
+    const rows = yield* storedItems(alice, feedId);
+
+    yield* items.markRead(
+      alice,
+      rows.map((row) => row.id),
+      true
+    );
+  });
+
+const syncScenario = (scenario: Scenario) =>
+  run(
+    Effect.gen(function* () {
+      const feeds = yield* FeedRepository;
+      const settings = yield* SettingRepository;
+      const feed = makeUniqueFeed({ ownerId: alice });
+
+      yield* feeds.create(alice, [feed]);
+      yield* storeItemsInListOrder(feed, scenario.stored);
+
+      if (scenario.readAll === true) {
+        yield* markAllRead(feed.id);
+      }
+
+      yield* settings.setRetention(alice, decodeRetention(scenario.retention));
+      yield* refreshFeed(alice, feed.id);
+
+      return yield* storedItems(alice, feed.id);
+    }),
+    {
+      parseFeed: () =>
+        Effect.succeed(
+          parsedFeed({
+            entries: scenario.listed.map((url) => parsedEntry(url)),
+          })
+        ),
+    }
+  );
+
+describe('refreshFeed retention', () => {
+  it.effect('FD-SYNC step 4 removes the stored item that no longer fits', () =>
+    Effect.gen(function* () {
+      const rows = yield* syncScenario({
+        stored: [
+          'https://example.com/d',
+          'https://example.com/c',
+          'https://example.com/b',
+        ],
+        listed: [
+          'https://example.com/n',
+          'https://example.com/d',
+          'https://example.com/c',
+        ],
+        retention: 3,
+      });
+
+      expect(urlsOf(rows)).toEqual([
+        'https://example.com/n',
+        'https://example.com/d',
+        'https://example.com/c',
+      ]);
+    })
+  );
+});
+
+describe('refreshFeed lowered retention', () => {
   it.effect(
-    'FD-SEL-4 removes unread items beyond the retention like read ones',
+    'FD-SEL-7 a lowered retention removes the oldest items at the next sync',
     () =>
       Effect.gen(function* () {
-        const readBottom = refreshWithRetention(true, 30);
-        const unreadBottom = refreshWithRetention(false, 30);
+        const rows = yield* syncScenario({
+          stored: [
+            'https://example.com/e',
+            'https://example.com/d',
+            'https://example.com/c',
+            'https://example.com/b',
+          ],
+          listed: ['https://example.com/e'],
+          retention: 2,
+        });
 
-        const read = yield* readBottom.effect;
-        const unread = yield* unreadBottom.effect;
-
-        expect(read.after).toEqual(readBottom.urls.slice(0, 30));
-        expect(unread.after).toEqual(readBottom.urls.slice(0, 30));
-        expect(unread.after).toEqual(read.after);
+        expect(urlsOf(rows)).toEqual([
+          'https://example.com/e',
+          'https://example.com/d',
+        ]);
       })
   );
 });
 
-describe('refreshFeed retention setting', () => {
+describe('refreshFeed unlisted items', () => {
   it.effect(
-    'SET-FEED-2 applies a lowered retention at the next refresh, not before',
+    'FD-SEL-5 an item the source no longer lists stays while there is room',
     () =>
       Effect.gen(function* () {
-        const { urls, effect } = refreshWithRetention(true, 20);
-        const result = yield* effect;
+        const rows = yield* syncScenario({
+          stored: [
+            'https://example.com/e',
+            'https://example.com/d',
+            'https://example.com/c',
+          ],
+          listed: ['https://example.com/e'],
+          retention: 3,
+        });
 
-        expect(result.before).toEqual(urls);
-        expect(result.after).toEqual(urls.slice(0, 20));
+        expect(urlsOf(rows)).toEqual([
+          'https://example.com/e',
+          'https://example.com/d',
+          'https://example.com/c',
+        ]);
       })
   );
 });
 
-const failingCreateLayer = Layer.mergeAll(
-  memoryFeedStoreLayer((items) => ({
-    ...items,
-    create: () =>
-      Effect.fail(new FeedItemRepositoryError({ message: 'create' })),
-  })),
-  MemorySettingRepositoryLive,
-  Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((_request, url) =>
-      Effect.succeed(feedResponse({ url: url.href }))
-    )
-  ),
-  Layer.mock(FeedParser, {
-    parse: () =>
-      Effect.succeed(
-        parsedFeed({
-          title: 'Source title',
-          entries: [parsedEntry(`${base}/a`)],
-        })
-      ),
-  }),
-  Layer.mock(HtmlParser, { parse: defaultParseHtml }),
-  Layer.mock(DocumentSanitizer, { sanitize: defaultSanitize })
-);
+describe('refreshFeed read state and retention', () => {
+  it.effect(
+    'FD-SEL-4 read state plays no role, so a read item beyond N is removed',
+    () =>
+      Effect.gen(function* () {
+        const rows = yield* syncScenario({
+          stored: [
+            'https://example.com/d',
+            'https://example.com/c',
+            'https://example.com/b',
+          ],
+          listed: [
+            'https://example.com/n',
+            'https://example.com/d',
+            'https://example.com/c',
+          ],
+          retention: 3,
+          readAll: true,
+        });
 
-describe('refreshFeed write failures', () => {
-  it.effect('keeps the feed title and time when creating items fails', () =>
-    Effect.gen(function* () {
-      const feed = feedOf();
-
-      const result = yield* Effect.gen(function* () {
-        yield* storeFeed(feed);
-
-        return {
-          error: yield* refreshFeed(alice, feed.id).pipe(Effect.flip),
-          stored: yield* findFeed(alice, feed.id),
-        };
-      }).pipe(Effect.provide(failingCreateLayer));
-
-      expect(result.error).toStrictEqual(
-        new FeedItemRepositoryError({ message: 'create' })
-      );
-      expect(Option.getOrThrow(result.stored)).toEqual(feed);
-    })
-  );
-
-  it.effect('creates no items when the feed is gone', () =>
-    Effect.gen(function* () {
-      const feed = feedOf();
-      let repository: IFeedRepository | undefined;
-
-      const result = yield* run(
-        Effect.gen(function* () {
-          repository = yield* FeedRepository;
-          yield* storeFeed(feed);
-          yield* refreshFeed(alice, feed.id);
-
-          return {
-            items: yield* storedItems(alice, feed.id),
-            feed: yield* findFeed(alice, feed.id),
-          };
-        }),
-        {
-          parseFeed: () =>
-            Effect.gen(function* () {
-              if (repository !== undefined) {
-                yield* repository.remove(alice, [feed.id]).pipe(Effect.orDie);
-              }
-
-              return parsedFeed({
-                title: 'Source title',
-                entries: [parsedEntry(`${base}/a`)],
-              });
-            }),
-        }
-      );
-
-      expect(result.items).toEqual([]);
-      expect(Option.isNone(result.feed)).toBe(true);
-    })
+        expect(urlsOf(rows)).toEqual([
+          'https://example.com/n',
+          'https://example.com/d',
+          'https://example.com/c',
+        ]);
+      })
   );
 });

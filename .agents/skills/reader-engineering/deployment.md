@@ -5,13 +5,13 @@ description: Conditional file of the reader-engineering skill. Read when touchin
 
 # Deployment
 
-One app, `apps/reader`, ships everything: it builds the server bundle and the web assets, the server serves both, and one process and one image run them. Package and image name `reader`; the product is 留白.
+One app, `apps/reader`, ships everything: it builds the server bundle and the web assets, the server serves both, and one process and one image run them. Package and image name `reader` (the root workspace package is `reader-workspace`, so `pnpm --filter reader` targets the app alone); the product is 留白.
 
-During the rewrite this file is the source of truth for setup, commands, environment variables and deployment. `README.md` still describes the previous two-app workspace (`apps/api`, `apps/web`, a starter with a different name); regenerate it from this file, and keep the two in agreement afterwards.
+This file is the source of truth for setup, commands, environment variables and deployment; `README.md` is written from it and the two must stay in agreement.
 
 ## Build and runtime layout
 
-- Both bundles come from Vite: the SPA build and the server SSR build. `pnpm build` writes them into the app's build output, `apps/reader/dist`: `dist/server.js` for the server and `dist/public` for the web assets.
+- Both bundles come from Vite: the server SSR build (`vite.server.config.ts`) and the SPA build (`vite.config.ts`). `pnpm build` writes them into the app's build output, `apps/reader/dist`: `dist/server.js` first (which empties `dist/`), then `dist/public` for the web assets.
 - The runtime directory is a separate thing from the build output: the Docker image's `/app` holds `server.js`, `public/` and the server's production `node_modules`, with no `dist/` level and no workspace paths.
 - The runtime must not depend on the workspace: no pnpm, no Turbo, no development dependencies, no workspace-relative asset paths. Start Node directly on `server.js` and pass configuration through environment variables.
 - Static routes are mounted once, through a single static-server layer with the fixed root `public`, resolved from the process working directory — which the runtime directory makes correct, since `public/` sits beside `server.js`. Whether that directory exists needs no environment branch and no startup filesystem check, and the layer does not validate `index.html` at startup.
@@ -22,24 +22,24 @@ During the rewrite this file is the source of truth for setup, commands, environ
 
 - Node `>=22.19` (the `engines` floor that `node:sqlite` requires; the container builds on Node 24) and pnpm `12.3.4`, pinned in the root `package.json`.
 - `pnpm install`, then create the app's local environment file from `apps/reader/.env.example` and replace `BETTER_AUTH_SECRET` with a long random value (`openssl rand -base64 32`).
-- Internal workspace packages may export TypeScript source. Do not enable package injection or add `ssr.noExternal` without a concrete need; after adding a source-only package, check the built server bundle for remaining runtime imports of it. TypeScript `include`/`exclude` does not control bundler externalization. The pinned pnpm supports the default `deploy` (no `--legacy`); injection concerns installation and peer resolution, not whether a source or compiled entry point is used.
+- Internal workspace packages export TypeScript source (`./src/index.ts`) and are bundled into `dist/server.js` by `vite.server.config.ts`. Any library kept external by `ssr.external` in `vite.server.config.ts` (`@mozilla/readability`, `dompurify`, `feedsmith`, `jsdom`, `puppeteer-core`, `ws`) remains a runtime import of `dist/server.js` and must also be a direct `dependencies` entry of `apps/reader/package.json` — otherwise pnpm's strict `node_modules` (both locally and after `pnpm --filter reader deploy --prod`) links it only under the adapter package and `node server.js` fails to resolve it. TypeScript `include`/`exclude` does not control bundler externalization, and the pinned pnpm supports the default `deploy` (no `--legacy`).
 
 ## Commands
 
 | Command | Does |
 | --- | --- |
-| `pnpm dev` | the app's `dev` script: `dev:web` (Vite) and `dev:server` (`tsx watch src/server/main.ts`), each as its own persistent Turborepo task |
-| `pnpm build` | the web build and the server bundle, both into `apps/reader/dist` (`dist/public`, `dist/server.js`) |
-| `pnpm start` | the built server |
+| `pnpm dev` | `dev:web` (Vite) and `dev:server` (`tsx watch --env-file-if-exists=.env src/server/main.ts`), each as its own persistent Turborepo task |
+| `pnpm build` | the server bundle and the web build, both into `apps/reader/dist` (`dist/server.js`, `dist/public`) |
+| `pnpm start` | the built server (`cd dist && node --env-file-if-exists=../.env server.js`) |
 | `pnpm db:migrate` | Better Auth's migrations against `auth.db` and the reader migration against `reader.db` |
 | `pnpm test` | every Vitest suite |
-| `pnpm typecheck` | TypeScript for both tsconfig files, tests included (`SKILL.md`) |
+| `pnpm typecheck` | TypeScript across every package and both app tsconfig files, tests included (`SKILL.md`) |
 | `pnpm check` | Biome lint and format for JavaScript, TypeScript, CSS and JSON |
 | `pnpm check --fix` | the same, applying safe fixes |
 
 ## Development
 
-- Development runs two processes, one per script: `dev:web` serves the web with Vite on `WEB_PORT` (default 3000), `dev:server` runs the server with `tsx watch src/server/main.ts` on `API_PORT` (default 3001). The app's `dev` script runs both, either as the two persistent Turborepo tasks or from one script that starts both.
+- Development runs two persistent Turborepo tasks (`pnpm dev`): `dev:web` serves the web with Vite on `WEB_PORT` (default 3000), and `dev:server` runs the server with `tsx watch --env-file-if-exists=.env src/server/main.ts` on `API_PORT` (default 3001).
 - Vite proxies `/api` to the server, so the browser talks to one origin during development and the server needs no CORS middleware. The proxy target is read from the same `API_PORT` the server reads (the app's `.env`), so one value configures both and nothing is duplicated.
 - In development the server runs from `apps/reader` with `tsx`, so its working directory holds no `public/` unless a build ran there. The web comes from the Vite dev server and nothing is served statically, which makes the static layer irrelevant in development; that needs no environment branch.
 - The web's Vite config builds with the Solid plugin (`ssr: false`) and the Tailwind plugin, reads its environment from the app directory, and uses `strictPort` so a busy port fails loudly instead of silently moving to another one.

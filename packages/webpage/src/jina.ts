@@ -1,50 +1,63 @@
-import { Effect, Redacted } from 'effect';
 import {
-  FetchHttpClient,
-  HttpClient,
-  type HttpClientResponse,
-} from 'effect/http';
-import { FetchFailure } from './failure';
+  type JinaKey,
+  WebpageFetcher,
+  WebpageFetcherError,
+} from '@reader/business';
+import { Effect, Layer, Option, Redacted } from 'effect';
+import { HttpClient } from 'effect/http';
 
 const JINA_ENDPOINT = 'https://r.jina.ai/';
 
-const requestPage = (
-  url: string,
-  key: Redacted.Redacted<string> | undefined
-): Effect.Effect<
-  HttpClientResponse.HttpClientResponse,
-  FetchFailure,
-  HttpClient.HttpClient
-> =>
-  HttpClient.get(`${JINA_ENDPOINT}${url}`, {
-    headers: {
-      Accept: 'text/html',
-      ...(key ? { Authorization: `Bearer ${Redacted.value(key)}` } : {}),
-      'X-Return-Format': 'html',
-    },
-  }).pipe(
-    Effect.mapError(
-      (cause) => new FetchFailure({ message: 'Jina request failed', cause })
-    )
-  );
+const failure = (message: string): WebpageFetcherError =>
+  new WebpageFetcherError({ message });
 
-export const fetchJina = (
+/**
+ * The key is sent as a bearer token only when one is stored; without it Jina
+ * answers anonymously (SET-FETCH). The key never appears in a message.
+ */
+const headers = (key: Option.Option<JinaKey>): Record<string, string> => ({
+  Accept: 'text/html',
+  'X-Return-Format': 'html',
+  ...Option.match(key, {
+    onNone: () => ({}),
+    onSome: (value) => ({ Authorization: `Bearer ${Redacted.value(value)}` }),
+  }),
+});
+
+const readPage = (
+  client: HttpClient.HttpClient,
   url: string,
-  key: Redacted.Redacted<string> | undefined
-): Effect.Effect<string, FetchFailure> =>
+  key: Option.Option<JinaKey>
+): Effect.Effect<string, WebpageFetcherError> =>
   Effect.gen(function* () {
-    const response = yield* requestPage(url, key);
+    // The target URL is passed whole: credentials in it are the site's, not
+    // ours, and Jina fetches the page with them (CM-URL-4).
+    const response = yield* client
+      .get(`${JINA_ENDPOINT}${url}`, { headers: headers(key) })
+      .pipe(Effect.mapError(() => failure('Jina request failed')));
 
     if (response.status < 200 || response.status >= 300) {
-      return yield* new FetchFailure({
-        message: `Jina request failed with status ${response.status}`,
-      });
+      return yield* failure(
+        `Jina request failed with status ${response.status}`
+      );
     }
 
     return yield* response.text.pipe(
-      Effect.mapError(
-        (cause) =>
-          new FetchFailure({ message: 'Jina response read failed', cause })
-      )
+      Effect.mapError(() => failure('Jina response read failed'))
     );
-  }).pipe(Effect.provide(FetchHttpClient.layer));
+  });
+
+/**
+ * The Jina fetcher for the owner's stored key, none for anonymous access
+ * (SET-ACTIVE-1). It sends its requests through the `HttpClient` of the
+ * environment, so the server decides how they reach the network.
+ */
+export const JinaWebpageFetcherLive = (
+  key: Option.Option<JinaKey>
+): Layer.Layer<WebpageFetcher, never, HttpClient.HttpClient> =>
+  Layer.effect(
+    WebpageFetcher,
+    Effect.map(HttpClient.HttpClient, (client) => ({
+      fetch: (url: string) => readPage(client, url, key),
+    }))
+  );

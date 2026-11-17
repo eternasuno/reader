@@ -1,121 +1,169 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option } from 'effect';
 import { Headers } from 'effect/http';
-import { FeedParserError } from '../../../src/port/feed-parser';
+import { FeedParserError } from '../../../src/error/feed';
 import { fetchParsedFeed } from '../../../src/usecase/feed/fetch-parsed-feed';
 import { decodeUrl } from '../../support/fixtures';
-import {
-  feedResponse,
-  parsedEntry,
-  parsedFeed,
-  run,
-  transportFailure,
-} from '../../support/usecase/feed';
+import { feedResponse, parsedFeed, run, transportFailure } from './support';
 
 const url = decodeUrl('https://example.com/feed.xml');
 
-const finalUrl = 'https://cdn.example.com/final.xml';
-
-describe('fetchParsedFeed credentials', () => {
-  it.effect('sends URL credentials as basic auth without userinfo', () =>
+describe('fetchParsedFeed', () => {
+  it.effect('FD-FETCH-1 returns the feed the parser read', () =>
     Effect.gen(function* () {
-      const credentialUrl = decodeUrl(
-        'https://us%40er:pa%3Ass@example.com/feed.xml'
-      );
-      const requests: Array<{
-        readonly href: string;
-        readonly authorization: Option.Option<string>;
-      }> = [];
+      const parsed = yield* run(fetchParsedFeed(url), {
+        parseFeed: () => Effect.succeed(parsedFeed({ title: 'Source' })),
+      });
 
-      yield* run(fetchParsedFeed(credentialUrl), {
-        fetchFeed: (target, request) => {
-          requests.push({
-            href: target.href,
-            authorization: Headers.get(request.headers, 'authorization'),
-          });
+      expect(parsed.title).toBe('Source');
+    })
+  );
+
+  it.effect('FD-FETCH-4 sends a GET to the submitted address', () =>
+    Effect.gen(function* () {
+      const targets: Array<string> = [];
+
+      yield* run(fetchParsedFeed(url), {
+        fetchFeed: (target) => {
+          targets.push(target.href);
 
           return Effect.succeed(feedResponse({ url: target.href }));
         },
       });
 
-      const requested = requests[0];
-
-      expect(requested?.href).toBe('https://example.com/feed.xml');
-
-      const authorization = Option.getOrThrow(
-        requested?.authorization ?? Option.none()
-      );
-
-      expect(authorization.startsWith('Basic ')).toBe(true);
-      expect(
-        Buffer.from(authorization.slice('Basic '.length), 'base64').toString(
-          'utf8'
-        )
-      ).toBe('us@er:pa:ss');
+      expect(targets).toEqual(['https://example.com/feed.xml']);
     })
   );
 });
 
-describe('fetchParsedFeed', () => {
-  it.effect('parses the body against the final URL of the response', () =>
-    Effect.gen(function* () {
-      const requested: Array<string> = [];
-      const parsed: Array<readonly [string, string]> = [];
-      const feed = parsedFeed({
-        entries: [parsedEntry('https://cdn.example.com/entry')],
-      });
+describe('fetchParsedFeed redirects', () => {
+  it.effect(
+    'FD-FETCH-4 parses the body against the final URL of the response',
+    () =>
+      Effect.gen(function* () {
+        const bases: Array<string> = [];
+        const bodies: Array<string> = [];
 
-      const result = yield* run(fetchParsedFeed(url), {
-        fetchFeed: (target) => {
-          requested.push(target.href);
+        yield* run(fetchParsedFeed(url), {
+          fetchFeed: () =>
+            Effect.succeed(
+              feedResponse({
+                url: 'https://example.com/final/feed.xml',
+                body: '<rss>body</rss>',
+              })
+            ),
+          parseFeed: (text, baseUrl) => {
+            bodies.push(text);
+            bases.push(baseUrl.href);
 
-          return Effect.succeed(
-            feedResponse({ url: finalUrl, body: '<rss>body</rss>' })
-          );
-        },
-        parseFeed: (text, baseUrl) => {
-          parsed.push([text, baseUrl.href]);
+            return Effect.succeed(parsedFeed());
+          },
+        });
 
-          return Effect.succeed(feed);
-        },
-      });
-
-      expect(result).toEqual(feed);
-      expect(requested).toEqual([url.href]);
-      expect(parsed).toEqual([['<rss>body</rss>', finalUrl]]);
-    })
+        expect(bodies).toEqual(['<rss>body</rss>']);
+        expect(bases).toEqual(['https://example.com/final/feed.xml']);
+      })
   );
+});
 
-  it.effect('reports a non-2xx response as a fetch failure', () =>
+describe('fetchParsedFeed failures', () => {
+  it.effect('FD-FETCH-2 a response that is not 2xx fails FetchFeedError', () =>
     Effect.gen(function* () {
       const error = yield* run(fetchParsedFeed(url), {
-        fetchFeed: () => Effect.succeed(feedResponse({ status: 404 })),
+        fetchFeed: (target) =>
+          Effect.succeed(feedResponse({ url: target.href, status: 500 })),
       }).pipe(Effect.flip);
 
       expect(error._tag).toBe('FetchFeedError');
-      expect(error.message).toBe('Failed to fetch the feed');
     })
   );
 
-  it.effect('reports a transport failure as a fetch failure', () =>
+  it.effect('FD-FETCH-2 a failed fetch fails FetchFeedError', () =>
     Effect.gen(function* () {
       const error = yield* run(fetchParsedFeed(url), {
         fetchFeed: (target) => Effect.fail(transportFailure(target)),
       }).pipe(Effect.flip);
 
       expect(error._tag).toBe('FetchFeedError');
-      expect(error.message).toBe('Failed to fetch the feed');
     })
   );
+});
 
-  it.effect('propagates the parser error', () =>
-    Effect.gen(function* () {
-      const error = yield* run(fetchParsedFeed(url), {
-        parseFeed: () => Effect.fail(new FeedParserError({ message: 'parse' })),
-      }).pipe(Effect.flip);
+const captureAuth = Effect.fnUntraced(function* (href: string) {
+  const seen: Array<{ target: string; auth: string | undefined }> = [];
 
-      expect(error._tag).toBe('FeedParserError');
-      expect(error.message).toBe('parse');
-    })
+  yield* run(fetchParsedFeed(decodeUrl(href)), {
+    fetchFeed: (target, request) => {
+      seen.push({
+        target: target.href,
+        auth: Option.getOrUndefined(
+          Headers.get(request.headers, 'authorization')
+        ),
+      });
+
+      return Effect.succeed(feedResponse({ url: target.href }));
+    },
+  });
+
+  return seen;
+});
+
+describe('fetchParsedFeed credentials', () => {
+  it.effect(
+    'CM-URL-4 sends credentials as Basic authorization and leaves them out of the address',
+    () =>
+      Effect.gen(function* () {
+        const seen = yield* captureAuth(
+          'https://user:secret@example.com/feed.xml'
+        );
+
+        expect(seen).toEqual([
+          {
+            target: 'https://example.com/feed.xml',
+            auth: `Basic ${btoa('user:secret')}`,
+          },
+        ]);
+      })
+  );
+
+  it.effect(
+    'CM-URL-4 decodes UTF-8 escaped credentials and keeps malformed percent sequences raw',
+    () =>
+      Effect.gen(function* () {
+        const raw = yield* captureAuth(
+          'https://user%:%FF@example.com/feed.xml'
+        );
+        const utf8 = yield* captureAuth(
+          'https://user:p%C3%A4ss%E5%AF%86@example.com/feed.xml'
+        );
+
+        expect(raw).toEqual([
+          {
+            target: 'https://example.com/feed.xml',
+            auth: `Basic ${btoa('user%:%FF')}`,
+          },
+        ]);
+        expect(utf8).toEqual([
+          {
+            target: 'https://example.com/feed.xml',
+            auth: `Basic ${Buffer.from('user:päss密', 'utf8').toString('base64')}`,
+          },
+        ]);
+      })
+  );
+});
+
+describe('fetchParsedFeed parsing', () => {
+  it.effect(
+    'FD-FETCH-2 a source that cannot be parsed fails FeedParserError',
+    () =>
+      Effect.gen(function* () {
+        const error = yield* run(fetchParsedFeed(url), {
+          parseFeed: () =>
+            Effect.fail(new FeedParserError({ message: 'not a feed' })),
+        }).pipe(Effect.flip);
+
+        expect(error._tag).toBe('FeedParserError');
+      })
   );
 });

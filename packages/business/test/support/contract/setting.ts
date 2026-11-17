@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, type Layer, Option, Redacted } from 'effect';
+import { Effect, Option, Redacted } from 'effect';
 import type { Setting } from '../../../src/entity/setting/setting';
 import { SettingRepository } from '../../../src/port/setting-repository';
 import {
@@ -9,225 +9,262 @@ import {
   decodeJinaKey,
   decodeRetention,
 } from '../fixtures';
+import type { SettingStoreFactory } from './layer';
 
 const jinaKey = decodeJinaKey('jina-secret');
 
-const endpoint = decodeBrowserEndpoint('http://127.0.0.1:9222/devtools');
+const endpoint = decodeBrowserEndpoint('ws://127.0.0.1:9222');
 
-const endpointHref = 'http://127.0.0.1:9222/devtools';
+const endpointHref = 'ws://127.0.0.1:9222/';
 
-const keyOf = (setting: Setting): string | undefined => {
-  const stored = setting.fetcher.jina.key;
+const keyOf = (setting: Setting): string | undefined =>
+  Option.isSome(setting.jinaKey)
+    ? Redacted.value(setting.jinaKey.value)
+    : undefined;
 
-  return Option.isSome(stored) ? Redacted.value(stored.value) : undefined;
-};
+const endpointOf = (setting: Setting): string | undefined =>
+  Option.isSome(setting.browserEndpoint)
+    ? Redacted.value(setting.browserEndpoint.value).href
+    : undefined;
 
-const endpointOf = (setting: Setting): string | undefined => {
-  const stored = setting.fetcher.browser.endpoint;
+const defaultsCases = (makeLayer: SettingStoreFactory) => (): void => {
+  it.effect('SET-GET-1 returns the defaults when nothing is stored', () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+      const setting = yield* settings.get(alice);
 
-  return Option.isSome(stored) ? Redacted.value(stored.value).href : undefined;
-};
+      expect(setting.ownerId).toBe(alice);
+      expect(setting.retention).toBe(100);
+      expect(setting.provider).toBe('jina');
+      expect(keyOf(setting)).toBeUndefined();
+      expect(endpointOf(setting)).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer()))
+  );
 
-type Run = <A, E>(
-  effect: Effect.Effect<A, E, SettingRepository>
-) => Effect.Effect<A, unknown>;
-
-const registerDefaults = (run: Run) =>
-  it.effect('returns the defaults when nothing is stored', () =>
-    run(
+  it.effect(
+    'SET-GET-1 the first write fills the other fields with defaults',
+    () =>
       Effect.gen(function* () {
-        const repository = yield* SettingRepository;
-        const setting = yield* repository.get(alice);
+        const settings = yield* SettingRepository;
 
-        expect(setting.ownerId).toBe(alice);
-        expect(setting.feed.retention).toBe(100);
-        expect(setting.fetcher.provider).toBe('jina');
+        yield* settings.setRetention(alice, decodeRetention(250));
+
+        const setting = yield* settings.get(alice);
+
+        expect(setting.retention).toBe(250);
+        expect(setting.provider).toBe('jina');
         expect(keyOf(setting)).toBeUndefined();
         expect(endpointOf(setting)).toBeUndefined();
-      })
-    )
+      }).pipe(Effect.provide(makeLayer()))
   );
+};
 
-const registerWriters = (run: Run) =>
-  it.effect('each writer sets only its fields and keeps the rest', () =>
-    run(
+const retentionCases = (makeLayer: SettingStoreFactory) => (): void => {
+  it.effect('SET-FEED-1 setRetention writes the retention only', () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+
+      yield* settings.selectBrowserWithEndpoint(alice, endpoint);
+      yield* settings.setRetention(alice, decodeRetention(30));
+
+      const setting = yield* settings.get(alice);
+
+      expect(setting.retention).toBe(30);
+      expect(setting.provider).toBe('browser');
+      expect(endpointOf(setting)).toBe(endpointHref);
+    }).pipe(Effect.provide(makeLayer()))
+  );
+};
+
+const jinaCases = (makeLayer: SettingStoreFactory) => (): void => {
+  it.effect(
+    'SET-FETCH-1 selectJinaWithKey writes the provider and the key',
+    () =>
       Effect.gen(function* () {
-        const repository = yield* SettingRepository;
+        const settings = yield* SettingRepository;
 
-        yield* repository.selectJinaWithKey(alice, jinaKey);
-        yield* repository.setRetention(alice, decodeRetention(250));
-        yield* repository.selectBrowserWithEndpoint(alice, endpoint);
+        yield* settings.setRetention(alice, decodeRetention(250));
+        yield* settings.selectJinaWithKey(alice, jinaKey);
 
-        const setting = yield* repository.get(alice);
+        const setting = yield* settings.get(alice);
 
-        expect(setting.feed.retention).toBe(250);
-        expect(setting.fetcher.provider).toBe('browser');
+        expect(setting.provider).toBe('jina');
         expect(keyOf(setting)).toBe('jina-secret');
+        expect(setting.retention).toBe(250);
+      }).pipe(Effect.provide(makeLayer()))
+  );
+
+  it.effect('SET-FETCH-5 selectJina keeps the stored key and endpoint', () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+
+      yield* settings.selectJinaWithKey(alice, jinaKey);
+      yield* settings.selectBrowserWithEndpoint(alice, endpoint);
+      yield* settings.selectJina(alice);
+
+      const setting = yield* settings.get(alice);
+
+      expect(setting.provider).toBe('jina');
+      expect(keyOf(setting)).toBe('jina-secret');
+      expect(endpointOf(setting)).toBe(endpointHref);
+    }).pipe(Effect.provide(makeLayer()))
+  );
+
+  it.effect('SET-FETCH-1 selectJinaWithKey replaces the stored key', () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+
+      yield* settings.selectJinaWithKey(alice, jinaKey);
+      yield* settings.selectJinaWithKey(alice, decodeJinaKey('other-secret'));
+
+      expect(keyOf(yield* settings.get(alice))).toBe('other-secret');
+    }).pipe(Effect.provide(makeLayer()))
+  );
+};
+
+const browserCases = (makeLayer: SettingStoreFactory) => (): void => {
+  it.effect(
+    'SET-FETCH-2 selectBrowserWithEndpoint writes provider and endpoint',
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* SettingRepository;
+
+        yield* settings.selectJinaWithKey(alice, jinaKey);
+        yield* settings.selectBrowserWithEndpoint(alice, endpoint);
+
+        const setting = yield* settings.get(alice);
+
+        expect(setting.provider).toBe('browser');
         expect(endpointOf(setting)).toBe(endpointHref);
-      })
-    )
+        expect(keyOf(setting)).toBe('jina-secret');
+      }).pipe(Effect.provide(makeLayer()))
   );
 
-const registerProviderSwitch = (run: Run) =>
+  it.effect('SET-FETCH-5 selectBrowser keeps the stored endpoint and key', () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+
+      yield* settings.selectJinaWithKey(alice, jinaKey);
+      yield* settings.selectBrowserWithEndpoint(alice, endpoint);
+      yield* settings.selectJina(alice);
+      yield* settings.selectBrowser(alice);
+
+      const setting = yield* settings.get(alice);
+
+      expect(setting.provider).toBe('browser');
+      expect(endpointOf(setting)).toBe(endpointHref);
+      expect(keyOf(setting)).toBe('jina-secret');
+    }).pipe(Effect.provide(makeLayer()))
+  );
+
   it.effect(
-    'SET-FETCH-5 selectJina and selectBrowser keep the other provider configuration',
+    'SET-ENDPOINT-2 keeps a configured endpoint while the provider is jina',
     () =>
-      run(
-        Effect.gen(function* () {
-          const repository = yield* SettingRepository;
+      Effect.gen(function* () {
+        const settings = yield* SettingRepository;
 
-          yield* repository.selectJinaWithKey(alice, jinaKey);
-          yield* repository.selectBrowserWithEndpoint(alice, endpoint);
+        yield* settings.selectBrowserWithEndpoint(alice, endpoint);
+        yield* settings.selectJina(alice);
 
-          yield* repository.selectJina(alice);
+        const setting = yield* settings.get(alice);
 
-          const jina = yield* repository.get(alice);
-
-          expect(jina.fetcher.provider).toBe('jina');
-          expect(keyOf(jina)).toBe('jina-secret');
-          expect(endpointOf(jina)).toBe(endpointHref);
-
-          yield* repository.selectBrowser(alice);
-
-          const browser = yield* repository.get(alice);
-
-          expect(browser.fetcher.provider).toBe('browser');
-          expect(keyOf(browser)).toBe('jina-secret');
-          expect(endpointOf(browser)).toBe(endpointHref);
-        })
-      )
+        expect(setting.provider).toBe('jina');
+        expect(endpointOf(setting)).toBe(endpointHref);
+      }).pipe(Effect.provide(makeLayer()))
   );
+};
 
-const registerProviderSwitchBack = (run: Run) =>
+const clearKeyCases = (makeLayer: SettingStoreFactory) => (): void => {
   it.effect(
-    'SET-FETCH-1 SET-FETCH-5 selectJinaWithKey switches back to jina and keeps the endpoint and retention',
+    'SET-KEY-1 clearJinaKey removes the key and keeps the provider',
     () =>
-      run(
-        Effect.gen(function* () {
-          const repository = yield* SettingRepository;
+      Effect.gen(function* () {
+        const settings = yield* SettingRepository;
 
-          yield* repository.setRetention(alice, decodeRetention(250));
-          yield* repository.selectJinaWithKey(alice, jinaKey);
-          yield* repository.selectBrowserWithEndpoint(alice, endpoint);
-          yield* repository.selectJinaWithKey(
-            alice,
-            decodeJinaKey('new-secret')
-          );
+        yield* settings.selectJinaWithKey(alice, jinaKey);
+        yield* settings.selectBrowserWithEndpoint(alice, endpoint);
+        yield* settings.clearJinaKey(alice);
 
-          const setting = yield* repository.get(alice);
+        const setting = yield* settings.get(alice);
 
-          expect(setting.fetcher.provider).toBe('jina');
-          expect(keyOf(setting)).toBe('new-secret');
-          expect(endpointOf(setting)).toBe(endpointHref);
-          expect(setting.feed.retention).toBe(250);
-        })
-      )
+        expect(setting.provider).toBe('browser');
+        expect(keyOf(setting)).toBeUndefined();
+        expect(endpointOf(setting)).toBe(endpointHref);
+      }).pipe(Effect.provide(makeLayer()))
   );
 
-const registerClearKey = (run: Run) =>
-  it.effect(
-    'SET-KEY-1 clearJinaKey removes the key and keeps provider and endpoint',
-    () =>
-      run(
-        Effect.gen(function* () {
-          const repository = yield* SettingRepository;
-
-          yield* repository.selectJinaWithKey(alice, jinaKey);
-          yield* repository.selectBrowserWithEndpoint(alice, endpoint);
-          yield* repository.clearJinaKey(alice);
-
-          const setting = yield* repository.get(alice);
-
-          expect(setting.fetcher.provider).toBe('browser');
-          expect(keyOf(setting)).toBeUndefined();
-          expect(endpointOf(setting)).toBe(endpointHref);
-        })
-      )
-  );
-
-const registerClearKeyWithoutKey = (run: Run) =>
   it.effect(
     'SET-KEY-2 clearJinaKey with no key stored changes nothing observable',
     () =>
-      run(
-        Effect.gen(function* () {
-          const repository = yield* SettingRepository;
+      Effect.gen(function* () {
+        const settings = yield* SettingRepository;
 
-          yield* repository.setRetention(alice, decodeRetention(200));
+        yield* settings.setRetention(alice, decodeRetention(200));
+        const before = yield* settings.get(alice);
 
-          const before = yield* repository.get(alice);
+        yield* settings.clearJinaKey(alice);
 
-          yield* repository.clearJinaKey(alice);
+        expect(yield* settings.get(alice)).toEqual(before);
+      }).pipe(Effect.provide(makeLayer()))
+  );
+};
 
-          const after = yield* repository.get(alice);
+const ownerCases = (makeLayer: SettingStoreFactory) => (): void => {
+  it.effect('SET-OWN-1 keeps the settings of each owner apart', () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
 
-          expect(after).toEqual(before);
-        })
-      )
+      yield* settings.setRetention(alice, decodeRetention(300));
+      yield* settings.selectJinaWithKey(alice, jinaKey);
+
+      const other = yield* settings.get(bob);
+
+      expect(other.ownerId).toBe(bob);
+      expect(other.retention).toBe(100);
+      expect(keyOf(other)).toBeUndefined();
+
+      yield* settings.setRetention(bob, decodeRetention(30));
+
+      const mine = yield* settings.get(alice);
+
+      expect(mine.retention).toBe(300);
+      expect(keyOf(mine)).toBe('jina-secret');
+      expect((yield* settings.get(bob)).retention).toBe(30);
+    }).pipe(Effect.provide(makeLayer()))
   );
 
-const registerConcurrent = (run: Run) =>
-  it.effect('keeps two concurrent writers of different fields', () =>
-    run(
+  it.effect(
+    'CM-PORT-3 two concurrent writers of different fields both survive',
+    () =>
       Effect.gen(function* () {
-        const repository = yield* SettingRepository;
+        const settings = yield* SettingRepository;
 
         yield* Effect.all(
           [
-            repository.setRetention(alice, decodeRetention(250)),
-            repository.selectJinaWithKey(alice, jinaKey),
+            settings.setRetention(alice, decodeRetention(250)),
+            settings.selectJinaWithKey(alice, jinaKey),
           ],
           { concurrency: 'unbounded' }
         );
 
-        const setting = yield* repository.get(alice);
+        const setting = yield* settings.get(alice);
 
-        expect(setting.feed.retention).toBe(250);
-        expect(setting.fetcher.provider).toBe('jina');
+        expect(setting.retention).toBe(250);
+        expect(setting.provider).toBe('jina');
         expect(keyOf(setting)).toBe('jina-secret');
-      })
-    )
+      }).pipe(Effect.provide(makeLayer()))
   );
-
-const registerOwners = (run: Run) =>
-  it.effect('keeps the settings of each owner apart', () =>
-    run(
-      Effect.gen(function* () {
-        const repository = yield* SettingRepository;
-
-        yield* repository.setRetention(alice, decodeRetention(300));
-        yield* repository.selectJinaWithKey(alice, jinaKey);
-
-        const other = yield* repository.get(bob);
-
-        expect(other.ownerId).toBe(bob);
-        expect(other.feed.retention).toBe(100);
-        expect(other.fetcher.provider).toBe('jina');
-        expect(keyOf(other)).toBeUndefined();
-
-        yield* repository.setRetention(bob, decodeRetention(30));
-
-        const mine = yield* repository.get(alice);
-
-        expect(mine.feed.retention).toBe(300);
-        expect(keyOf(mine)).toBe('jina-secret');
-      })
-    )
-  );
+};
 
 export const settingRepositoryContract = (
-  layer: Layer.Layer<SettingRepository, unknown>
+  makeLayer: SettingStoreFactory
 ): void => {
-  const run: Run = (effect) => effect.pipe(Effect.provide(layer));
-
   describe('SettingRepository', () => {
-    registerDefaults(run);
-    registerWriters(run);
-    registerProviderSwitch(run);
-    registerProviderSwitchBack(run);
-    registerClearKey(run);
-    registerClearKeyWithoutKey(run);
-    registerConcurrent(run);
-    registerOwners(run);
+    describe('get', defaultsCases(makeLayer));
+    describe('setRetention', retentionCases(makeLayer));
+    describe('jina provider', jinaCases(makeLayer));
+    describe('browser provider', browserCases(makeLayer));
+    describe('clearJinaKey', clearKeyCases(makeLayer));
+    describe('owner and concurrent writes', ownerCases(makeLayer));
   });
 };

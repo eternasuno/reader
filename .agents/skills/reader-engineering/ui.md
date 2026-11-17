@@ -12,7 +12,7 @@ This file is the visual system and the shared controls: how the app looks and la
 - Wide screens use three columns: sidebar, article list, reader. Intermediate screens keep the sidebar and show either the list or the reader. Small screens show one panel plus a mobile navigation bar. This panel layout's whole responsive behaviour is CSS (Tailwind breakpoints), not scripted layout. The settings page is the one exception: it chooses sidebar-beside-sections versus stacked sections by measuring the available space, not by a breakpoint (`reader-spec/settings.md`).
 - Hiding a panel must not lose focus: when a panel becomes hidden, move focus from the actual visibility and the actual focused element, not from a JavaScript media query that mirrors a CSS breakpoint — the two disagree at the edges and after zoom. Keep valid focus and an open dialog untouched.
 - The article-list heading is one compact row: title and unread count grouped on the left, icon-sized actions on the right. No action row is added below it.
-- Article rows are content-sized with full-width hover and selected surfaces; a title is clamped to three lines, a summary to two, and thumbnails have fixed dimensions. The unread control sits inside the row's hit area but is its own target, so pressing it never activates the article link.
+- Article rows are content-sized with full-width hover and selected surfaces; a title is clamped to three lines and a summary to two. The unread control sits inside the row's hit area but is its own target, so pressing it never activates the article link.
 - List titles carry no hover underline; hover feedback is the full-width surface only.
 
 ## Visual system
@@ -32,7 +32,7 @@ This file is the visual system and the shared controls: how the app looks and la
 
 - The warm brand accent is the Tailwind token `--color-brand: #d5a15c` in the `@theme` block, used as `text-brand` / `bg-brand`. A color defined only in the daisyUI theme block produces no utility class: any custom semantic color must also be registered with Tailwind `@theme`.
 - Use Tailwind for all presentation a utility expresses. `index.css` stays Tailwind/daisyUI configuration and theme tokens: no component CSS, no `@apply`, no giant class constants, no sprawling descendant selectors. When a repeated piece of UI needs a shared look, extract a component in `ui/`.
-- Prefer the built-in sizing, spacing and breakpoint scales over incidental precision. Unavoidable fixed dimensions are in `rem`, except thin borders in `px`. The only runtime CSS values are measured: the article frame's height, `VirtualList`'s layout values (row offsets, total height) and generated anchor names.
+- Prefer the built-in sizing, spacing and breakpoint scales over incidental precision. Unavoidable fixed dimensions are in `rem`, except thin borders in `px`. The only runtime CSS values are measured: the article frame's height and `VirtualList`'s layout values (row offsets, total height).
 
 ## Shared controls (`src/web/ui`)
 

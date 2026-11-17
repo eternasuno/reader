@@ -5,7 +5,7 @@ description: Conditional file of the reader-engineering skill. Read when touchin
 
 # Database
 
-The product's data is SQLite, and `@reader/sqlite` is the adapter for the business repository ports. It owns the connections, the reader migration, the repository implementations and the cross-owner feed listing the scheduler reads; `./testing` exports the in-memory database Layers. Better Auth's integration, the migration orchestration (the server's `db:migrate` entry in `apps/reader`) and the refresh loop stay in the app: the store imports `@reader/business` and never the app, and the app's HTTP handlers reach a database only through the Layers the server provides. Port contracts (CM-PORT), paging (CM-PAGE) and uniqueness (CM-ID-6) are rules of `reader-spec`; this file says how SQLite satisfies them and what it refuses to do.
+The product's data is SQLite, and `@reader/sqlite` is the adapter for the business repository ports. It owns the reader connection, the reader migration, the repository implementations and the cross-owner feed listing the scheduler reads; `./testing` exports the in-memory database Layers. Better Auth's integration, the migration orchestration (the server's `db:migrate` entry in `apps/reader`) and the refresh loop stay in the app: the store imports `@reader/business` and never the app, and the app's HTTP handlers reach a database only through the Layers the server provides. Port contracts (CM-PORT), paging (CM-PAGE) and uniqueness (CM-ID-6) are rules of `reader-spec`; this file says how SQLite satisfies them and what it refuses to do.
 
 ## Files and connections
 
@@ -39,91 +39,19 @@ The product's data is SQLite, and `@reader/sqlite` is the adapter for the busine
 
 - Lists use database-side keyset paging on `id` descending, always scoped by owner (CM-OWN), filtered by `unread` in both lists and, for feed items, by `feedId` (one feed) or by the feeds whose `folderId` is the folder (one folder). The cursor is the `id` of the last returned row and the next page is the rows with a smaller id.
 - `publishedAt` is display-only and belongs in no `ORDER BY`, keyset clause or index: it is optional, comes from outside, and does not order arrivals.
-- Keep the keyset clause builder in one place (the store's `page` fragment: unread clause, cursor clause, `ORDER BY id DESC LIMIT ?`) so the three list queries cannot drift apart.
+- Keep the keyset clause builder in one place (the store's `page` fragment: unread clause, cursor clause, `ORDER BY id DESC LIMIT ?`) so the four paged list queries cannot drift apart.
 
-## Indexes and constraints
+## Schema, constraints and indexes
 
-- Indexes: feed `(owner, folder_id)`, `(owner, title, id)`; feed_item `(owner, id)`, `(owner, feed_id, id)`, `(owner, read, id)`; saved_page `(owner, id)`, `(owner, read, id)`.
-- Choose them from the target queries and verify each with `EXPLAIN QUERY PLAN`; re-check with the real store SQL after changing paging or indexes, because existing measurements do not carry over. Include `owner` in every owner-scoped index and `feed` in feed-scoped ones.
-- Unique constraints are `(owner, url)` on `feed`, `(feed_id, url)` on `feed_item`, `(owner, url)` on `saved_page` and `(owner, name)` on `folder`; names compare exactly as stored, so they are case-sensitive. The duplicate rules and the errors they produce live in `reader-spec` (CM-ID-6, CM-PORT-6).
+`packages/sqlite/src/migration.ts` (`0001_reader`) is the schema. What the DDL alone does not explain:
 
-## Schema
-
-The reader migration `0001_reader` creates exactly these tables, columns, constraints and indexes. This is the one place a field list belongs: the schema is rewritten from this section. Every table is `STRICT`; `id` and `owner` are TEXT, dates are INTEGER epoch milliseconds, and booleans are INTEGER 0/1.
-
-**folder** — a named group of one owner's feeds, one level deep.
-
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | TEXT | primary key |
-| `owner` | TEXT | NOT NULL |
-| `name` | TEXT | NOT NULL |
-| | | `UNIQUE (owner, name)`, `UNIQUE (owner, id)` |
-
-No index beyond the unique constraints: `UNIQUE (owner, name)` also serves the folder list's `ORDER BY name`, and folders are not paged (CM-PAGE).
-
-**feed** — one owner's subscription to one source address.
-
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | TEXT | primary key |
-| `owner` | TEXT | NOT NULL |
-| `url` | TEXT | NOT NULL, the normalized URL (CM-URL) |
-| `title` | TEXT | NOT NULL, the title previewed at subscribe time |
-| `folder_id` | TEXT | nullable; absent means top level |
-| `updated_at` | INTEGER | nullable epoch ms of the last successful sync (`Feed.updatedAt`) |
-| | | `UNIQUE (owner, url)`, `UNIQUE (owner, id)` |
-| | | `FOREIGN KEY (owner, folder_id) REFERENCES folder (owner, id) ON DELETE CASCADE` |
-
-Indexes: `feed_owner_folder (owner, folder_id)` for the folder scope's feed lookup, `feed_owner_title (owner, title, id)` for the sidebar's title order. Feeds are not paged.
-
-**feed_item** — one stored entry of a feed.
-
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | TEXT | primary key |
-| `owner` | TEXT | NOT NULL |
-| `feed_id` | TEXT | NOT NULL |
-| `url` | TEXT | NOT NULL |
-| `title` | TEXT | NOT NULL |
-| `description` | TEXT | nullable, sanitized HTML (CM-ART-4) |
-| `content` | TEXT | nullable, sanitized HTML from the source (CM-ART-4) |
-| `extracted_content` | TEXT | nullable, sanitized HTML extracted from the page |
-| `published_at` | INTEGER | nullable epoch ms; display only |
-| `read` | INTEGER | NOT NULL, `CHECK (read IN (0, 1))` |
-| | | `UNIQUE (feed_id, url)` |
-| | | `FOREIGN KEY (owner, feed_id) REFERENCES feed (owner, id) ON DELETE CASCADE` |
-
-Indexes: `feed_item_owner_id (owner, id)`, `feed_item_owner_feed_id (owner, feed_id, id)`, `feed_item_owner_read_id (owner, read, id)`. There is no `(owner, id)` unique constraint because the primary key covers it and nothing references a feed item.
-
-**saved_page** — one page in the read-later list.
-
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | TEXT | primary key |
-| `owner` | TEXT | NOT NULL |
-| `url` | TEXT | NOT NULL |
-| `title` | TEXT | NOT NULL |
-| `description` | TEXT | nullable, sanitized HTML |
-| `content` | TEXT | NOT NULL, sanitized HTML |
-| `published_at` | INTEGER | nullable epoch ms; display only |
-| `read` | INTEGER | NOT NULL, `CHECK (read IN (0, 1))` |
-| | | `UNIQUE (owner, url)` |
-
-Indexes: `saved_page_owner_id (owner, id)`, `saved_page_owner_read_id (owner, read, id)`. Like `feed_item`, it is not a foreign-key target, so its primary key is its only unique constraint on `id`.
-
-`content` is NOT NULL here and nullable on `feed_item`: adding a link stores the extracted article or fails, while a feed item may arrive with no text and gain content later through extraction or saving.
-
-**setting** — one row per owner, created by its first write.
-
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `owner` | TEXT | primary key |
-| `retention` | INTEGER | nullable; absent means no retention choice was made |
-| `provider` | TEXT | nullable; the chosen page fetcher |
-| `jina_key` | TEXT | nullable, secret, never returned or logged |
-| `browser_endpoint` | TEXT | nullable, secret, never returned or logged |
-| | | no index, no unique constraint, no foreign key |
+- `content` is `NOT NULL` on `saved_page` and nullable on `feed_item`: adding a link stores the extracted article or fails, while a feed item may arrive with no text and gain content later through extraction or saving.
+- `setting` has at most one row per owner, created on its first write (`get` returns defaults without inserting a row); `jina_key` and `browser_endpoint` are secrets and must never be returned or logged.
+- Unique constraints are `(owner, url)` on `feed`, `(feed_id, url)` on `feed_item`, `(owner, url)` on `saved_page` and `(owner, name)` on `folder`; names compare-as-stored (case-sensitive). The duplicate rules and the errors they produce live in `reader-spec` (CM-ID-6, CM-PORT-6).
+- Indexes are chosen from the target queries and verified with `EXPLAIN QUERY PLAN` (`packages/sqlite/test/sqlite.test.ts`); re-check with the real store SQL after changing paging or indexes, because existing measurements do not carry over. Include `owner` in every owner-scoped index and `feed_id` in feed-scoped ones:
+  - `folder` needs no index beyond its unique constraints: `UNIQUE (owner, name)` also serves the folder list's `ORDER BY name, id`, and folders are not paged (CM-PAGE).
+  - `feed` has `feed_owner_folder (owner, folder_id)` for the folder scope's feed lookup and `feed_owner_title (owner, title, id)` for the sidebar's title order; feeds are not paged.
+  - `feed_item` (`(owner, id)`, `(owner, feed_id, id)`, `(owner, read, id)`) and `saved_page` (`(owner, id)`, `(owner, read, id)`) cover the keyset-paged list queries without table scans or temporary B-trees.
 
 ## Development phase
 
@@ -131,7 +59,7 @@ The project is in development: do not write data migrations or compatibility pat
 
 ## Performance trap
 
-`node:sqlite` is synchronous, so one write blocks the event loop while it runs. The refresh benchmark in `packages/sqlite/test/bench/` (200 feeds x 100 items arriving at once) measured a refresh round of 1.2 s regular and 1.9 s heavy against 37 s and 82 s on the previous store, and "mark as read" about 1 ms against about 130 ms, but the loop stalled up to roughly 1.2 s during a round because each unbounded refresh fiber runs one synchronous write per loop turn; explicit yields did not help. Add no concurrency limit until running the application shows it is needed (`AGENTS.md`); the loop stall is the symptom to watch for.
+`node:sqlite` is synchronous, so one write blocks the event loop while it runs. A refresh benchmark (200 feeds x 100 items arriving at once) measured a refresh round of 1.2 s regular and 1.9 s heavy against 37 s and 82 s on the previous store, and "mark as read" about 1 ms against about 130 ms, but the loop stalled up to roughly 1.2 s during a round because each unbounded refresh fiber runs one synchronous write per loop turn; explicit yields did not help. Add no concurrency limit until running the application shows it is needed (`AGENTS.md`); the loop stall is the symptom to watch for.
 
 ## Unstable APIs
 

@@ -4,9 +4,9 @@ import type {
   Folder,
   FolderId,
   FolderName,
-} from '../../../../src/entity/feed/folder';
+} from '../../../../src/entity/folder/folder';
 import type { IFolderRepository } from '../../../../src/port/folder-repository';
-import { byNameThenId, type Ref_ } from './state';
+import { byNameThenId, type FeedStateRef } from './state';
 
 const hasFolderName = (
   folders: ReadonlyArray<Folder>,
@@ -35,24 +35,25 @@ const insertFolders = (
   folders: ReadonlyArray<Folder>,
   owner: OwnerId,
   rows: ReadonlyArray<Folder>
-) => {
+): {
+  readonly folders: ReadonlyArray<Folder>;
+  readonly created: ReadonlyArray<FolderId>;
+} => {
   const stored: Array<Folder> = [...folders];
   const created: Array<FolderId> = [];
 
   for (const row of rows) {
-    if (isFolderTaken(stored, owner, row)) {
-      continue;
+    if (!isFolderTaken(stored, owner, row)) {
+      stored.push(row);
+      created.push(row.id);
     }
-
-    stored.push(row);
-    created.push(row.id);
   }
 
-  return { created, folders: stored };
+  return { folders: stored, created };
 };
 
 const findFolder =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (owner: OwnerId, id: FolderId): Effect.Effect<Option.Option<Folder>> =>
     Effect.map(Ref.get(state), (store) =>
       Option.fromUndefinedOr(
@@ -63,7 +64,7 @@ const findFolder =
     );
 
 const listFolders =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (owner: OwnerId): Effect.Effect<ReadonlyArray<Folder>> =>
     Effect.map(Ref.get(state), (store) =>
       store.folders
@@ -72,7 +73,7 @@ const listFolders =
     );
 
 const createFolders =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (
     owner: OwnerId,
     folders: ReadonlyArray<Folder>
@@ -84,18 +85,17 @@ const createFolders =
     });
 
 const renameFolder =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (owner: OwnerId, id: FolderId, name: FolderName): Effect.Effect<boolean> =>
     Ref.modify(state, (store) => {
       const folder = store.folders.find(
         (row) => row.ownerId === owner && row.id === id
       );
 
-      if (folder === undefined) {
-        return [false, store];
-      }
-
-      if (hasFolderName(store.folders, owner, id, name)) {
+      if (
+        folder === undefined ||
+        hasFolderName(store.folders, owner, id, name)
+      ) {
         return [false, store];
       }
 
@@ -111,7 +111,7 @@ const renameFolder =
     });
 
 const removeFolders =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (owner: OwnerId, ids: ReadonlyArray<FolderId>): Effect.Effect<void> =>
     Ref.update(state, (store) => {
       const wanted = new Set<string>(ids);
@@ -140,7 +140,9 @@ const removeFolders =
       };
     });
 
-export const makeMemoryFolderRepository = (state: Ref_): IFolderRepository => ({
+export const makeMemoryFolderRepository = (
+  state: FeedStateRef
+): IFolderRepository => ({
   find: findFolder(state),
   list: listFolders(state),
   create: createFolders(state),
