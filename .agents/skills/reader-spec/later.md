@@ -111,7 +111,7 @@ Adding a link, saving a feed item and listing saved pages are the three use case
 ### Saving a feed item to later
 
 - The reader header of a feed item has the action `保存到稍后阅读`; a saved page has no such action (reader.md has the rest of the header).
-- The action is disabled while a write on the open article is pending, and the reader stays on the feed item afterwards: the item is unchanged (SP-SAVE-4), the copy is unread (SP-SAVE-9), and the row appears in the `稍后阅读` list on its next load, at the top.
+- The reader stays on the feed item afterwards: the item is unchanged (SP-SAVE-4), the copy is unread (SP-SAVE-9), and the row appears in the `稍后阅读` list on its next load, at the top.
 - Success shows the toast `已保存到稍后阅读`, and the scope's count grows at once.
 - Saving an item whose page was already saved fails `SavedPageAlreadyExists`: the toast `该文章已在稍后阅读中` appears, nothing opens, and the reader stays on the item. The duplicate page is not opened here; only adding a link does that.
 - An item that no longer exists shows `文章不存在，可能已被删除`.
@@ -119,7 +119,7 @@ Adding a link, saving a feed item and listing saved pages are the three use case
 ### Removing a saved page
 
 - A saved page's reader overflow menu has a destructive `删除`, separated from the other entries. Choosing it asks for confirmation first (Messages); cancelling changes nothing. Feed items have no delete entry.
-- Removing drops the row from the list immediately, and the header actions of that article are disabled while the request runs.
+- Removing drops the row from the list immediately.
 - Success: the reader closes, the selection is cleared and the list shows without the row (`/later`, keeping `?unread` when the filter is on). The scope's count drops by one only when the removed page was unread.
 - Failure: the row returns to its place in the list, a count the removal had lowered is read again, the page stays open and the toast of the error appears.
 - A removed link can be added again and comes back as a new unread page at the top (SP-REMOVE-2).

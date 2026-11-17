@@ -35,12 +35,12 @@ Its own screen behavior:
 - RD-EXTRACT-1 Extraction is an independent icon in the header action row, immediately before the overflow menu; it is not a menu item and there is no second action row below the header.
 - RD-EXTRACT-2 While the reader shows default content the icon is the outline icon, labelled `提取正文`. While it shows extracted content the icon is the solid icon in the accent (purple) and exposes its pressed state, labelled `切换回原文`.
 - RD-EXTRACT-3 Turning extraction on when the article already has extracted content (FD-EXTRACT-2) shows it at once and calls nothing.
-- RD-EXTRACT-4 Turning extraction on without extracted content requests extraction (FD-EXTRACT): the icon is replaced by a spinner and the status line `正在提取正文…` is announced; the control cannot be used again while it runs.
+- RD-EXTRACT-4 Turning extraction on without extracted content requests extraction (FD-EXTRACT): the icon is replaced by a spinner and the status line `正在提取正文…` is announced, and the control is disabled until the answer arrives.
 - RD-EXTRACT-5 The first extraction switches the reader to the extracted view only after the returned article replaces the open one; the reader never shows an empty extracted view while waiting.
 - RD-EXTRACT-6 Turning extraction off returns to the default content (RD-CONTENT) and changes nothing on the server; the stored extracted content is kept and reused the next time (FD-EXTRACT-2).
 - RD-EXTRACT-7 A failed extraction stores nothing and leaves the reader in the mode it had before the attempt, because the extracted mode is entered only after a successful answer (RD-EXTRACT-5): the spinner ends and the error toast shows the CM-FETCH-4 wording (Messages).
 - RD-EXTRACT-8 Choosing a different article while an extraction runs abandons its result: the late result changes neither the new article's mode nor its controls, and the new article starts on the default content.
-- RD-EXTRACT-9 Extraction and the embedded-page item are both disabled for an article without a URL and while an extraction runs (RD-EXTRACT-4), and `打开原文` is not shown for an article without a URL.
+- RD-EXTRACT-9 Extraction is disabled while it runs (RD-EXTRACT-4). No article lacks a URL — every feed item (FD-PARSE-2) and every saved page ([later.md](later.md) API) has one — so `打开原文` is shown for every article, and neither the extraction control nor the embedded-page item is withheld for want of a URL (RD-WEBPAGE-4).
 
 ### RD-MODE — What a switch of article does to the mode
 
@@ -53,7 +53,7 @@ Its own screen behavior:
 - RD-WEBPAGE-1 `嵌入式网页视图` is a checkbox item in the header overflow menu; it is unchecked while the reader shows article content. Checking it shows the original page, unchecking returns to the default content.
 - RD-WEBPAGE-2 The embedded view fills the reader below the header: a notice bar with `部分网站不允许内嵌或需要登录；若显示异常，请打开原文。`, where `打开原文` is a link that opens the page in a new tab, and below it the page itself.
 - RD-WEBPAGE-3 The page loads in a sandboxed frame from its own address, with scripts, forms, popups and same-origin access allowed inside the frame and no referrer sent to the site. The reader header stays visible and usable, so the user can always uncheck the item and leave the view.
-- RD-WEBPAGE-4 The view is offered only for an address that can be embedded safely: an `http`/`https` URL without a user name or password that does not point at the app itself. The item is disabled as RD-EXTRACT-9 says; for an address that cannot be embedded safely the area shows `此地址不支持安全内嵌，请使用上方链接打开原文。` instead of a frame, and `打开原文` remains available.
+- RD-WEBPAGE-4 The view is offered for an address that can be embedded safely, an `http`/`https` URL without a user name or password that does not point at the app itself. For any other address the area shows `此地址不支持安全内嵌，请使用上方链接打开原文。` instead of a frame, and `打开原文` remains available.
 - RD-WEBPAGE-5 Choosing extraction while the embedded page is shown leaves the embedded view and shows the extracted content (RD-EXTRACT-5).
 
 ### RD-FRAME — How article HTML is rendered
@@ -112,7 +112,6 @@ Placed by this screen, defined by [later.md](later.md) (Removing a saved page).
 - Left: `返回文章列表`, then `上一篇`, then `下一篇`, disabled as RD-NAV-1 and RD-NAV-2 say.
 - Right: `保存到稍后阅读` for a feed item (RD-SAVE), the read toggle (RD-READ-2), the extraction icon (RD-EXTRACT), the overflow trigger `更多操作` opening the menu labelled `更多文章操作`.
 - Overflow menu: `嵌入式网页视图` as a checkbox item (RD-WEBPAGE-1), `打开原文` opening a new tab (RD-CONTENT-4), then, for a saved page only, `删除` in the destructive color (RD-DELETE-1). There is no `原文` item (RD-CONTENT-4).
-- While a write for the open article is in flight, its save, read and delete controls are disabled.
 
 **Content.** One centered reading-width column that scrolls: the title and the source line (RD-CONTENT-3), then the article HTML in the isolated frame (RD-FRAME), with the fallbacks and the `暂无内容` state of RD-CONTENT-1.
 
@@ -251,8 +250,7 @@ Feature: The reader pane
       Given a feed item with neither content nor extracted content
       When I open it and choose "提取正文"
       Then the header shows a spinner and the status "正在提取正文…"
-      And "保存到稍后阅读", the read toggle and the extraction icon are disabled while it runs
-      And "嵌入式网页视图" cannot be checked while it runs
+      And the extraction icon is disabled while it runs
       When the extraction answers with the item carrying extracted content
       Then the reader shows the extracted content
       And the icon is solid and pressed and reads "切换回原文"
@@ -281,7 +279,7 @@ Feature: The reader pane
       When I open "B"
       Then "B" is shown with its default content
       When the extraction of "A" answers
-      Then "B" keeps its default content and its controls are enabled
+      Then "B" keeps its default content
 
     Scenario: A different article resets the mode, the same article does not
       Given I am reading "A" in the extracted view

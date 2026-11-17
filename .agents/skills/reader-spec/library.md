@@ -24,7 +24,7 @@ The screen-level rules below are the ones no domain file holds.
 
 - LIB-LIST-1 The list holds the scope's rows in arrival order, newest on top (CM-PAGE-1), 30 rows per page.
 - LIB-LIST-2 A page request carries `limit` 30, the filter, and, for a next page, the cursor of the last returned row (CM-PAGE-4). The next page is asked for when the scrolled content comes within 600 px of its end and the cursor is not `null`; a `null` cursor ends paging. One page request is in flight at a time.
-- LIB-LIST-3 A page is appended to the loaded rows. A row already loaded is not added a second time and keeps its optimistic read state; a row whose delete is still in flight is not added back.
+- LIB-LIST-3 A page is appended to the loaded rows. A row already loaded is not added a second time and keeps its optimistic read state.
 - LIB-LIST-4 A page that fails keeps the rows already loaded and shows the list error banner. `重试` repeats the request that failed: the next page with the same cursor when rows were loaded, the first page otherwise. Paging continues after a successful retry.
 
 ### LIB-RELOAD — When the list is read again
@@ -42,9 +42,9 @@ The screen-level rules below are the ones no domain file holds.
 
 ### LIB-READ — Read state across the screen
 
-- LIB-READ-1 A read-state change is shown at once and rolled back with an error toast when its request fails. A row whose own read write is in flight cannot be marked again until it settles.
+- LIB-READ-1 A read-state change is shown at once and rolled back with an error toast when its request fails. A row is marked again whenever the user activates its control: the two requests are not queued, and the last answer wins.
 - LIB-READ-2 Opening an unread article marks it read with the same write and keeps its row in the list, shown as read; opening an article never reloads the list.
-- LIB-READ-3 `将已加载文章标为已读` marks the loaded rows that are unread, not already being written and belong to the scope when the operation runs — for a folder, the rows of its current feeds ([folders.md](folders.md) FD-MOVE-4) — in one bulk request that carries their ids. It is disabled when no such row is unread.
+- LIB-READ-3 `将已加载文章标为已读` marks the loaded rows that are unread and belong to the scope when the operation runs — for a folder, the rows of its current feeds ([folders.md](folders.md) FD-MOVE-4) — in one bulk request that carries their ids. It is never disabled: with no loaded unread row the request carries an empty list, which the server ignores (SKILL.md Client conventions).
 - LIB-READ-4 `全部标记为已读` marks the whole scope, including the rows not loaded, through the scope's mark-all endpoint. The optimistic update turns read only the loaded unread rows that belong to the scope when the operation runs — for a folder, the rows of its current feeds, so a moved-out feed's still-shown rows stay unread ([folders.md](folders.md) FD-MOVE-4) — and the scope's unread counters go to zero.
 - LIB-READ-5 `全部标记为已读` is never disabled, in the list menu and in every sidebar menu, whatever the counts say and whether or not another request is in flight. When nothing in the scope is unread it still sends the request, which changes nothing.
 - LIB-READ-6 A failed mark-all restores the rows it turned read and the counters it cleared, reloads the counts, and shows an error toast.
@@ -58,7 +58,7 @@ The screen-level rules below are the ones no domain file holds.
 ### LIB-MENU — Menus act on the scope they belong to
 
 - LIB-MENU-1 Every scope row has one menu holding `只显示未读` and `全部标记为已读`; the remaining items belong to the scope ([later.md](later.md), [feeds.md](feeds.md), [folders.md](folders.md)).
-- LIB-MENU-2 A menu action applies to the scope whose trigger opened the menu, not to the selected scope: the screen selects that scope and navigates to its URL first, then applies the filter or the mark-all. If the scope changed before that navigation finished, the action is dropped rather than applied to the new scope.
+- LIB-MENU-2 A menu action applies to the scope whose trigger opened the menu, not to the selected scope. The screen selects that scope (LIB-SCOPE-3, LIB-URL-1), and the action names its target rather than depending on that selection: the mark-all requests that scope's own endpoint with its id (API), and the filter item changes the one shared filter (LIB-FILTER-1).
 - LIB-MENU-3 The list's overflow menu holds the filter and the mark-all of the selected scope plus the items that scope allows; it never offers another scope's action.
 
 ### LIB-ROW — A row
@@ -97,9 +97,9 @@ The screen-level rules below are the ones no domain file holds.
 
 **Account menu.** The trigger opens the account menu; its items, the sign-out pending label and sign-out failure are [account.md](account.md).
 
-**List pane.** The heading is one compact row: the scope's name — its feed or folder name, `目录` for a folder that is not loaded, `订阅` for a feed that is not loaded — with the scope's unread count beside it, on the left. On the right only `将已加载文章标为已读` and the `⋯` list menu. The list menu holds `只显示未读`, `全部标记为已读` (never disabled, LIB-READ-5), the add action of `稍后阅读` ([later.md](later.md) Messages), and `删除 RSS 源` for a single feed, which asks first ([feeds.md](feeds.md)). Folder rename and delete are only in the sidebar ([folders.md](folders.md)). `将已加载文章标为已读` is disabled according to LIB-READ-3.
+**List pane.** The heading is one compact row: the scope's name — its feed or folder name, `目录` for a folder that is not loaded, `订阅` for a feed that is not loaded — with the scope's unread count beside it, on the left. On the right only `将已加载文章标为已读` and the `⋯` list menu. The list menu holds `只显示未读`, `全部标记为已读` (never disabled, LIB-READ-5), the add action of `稍后阅读` ([later.md](later.md) Messages), and `删除 RSS 源` for a single feed, which asks first ([feeds.md](feeds.md)). Folder rename and delete are only in the sidebar ([folders.md](folders.md)).
 
-**Rows.** Each row is full width with a hover surface and a selected surface, its height follows its content. It carries the source and, when the row has a publish time, the relative time at the right of that line (SKILL.md shared messages); the title over at most three lines; the summary over at most two. The read control sits at the left of the row, as a ring for read and a ring with a solid centre for unread, visible while hovering the row or focusing it, always visible on coarse pointers, and disabled while its own write is in flight. Activating the title opens the article; modified clicks are left to the browser (LIB-ROW-3).
+**Rows.** Each row is full width with a hover surface and a selected surface, its height follows its content. It carries the source and, when the row has a publish time, the relative time at the right of that line (SKILL.md shared messages); the title over at most three lines; the summary over at most two. The read control sits at the left of the row, as a ring for read and a ring with a solid centre for unread, visible while hovering the row or focusing it, always visible on coarse pointers. Activating the title opens the article; modified clicks are left to the browser (LIB-ROW-3).
 
 **Paging.** LIB-LIST-1 and LIB-LIST-2 give the page size and the next page; the list is virtualized: only the visible rows and a small margin are rendered, and a row's height is measured after it is mounted.
 
@@ -277,11 +277,6 @@ Feature: The library screen
       And an error toast shows the message of the failure
       And the unread counts are read again
 
-    Scenario: A row being written cannot be marked again
-      Given a read mark is in flight for a row
-      Then that row's read control is disabled
-      And the other rows can still be marked
-
     Scenario: Opening an unread article keeps its row as read
       Given an unread row
       When I open its title
@@ -297,10 +292,6 @@ Feature: The library screen
       And all 12 rows show as read
       And the unread counts of the scope drop by 12
 
-    Scenario: The action is disabled when no loaded row is unread
-      Given every loaded row is read
-      Then "将已加载文章标为已读" is disabled
-
   Rule: Marking the whole scope
     Scenario: The whole scope is marked, including rows not loaded
       Given a scope with 40 unread rows of which 30 are loaded
@@ -309,11 +300,11 @@ Feature: The library screen
       And the loaded unread rows show as read at once
       And the scope's unread count goes to zero
 
-    Scenario: A stale counter does not disable marking the whole scope
+    Scenario: A stale counter does not block marking the whole scope
       Given the scope's unread count is zero but a loaded row is unread
-      Then "全部标记为已读" is enabled
-      When I choose it
+      When I choose "全部标记为已读"
       Then the scope's mark-all endpoint is called
+      And the loaded unread row shows as read
 
     Scenario: A failed mark-all rolls back
       Given 5 loaded unread rows and an unread count of 9
@@ -326,14 +317,10 @@ Feature: The library screen
     Scenario: Marking another scope read from the sidebar
       Given "稍后阅读" is selected with unread rows
       When I open the menu of "全部订阅" and choose "全部标记为已读"
-      Then the URL is "/all"
+      Then "全部订阅" is selected at "/all"
+      And the all-items mark-all endpoint is called
       And everything in "全部订阅" is marked read
       And the unread count of "稍后阅读" is unchanged
-
-    Scenario: A delayed menu action does not hit another scope
-      Given I chose "全部标记为已读" in the menu of a feed and its list is still loading
-      When I select another scope before the navigation settles
-      Then the mark is not applied to the new scope
 
     Scenario: The filter item marks the checkbox of the shared filter
       Given the unread filter is off

@@ -45,6 +45,7 @@ This project uses Effect **4** (see `packages/*/package.json` for the exact vers
 
 - Business behavior is defined by the numbered rules in the `reader-spec` skill. Change its domain files in the same change as the behavior they describe.
 - Add no length, size, batch, page-size, timeout or concurrency limit and no defensive policy until running the application shows it is needed.
+- Robustness comes from the API: decode and validate every input there and fail a wrong one. Forms keep their validation, but quick actions (mark read, mark all, move, delete) get no disabled states, pending tracking or guards; send the request and let the server ignore empty lists and unknown ids (`reader-spec` Client conventions).
 - One domain has one name in every layer: `feed`, `folder`, `feed-item`, `saved-page` and `setting` in every package and in `apps/reader` (including the web modules). User-facing names (`稍后阅读`, routes such as `/later`) may differ.
 - The project is in development: do not add data migrations or backward compatibility for stored data. When a schema or embedded-engine change makes an existing database unusable, delete it and rebuild with `pnpm db:migrate`.
 - Before finishing changes, run `pnpm check`, `pnpm typecheck`, `pnpm test` and `pnpm build`.

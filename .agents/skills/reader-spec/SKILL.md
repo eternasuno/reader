@@ -64,6 +64,13 @@ The browser talks to the server over credentialed JSON HTTP under `/api`. Each d
 - A request that fails structural decoding (malformed `limit`, `cursor` or id, missing field, wrong type) gets 400 with an empty body. A value that is well formed but breaks a domain value rule (an address that is not a valid `NormalizedUrl`, a blank folder name, a retention below 1, a browser endpoint with another protocol) gets 400 with the domain's tag (`InvalidPageUrl`, `FeedUrlInvalid`, `InvalidFolderName`, `InvalidRetention`, `InvalidEndpoint`), as each domain's API table lists. Every other failure carries `{ "_tag": "<ErrorName>" }`, plus `id` or `url` where the domain file says so, and no message: the wording is the web client's (Messages). Repository failures are 500 with their own tag, so the client can tell which data is unavailable.
 - The client derives its requests and the set of error tags from one shared contract; no request is written by hand.
 
+## Client conventions
+
+The server is what keeps the data correct: it decodes and validates every request and answers a wrong one with an error (API conventions). Forms keep their validation for the user's benefit (each domain's Interface says which); quick actions stay simple.
+
+- Quick actions — toggling read, `将已加载文章标为已读`, `全部标记为已读`, moving a feed, deleting — are always enabled. They do not depend on counts or on other requests in flight, and the client keeps no pending state to decide whether they may be pressed: it sends what it has, an empty id list or an id that no longer exists included, and the server ignores what does not apply (CM-PORT-5). An optimistic change still rolls back with an error toast when its request fails; when several requests for the same row overlap, the last answer wins.
+- A form's submit, or an action that waits on a remote fetch (adding a link, preview, subscribe, extract, save to later), shows a loading spinner and is disabled while its request runs, so the request is not sent twice; it is enabled again when the request settles.
+
 ## Common rules
 
 Rules shared by more than one domain. Parsing and validation happen where outside data enters: HTTP input, adapter outputs and configuration. Past those boundaries branded values are trusted and never re-validated. The dependency direction `SavedPage -> Feed -> Setting -> Common` constrains code imports, not the rules: a rule may mention another domain to explain itself.

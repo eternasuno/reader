@@ -47,9 +47,9 @@ A folder groups some of one owner's feeds so they can be listed, counted and mar
 
 ### The sidebar folder menu
 
-The folder row's `⋯` menu shows, in this order, `只显示未读` (a checkbox item reflecting the shared unread filter), `全部标记为已读`, `重命名目录`, and then, separated from the items above and in the destructive color, `删除目录`. The menu's labels are `目录「name」菜单` for the trigger and `「name」目录操作` for the popover. The menu items are not operable while a folder write is pending.
+The folder row's `⋯` menu shows, in this order, `只显示未读` (a checkbox item reflecting the shared unread filter), `全部标记为已读`, `重命名目录`, and then, separated from the items above and in the destructive color, `删除目录`. The menu's labels are `目录「name」菜单` for the trigger and `「name」目录操作` for the popover.
 
-- `只显示未读` and `全部标记为已读` act on the clicked folder, even when another scope is selected: the folder scope is selected first and the item is applied only if that selection completed, so a delayed action cannot target a scope the user chose meanwhile. `全部标记为已读` marks every item of the folder's current feeds (FD-READ-5). Both are the shared scope-menu actions of `library.md`.
+- `只显示未读` and `全部标记为已读` act on the clicked folder, even when another scope is selected: the folder scope is selected (`library.md` LIB-MENU-2) and the mark-all requests that folder's own endpoint with its id, so the action names its target instead of depending on the selection. `全部标记为已读` marks every item of the folder's current feeds (FD-READ-5). Both are the shared scope-menu actions of `library.md`.
 - `重命名目录` opens the folder dialog for that folder; `删除目录` asks for confirmation and deletes it (below). Neither changes the selected scope.
 
 ### The folder scope
@@ -320,11 +320,6 @@ Feature: RSS feed folders
       When I check "只显示未读" in the ⋯ menu of the sidebar folder "Tech"
       Then the folder "Tech" is selected
       And the article list contains only the unread articles of Go Blog and Rust Blog
-
-    Scenario: The action is not applied to another scope before the scope switch completes
-      Given I clicked "全部标记为已读" in the ⋯ menu of the sidebar folder "Tech"
-      When I select the feed "Zeta Daily" while the switch to the folder "Tech" has not completed yet
-      Then the articles of Zeta Daily are not marked as read
 
   Rule: Creating a folder
 
