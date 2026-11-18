@@ -9,8 +9,8 @@ Operator setup, commands, environment variables, and `docker run` examples live 
 
 ## Multi-Stage Build & Embedding
 
-- **Stage 1 (`node:26-alpine`)**: uses Node 26 LTS (`corepack enable`) and builds `web/` (`pnpm install --frozen-lockfile && pnpm build`) into `web/dist/`.
-- **Stage 2 (`golang:1.26-alpine`)**: copies Go source + `web/dist/`, prepares an empty `/empty-data` directory (`mkdir /empty-data && chown 65532:65532 /empty-data`), and compiles `CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/reader ./cmd/reader`.
+- **Stage 1 (`node:24-alpine`)**: uses Node 24 LTS (`corepack enable`) and builds `web/` (`pnpm install --frozen-lockfile && pnpm build`) into `web/dist/`.
+- **Stage 2 (`golang:1.27-alpine`)**: copies Go source + `web/dist/`, prepares an empty `/empty-data` directory (`mkdir /empty-data && chown 65532:65532 /empty-data`), and compiles `CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/reader ./cmd/reader`.
 - **Stage 3 (`gcr.io/distroless/static-debian12:nonroot`)**: copies `/out/reader` and `COPY --from=build --chown=65532:65532 /empty-data /data` (explicit numeric UID/GID ownership since distroless has no shell). `cmd/reader` imports `_ "time/tzdata"` so `TZ` works without OS zoneinfo files.
 - **Container smoke check**: verify DB creation and a WAL write inside the built container running as UID `65532` with `/data` mounted as a directory.
 

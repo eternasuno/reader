@@ -16,7 +16,7 @@ Conditional files:
 
 | Concern | Choice | Why |
 | --- | --- | --- |
-| Backend | Go `1.26+`, stdlib `net/http.ServeMux` | single static binary, low RAM (~20–50 MB), satisfies `modernc.org/sqlite@v1.62` & `gofeed@v1.5` floor |
+| Backend | Go `1.27+`, stdlib `net/http.ServeMux` | single static binary, low RAM (~20–50 MB), satisfies `modernc.org/sqlite@v1.62` & `gofeed@v1.5` floor |
 | IDs | `github.com/google/uuid` (`uuid.NewV7`) | RFC 9562 UUIDv7 with built-in monotonic sequence counter |
 | Database | SQLite via `modernc.org/sqlite` | pure Go (`CGO_ENABLED=0`), single file, no external DB process |
 | Feed parsing | `github.com/mmcdole/gofeed` (`rss` / `atom` / `json` subparsers + `DetectFeedType`) | RSS/RDF, Atom, and JSON Feed in one library; format-specific parsers keep `FD-PARSE-*` exact |

@@ -5,4 +5,4 @@ vim.lsp.config("tsc", {
   end,
 })
 
-vim.lsp.enable({ "tsc", "biome" })
+vim.lsp.enable({ "gopls", "tsc", "biome" })

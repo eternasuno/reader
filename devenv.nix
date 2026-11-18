@@ -1,5 +1,6 @@
 {...}: {
   languages = {
+    go.enable = true;
     javascript = {
       enable = true;
       pnpm = {

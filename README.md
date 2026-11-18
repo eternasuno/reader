@@ -11,14 +11,14 @@
 
 ## Target Architecture Overview
 
-- **Backend**: Go `1.26+` (`net/http`, `modernc.org/sqlite`, `github.com/mmcdole/gofeed`, `codeberg.org/readeck/go-readability/v2`, `github.com/microcosm-cc/bluemonday`, `archive/zip` EPUB 3 builder, `github.com/wneessen/go-mail`).
+- **Backend**: Go `1.27+` (`net/http`, `modernc.org/sqlite`, `github.com/mmcdole/gofeed`, `codeberg.org/readeck/go-readability/v2`, `github.com/microcosm-cc/bluemonday`, `archive/zip` EPUB 3 builder, `github.com/wneessen/go-mail`).
 - **Frontend**: SolidJS 2 SPA (`web/`: `solid-js` `^2.0.0`, `@solidjs/web` `^2.0.0`, `@solidjs/router` `^2.0.0`, `@solid-primitives/i18n@next` for bilingual `zh-CN` / `en`, `@tanstack/virtual-core`, Tailwind CSS 4, daisyUI 5, built with Vite 8/9 + `@solidjs/vite-plugin` `^3.0.0`) embedded into the Go binary via `go:embed`.
 - **Storage**: single SQLite file (`<DATA_DIR>/reader.db`) with WAL mode and embedded startup migrations.
 
 ## Requirements (Local Build)
 
-- Go `>= 1.26`
-- Node `>= 26` (Active LTS) and `pnpm` (to build the frontend assets under `web/`)
+- Go `>= 1.27`
+- Node `>= 24` (Active LTS) and `pnpm` (to build the frontend assets under `web/`)
 
 ## Target Docker Deployment
 
