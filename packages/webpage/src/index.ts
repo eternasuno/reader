@@ -1,4 +1,2 @@
-export {
-  BrowserWebpageFetcherLive,
-  JinaWebpageFetcherLive,
-} from './webpage-fetcher';
+export { BrowserWebpageFetcherLive } from './browser';
+export { JinaWebpageFetcherLive } from './jina';

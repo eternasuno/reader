@@ -1,109 +1,181 @@
-import { expect, it } from '@effect/vitest';
+import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option } from 'effect';
 import { FeedItemRepository } from '../../../../src/port/feed-item-repository';
 import { FeedRepository } from '../../../../src/port/feed-repository';
 import {
   alice,
   bob,
+  feedItemQuery,
   idsOf,
+  itemRow,
   makeUniqueFeed,
-  makeUniqueFeedItem,
   makeUniqueFolder,
-  rowAt,
   storedFeed,
   storedFolder,
   storedFolderFeed,
 } from '../../fixtures';
-import type { FeedStoreLayer } from '../feed';
-import type { ListScope } from './list';
+import type { FeedStoreFactory } from '../layer';
+import { type ListScopeSetup, listCases } from './list';
 
-const query = { limit: 10, unreadOnly: false };
+const query = feedItemQuery();
 
-const feedExclusionCases =
-  (layer: FeedStoreLayer, scope: ListScope) => (): void => {
-    it.effect('excludes the items of other feeds', () =>
-      Effect.gen(function* () {
-        const items = yield* FeedItemRepository;
-        const setup = yield* scope((feedId) => [
-          makeUniqueFeedItem({ feedId }),
-        ]);
-        const other = yield* storedFeed();
-        yield* items.create(alice, [makeUniqueFeedItem({ feedId: other.id })]);
-        const listed = yield* setup.list(query);
+export const allScope: ListScopeSetup = (makeRows) =>
+  Effect.gen(function* () {
+    const feeds = yield* FeedRepository;
+    const items = yield* FeedItemRepository;
+    const feed = makeUniqueFeed({ ownerId: alice });
+    const rows = makeRows(feed.id);
+    yield* feeds.create(alice, [feed]);
+    yield* items.create(alice, rows);
 
-        expect(idsOf(listed)).toEqual([rowAt(setup.rows, 0).id]);
-      }).pipe(Effect.provide(layer))
-    );
-  };
+    return {
+      feedId: feed.id,
+      rows,
+      list: (asked) => items.listAll(alice, asked),
+    };
+  });
 
-const feedEmptyCases = (layer: FeedStoreLayer) => (): void => {
-  it.effect('returns an empty page for an unknown or foreign feed', () =>
+export const byFeedScope: ListScopeSetup = (makeRows) =>
+  Effect.gen(function* () {
+    const items = yield* FeedItemRepository;
+    const feed = yield* storedFeed();
+    const rows = makeRows(feed.id);
+    yield* items.create(alice, rows);
+
+    return {
+      feedId: feed.id,
+      rows,
+      list: (asked) => items.listByFeed(alice, feed.id, asked),
+    };
+  });
+
+export const byFolderScope: ListScopeSetup = (makeRows) =>
+  Effect.gen(function* () {
+    const items = yield* FeedItemRepository;
+    const folder = yield* storedFolder();
+    const feed = yield* storedFolderFeed(folder.id);
+    const rows = makeRows(feed.id);
+    yield* items.create(alice, rows);
+
+    return {
+      feedId: feed.id,
+      rows,
+      list: (asked) => items.listByFolder(alice, folder.id, asked),
+    };
+  });
+
+const allScopeCases = (makeLayer: FeedStoreFactory) => (): void => {
+  it.effect('FD-LIST-1 lists the items of the feeds in folders too', () =>
     Effect.gen(function* () {
       const items = yield* FeedItemRepository;
-      const feed = yield* storedFeed();
-      const bobFeed = yield* storedFeed(bob);
-      const bobRow = makeUniqueFeedItem({ ownerId: bob, feedId: bobFeed.id });
-      yield* items.create(alice, [makeUniqueFeedItem({ feedId: feed.id })]);
-      yield* items.create(bob, [bobRow]);
+      const folder = yield* storedFolder();
+      const inFolder = yield* storedFolderFeed(folder.id);
+      const topLevel = yield* storedFeed();
+      const rows = [itemRow(inFolder.id), itemRow(topLevel.id)];
+      yield* items.create(alice, rows);
 
-      expect(idsOf(yield* items.listByFeed(bob, bobFeed.id, query))).toEqual([
-        bobRow.id,
-      ]);
-      expect(
-        yield* items.listByFeed(alice, makeUniqueFeed().id, query)
-      ).toEqual([]);
-      expect(yield* items.listByFeed(alice, bobFeed.id, query)).toEqual([]);
-    }).pipe(Effect.provide(layer))
+      expect(idsOf(yield* items.listAll(alice, query))).toEqual(
+        idsOf(rows).reverse()
+      );
+    }).pipe(Effect.provide(makeLayer()))
+  );
+
+  it.effect('CM-OWN-2 lists only the items of the owner', () =>
+    Effect.gen(function* () {
+      const items = yield* FeedItemRepository;
+      const mine = yield* storedFeed();
+      const theirs = yield* storedFeed(bob);
+      const myRow = itemRow(mine.id);
+      yield* items.create(alice, [myRow]);
+      yield* items.create(bob, [itemRow(theirs.id, { ownerId: bob })]);
+
+      expect(idsOf(yield* items.listAll(alice, query))).toEqual([myRow.id]);
+    }).pipe(Effect.provide(makeLayer()))
   );
 };
 
-const folderMergeCases = (layer: FeedStoreLayer) => (): void => {
+const feedScopeCases = (makeLayer: FeedStoreFactory) => (): void => {
+  it.effect('FD-LIST-2 excludes the items of other feeds', () =>
+    Effect.gen(function* () {
+      const items = yield* FeedItemRepository;
+      const feed = yield* storedFeed();
+      const other = yield* storedFeed();
+      const mine = itemRow(feed.id);
+      yield* items.create(alice, [mine, itemRow(other.id)]);
+
+      expect(idsOf(yield* items.listByFeed(alice, feed.id, query))).toEqual([
+        mine.id,
+      ]);
+    }).pipe(Effect.provide(makeLayer()))
+  );
+
   it.effect(
-    'merges the items of several feeds in the folder newest first',
+    'FD-LIST-2 gives an empty page for an unknown or foreign feed',
+    () =>
+      Effect.gen(function* () {
+        const items = yield* FeedItemRepository;
+        const feed = yield* storedFeed();
+        const theirFeed = yield* storedFeed(bob);
+        const theirRow = itemRow(theirFeed.id, { ownerId: bob });
+        yield* items.create(alice, [itemRow(feed.id)]);
+        yield* items.create(bob, [theirRow]);
+
+        expect(
+          idsOf(yield* items.listByFeed(bob, theirFeed.id, query))
+        ).toEqual([theirRow.id]);
+        expect(
+          yield* items.listByFeed(alice, makeUniqueFeed().id, query)
+        ).toEqual([]);
+        expect(yield* items.listByFeed(alice, theirFeed.id, query)).toEqual([]);
+      }).pipe(Effect.provide(makeLayer()))
+  );
+};
+
+const folderMergeCase = (makeLayer: FeedStoreFactory): void => {
+  it.effect('FD-LIST-6 merges the feeds of the folder newest first', () =>
+    Effect.gen(function* () {
+      const items = yield* FeedItemRepository;
+      const folder = yield* storedFolder();
+      const first = yield* storedFolderFeed(folder.id);
+      const second = yield* storedFolderFeed(folder.id);
+      const rows = [itemRow(first.id), itemRow(second.id), itemRow(first.id)];
+      yield* items.create(alice, rows);
+
+      expect(idsOf(yield* items.listByFolder(alice, folder.id, query))).toEqual(
+        idsOf(rows).reverse()
+      );
+    }).pipe(Effect.provide(makeLayer()))
+  );
+};
+
+const folderExclusionCase = (makeLayer: FeedStoreFactory): void => {
+  it.effect(
+    'FD-LIST-7 excludes top-level feeds and feeds of other folders',
     () =>
       Effect.gen(function* () {
         const items = yield* FeedItemRepository;
         const folder = yield* storedFolder();
-        const first = yield* storedFolderFeed(folder.id);
-        const second = yield* storedFolderFeed(folder.id);
-        const rows = [
-          makeUniqueFeedItem({ feedId: first.id }),
-          makeUniqueFeedItem({ feedId: second.id }),
-          makeUniqueFeedItem({ feedId: first.id }),
-        ];
-        yield* items.create(alice, rows);
-        const listed = yield* items.listByFolder(alice, folder.id, query);
+        const otherFolder = yield* storedFolder();
+        const inside = yield* storedFolderFeed(folder.id);
+        const topLevel = yield* storedFeed();
+        const elsewhere = yield* storedFolderFeed(otherFolder.id);
+        const mine = itemRow(inside.id);
+        yield* items.create(alice, [
+          mine,
+          itemRow(topLevel.id),
+          itemRow(elsewhere.id),
+        ]);
 
-        expect(idsOf(listed)).toEqual(idsOf(rows).reverse());
-      }).pipe(Effect.provide(layer))
+        expect(
+          idsOf(yield* items.listByFolder(alice, folder.id, query))
+        ).toEqual([mine.id]);
+      }).pipe(Effect.provide(makeLayer()))
   );
 };
 
-const folderExclusionCases = (layer: FeedStoreLayer) => (): void => {
-  it.effect('excludes top-level feeds and feeds of other folders', () =>
-    Effect.gen(function* () {
-      const items = yield* FeedItemRepository;
-      const folder = yield* storedFolder();
-      const otherFolder = yield* storedFolder();
-      const inside = yield* storedFolderFeed(folder.id);
-      const topLevel = yield* storedFeed();
-      const elsewhere = yield* storedFolderFeed(otherFolder.id);
-      const mine = makeUniqueFeedItem({ feedId: inside.id });
-      yield* items.create(alice, [
-        mine,
-        makeUniqueFeedItem({ feedId: topLevel.id }),
-        makeUniqueFeedItem({ feedId: elsewhere.id }),
-      ]);
-      const listed = yield* items.listByFolder(alice, folder.id, query);
-
-      expect(idsOf(listed)).toEqual([mine.id]);
-    }).pipe(Effect.provide(layer))
-  );
-};
-
-const folderEmptyCases = (layer: FeedStoreLayer) => (): void => {
+const emptyFolderCase = (makeLayer: FeedStoreFactory): void => {
   it.effect(
-    'returns an empty page for an unknown, foreign or empty folder',
+    'FD-LIST-7 gives an empty page for an unknown, foreign or empty folder',
     () =>
       Effect.gen(function* () {
         const items = yield* FeedItemRepository;
@@ -111,10 +183,8 @@ const folderEmptyCases = (layer: FeedStoreLayer) => (): void => {
         const bobFolder = yield* storedFolder(bob);
         const bobFeed = yield* storedFolderFeed(bobFolder.id, bob);
         const empty = yield* storedFolder();
-        yield* items.create(alice, [makeUniqueFeedItem({ feedId: feed.id })]);
-        yield* items.create(bob, [
-          makeUniqueFeedItem({ ownerId: bob, feedId: bobFeed.id }),
-        ]);
+        yield* items.create(alice, [itemRow(feed.id)]);
+        yield* items.create(bob, [itemRow(bobFeed.id, { ownerId: bob })]);
 
         expect(
           yield* items.listByFolder(alice, makeUniqueFolder().id, query)
@@ -123,101 +193,61 @@ const folderEmptyCases = (layer: FeedStoreLayer) => (): void => {
           []
         );
         expect(yield* items.listByFolder(alice, empty.id, query)).toEqual([]);
-      }).pipe(Effect.provide(layer))
+      }).pipe(Effect.provide(makeLayer()))
   );
 };
 
-const folderMovedOutCases = (layer: FeedStoreLayer) => (): void => {
-  it.effect('stops listing a feed moved out of the folder', () =>
-    Effect.gen(function* () {
-      const items = yield* FeedItemRepository;
-      const feeds = yield* FeedRepository;
-      const folder = yield* storedFolder();
-      const feed = yield* storedFolderFeed(folder.id);
-      const row = makeUniqueFeedItem({ feedId: feed.id });
-      yield* items.create(alice, [row]);
-
-      expect(idsOf(yield* items.listByFolder(alice, folder.id, query))).toEqual(
-        [row.id]
-      );
-
-      yield* feeds.moveToFolder(alice, feed.id, Option.none());
-
-      expect(yield* items.listByFolder(alice, folder.id, query)).toEqual([]);
-    }).pipe(Effect.provide(layer))
-  );
-};
-
-const crossScopeCases = (layer: FeedStoreLayer) => (): void => {
+const folderMembershipCases = (makeLayer: FeedStoreFactory) => (): void => {
   it.effect(
-    'CM-PAGE-7 reads on from a cursor taken under another selection',
+    'FD-LIST-6 lists the feeds that are in the folder when it lists',
     () =>
       Effect.gen(function* () {
+        const feeds = yield* FeedRepository;
         const items = yield* FeedItemRepository;
-        const first = yield* storedFeed();
-        const second = yield* storedFeed();
-        const bobFeed = yield* storedFeed(bob);
-        const read = makeUniqueFeedItem({ feedId: second.id, read: true });
-        const unread = makeUniqueFeedItem({ feedId: second.id });
-        yield* items.create(alice, [read, unread]);
-        yield* items.create(bob, [
-          makeUniqueFeedItem({ feedId: bobFeed.id, ownerId: bob }),
-        ]);
-        const cursor = makeUniqueFeedItem({ feedId: first.id });
-        yield* items.create(alice, [cursor]);
-        const newer = makeUniqueFeedItem({ feedId: second.id });
-        yield* items.create(alice, [newer]);
+        const folder = yield* storedFolder();
+        const feed = yield* storedFolderFeed(folder.id);
+        const row = itemRow(feed.id);
+        yield* items.create(alice, [row]);
 
         expect(
-          idsOf(
-            yield* items.listByFeed(alice, second.id, {
-              ...query,
-              after: cursor.id,
-            })
-          )
-        ).toEqual([unread.id, read.id]);
+          idsOf(yield* items.listByFolder(alice, folder.id, query))
+        ).toEqual([row.id]);
+
+        yield* feeds.moveToFolder(alice, feed.id, Option.none());
+
+        expect(yield* items.listByFolder(alice, folder.id, query)).toEqual([]);
+
+        yield* feeds.moveToFolder(alice, feed.id, Option.some(folder.id));
+
         expect(
-          idsOf(
-            yield* items.listByFeed(alice, second.id, {
-              after: cursor.id,
-              limit: 10,
-              unreadOnly: true,
-            })
-          )
-        ).toEqual([unread.id]);
-        expect(
-          idsOf(yield* items.listAll(alice, { ...query, after: cursor.id }))
-        ).toEqual([unread.id, read.id]);
-      }).pipe(Effect.provide(layer))
+          idsOf(yield* items.listByFolder(alice, folder.id, query))
+        ).toEqual([row.id]);
+      }).pipe(Effect.provide(makeLayer()))
   );
 };
 
-const allFolderCases = (layer: FeedStoreLayer) => (): void => {
-  it.effect('lists the items of feeds in folders too', () =>
-    Effect.gen(function* () {
-      const items = yield* FeedItemRepository;
-      const folder = yield* storedFolder();
-      const inFolder = yield* storedFolderFeed(folder.id);
-      const topLevel = yield* storedFeed();
-      const rows = [
-        makeUniqueFeedItem({ feedId: inFolder.id }),
-        makeUniqueFeedItem({ feedId: topLevel.id }),
-      ];
-      yield* items.create(alice, rows);
-      const listed = yield* items.listAll(alice, query);
-
-      expect(idsOf(listed)).toEqual(idsOf(rows).reverse());
-    }).pipe(Effect.provide(layer))
-  );
+export const listAllCases = (makeLayer: FeedStoreFactory): void => {
+  describe('listAll', () => {
+    listCases(makeLayer, allScope);
+    describe('scope', allScopeCases(makeLayer));
+  });
 };
 
-export {
-  allFolderCases,
-  crossScopeCases,
-  feedEmptyCases,
-  feedExclusionCases,
-  folderEmptyCases,
-  folderExclusionCases,
-  folderMergeCases,
-  folderMovedOutCases,
+export const listByFeedCases = (makeLayer: FeedStoreFactory): void => {
+  describe('listByFeed', () => {
+    listCases(makeLayer, byFeedScope);
+    describe('scope', feedScopeCases(makeLayer));
+  });
+};
+
+export const listByFolderCases = (makeLayer: FeedStoreFactory): void => {
+  describe('listByFolder', () => {
+    listCases(makeLayer, byFolderScope);
+    describe('scope', () => {
+      folderMergeCase(makeLayer);
+      folderExclusionCase(makeLayer);
+      emptyFolderCase(makeLayer);
+    });
+    describe('membership', folderMembershipCases(makeLayer));
+  });
 };

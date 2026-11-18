@@ -31,9 +31,8 @@ build/
 .solid/
 vite.config.ts.timestamp-*
 
-# Embedded SurrealDB (SurrealKV) data
+# SQLite data (reader.db, auth.db)
 .data/
-.surreal/
 
 # Test coverage
 coverage/
@@ -72,3 +71,6 @@ devenv.local.yaml
 .direnv
 
 .maki
+
+# Reference sources for agents (scripts/effect-source.sh)
+.repos/

@@ -10,20 +10,13 @@ import {
   type SavedPageQuery,
   SavedPageRepository,
 } from '../../../src/port/saved-page-repository';
+import { byIdDescending } from './text';
 
 type MemorySavedPageState = {
   readonly pages: ReadonlyArray<SavedPage>;
 };
 
-type Ref_ = Ref.Ref<MemorySavedPageState>;
-
-const compareText = (left: string, right: string): number => {
-  if (left === right) {
-    return 0;
-  }
-
-  return left < right ? -1 : 1;
-};
+type SavedPageStateRef = Ref.Ref<MemorySavedPageState>;
 
 const isPageTaken = (
   pages: ReadonlyArray<SavedPage>,
@@ -31,9 +24,10 @@ const isPageTaken = (
   row: SavedPage
 ): boolean =>
   row.ownerId !== owner ||
-  pages.some((page) => page.id === row.id) ||
   pages.some(
-    (page) => page.ownerId === row.ownerId && page.url.href === row.url.href
+    (page) =>
+      page.id === row.id ||
+      (page.ownerId === row.ownerId && page.url.href === row.url.href)
   );
 
 const insertPages = (
@@ -48,19 +42,17 @@ const insertPages = (
   const created: Array<SavedPageId> = [];
 
   for (const row of rows) {
-    if (isPageTaken(stored, owner, row)) {
-      continue;
+    if (!isPageTaken(stored, owner, row)) {
+      stored.push(row);
+      created.push(row.id);
     }
-
-    stored.push(row);
-    created.push(row.id);
   }
 
   return { pages: stored, created };
 };
 
 const findPage =
-  (state: Ref_) =>
+  (state: SavedPageStateRef) =>
   (owner: OwnerId, id: SavedPageId): Effect.Effect<Option.Option<SavedPage>> =>
     Effect.map(Ref.get(state), (store) =>
       Option.fromUndefinedOr(
@@ -69,7 +61,7 @@ const findPage =
     );
 
 const findPageByUrl =
-  (state: Ref_) =>
+  (state: SavedPageStateRef) =>
   (
     owner: OwnerId,
     url: NormalizedUrl
@@ -83,7 +75,7 @@ const findPageByUrl =
     );
 
 const listPages =
-  (state: Ref_) =>
+  (state: SavedPageStateRef) =>
   (
     owner: OwnerId,
     query: SavedPageQuery
@@ -91,14 +83,16 @@ const listPages =
     Effect.map(Ref.get(state), (store) =>
       store.pages
         .filter((page) => page.ownerId === owner)
-        .filter((page) => !query.unreadOnly || !page.read)
-        .filter((page) => query.after === undefined || page.id < query.after)
-        .sort((left, right) => compareText(right.id, left.id))
+        .filter((page) => !query.unread || !page.read)
+        .filter(
+          (page) => !Option.exists(query.cursor, (cursor) => page.id >= cursor)
+        )
+        .sort(byIdDescending)
         .slice(0, query.limit)
     );
 
 const createPages =
-  (state: Ref_) =>
+  (state: SavedPageStateRef) =>
   (
     owner: OwnerId,
     pages: ReadonlyArray<SavedPage>
@@ -110,7 +104,7 @@ const createPages =
     });
 
 const markPages =
-  (state: Ref_) =>
+  (state: SavedPageStateRef) =>
   (
     owner: OwnerId,
     ids: ReadonlyArray<SavedPageId>,
@@ -129,7 +123,7 @@ const markPages =
     });
 
 const markAllPages =
-  (state: Ref_) =>
+  (state: SavedPageStateRef) =>
   (owner: OwnerId): Effect.Effect<void> =>
     Ref.update(state, (store) => ({
       pages: store.pages.map((page) =>
@@ -138,7 +132,7 @@ const markAllPages =
     }));
 
 const removePages =
-  (state: Ref_) =>
+  (state: SavedPageStateRef) =>
   (owner: OwnerId, ids: ReadonlyArray<SavedPageId>): Effect.Effect<void> =>
     Ref.update(state, (store) => {
       const wanted = new Set<string>(ids);
@@ -151,7 +145,7 @@ const removePages =
     });
 
 const countUnreadPages =
-  (state: Ref_) =>
+  (state: SavedPageStateRef) =>
   (owner: OwnerId): Effect.Effect<number> =>
     Effect.map(
       Ref.get(state),
@@ -160,7 +154,9 @@ const countUnreadPages =
           .length
     );
 
-const makeSavedPageRepository = (state: Ref_): ISavedPageRepository => ({
+const makeSavedPageRepository = (
+  state: SavedPageStateRef
+): ISavedPageRepository => ({
   find: findPage(state),
   findByUrl: findPageByUrl(state),
   list: listPages(state),
@@ -171,11 +167,17 @@ const makeSavedPageRepository = (state: Ref_): ISavedPageRepository => ({
   unreadCount: countUnreadPages(state),
 });
 
-export const MemorySavedPageRepositoryLive: Layer.Layer<SavedPageRepository> =
+/** Builds a fresh, empty store per call, so each test gets its own state. */
+export const memorySavedPageLayer = (
+  decorate: (pages: ISavedPageRepository) => ISavedPageRepository = (pages) =>
+    pages
+): Layer.Layer<SavedPageRepository> =>
   Layer.effect(
     SavedPageRepository,
-    Effect.map(
-      Ref.make<MemorySavedPageState>({ pages: [] }),
-      makeSavedPageRepository
+    Effect.map(Ref.make<MemorySavedPageState>({ pages: [] }), (state) =>
+      decorate(makeSavedPageRepository(state))
     )
   );
+
+export const MemorySavedPageRepositoryLive: Layer.Layer<SavedPageRepository> =
+  memorySavedPageLayer();

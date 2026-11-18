@@ -1,8 +1,8 @@
 {
-  "name": "template",
+  "name": "reader-workspace",
   "version": "0.1.0",
   "private": true,
-  "description": "SolidJS SPA and Effect HTTP API starter with Better Auth and embedded SurrealDB.",
+  "description": "留白 — a self-hosted read-later and feed reader.",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@12.3.4",
@@ -12,8 +12,9 @@
   "scripts": {
     "build": "turbo run build",
     "check": "biome check",
-    "db:migrate": "pnpm --filter api db:migrate",
-    "dev": "turbo run dev",
+    "db:migrate": "pnpm --filter reader db:migrate",
+    "dev": "turbo run dev:web dev:server",
+    "effect:source": "sh scripts/effect-source.sh",
     "prepare": "effect-tsgo patch",
     "start": "turbo run start",
     "test": "turbo run test",

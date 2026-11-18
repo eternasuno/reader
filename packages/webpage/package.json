@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "@reader/business": "workspace:*",
-    "effect": "4.1.2",
+    "effect": "4.1.4",
     "puppeteer-core": "25.16.0",
     "ws": "8.22.1"
   },
   "devDependencies": {
-    "@effect/vitest": "4.1.2",
+    "@effect/vitest": "4.1.4",
     "@types/node": "catalog:",
     "@types/ws": "8.18.2",
     "typescript": "catalog:",

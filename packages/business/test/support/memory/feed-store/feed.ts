@@ -1,26 +1,13 @@
 import { type DateTime, Effect, Option, Ref } from 'effect';
 import type { OwnerId } from '../../../../src/entity/common/owner-id';
 import type { Feed, FeedId, FeedTitle } from '../../../../src/entity/feed/feed';
-import type { Folder, FolderId } from '../../../../src/entity/feed/folder';
+import type { Folder, FolderId } from '../../../../src/entity/folder/folder';
 import type { IFeedRepository } from '../../../../src/port/feed-repository';
-import { byTitleThenId, type Ref_ } from './state';
-
-const hasFolder = (
-  folders: ReadonlyArray<Folder>,
-  owner: OwnerId,
-  id: FolderId
-): boolean =>
-  folders.some((folder) => folder.ownerId === owner && folder.id === id);
-
-const isFolderMissing = (
-  folders: ReadonlyArray<Folder>,
-  owner: OwnerId,
-  folderId: Option.Option<FolderId>
-): boolean => Option.exists(folderId, (id) => !hasFolder(folders, owner, id));
+import { byTitleThenId, type FeedStateRef, isFolderMissing } from './state';
 
 const isFeedTaken = (
-  feeds: ReadonlyArray<Feed>,
   folders: ReadonlyArray<Folder>,
+  feeds: ReadonlyArray<Feed>,
   owner: OwnerId,
   row: Feed
 ): boolean =>
@@ -33,28 +20,31 @@ const isFeedTaken = (
   isFolderMissing(folders, owner, row.folderId);
 
 const insertFeeds = (
-  feeds: ReadonlyArray<Feed>,
-  folders: ReadonlyArray<Folder>,
+  store: {
+    readonly folders: ReadonlyArray<Folder>;
+    readonly feeds: ReadonlyArray<Feed>;
+  },
   owner: OwnerId,
   rows: ReadonlyArray<Feed>
-) => {
-  const stored: Array<Feed> = [...feeds];
+): {
+  readonly feeds: ReadonlyArray<Feed>;
+  readonly created: ReadonlyArray<FeedId>;
+} => {
+  const stored: Array<Feed> = [...store.feeds];
   const created: Array<FeedId> = [];
 
   for (const row of rows) {
-    if (isFeedTaken(stored, folders, owner, row)) {
-      continue;
+    if (!isFeedTaken(store.folders, stored, owner, row)) {
+      stored.push(row);
+      created.push(row.id);
     }
-
-    stored.push(row);
-    created.push(row.id);
   }
 
   return { feeds: stored, created };
 };
 
 const findFeed =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (owner: OwnerId, id: FeedId): Effect.Effect<Option.Option<Feed>> =>
     Effect.map(Ref.get(state), (store) =>
       Option.fromUndefinedOr(
@@ -63,41 +53,40 @@ const findFeed =
     );
 
 const listFeeds =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (owner: OwnerId): Effect.Effect<ReadonlyArray<Feed>> =>
     Effect.map(Ref.get(state), (store) =>
       store.feeds.filter((feed) => feed.ownerId === owner).sort(byTitleThenId)
     );
 
 const createFeeds =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (
     owner: OwnerId,
     feeds: ReadonlyArray<Feed>
   ): Effect.Effect<ReadonlyArray<FeedId>> =>
     Ref.modify(state, (store) => {
-      const inserted = insertFeeds(store.feeds, store.folders, owner, feeds);
+      const inserted = insertFeeds(store, owner, feeds);
 
       return [inserted.created, { ...store, feeds: inserted.feeds }];
     });
 
 const moveFeedToFolder =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (
     owner: OwnerId,
     id: FeedId,
     folderId: Option.Option<FolderId>
   ): Effect.Effect<boolean> =>
     Ref.modify(state, (store) => {
-      if (isFolderMissing(store.folders, owner, folderId)) {
-        return [false, store];
-      }
-
       const feed = store.feeds.find(
         (row) => row.ownerId === owner && row.id === id
       );
 
-      if (feed === undefined) {
+      if (
+        feed === undefined ||
+        isFolderMissing(store.folders, owner, folderId)
+      ) {
         return [false, store];
       }
 
@@ -113,7 +102,7 @@ const moveFeedToFolder =
     });
 
 const recordFeedSync =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (
     owner: OwnerId,
     id: FeedId,
@@ -130,7 +119,7 @@ const recordFeedSync =
     }));
 
 const removeFeeds =
-  (state: Ref_) =>
+  (state: FeedStateRef) =>
   (owner: OwnerId, ids: ReadonlyArray<FeedId>): Effect.Effect<void> =>
     Ref.update(state, (store) => {
       const wanted = new Set<string>(ids);
@@ -147,7 +136,9 @@ const removeFeeds =
       };
     });
 
-export const makeMemoryFeedRepository = (state: Ref_): IFeedRepository => ({
+export const makeMemoryFeedRepository = (
+  state: FeedStateRef
+): IFeedRepository => ({
   find: findFeed(state),
   list: listFeeds(state),
   create: createFeeds(state),

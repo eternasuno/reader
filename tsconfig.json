@@ -23,6 +23,8 @@
           "effect/http",
           "effect/http-api",
           "effect/schema",
+          "effect/sql",
+          "@effect/sql-sqlite-node",
           "@effect/platform-node",
           "@effect/vitest"
         ]

@@ -1,176 +1,157 @@
 import { describe, expect, it } from '@effect/vitest';
 import type { FeedItemKey } from '../../../../src/port/feed-item-repository';
-import type { ParsedFeedEntry } from '../../../../src/port/feed-parser';
-import {
-  type Selection,
-  selectItems,
-} from '../../../../src/usecase/feed/refresh-feed';
-import { decodeUrl, makeFeedItem } from '../../../support/fixtures';
-import { parsedEntry } from '../../../support/usecase/feed';
+import { selectItems } from '../../../../src/usecase/feed/refresh-feed/selection';
+import { decodeUrl, makeUniqueFeedItem } from '../../../support/fixtures';
+import { parsedEntry, urlsOf } from '../support';
 
-const base = 'https://example.com';
-
-const inventoryOf = (
-  letters: ReadonlyArray<string>
-): ReadonlyArray<FeedItemKey> =>
-  letters.map((letter) => {
-    const item = makeFeedItem({ url: decodeUrl(`${base}/${letter}`) });
+/** An inventory in list order: the first key is the item on top (FD-LIST-4). */
+const inventoryOf = (urls: ReadonlyArray<string>): ReadonlyArray<FeedItemKey> =>
+  urls.map((url) => {
+    const item = makeUniqueFeedItem({ url: decodeUrl(url) });
 
     return { id: item.id, url: item.url };
   });
 
 const entriesOf = (
-  letters: ReadonlyArray<string>
-): ReadonlyArray<ParsedFeedEntry> =>
-  letters.map((letter) => parsedEntry(`${base}/${letter}`));
+  urls: ReadonlyArray<string>
+): ReadonlyArray<ReturnType<typeof parsedEntry>> =>
+  urls.map((url) => parsedEntry(url, { title: url }));
 
-const keptUrls = (
-  inventory: ReadonlyArray<FeedItemKey>,
-  selection: Selection
-): ReadonlyArray<string> =>
-  inventory
-    .filter((item) => !selection.toRemove.includes(item.id))
-    .map((item) => item.url.href);
-
-const afterSync = (
-  inventory: ReadonlyArray<FeedItemKey>,
-  selection: Selection
-): ReadonlyArray<string> => [
-  ...selection.toImport.map((entry) => entry.url.href),
-  ...keptUrls(inventory, selection),
-];
-
-const select = (
-  inventoryLetters: ReadonlyArray<string>,
-  sourceLetters: ReadonlyArray<string>,
-  retention = 3
-) => {
-  const inventory = inventoryOf(inventoryLetters);
-  const selection = selectItems(inventory, entriesOf(sourceLetters), retention);
-
-  return { inventory, selection };
-};
-
-const expected = (letters: ReadonlyArray<string>): ReadonlyArray<string> =>
-  letters.map((letter) => `${base}/${letter}`);
-
-describe('selectItems on a fresh feed', () => {
-  it('imports the first N entries of a new feed, newest first', () => {
-    const { inventory, selection } = select([], ['d', 'c', 'b', 'a']);
-
-    expect(afterSync(inventory, selection)).toEqual(expected(['d', 'c', 'b']));
-    expect(selection.toRemove).toEqual([]);
-  });
-});
-
-describe('selectItems with new entries', () => {
-  it('puts a new entry on top and removes the oldest', () => {
-    const { inventory, selection } = select(
-      ['d', 'c', 'b'],
-      ['e', 'd', 'c', 'b']
-    );
-
-    expect(selection.toImport.map((entry) => entry.url.href)).toEqual(
-      expected(['e'])
-    );
-    expect(afterSync(inventory, selection)).toEqual(expected(['e', 'd', 'c']));
-  });
-
-  it('imports an entry inserted in the middle and drops the last one', () => {
-    const { inventory, selection } = select(
-      ['e', 'd', 'c'],
-      ['e', 'x', 'd', 'c']
-    );
-
-    expect(afterSync(inventory, selection)).toEqual(expected(['x', 'e', 'd']));
-  });
-});
-
-describe('selectItems with a shorter source', () => {
-  it('keeps stored entries up to N', () => {
-    const { inventory, selection } = select(['e', 'd', 'c'], ['f']);
-
-    expect(afterSync(inventory, selection)).toEqual(expected(['f', 'e', 'd']));
-  });
-});
-
-describe('selectItems with a reordered source', () => {
-  it('does not move stored entries', () => {
-    const { inventory, selection } = select(['e', 'd', 'c'], ['c', 'e', 'd']);
-
-    expect(selection.toImport).toEqual([]);
-    expect(afterSync(inventory, selection)).toEqual(expected(['e', 'd', 'c']));
-  });
-});
-
-describe('selectItems after a retention change', () => {
-  it('reimports an entry brought back by a higher retention', () => {
-    const { inventory, selection } = select(
-      ['e', 'd', 'c'],
-      ['e', 'd', 'c', 'b'],
-      4
-    );
-
-    expect(afterSync(inventory, selection)).toEqual(
-      expected(['b', 'e', 'd', 'c'])
-    );
-  });
-});
-
-describe('selectItems with an edited entry', () => {
-  it('never touches the stored item', () => {
-    const inventory = inventoryOf(['x']);
+describe('selectItems', () => {
+  it('FD-SEL-8 a new feed imports the first N entries in source order', () => {
     const selection = selectItems(
-      inventory,
-      [parsedEntry(`${base}/x`, { title: 'A new title' })],
+      [],
+      entriesOf([
+        'https://example.com/d',
+        'https://example.com/c',
+        'https://example.com/b',
+        'https://example.com/a',
+      ]),
       3
     );
 
-    expect(selection.toImport).toEqual([]);
+    expect(urlsOf(selection.toImport)).toEqual([
+      'https://example.com/d',
+      'https://example.com/c',
+      'https://example.com/b',
+    ]);
     expect(selection.toRemove).toEqual([]);
   });
-});
 
-describe('selectItems duplicate URLs', () => {
-  it('collapses a URL to its first entry in source order', () => {
+  it('FD-SEL-1 entries with the same URL collapse to the first one', () => {
     const selection = selectItems(
-      inventoryOf([]),
-      [
-        parsedEntry(`${base}/a`, { title: 'First a' }),
-        parsedEntry(`${base}/a`, { title: 'Second a' }),
-        parsedEntry(`${base}/b`),
-        parsedEntry(`${base}/a`),
-      ],
+      [],
+      entriesOf([
+        'https://example.com/a',
+        'https://example.com/b',
+        'https://example.com/a',
+        'https://example.com/c',
+      ]),
       3
     );
 
-    expect(
-      selection.toImport.map((entry) => [entry.url.href, entry.title])
-    ).toEqual([
-      [`${base}/a`, 'First a'],
-      [`${base}/b`, 'Entry'],
+    expect(urlsOf(selection.toImport)).toEqual([
+      'https://example.com/a',
+      'https://example.com/b',
+      'https://example.com/c',
     ]);
   });
 });
 
-describe('selectItems beyond the retention', () => {
-  it('never imports an entry beyond the first N distinct ones', () => {
-    const { inventory, selection } = select(
-      ['d'],
-      ['a', 'b', 'c', 'd', 'e'],
+describe('selectItems duplicates and N', () => {
+  it('FD-SEL-6 an entry beyond the first N is never imported', () => {
+    const selection = selectItems(
+      [],
+      entriesOf([
+        'https://example.com/a',
+        'https://example.com/b',
+        'https://example.com/c',
+        'https://example.com/d',
+      ]),
       3
     );
 
-    expect(selection.toImport.map((entry) => entry.url.href)).toEqual(
-      expected(['a', 'b', 'c'])
-    );
-    expect(selection.toRemove).toHaveLength(inventory.length);
+    expect(urlsOf(selection.toImport)).toHaveLength(3);
   });
 
-  it('imports nothing from an empty source', () => {
-    const { selection } = select(['a'], []);
+  it('FD-SEL-2 a stored entry is not imported again', () => {
+    const selection = selectItems(
+      inventoryOf(['https://example.com/a']),
+      entriesOf(['https://example.com/a', 'https://example.com/b']),
+      3
+    );
+
+    expect(urlsOf(selection.toImport)).toEqual(['https://example.com/b']);
+    expect(selection.toRemove).toEqual([]);
+  });
+});
+
+describe('selectItems stored items', () => {
+  it('FD-SEL-3 removes the unlisted stored items at the bottom of the list', () => {
+    const inventory = inventoryOf([
+      'https://example.com/c',
+      'https://example.com/b',
+      'https://example.com/a',
+    ]);
+    const selection = selectItems(
+      inventory,
+      entriesOf([
+        'https://example.com/d',
+        'https://example.com/c',
+        'https://example.com/b',
+      ]),
+      3
+    );
+
+    expect(urlsOf(selection.toImport)).toEqual(['https://example.com/d']);
+    expect(selection.toRemove).toEqual([inventory[2]?.id]);
+  });
+
+  it('FD-SEL-3 keeps the other stored items in list order until N', () => {
+    const inventory = inventoryOf([
+      'https://example.com/c',
+      'https://example.com/b',
+      'https://example.com/a',
+    ]);
+    const selection = selectItems(
+      inventory,
+      entriesOf(['https://example.com/d']),
+      3
+    );
+
+    expect(selection.toRemove).toEqual([inventory[2]?.id]);
+  });
+});
+
+describe('selectItems retention', () => {
+  it('FD-SEL-5 an item the source no longer lists stays while room is left', () => {
+    const selection = selectItems(
+      inventoryOf([
+        'https://example.com/c',
+        'https://example.com/b',
+        'https://example.com/a',
+      ]),
+      entriesOf(['https://example.com/c']),
+      3
+    );
 
     expect(selection.toImport).toEqual([]);
     expect(selection.toRemove).toEqual([]);
+  });
+
+  it('FD-SEL-7 a lowered N removes the oldest items at the next sync', () => {
+    const inventory = inventoryOf([
+      'https://example.com/e',
+      'https://example.com/d',
+      'https://example.com/c',
+      'https://example.com/b',
+    ]);
+    const selection = selectItems(
+      inventory,
+      entriesOf(['https://example.com/e']),
+      2
+    );
+
+    expect(selection.toRemove).toEqual([inventory[2]?.id, inventory[3]?.id]);
   });
 });

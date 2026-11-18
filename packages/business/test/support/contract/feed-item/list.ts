@@ -1,258 +1,149 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option } from 'effect';
-import type { Feed, FeedId } from '../../../../src/entity/feed/feed';
-import type { FeedItem } from '../../../../src/entity/feed/feed-item';
-import type { FolderId } from '../../../../src/entity/feed/folder';
+import type { FeedId } from '../../../../src/entity/feed/feed';
+import type { FeedItem } from '../../../../src/entity/feed-item/feed-item';
+import type { FeedRepositoryError } from '../../../../src/error/feed';
+import type { FeedItemRepositoryError } from '../../../../src/error/feed-item';
+import type { FolderRepositoryError } from '../../../../src/error/folder';
 import {
   type FeedItemQuery,
   FeedItemRepository,
-  type FeedItemRepositoryError,
 } from '../../../../src/port/feed-item-repository';
 import {
-  FeedRepository,
-  type FeedRepositoryError,
-} from '../../../../src/port/feed-repository';
-import type {
-  FolderRepository,
-  FolderRepositoryError,
-} from '../../../../src/port/folder-repository';
-import {
   alice,
-  bob,
+  type FeedItemOverrides,
+  feedItemQuery,
   idsOf,
-  makeUniqueFeed,
-  makeUniqueFeedItem,
+  itemRow,
   rowAt,
-  storedFeed,
-  storedFolder,
 } from '../../fixtures';
-import type { FeedStoreLayer } from '../feed';
-import {
-  allFolderCases,
-  crossScopeCases,
-  feedEmptyCases,
-  feedExclusionCases,
-  folderEmptyCases,
-  folderExclusionCases,
-  folderMergeCases,
-  folderMovedOutCases,
-} from './list-scope';
+import type { FeedStoreFactory, FeedStorePorts } from '../layer';
 
-type Lister = (
+export type Lister = (
   query: FeedItemQuery
 ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
 
-type ScopeError =
+/** One scope, seeded with the rows it should list, oldest first. */
+export type ListSetup = {
+  readonly feedId: FeedId;
+  readonly rows: ReadonlyArray<FeedItem>;
+  readonly list: Lister;
+};
+
+export type ScopeError =
   | FeedItemRepositoryError
   | FeedRepositoryError
   | FolderRepositoryError;
 
-export type ListScope = (
+export type ListScopeSetup = (
   makeRows: (feedId: FeedId) => ReadonlyArray<FeedItem>
-) => Effect.Effect<
-  {
-    readonly feed: Feed;
-    readonly rows: ReadonlyArray<FeedItem>;
-    readonly list: Lister;
-  },
-  ScopeError,
-  FeedRepository | FeedItemRepository | FolderRepository
->;
+) => Effect.Effect<ListSetup, ScopeError, FeedStorePorts>;
 
-const foreignRow = (): Effect.Effect<
-  void,
-  FeedRepositoryError | FeedItemRepositoryError,
-  FeedRepository | FeedItemRepository
-> =>
-  Effect.gen(function* () {
-    const items = yield* FeedItemRepository;
-    const feed = yield* storedFeed(bob);
-    yield* items.create(bob, [
-      makeUniqueFeedItem({ feedId: feed.id, ownerId: bob }),
-    ]);
-  });
-
-const scopeFeed = (
-  folderId: Option.Option<FolderId>
-): Effect.Effect<Feed, FeedRepositoryError, FeedRepository> =>
-  Effect.gen(function* () {
-    const feeds = yield* FeedRepository;
-    const feed = makeUniqueFeed({ ownerId: alice, folderId });
-    yield* feeds.create(alice, [feed]);
-
-    return feed;
-  });
+const optionOf = Option.some;
 
 const seedRows = (
-  feed: Feed,
-  makeRows: (feedId: FeedId) => ReadonlyArray<FeedItem>
-): Effect.Effect<
-  ReadonlyArray<FeedItem>,
-  FeedItemRepositoryError,
-  FeedItemRepository
-> =>
-  Effect.gen(function* () {
-    const items = yield* FeedItemRepository;
-    const rows = makeRows(feed.id);
-    yield* items.create(alice, rows);
-
-    return rows;
-  });
-
-const listAllScope: ListScope = (makeRows) =>
-  Effect.gen(function* () {
-    const items = yield* FeedItemRepository;
-    const feed = yield* scopeFeed(Option.none());
-    const rows = yield* seedRows(feed, makeRows);
-    yield* foreignRow();
-
-    return { feed, list: (asked) => items.listAll(alice, asked), rows };
-  });
-
-const listByFeedScope: ListScope = (makeRows) =>
-  Effect.gen(function* () {
-    const items = yield* FeedItemRepository;
-    const feed = yield* scopeFeed(Option.none());
-    const rows = yield* seedRows(feed, makeRows);
-    yield* foreignRow();
-
-    return {
-      feed,
-      list: (asked) => items.listByFeed(alice, feed.id, asked),
-      rows,
-    };
-  });
-
-const listByFolderScope: ListScope = (makeRows) =>
-  Effect.gen(function* () {
-    const items = yield* FeedItemRepository;
-    const folder = yield* storedFolder();
-    const feed = yield* scopeFeed(Option.some(folder.id));
-    const rows = yield* seedRows(feed, makeRows);
-    yield* foreignRow();
-
-    return {
-      feed,
-      list: (asked) => items.listByFolder(alice, folder.id, asked),
-      rows,
-    };
-  });
-
-const orderCases = (layer: FeedStoreLayer, scope: ListScope) => (): void => {
-  it.effect('lists the owner items newest first at most limit', () =>
-    Effect.gen(function* () {
-      const setup = yield* scope((feedId) => [
-        makeUniqueFeedItem({ feedId }),
-        makeUniqueFeedItem({ feedId }),
-        makeUniqueFeedItem({ feedId }),
-      ]);
-      const page = yield* setup.list({ limit: 2, unreadOnly: false });
-
-      expect(idsOf(page)).toEqual([
-        rowAt(setup.rows, 2).id,
-        rowAt(setup.rows, 1).id,
-      ]);
-    }).pipe(Effect.provide(layer))
+  scope: ListScopeSetup,
+  count: number,
+  overrides: (index: number) => FeedItemOverrides
+): Effect.Effect<ListSetup, ScopeError, FeedStorePorts> =>
+  scope((feedId) =>
+    Array.from({ length: count }, (_unused, index) =>
+      itemRow(feedId, overrides(index))
+    )
   );
-};
 
-const unreadCases = (layer: FeedStoreLayer, scope: ListScope) => (): void => {
-  it.effect('returns unread items only', () =>
-    Effect.gen(function* () {
-      const setup = yield* scope((feedId) => [
-        makeUniqueFeedItem({ feedId, read: true }),
-        makeUniqueFeedItem({ feedId }),
-      ]);
-      const listed = yield* setup.list({ limit: 10, unreadOnly: true });
-
-      expect(idsOf(listed)).toEqual([rowAt(setup.rows, 1).id]);
-    }).pipe(Effect.provide(layer))
-  );
-};
-
-const deletedCursorCases =
-  (layer: FeedStoreLayer, scope: ListScope) => (): void => {
-    it.effect('keeps paging after the cursor row was removed', () =>
+const orderCases =
+  (makeLayer: FeedStoreFactory, scope: ListScopeSetup) => (): void => {
+    it.effect('CM-PAGE-1 lists the newest rows first, at most limit', () =>
       Effect.gen(function* () {
-        const items = yield* FeedItemRepository;
-        const setup = yield* scope((feedId) => [
-          makeUniqueFeedItem({ feedId }),
-          makeUniqueFeedItem({ feedId }),
-          makeUniqueFeedItem({ feedId }),
-        ]);
-        const cursor = rowAt(setup.rows, 1);
-        yield* items.remove(alice, [cursor.id]);
-        const afterRemoved = yield* setup.list({
-          after: cursor.id,
-          limit: 10,
-          unreadOnly: false,
-        });
+        const setup = yield* seedRows(scope, 3, () => ({}));
+        const page = yield* setup.list(feedItemQuery({ limit: 2 }));
 
-        expect(idsOf(afterRemoved)).toEqual([rowAt(setup.rows, 0).id]);
-      }).pipe(Effect.provide(layer))
+        expect(idsOf(page)).toEqual([
+          rowAt(setup.rows, 2).id,
+          rowAt(setup.rows, 1).id,
+        ]);
+      }).pipe(Effect.provide(makeLayer()))
     );
   };
 
-const everyRowCases = (layer: FeedStoreLayer, scope: ListScope) => (): void => {
-  it.effect('pages through every row without repeating or skipping', () =>
-    Effect.gen(function* () {
-      const setup = yield* scope((feedId) => [
-        makeUniqueFeedItem({ feedId }),
-        makeUniqueFeedItem({ feedId }),
-        makeUniqueFeedItem({ feedId }),
-        makeUniqueFeedItem({ feedId }),
-        makeUniqueFeedItem({ feedId }),
-      ]);
-      const pageOne = yield* setup.list({ limit: 2, unreadOnly: false });
-      const pageTwo = yield* setup.list({
-        after: rowAt(setup.rows, 3).id,
-        limit: 2,
-        unreadOnly: false,
-      });
-      const pageThree = yield* setup.list({
-        after: rowAt(setup.rows, 1).id,
-        limit: 2,
-        unreadOnly: false,
-      });
+const cursorCases =
+  (makeLayer: FeedStoreFactory, scope: ListScopeSetup) => (): void => {
+    it.effect('CM-PAGE-3 lists only the rows strictly after the cursor', () =>
+      Effect.gen(function* () {
+        const setup = yield* seedRows(scope, 3, () => ({}));
+        const cursor = optionOf(rowAt(setup.rows, 1).id);
+        const page = yield* setup.list(feedItemQuery({ cursor }));
 
-      expect(idsOf([...pageOne, ...pageTwo, ...pageThree])).toEqual(
-        idsOf(setup.rows).reverse()
-      );
-    }).pipe(Effect.provide(layer))
-  );
-};
+        expect(idsOf(page)).toEqual([rowAt(setup.rows, 0).id]);
+      }).pipe(Effect.provide(makeLayer()))
+    );
+  };
 
-const allCases = (layer: FeedStoreLayer) => (): void => {
-  describe('order and limit', orderCases(layer, listAllScope));
-  describe('cursor from another selection', crossScopeCases(layer));
-  describe('unread', unreadCases(layer, listAllScope));
-  describe('deleted cursor', deletedCursorCases(layer, listAllScope));
-  describe('every row', everyRowCases(layer, listAllScope));
-  describe('folders', allFolderCases(layer));
-};
+const unreadCases =
+  (makeLayer: FeedStoreFactory, scope: ListScopeSetup) => (): void => {
+    it.effect('CM-PAGE-8 returns unread rows only while unread is true', () =>
+      Effect.gen(function* () {
+        const setup = yield* seedRows(scope, 3, (index) => ({
+          read: index !== 1,
+        }));
 
-const byFeedCases = (layer: FeedStoreLayer) => (): void => {
-  describe('order and limit', orderCases(layer, listByFeedScope));
-  describe('unread', unreadCases(layer, listByFeedScope));
-  describe('deleted cursor', deletedCursorCases(layer, listByFeedScope));
-  describe('every row', everyRowCases(layer, listByFeedScope));
-  describe('scope', feedExclusionCases(layer, listByFeedScope));
-  describe('empty scope', feedEmptyCases(layer));
-};
+        const unread = yield* setup.list(
+          feedItemQuery({ limit: 1, unread: true })
+        );
+        const all = yield* setup.list(feedItemQuery({ unread: false }));
 
-const byFolderCases = (layer: FeedStoreLayer) => (): void => {
-  describe('order and limit', orderCases(layer, listByFolderScope));
-  describe('unread', unreadCases(layer, listByFolderScope));
-  describe('deleted cursor', deletedCursorCases(layer, listByFolderScope));
-  describe('every row', everyRowCases(layer, listByFolderScope));
-  describe('merged folders', folderMergeCases(layer));
-  describe('scope', folderExclusionCases(layer));
-  describe('empty scope', folderEmptyCases(layer));
-  describe('feed moved out', folderMovedOutCases(layer));
-};
+        expect(idsOf(unread)).toEqual([rowAt(setup.rows, 1).id]);
+        expect(idsOf(all)).toEqual(idsOf(setup.rows).reverse());
+      }).pipe(Effect.provide(makeLayer()))
+    );
+  };
 
-export const listCases = (layer: FeedStoreLayer) => (): void => {
-  describe('listAll', allCases(layer));
-  describe('listByFeed', byFeedCases(layer));
-  describe('listByFolder', byFolderCases(layer));
+const deletedCursorCases =
+  (makeLayer: FeedStoreFactory, scope: ListScopeSetup) => (): void => {
+    it.effect('CM-PAGE-6 keeps paging after the cursor row was removed', () =>
+      Effect.gen(function* () {
+        const items = yield* FeedItemRepository;
+        const setup = yield* seedRows(scope, 3, () => ({}));
+        const cursor = rowAt(setup.rows, 1).id;
+        yield* items.remove(alice, [cursor]);
+
+        const page = yield* setup.list(
+          feedItemQuery({ cursor: optionOf(cursor) })
+        );
+
+        expect(idsOf(page)).toEqual([rowAt(setup.rows, 0).id]);
+      }).pipe(Effect.provide(makeLayer()))
+    );
+  };
+
+const everyRowCases =
+  (makeLayer: FeedStoreFactory, scope: ListScopeSetup) => (): void => {
+    it.effect('CM-PAGE-10 pages through every row once', () =>
+      Effect.gen(function* () {
+        const setup = yield* seedRows(scope, 5, () => ({}));
+        const first = yield* setup.list(feedItemQuery({ limit: 2 }));
+        const second = yield* setup.list(
+          feedItemQuery({ limit: 2, cursor: optionOf(rowAt(first, 1).id) })
+        );
+        const third = yield* setup.list(
+          feedItemQuery({ limit: 2, cursor: optionOf(rowAt(second, 1).id) })
+        );
+
+        expect(idsOf([...first, ...second, ...third])).toEqual(
+          idsOf(setup.rows).reverse()
+        );
+      }).pipe(Effect.provide(makeLayer()))
+    );
+  };
+
+export const listCases = (
+  makeLayer: FeedStoreFactory,
+  scope: ListScopeSetup
+): void => {
+  describe('order and limit', orderCases(makeLayer, scope));
+  describe('cursor', cursorCases(makeLayer, scope));
+  describe('unread', unreadCases(makeLayer, scope));
+  describe('deleted cursor', deletedCursorCases(makeLayer, scope));
+  describe('every row', everyRowCases(makeLayer, scope));
 };

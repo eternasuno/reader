@@ -1,78 +1,64 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Cause, Effect, Exit, Option, Redacted, Schema } from 'effect';
-import type { JinaKey } from '../../../src/entity/setting/fetcher';
 import { Setting } from '../../../src/entity/setting/setting';
-import {
-  type ActiveFetcher,
-  activeFetcher,
-} from '../../../src/usecase/setting/active-fetcher';
+import { activeFetcher } from '../../../src/usecase/setting/active-fetcher';
 import { alice } from '../../support/fixtures';
+import { endpoint, endpointHref } from './harness';
 
-const decodeSetting = Schema.decodeSync(Setting);
-
-const jinaSetting = (key?: string): Setting =>
-  decodeSetting({
-    ownerId: alice,
-    feed: {},
-    fetcher: { provider: 'jina', jina: { key }, browser: {} },
-  });
-
-const browserSetting = (endpoint?: string): Setting =>
-  decodeSetting({
-    ownerId: alice,
-    feed: {},
-    fetcher: { provider: 'browser', jina: {}, browser: { endpoint } },
-  });
-
-const jinaKey = (fetcher: ActiveFetcher): Option.Option<JinaKey> => {
-  if (fetcher._tag !== 'Jina') {
-    throw new Error(`expected the Jina fetcher, got ${fetcher._tag}`);
-  }
-
-  return fetcher.key;
-};
+const settingOf = (input: Record<string, string>): Setting =>
+  Schema.decodeSync(Setting)({ ownerId: alice, ...input });
 
 describe('activeFetcher', () => {
-  it.effect('SET-ACTIVE-1 reports Jina without a key', () =>
+  it.effect('SET-ACTIVE-1 gives Jina with the stored key', () =>
     Effect.gen(function* () {
-      const fetcher = yield* activeFetcher(jinaSetting());
-      const key = jinaKey(fetcher);
+      const active = yield* activeFetcher(settingOf({ jinaKey: 'sk-live' }));
 
-      expect(fetcher._tag).toBe('Jina');
-      expect(Option.isNone(key)).toBe(true);
+      expect(active._tag).toBe('Jina');
+
+      if (active._tag === 'Jina') {
+        expect(Redacted.value(Option.getOrThrow(active.key))).toBe('sk-live');
+      }
     })
   );
 
-  it.effect('SET-ACTIVE-1 reports Jina with the stored key', () =>
+  it.effect('SET-ACTIVE-1 gives Jina with no key when none is stored', () =>
     Effect.gen(function* () {
-      const fetcher = yield* activeFetcher(jinaSetting('jina-secret'));
-      const key = jinaKey(fetcher);
+      const active = yield* activeFetcher(settingOf({}));
 
-      expect(fetcher._tag).toBe('Jina');
-      expect(Redacted.value(Option.getOrThrow(key))).toBe('jina-secret');
+      expect(active).toStrictEqual({ _tag: 'Jina', key: Option.none() });
     })
   );
 
-  it.effect('SET-ACTIVE-1 reports the browser with its endpoint', () =>
+  it.effect('SET-ACTIVE-1 gives Browser with the stored endpoint', () =>
     Effect.gen(function* () {
-      const fetcher = yield* activeFetcher(
-        browserSetting('ws://127.0.0.1:9222')
-      );
+      const setting = Schema.decodeSync(Setting)({
+        ownerId: alice,
+        provider: 'browser',
+        browserEndpoint: Redacted.value(endpoint).href,
+      });
+      const active = yield* activeFetcher(setting);
 
-      expect(fetcher._tag).toBe('Browser');
-      expect(
-        fetcher._tag === 'Browser' && Redacted.value(fetcher.endpoint).href
-      ).toBe('ws://127.0.0.1:9222/');
+      expect(active._tag).toBe('Browser');
+
+      if (active._tag === 'Browser') {
+        expect(Redacted.value(active.endpoint).href).toBe(endpointHref);
+      }
     })
   );
 
-  it.effect(
-    'SET-ACTIVE-2 treats the browser without an endpoint as a defect',
-    () =>
-      Effect.gen(function* () {
-        const exit = yield* Effect.exit(activeFetcher(browserSetting()));
+  it.effect('SET-ACTIVE-2 browser without an endpoint is a defect', () =>
+    Effect.gen(function* () {
+      const setting = Schema.decodeSync(Setting)({
+        ownerId: alice,
+        provider: 'browser',
+      });
+      const exit = yield* Effect.exit(activeFetcher(setting));
 
-        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-      })
+      expect(Exit.isFailure(exit)).toBe(true);
+
+      if (Exit.isFailure(exit)) {
+        expect(Cause.hasDies(exit.cause)).toBe(true);
+      }
+    })
   );
 });

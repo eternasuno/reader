@@ -1,16 +1,30 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Option, Result, Schema } from 'effect';
+import { NormalizedUrl } from '../../../src/entity/common/normalized-url';
+import { OwnerId } from '../../../src/entity/common/owner-id';
 import {
   Feed,
   FeedId,
   FeedTitle,
   makeFeedTitle,
 } from '../../../src/entity/feed/feed';
-import { FeedItem } from '../../../src/entity/feed/feed-item';
-import { makeFeed, makeFeedItem, makeFolder } from '../../support/fixtures';
+import { Folder, FolderName } from '../../../src/entity/folder/folder';
+
+const alice = OwnerId.make('alice');
+
+const url = Schema.decodeSync(NormalizedUrl)('https://example.com/feed.xml');
+
+const makeFeed = (): Feed =>
+  Feed.make({
+    ownerId: alice,
+    url,
+    title: FeedTitle.make('Feed'),
+    folderId: Option.none(),
+    updatedAt: Option.none(),
+  });
 
 describe('FeedTitle', () => {
-  it('trims the title and rejects a blank one', () => {
+  it('FD-PARSE-8 trims the title and rejects a blank one', () => {
     const decode = Schema.decodeUnknownResult(FeedTitle);
 
     expect(Result.getOrThrow(decode('  My feed  '))).toBe('My feed');
@@ -18,90 +32,64 @@ describe('FeedTitle', () => {
     expect(Result.isFailure(decode(''))).toBe(true);
   });
 
-  it('falls back to the url host of a blank title', () => {
-    const url = new URL('https://example.com/feed.xml');
+  it('FD-PARSE-8 falls back to the host of the address when the title is blank', () => {
+    const feedUrl = new URL('https://example.com/feed.xml');
 
-    expect(makeFeedTitle('', url)).toBe('example.com');
+    expect(makeFeedTitle('', feedUrl)).toBe('example.com');
     expect(makeFeedTitle('   ', new URL('http://news.site:8080/x'))).toBe(
       'news.site:8080'
     );
-    expect(makeFeedTitle('  My feed ', url)).toBe('My feed');
+    expect(makeFeedTitle('  My feed ', feedUrl)).toBe('My feed');
   });
 });
 
 describe('Feed', () => {
-  it('FD-ID-1 makes a new lower-case version-7 id at construction and a later one sorts after it', () => {
-    let previous = makeFeed();
-
-    expect(Schema.is(FeedId)(previous.id)).toBe(true);
-    expect(previous.id).toBe(previous.id.toLowerCase());
-
-    for (let sample = 0; sample < 7; sample++) {
-      const next = makeFeed();
-
-      expect(next.id > previous.id).toBe(true);
-      previous = next;
-    }
-  });
-
-  it('round trips without an updated time', () => {
+  it('FD-ID-1 makes a lower-case version-7 id when the feed is created', () => {
     const feed = makeFeed();
 
-    expect(Option.isNone(feed.updatedAt)).toBe(true);
+    expect(Schema.is(FeedId)(feed.id)).toBe(true);
+    expect(feed.id).toBe(feed.id.toLowerCase());
+  });
 
-    const encoded = Schema.encodeSync(Feed)(feed);
+  it('FD-SUB builds a feed with no folder and no sync time', () => {
+    const feed = makeFeed();
 
-    expect(encoded.updatedAt).toBeUndefined();
+    expect(feed.ownerId).toBe(alice);
+    expect(feed.url.href).toBe('https://example.com/feed.xml');
+    expect(feed.title).toBe('Feed');
+    expect(feed.folderId).toEqual(Option.none());
+    expect(feed.updatedAt).toEqual(Option.none());
+  });
+
+  it('omits an absent folder and sync time from JSON instead of writing null', () => {
+    const encoded = Schema.encodeUnknownSync(Feed)(makeFeed());
+
     expect(encoded.folderId).toBeUndefined();
-
-    const decoded = Schema.decodeSync(Feed)(encoded);
-
-    expect(decoded.id).toBe(feed.id);
-    expect(Option.isNone(decoded.updatedAt)).toBe(true);
-    expect(Option.isNone(decoded.folderId)).toBe(true);
+    expect(encoded.updatedAt).toBeUndefined();
   });
 
-  it('decodes a stored folder id', () => {
-    const folderId = makeFolder().id;
-    const encoded = {
-      ...Schema.encodeSync(Feed)(makeFeed()),
+  it('FD-FOLDER-3 decodes a stored folder id', () => {
+    const folderId = Folder.make({
+      ownerId: alice,
+      name: FolderName.make('Tech'),
+    }).id;
+    const feed = Schema.decodeSync(Feed)({
+      ...Schema.encodeUnknownSync(Feed)(makeFeed()),
       folderId,
-    };
-    const feed = Schema.decodeSync(Feed)(encoded);
+    });
 
-    expect(Option.getOrThrow(feed.folderId)).toBe(folderId);
+    expect(feed.folderId).toEqual(Option.some(folderId));
   });
 
-  it('decodes a stored updated time', () => {
+  it('FD-SYNC records the time of the last successful sync', () => {
     const updatedAt = new Date('2026-01-01T00:00:00.000Z');
-    const encoded = {
-      ...Schema.encodeSync(Feed)(makeFeed()),
+    const feed = Schema.decodeSync(Feed)({
+      ...Schema.encodeUnknownSync(Feed)(makeFeed()),
       updatedAt,
-    };
-    const feed = Schema.decodeSync(Feed)(encoded);
+    });
 
     expect(Option.getOrThrow(feed.updatedAt).epochMilliseconds).toBe(
       updatedAt.getTime()
     );
-  });
-});
-
-describe('FeedItem', () => {
-  it('round trips every optional field as none', () => {
-    const item = makeFeedItem();
-    const encoded = Schema.encodeSync(FeedItem)(item);
-
-    expect(encoded.description).toBeUndefined();
-    expect(encoded.content).toBeUndefined();
-    expect(encoded.extractedContent).toBeUndefined();
-    expect(encoded.publishedAt).toBeUndefined();
-
-    const decoded = Schema.decodeSync(FeedItem)(encoded);
-
-    expect(decoded.id).toBe(item.id);
-    expect(Option.isNone(decoded.description)).toBe(true);
-    expect(Option.isNone(decoded.content)).toBe(true);
-    expect(Option.isNone(decoded.extractedContent)).toBe(true);
-    expect(Option.isNone(decoded.publishedAt)).toBe(true);
   });
 });

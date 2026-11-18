@@ -1,33 +1,36 @@
 import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   ArticleContent,
-  ArticleDescription,
+  type ArticleDescription,
   ArticleTitle,
 } from '../../src/entity/common/article';
 import { NormalizedUrl } from '../../src/entity/common/normalized-url';
-import { OptionFromOptionalNonEmpty } from '../../src/entity/common/option-from-optional-non-empty';
 import { OwnerId } from '../../src/entity/common/owner-id';
 import { Feed, type FeedId, FeedTitle } from '../../src/entity/feed/feed';
-import { FeedItem, type FeedItemId } from '../../src/entity/feed/feed-item';
+import {
+  FeedItem,
+  type FeedItemId,
+} from '../../src/entity/feed-item/feed-item';
 import {
   Folder,
   type FolderId,
   FolderName,
-} from '../../src/entity/feed/folder';
+} from '../../src/entity/folder/folder';
 import {
   SavedPage,
   type SavedPageId,
 } from '../../src/entity/saved-page/saved-page';
 import { BrowserEndpoint, JinaKey } from '../../src/entity/setting/fetcher';
 import { Retention } from '../../src/entity/setting/retention';
-import {
-  FeedRepository,
-  type FeedRepositoryError,
-} from '../../src/port/feed-repository';
-import {
-  FolderRepository,
-  type FolderRepositoryError,
-} from '../../src/port/folder-repository';
+import type { FeedRepositoryError } from '../../src/error/feed';
+import type { FolderRepositoryError } from '../../src/error/folder';
+import type {
+  FeedItemQuery,
+  FeedUnreadCount,
+} from '../../src/port/feed-item-repository';
+import { FeedRepository } from '../../src/port/feed-repository';
+import { FolderRepository } from '../../src/port/folder-repository';
+import type { SavedPageQuery } from '../../src/port/saved-page-repository';
 
 export const alice = OwnerId.make('alice');
 
@@ -37,20 +40,27 @@ export const decodeUrl = Schema.decodeSync(NormalizedUrl);
 
 export const decodeTitle = Schema.decodeSync(ArticleTitle);
 
-export const decodeDescription = Schema.decodeSync(
-  OptionFromOptionalNonEmpty(ArticleDescription)
-);
+export const decodeRetention = Schema.decodeSync(Retention);
 
-export const decodeContent = Schema.decodeSync(
-  OptionFromOptionalNonEmpty(ArticleContent)
-);
+export const decodeJinaKey = Schema.decodeSync(JinaKey);
 
-export const parsedDocument = (html = ''): Document =>
-  ({ body: { innerHTML: html } }) as unknown as Document;
+export const decodeBrowserEndpoint = Schema.decodeSync(BrowserEndpoint);
 
-const defaultFeedUrl = decodeUrl('https://example.com/feed.xml');
+let counter = 0;
 
-type FeedOverrides = {
+const nextTag = (): number => {
+  counter += 1;
+
+  return counter;
+};
+
+export const uniqueUrl = (path: string): NormalizedUrl =>
+  decodeUrl(`https://example.com/${path}/${nextTag()}`);
+
+export const uniqueFolderName = (prefix = 'Folder'): FolderName =>
+  FolderName.make(`${prefix} ${nextTag()}`);
+
+export type FeedOverrides = {
   readonly id?: FeedId;
   readonly ownerId?: OwnerId;
   readonly url?: NormalizedUrl;
@@ -62,14 +72,12 @@ type FeedOverrides = {
 export const makeFeed = (overrides: FeedOverrides = {}): Feed =>
   Feed.make({
     ownerId: alice,
-    url: defaultFeedUrl,
+    url: decodeUrl('https://example.com/feed.xml'),
     title: FeedTitle.make('Feed'),
     folderId: Option.none(),
     updatedAt: Option.none(),
     ...overrides,
   });
-
-const defaultFeedId = makeFeed().id;
 
 export type FeedItemOverrides = {
   readonly id?: FeedItemId;
@@ -87,7 +95,7 @@ export type FeedItemOverrides = {
 export const makeFeedItem = (overrides: FeedItemOverrides = {}): FeedItem =>
   FeedItem.make({
     ownerId: alice,
-    feedId: defaultFeedId,
+    feedId: makeFeed().id,
     url: decodeUrl('https://example.com/item'),
     title: decodeTitle('Item'),
     description: Option.none(),
@@ -98,7 +106,20 @@ export const makeFeedItem = (overrides: FeedItemOverrides = {}): FeedItem =>
     ...overrides,
   });
 
-type SavedPageOverrides = {
+export type FolderOverrides = {
+  readonly id?: FolderId;
+  readonly ownerId?: OwnerId;
+  readonly name?: FolderName;
+};
+
+export const makeFolder = (overrides: FolderOverrides = {}): Folder =>
+  Folder.make({
+    ownerId: alice,
+    name: FolderName.make('Folder'),
+    ...overrides,
+  });
+
+export type SavedPageOverrides = {
   readonly id?: SavedPageId;
   readonly ownerId?: OwnerId;
   readonly url?: NormalizedUrl;
@@ -121,53 +142,39 @@ export const makeSavedPage = (overrides: SavedPageOverrides = {}): SavedPage =>
     ...overrides,
   });
 
-type FolderOverrides = {
-  readonly id?: FolderId;
-  readonly ownerId?: OwnerId;
-  readonly name?: FolderName;
-};
-
-export const makeFolder = (overrides: FolderOverrides = {}): Folder =>
-  Folder.make({
-    ownerId: alice,
-    name: FolderName.make('Folder'),
-    ...overrides,
-  });
-
-let urlCounter = 0;
-
-export const uniqueUrl = (path: string): NormalizedUrl => {
-  urlCounter += 1;
-
-  return decodeUrl(`https://example.com/${path}/${urlCounter}`);
-};
-
 export const makeUniqueFeed = (overrides: FeedOverrides = {}): Feed =>
   makeFeed({ url: uniqueUrl('feed'), ...overrides });
-
-export const makeUniqueFolder = (overrides: FolderOverrides = {}): Folder => {
-  urlCounter += 1;
-
-  return makeFolder({
-    name: FolderName.make(`Folder ${urlCounter}`),
-    ...overrides,
-  });
-};
 
 export const makeUniqueFeedItem = (
   overrides: FeedItemOverrides = {}
 ): FeedItem => makeFeedItem({ url: uniqueUrl('item'), ...overrides });
 
+export const makeUniqueFolder = (overrides: FolderOverrides = {}): Folder =>
+  makeFolder({ name: uniqueFolderName(), ...overrides });
+
 export const makeUniqueSavedPage = (
   overrides: SavedPageOverrides = {}
 ): SavedPage => makeSavedPage({ url: uniqueUrl('page'), ...overrides });
 
-export const idsOf = (
-  rows: ReadonlyArray<{ readonly id: string }>
-): Array<string> => rows.map((row) => row.id);
+export const feedRow = (title = 'Feed', owner = alice): Feed =>
+  makeUniqueFeed({ ownerId: owner, title: FeedTitle.make(title) });
+
+export const folderRow = (name: string, owner = alice): Folder =>
+  makeUniqueFolder({ ownerId: owner, name: FolderName.make(name) });
+
+export const folderFeedRow = (folderId: FolderId, owner = alice): Feed =>
+  makeUniqueFeed({ ownerId: owner, folderId: Option.some(folderId) });
+
+export const itemRow = (
+  feedId: FeedId,
+  overrides: FeedItemOverrides = {}
+): FeedItem => makeUniqueFeedItem({ feedId, ...overrides });
+
+export const pageRow = (owner = alice): SavedPage =>
+  makeUniqueSavedPage({ ownerId: owner });
 
 export const storedFeed = (
-  owner: OwnerId = alice
+  owner = alice
 ): Effect.Effect<Feed, FeedRepositoryError, FeedRepository> =>
   Effect.gen(function* () {
     const feeds = yield* FeedRepository;
@@ -178,7 +185,7 @@ export const storedFeed = (
   });
 
 export const storedFolder = (
-  owner: OwnerId = alice
+  owner = alice
 ): Effect.Effect<Folder, FolderRepositoryError, FolderRepository> =>
   Effect.gen(function* () {
     const folders = yield* FolderRepository;
@@ -188,26 +195,9 @@ export const storedFolder = (
     return folder;
   });
 
-export const decodeRetention = Schema.decodeSync(Retention);
-
-export const decodeJinaKey = Schema.decodeSync(JinaKey);
-
-export const decodeBrowserEndpoint = Schema.decodeSync(BrowserEndpoint);
-
-export const feedRow = (title = 'Feed', owner = alice): Feed =>
-  makeUniqueFeed({ ownerId: owner, title: FeedTitle.make(title) });
-
-export const folderRow = (name: string, owner: OwnerId = alice): Folder =>
-  makeUniqueFolder({ ownerId: owner, name: FolderName.make(name) });
-
-export const folderFeedRow = (
-  folderId: FolderId,
-  owner: OwnerId = alice
-): Feed => makeUniqueFeed({ ownerId: owner, folderId: Option.some(folderId) });
-
 export const storedFolderFeed = (
   folderId: FolderId,
-  owner: OwnerId = alice
+  owner = alice
 ): Effect.Effect<Feed, FeedRepositoryError, FeedRepository> =>
   Effect.gen(function* () {
     const feeds = yield* FeedRepository;
@@ -217,11 +207,46 @@ export const storedFolderFeed = (
     return feed;
   });
 
-export const rowAt = (rows: ReadonlyArray<FeedItem>, index: number): FeedItem =>
-  Option.getOrThrow(Option.fromUndefinedOr(rows[index]));
+export const idsOf = (
+  rows: ReadonlyArray<{ readonly id: string }>
+): Array<string> => rows.map((row) => row.id);
+
+/** Ids in byte order, for a write whose result order the contract does not fix. */
+export const sortedIds = (ids: ReadonlyArray<string>): Array<string> =>
+  Array.from(ids).sort();
+
+export const rowAt = <A>(rows: ReadonlyArray<A>, index: number): A => {
+  const row = rows[index];
+
+  if (row === undefined) {
+    throw new Error(`no row at index ${index}`);
+  }
+
+  return row;
+};
+
+export const unreadCountFor = (
+  counts: ReadonlyArray<FeedUnreadCount>,
+  feedId: FeedId
+): number => counts.find((count) => count.feedId === feedId)?.count ?? 0;
 
 export const updatedTime = (): DateTime.Utc =>
   DateTime.fromDateUnsafe(new Date('2026-01-01T00:00:00.000Z'));
 
-export const pageRow = (owner: OwnerId = alice): SavedPage =>
-  makeUniqueSavedPage({ ownerId: owner });
+export const feedItemQuery = (
+  overrides: Partial<FeedItemQuery> = {}
+): FeedItemQuery => ({
+  limit: 10,
+  unread: false,
+  cursor: Option.none(),
+  ...overrides,
+});
+
+export const savedPageQuery = (
+  overrides: Partial<SavedPageQuery> = {}
+): SavedPageQuery => ({
+  limit: 10,
+  unread: false,
+  cursor: Option.none(),
+  ...overrides,
+});

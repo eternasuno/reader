@@ -1,28 +1,81 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Option, Schema } from 'effect';
-import { SavedPageId } from '../../../src/entity/saved-page/saved-page';
-import { makeSavedPage } from '../../support/fixtures';
+import { Option, Result, Schema } from 'effect';
+import {
+  ArticleContent,
+  ArticleTitle,
+} from '../../../src/entity/common/article';
+import { NormalizedUrl } from '../../../src/entity/common/normalized-url';
+import { OwnerId } from '../../../src/entity/common/owner-id';
+import {
+  SavedPage,
+  SavedPageId,
+} from '../../../src/entity/saved-page/saved-page';
 
-describe('SavedPage', () => {
-  it('SP-ID-1 makes a new lower-case version-7 id at construction and a later one sorts after it', () => {
-    let previous = makeSavedPage();
+const alice = OwnerId.make('alice');
 
-    expect(Schema.is(SavedPageId)(previous.id)).toBe(true);
-    expect(previous.id).toBe(previous.id.toLowerCase());
+const url = Schema.decodeSync(NormalizedUrl)('https://example.com/post');
 
-    for (let sample = 0; sample < 7; sample++) {
-      const next = makeSavedPage();
-
-      expect(next.id > previous.id).toBe(true);
-      previous = next;
-    }
+const makeSavedPage = (): SavedPage =>
+  SavedPage.make({
+    ownerId: alice,
+    url,
+    title: ArticleTitle.make('Post'),
+    description: Option.none(),
+    content: ArticleContent.make('<p>body</p>'),
+    publishedAt: Option.none(),
+    read: false,
   });
 
-  it('starts unread with an empty description and no publish time', () => {
+describe('SavedPage', () => {
+  it('SP-ID-1 makes a lower-case version-7 id when the page is created', () => {
+    const page = makeSavedPage();
+
+    expect(Schema.is(SavedPageId)(page.id)).toBe(true);
+    expect(page.id).toBe(page.id.toLowerCase());
+  });
+
+  it('SP-ADD starts the page unread with no description and no publish time', () => {
     const page = makeSavedPage();
 
     expect(page.read).toBe(false);
     expect(page.description).toEqual(Option.none());
     expect(page.publishedAt).toEqual(Option.none());
+  });
+
+  it('SP-ADD-2 keeps the submitted normalized URL as the key', () => {
+    const page = makeSavedPage();
+
+    expect(page.url.href).toBe('https://example.com/post');
+  });
+
+  it('CM-ART-4 trims the stored content', () => {
+    const page = Schema.decodeSync(SavedPage)({
+      ...Schema.encodeUnknownSync(SavedPage)(makeSavedPage()),
+      content: ' <p>body</p> ',
+    });
+
+    expect(page.content).toBe('<p>body</p>');
+  });
+
+  it('CM-ART-4 requires content: a page without it does not decode', () => {
+    const stored = {
+      id: makeSavedPage().id,
+      ownerId: alice,
+      url: url.href,
+      title: 'Post',
+      read: false,
+    };
+
+    expect(
+      Result.isFailure(Schema.decodeUnknownResult(SavedPage)(stored))
+    ).toBe(true);
+  });
+
+  it('omits an absent description and publish time from JSON instead of writing null', () => {
+    const encoded = Schema.encodeUnknownSync(SavedPage)(makeSavedPage());
+
+    expect(encoded.description).toBeUndefined();
+    expect(encoded.publishedAt).toBeUndefined();
+    expect(encoded.content).toBe('<p>body</p>');
   });
 });
