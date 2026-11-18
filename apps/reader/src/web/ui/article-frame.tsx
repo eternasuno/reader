@@ -97,7 +97,7 @@ const scopeContent = (html: string) => {
 };
 
 const articleBodyClass =
-  'flow-root mx-auto max-w-3xl bg-[#121212] text-[#d4d4d8] font-[system-ui,sans-serif] text-lg leading-[1.9] wrap-anywhere max-sm:text-base';
+  'flow-root mx-auto max-w-3xl bg-[#121212] text-[#d4d4d8] font-sans text-lg leading-[1.9] wrap-anywhere max-sm:text-base';
 
 /** The inline reporter: measures the body and posts its height to the parent. */
 const reporterScript = (

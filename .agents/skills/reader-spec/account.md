@@ -20,10 +20,10 @@ Who the user is and how a request carries that: registration, sign-in, the sessi
 - AC-SESSION-2 Identity comes only from the session cookie of the request. No endpoint accepts a user id or an owner from the client, and a request naming another owner is still handled as the session's user (CM-OWN-1). The owner of every stored row is the session's user.
 - AC-SESSION-3 Every endpoint other than `/api/auth/*` needs a session: without one the answer is 401 with an empty body (API conventions). The browser sends its cookies with every request.
 - AC-SESSION-4 Every route except `/login` and `/register` needs a session. A page whose session check answers "no session" redirects to `/login`, replacing the history entry, so going back does not return to the guarded page.
-- AC-SESSION-5 `/login` with a session goes to `/`, replacing the entry. `/register` has no such redirect: a signed-in user who opens it sees the form.
+- AC-SESSION-5 `/login` with a session goes to `/`, replacing the entry. Only an answered session counts: while the session is being read again (after sign-out, on focus) the previous user is not yet confirmed, so `/login` waits for the answer instead of bouncing back to a guarded page. `/register` has no such redirect: a signed-in user who opens it sees the form.
 - AC-SESSION-6 The session check has three states: pending, answered (a session or none) and failed. While it is pending the page shows the session-checking text and, when it fails, the session-check-failure text and no content; a failure does not redirect, because an unreachable auth server says nothing about whether the user is signed in. Only an answered "no session" redirects (AC-SESSION-4). The two texts are shared with every other page ([SKILL.md](SKILL.md) Shared messages).
 - AC-SESSION-7 The auth server renews or clears the session cookie while it reads a session, and those headers reach the browser on every library response, error responses included. A session the server extended or ended is therefore never lost or kept in the browser because of a request that failed later.
-- AC-SESSION-8 The client re-reads the session when the window regains focus and after sign-in, sign-up and sign-out, so a session that ended elsewhere (another device signed out, the session expired) is noticed at the next check and the guard redirects.
+- AC-SESSION-8 The client re-reads the session when the window regains focus, after sign-in, sign-up and sign-out, and when any request answers 401, so a session that ended elsewhere (another device signed out, the session expired) is noticed at the next check and the guard redirects.
 
 ### AC-PASSWORD — Changing the password
 
@@ -61,7 +61,7 @@ Who the user is and how a request carries that: registration, sign-in, the sessi
 ### Sign-out
 
 - Sign-out lives in the account menu of the library screen: the trigger is the user icon carrying the account-menu trigger label, and the menu shows the settings item, which opens `/settings`, and then, separated, the sign-out item ([library.md](library.md) places the menu in the sidebar and on the mobile bar) (Messages: account menu trigger; account menu item, settings; account menu item, sign-out).
-- Pressing the sign-out item ends the session on the server and expires the cookie, then goes to `/login` replacing the entry (AC-SESSION-4 keeps the user out afterwards). While the request is in flight the item is disabled and shows its pending label; a second press does nothing.
+- Pressing the sign-out item ends the session on the server and expires the cookie; the client then reads the session again (AC-SESSION-8), and its answer "no session" takes the page to `/login` replacing the entry (AC-SESSION-4), so the page moves once. The item itself does not navigate: navigating before that read answers would let `/login` see the previous user. While the request is in flight the item is disabled and shows its pending label; a second press does nothing.
 - A sign-out that fails leaves the session untouched and shows the sign-out wording inside the menu, under the item, so the user can press it again (Messages: sign-out).
 
 ### The `账号` section of the settings page
@@ -258,6 +258,11 @@ Feature: Accounts and sessions
       When the session ends on another device and I focus the window again
       Then the next session check has no session and I am redirected to "/login"
 
+    Scenario: A request finds the session gone before the window is focused again
+      Given I am reading the library and my session ends on the server
+      When the next library request answers 401
+      Then the session is read again and I am redirected to "/login" once
+
     Scenario: Library operations need the session
       Given I have no session
       When a library request is sent without a session cookie
@@ -270,6 +275,7 @@ Feature: Accounts and sessions
       When I open the account menu and press "退出登录"
       Then the item reads "退出中…" while the request runs
       And I am on "/login" and the session is gone
+      And the page went to "/login" once, without passing through "/" or "/later" again
       When I open "/later"
       Then I am redirected to "/login"
 

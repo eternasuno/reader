@@ -1,4 +1,4 @@
-import { createEffect, on } from 'solid-js';
+import { createEffect, createMemo, on } from 'solid-js';
 import { loadSidebar } from '../feed';
 import { ReaderPane } from '../reader';
 import { AddLinkDialog, reloadSavedPageCount } from '../saved-page';
@@ -71,8 +71,10 @@ export const LibraryPage = () => {
   useLibraryRoute();
   keepPanelFocus();
 
+  const scopeKey = createMemo(reloadKey);
+
   createEffect(
-    on(reloadKey, () => {
+    on(scopeKey, () => {
       void reloadList(currentScope(), unreadFilter());
       void loadSidebar();
       void reloadSavedPageCount();

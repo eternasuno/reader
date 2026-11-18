@@ -9,6 +9,20 @@ export const authClient = createAuthClient({
   fetchOptions: { credentials: 'include' },
 });
 
+/** One value of the session atom that `useSession()` returns. */
+export type AuthSession = ReturnType<ReturnType<typeof authClient.useSession>>;
+
+/**
+ * Whether the session read has finished and found a user (AC-SESSION-5). While
+ * Better Auth reads the session again (after sign-out, on focus) it keeps the
+ * previous user with `isRefetching`, so that user is not confirmed yet.
+ */
+export const isConfirmedSignedIn = (session: AuthSession): boolean =>
+  !session.isPending &&
+  !session.isRefetching &&
+  session.data !== null &&
+  session.error === null;
+
 /** The Better Auth operations whose failures carry their own wording. */
 export type AuthOperation =
   | 'sign-up'

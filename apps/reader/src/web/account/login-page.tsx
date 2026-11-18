@@ -1,6 +1,6 @@
 import { A, useNavigate } from '@solidjs/router';
 import { createEffect } from 'solid-js';
-import { authClient } from '../api/auth';
+import { authClient, isConfirmedSignedIn } from '../api/auth';
 import { AuthPage } from './auth-page';
 import { LoginForm } from './login-form';
 import { accountMessages as copy } from './messages';
@@ -14,11 +14,7 @@ export const LoginPage = () => {
   const session = authClient.useSession();
 
   createEffect(() => {
-    const current = session();
-
-    if (!current.isPending && current.data !== null && current.error === null) {
-      navigate('/', { replace: true });
-    }
+    if (isConfirmedSignedIn(session())) navigate('/', { replace: true });
   });
 
   return (
