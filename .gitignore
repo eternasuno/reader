@@ -18,6 +18,7 @@ lerna-debug.log*
 !.env.example
 
 # Build output
+/reader
 dist/
 build/
 .output/
@@ -31,7 +32,7 @@ build/
 .solid/
 vite.config.ts.timestamp-*
 
-# SQLite data (reader.db, auth.db)
+# SQLite data (reader.db)
 .data/
 
 # Test coverage
