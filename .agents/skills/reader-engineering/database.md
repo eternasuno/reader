@@ -1,66 +1,42 @@
 ---
 name: reader-database
-description: Conditional file of the reader-engineering skill. Read when touching SQLite: the two database files, @reader/sqlite, the reader migration, schema, queries, paging, indexes or the repository adapters.
+description: Conditional file of reader-engineering. Read when modifying SQLite connections, embedded migrations, schema, indexes, paging queries, or repository implementations.
 ---
 
-# Database
+# Database (`internal/sqlite`)
 
-The product's data is SQLite, and `@reader/sqlite` is the adapter for the business repository ports. It owns the reader connection, the reader migration, the repository implementations and the cross-owner feed listing the scheduler reads; `./testing` exports the in-memory database Layers. Better Auth's integration, the migration orchestration (the server's `db:migrate` entry in `apps/reader`) and the refresh loop stay in the app: the store imports `@reader/business` and never the app, and the app's HTTP handlers reach a database only through the Layers the server provides. Port contracts (CM-PORT), paging (CM-PAGE) and uniqueness (CM-ID-6) are rules of `reader-spec`; this file says how SQLite satisfies them and what it refuses to do.
+Single SQLite database file (`<DATA_DIR>/reader.db`) using `modernc.org/sqlite`. Because this is a single-user, single-instance deployment, no separate auth database is needed.
 
-## Files and connections
+## Connection, Pragmas & Startup Migration
 
-- The reader data lives in `<DATA_DIR>/reader.db` and Better Auth's data in `<DATA_DIR>/auth.db`. `DATA_DIR` defaults to `.data` relative to the process working directory and is created if missing.
-- Keep the two files separate: two connections to one file contend for SQLite's single write lock, and with synchronous `node:sqlite` a waiting writer blocks the event loop while the lock holder may need it to commit; Better Auth's dialect also opens a deferred `BEGIN`, which fails at once with `SQLITE_BUSY` on upgrade. Owner ids in `reader.db` are plain strings, so the split loses no constraint.
-- At server startup, open the files only; do not generate or apply schema at runtime. Apply both Better Auth's migrations and the reader migration through `pnpm db:migrate` — the server's migrate entry, which runs Better Auth's migrations against `auth.db` and `migrateReader` from `@reader/sqlite` against `reader.db` — once during deployment, before the service starts.
-- The reader store uses `@effect/sql-sqlite-node` over Node's built-in `node:sqlite`, so no native module is installed: one connection, WAL, `BEGIN IMMEDIATE` for writable transactions and a 5 s busy timeout (library defaults). The store's client Layer turns on `PRAGMA foreign_keys = ON` for that connection; SQLite defaults it off per connection, so the pragma must be set where the connection is made.
-- Tables are `STRICT`; dates are INTEGER epoch milliseconds and booleans are 0/1 with a `CHECK (read IN (0, 1))`.
-- `decodeRows` drops NULL columns before schema decoding, so an absent optional column decodes as none and the HTTP JSON omits the field instead of sending `null`, which the browser's schemas reject.
-- Each repository maps every failure through `failWith`: it logs the original cause with `Effect.logError` and fails with the port error. Both the cause and the port error's message stay server-side — HTTP sends the contract's error tag and nothing else, and the wording the user reads is the web client's (SKILL.md API conventions) — so the message is a debugging aid and the log is the only place it is read. The log is also where secrets must stay out: a decode failure of a `setting` row is logged without its details, because schema issues print the raw value and the Jina key and the browser endpoint must never be logged.
+- **Per-connection pragmas**: SQLite `foreign_keys`, `busy_timeout`, and `synchronous` are connection-scoped. Configure them on **every** pooled connection via repeated modernc DSN `_pragma` parameters (`?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)`) or a driver connection init hook — never by executing `PRAGMA` once on `*sql.DB`.
+- **WAL & pools**: open the write pool (`SetMaxOpenConns(1)` with `_txlock=immediate` for `BEGIN IMMEDIATE`) first, execute `PRAGMA journal_mode = WAL`, then open the read pool (`MaxOpenConns > 1`). Note `SetMaxOpenConns(1)` serializes writes **within this Go process** only; concurrent external processes or multiple containers against the same file will still hit `SQLITE_BUSY` and are unsupported.
+- **Startup migration**: SQL migrations live in `internal/sqlite/migrations/*.sql` embedded via `//go:embed` and execute idempotently on startup before HTTP servers or workers start. During active development, backward-compatible data migrations are not maintained — delete `reader.db` and restart to rebuild from scratch when schema changes.
 
-## Concurrency, ownership and cascades
+## Schema & Indexes
 
-- Correctness does not come from an application-level lock; the `ReaderStoreConcurrency` semaphore of the earlier design is gone. SQLite allows one writer at a time with serializable transactions.
-- Foreign keys `(owner, feed_id) -> feed (owner, id)` and `(owner, folder_id) -> folder (owner, id)` with `ON DELETE CASCADE` make removing a feed remove its items and removing a folder remove its feeds and their items, and they reject cross-owner references. Every table that is a foreign-key target therefore carries `UNIQUE (owner, id)`: the primary key is not addressable by a composite foreign key. `feed_item` and `saved_page` are not targets, so their primary key is enough.
-- Ownership is enforced twice: the write or read carries `owner` in its `WHERE` (CM-OWN-2), and the cascade foreign keys make a cross-owner reference impossible rather than merely unread.
+Single-user schema removes `owner` columns and composite `(owner, id)` constraints:
 
-## Writes
+- **`folder`**: `(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE) STRICT`.
+- **`feed`**: `(id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL, folder_id TEXT REFERENCES folder(id) ON DELETE SET NULL, updated_at INTEGER, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, reader_mode TEXT NOT NULL DEFAULT 'default', sort_order TEXT NOT NULL DEFAULT 'newest') STRICT`.
+  - Note `ON DELETE SET NULL` ensures deleting a folder moves feeds to the top level (`FD-FOLDER-4`) atomically at the DB layer.
+  - `failure_count` and `last_error` track consecutive refresh failures (`FD-SCHED-3`), reset on any successful refresh.
+  - Indexes: `feed_folder (folder_id)`, `feed_title (title, id)`.
+- **`feed_item`**: `(id TEXT PRIMARY KEY, feed_id TEXT NOT NULL REFERENCES feed(id) ON DELETE CASCADE, url TEXT NOT NULL, title TEXT NOT NULL, description TEXT, content TEXT, extracted_content TEXT, published_at INTEGER, read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1)), UNIQUE (feed_id, url)) STRICT`.
+  - Indexes (verify every list variant, including `folder` queries, with `EXPLAIN QUERY PLAN`):
+    - `(id)` PK covers `全部订阅` (`unread = false`)
+    - `(read, id)` covers `全部订阅` (`unread = true`) and fast unread filtering
+    - `(feed_id, id)` covers unfiltered single-feed `ORDER BY id DESC|ASC` and feed retention inventory
+    - `(feed_id, read, id)` covers filtered single-feed unread lists and `unreadCounts` (`WHERE read = 0 GROUP BY feed_id`)
+- **`saved_page`**: `(id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL, description TEXT, content TEXT NOT NULL, published_at INTEGER, read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1))) STRICT`.
+  - Index: `(read, id)`.
+- **`setting`**: singleton row (`id INTEGER PRIMARY KEY CHECK (id = 1)`) storing `retention`, `provider`, `jina_key`, `browser_endpoint`, Kindle SMTP fields, and `next_send_at`.
+- **`kindle_send`**: `(id TEXT PRIMARY KEY, trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')), status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')), article_count INTEGER NOT NULL DEFAULT 0, book_count INTEGER NOT NULL DEFAULT 0, error TEXT, started_at INTEGER NOT NULL, finished_at INTEGER) STRICT`.
+  - Pruned to the latest `20` rows after inserting/completing a run (`KD-LOG-1`). On startup, any leftover `running` rows are marked `failed` before starting HTTP/schedulers.
 
-- Each `create` row is one `INSERT ... SELECT ... WHERE <parent exists> ON CONFLICT DO NOTHING RETURNING id`, or `INSERT ... VALUES ... ON CONFLICT DO NOTHING RETURNING id` without a parent, repeated per row inside one transaction (CM-PORT-3, CM-PORT-6): duplicates by id or unique key are skipped, never overwritten, and concurrent creates of one key leave one row. The returned ids are the rows actually created.
-- Guarded writes (`moveToFolder`, `rename`, `setExtractedContent`) are one `UPDATE ... WHERE <guard>`, with `RETURNING id` where the port must report whether a row changed (CM-PORT-5). Do not turn either form back into a check-then-write sequence: the read and the write would be two statements, and another writer can commit between them.
-- `setting` is keyed by `owner` and every write method is one `INSERT ... ON CONFLICT (owner) DO UPDATE`.
+## Query Rules
 
-## SQL fragments and binding
-
-- Every interpolated value in an `sql` template is a bound parameter, strings included: `${name}` becomes a placeholder and its value is bound, never spliced into the text. SQL text comes from the template's literal parts and, where a fragment really is text, from `sql('column')` — the same `sql` called with a plain string, which escapes an identifier — a nested `sql\`...\`` fragment, or an explicit `sql.literal` / `sql.unsafe` fragment such as the shared `SELECT` list. A value is therefore safe to interpolate anywhere, and no fragment may be assembled by concatenating values.
-- Id lists go through `inList`, which binds the whole list as one JSON parameter read with `json_each`: `sql.in` binds one parameter per element and fails past SQLite's variable limit, and the ports take unbounded lists.
-- Effect concatenates template fragments without whitespace, so an optional clause fragment must start with a space (``sql` AND read = 0` ``); one that does not start with a space silently glues itself to the previous token.
-
-## Lists and paging
-
-- Lists use database-side keyset paging on `id` descending (ascending, with `id >` the cursor, for a single feed that stores `oldest`; FD-PREF-3), always scoped by owner (CM-OWN), filtered by `unread` in both lists and, for feed items, by `feedId` (one feed) or by the feeds whose `folderId` is the folder (one folder). The cursor is the `id` of the last returned row and the next page is the rows with a smaller id.
-- `publishedAt` is display-only and belongs in no `ORDER BY`, keyset clause or index: it is optional, comes from outside, and does not order arrivals.
-- Keep the keyset clause builder in one place (the store's `page` fragment: unread clause, cursor clause, `ORDER BY id DESC|ASC LIMIT ?`) so the four paged list queries cannot drift apart.
-
-## Schema, constraints and indexes
-
-`packages/sqlite/src/migration.ts` (`0001_reader`) is the schema. What the DDL alone does not explain:
-
-- `content` is `NOT NULL` on `saved_page` and nullable on `feed_item`: adding a link stores the extracted article or fails, while a feed item may arrive with no text and gain content later through extraction or saving.
-- `setting` has at most one row per owner, created on its first write (`get` returns defaults without inserting a row); `jina_key` and `browser_endpoint` are secrets and must never be returned or logged. The Kindle delivery is the `kindle_email` / `sender_email` / `smtp_*` / `send_time` / `smtp_password` columns: a delivery exists exactly when `kindle_email` is stored, and `smtp_password` is a secret like the Jina key. `next_send_at` (epoch ms) is the next scheduled send, written by `setKindle` in the same upsert as the group. `listKindleDue(now)` reads the rows with `next_send_at <= now`, a stored delivery and a send time, through `setting_next_send_at`; it orders by `next_send_at, owner`, because `ORDER BY owner` alone makes SQLite scan the primary key and ignore the index. `rescheduleKindle` moves one owner's `next_send_at`.
-- Unique constraints are `(owner, url)` on `feed`, `(feed_id, url)` on `feed_item`, `(owner, url)` on `saved_page` and `(owner, name)` on `folder`; names compare-as-stored (case-sensitive). The duplicate rules and the errors they produce live in `reader-spec` (CM-ID-6, CM-PORT-6).
-- Indexes are chosen from the target queries and verified with `EXPLAIN QUERY PLAN` (`packages/sqlite/test/sqlite.test.ts`); re-check with the real store SQL after changing paging or indexes, because existing measurements do not carry over. Include `owner` in every owner-scoped index and `feed_id` in feed-scoped ones:
-  - `folder` needs no index beyond its unique constraints: `UNIQUE (owner, name)` also serves the folder list's `ORDER BY name, id`, and folders are not paged (CM-PAGE).
-  - `feed` has `feed_owner_folder (owner, folder_id)` for the folder scope's feed lookup and `feed_owner_title (owner, title, id)` for the sidebar's title order; feeds are not paged.
-  - `feed_item` (`(owner, id)`, `(owner, feed_id, id)`, `(owner, read, id)`; the same indexes serve the oldest-first single-feed list, scanned forward) and `saved_page` (`(owner, id)`, `(owner, read, id)`) cover the keyset-paged list queries without table scans or temporary B-trees.
-
-## Development phase
-
-The project is in development: do not write data migrations or compatibility paths for stored data. When the schema changes, edit migration `0001_reader` in place, delete the database files in `DATA_DIR` (`.data/reader.db`, `.data/auth.db`) and run `pnpm db:migrate` again. Tests never run `db:migrate`: they apply the migrations to `:memory:` databases through `@reader/sqlite/testing`.
-
-## Performance trap
-
-`node:sqlite` is synchronous, so one write blocks the event loop while it runs. A refresh benchmark (200 feeds x 100 items arriving at once) measured a refresh round of 1.2 s regular and 1.9 s heavy against 37 s and 82 s on the previous store, and "mark as read" about 1 ms against about 130 ms, but the loop stalled up to roughly 1.2 s during a round because each unbounded refresh fiber runs one synchronous write per loop turn; explicit yields did not help. Add no concurrency limit until running the application shows it is needed (`AGENTS.md`); the loop stall is the symptom to watch for.
-
-## Unstable APIs
-
-`effect/sql` and `@effect/sql-sqlite-node` are unstable APIs; the root `tsconfig.json` allowlists them (`allowedUnstableApis`). Using another unstable export fails `pnpm typecheck` until it is allowlisted there.
+- **Dates & booleans**: store timestamps as `INTEGER` epoch milliseconds; booleans as `0`/`1`.
+- **Keyset paging**: `WHERE id < ?` (`DESC`) or `WHERE id > ?` (`ASC` for `oldest`), `ORDER BY id DESC|ASC LIMIT ?` (fetching `limit + 1` rows to compute `cursor`). `published_at` is never in `ORDER BY` or indexes.
+- **Unbounded ID lists**: pass ID slices via `json_each(?)` rather than building dynamic `IN (?, ?, ...)` placeholders to avoid SQLite parameter limits.
+- **Atomic writes**: use `INSERT ... ON CONFLICT DO NOTHING RETURNING id` and `UPDATE ... RETURNING id` instead of check-then-write sequences.
