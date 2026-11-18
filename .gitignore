@@ -72,5 +72,5 @@ devenv.local.yaml
 
 .maki
 
-# Reference sources for agents (scripts/effect-source.sh)
-.repos/
+# Reference repositories for agents (clone-reference-repositories skill)
+.slim/
