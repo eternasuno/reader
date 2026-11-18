@@ -31,7 +31,7 @@ const cascadeCases = (makeLayer: FeedStoreFactory) => (): void => {
 
       expect(Option.isNone(yield* feeds.find(alice, removed.id))).toBe(true);
       expect(
-        yield* items.listByFeed(alice, removed.id, feedItemQuery())
+        yield* items.listByFeed(alice, removed.id, feedItemQuery(), 'newest')
       ).toEqual([]);
       expect(yield* items.inventory(alice, removed.id)).toEqual([]);
       const counts = yield* items.unreadCounts(alice);
@@ -95,9 +95,9 @@ const raceOnce = (): Effect.Effect<
     );
 
     expect(Option.isNone(yield* feeds.find(alice, feed.id))).toBe(true);
-    expect(yield* items.listByFeed(alice, feed.id, feedItemQuery())).toEqual(
-      []
-    );
+    expect(
+      yield* items.listByFeed(alice, feed.id, feedItemQuery(), 'newest')
+    ).toEqual([]);
     expect(yield* items.inventory(alice, feed.id)).toEqual([]);
     expect(
       (yield* items.unreadCounts(alice)).filter(

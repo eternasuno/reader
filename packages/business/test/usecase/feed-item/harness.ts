@@ -52,11 +52,16 @@ export const storedItems = (
   Effect.gen(function* () {
     const items = yield* FeedItemRepository;
 
-    return yield* items.listByFeed(owner, feedId, {
-      limit: 1000,
-      unread: false,
-      cursor: Option.none(),
-    });
+    return yield* items.listByFeed(
+      owner,
+      feedId,
+      {
+        limit: 1000,
+        unread: false,
+        cursor: Option.none(),
+      },
+      'newest'
+    );
   });
 
 /**

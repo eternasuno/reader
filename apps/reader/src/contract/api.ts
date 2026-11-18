@@ -2,6 +2,7 @@ import { HttpApi } from 'effect/http-api';
 import { FeedApi } from './feed';
 import { FeedItemApi } from './feed-item';
 import { FolderApi } from './folder';
+import { KindleApi } from './kindle';
 import { Authentication } from './middleware';
 import { SavedPageApi } from './saved-page';
 import { SettingApi } from './setting';
@@ -13,6 +14,6 @@ import { SettingApi } from './setting';
  * conventions).
  */
 export const ReaderApi = HttpApi.make('reader')
-  .add(SavedPageApi, FeedApi, FeedItemApi, FolderApi, SettingApi)
+  .add(SavedPageApi, FeedApi, FeedItemApi, FolderApi, SettingApi, KindleApi)
   .middleware(Authentication)
   .prefix('/api');

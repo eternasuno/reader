@@ -63,6 +63,7 @@ The web's Vite config builds with the Solid plugin (`ssr: false`) and the Tailwi
 | `DATA_DIR`           | `.data`                 | server, `db:migrate`    | directory holding `reader.db` and `auth.db`, relative to the process working directory, created if missing |
 | `BETTER_AUTH_SECRET` | — (required)            | server                  | Better Auth signing secret                                                                                 |
 | `BETTER_AUTH_URL`    | `http://localhost:3000` | server                  | canonical public origin used for auth URLs and the `Origin` check on state-changing requests               |
+| `TZ`                 | the system zone         | server                  | time zone of the process; decides the date of a Kindle send and when the daily send time comes due         |
 
 Deploy the web and `/api` on one public origin, set `BETTER_AUTH_URL` to it, and terminate HTTPS in a reverse proxy in front of the app.
 
@@ -90,12 +91,14 @@ docker run --rm --init \
   -e API_PORT=3001 \
   -e BETTER_AUTH_URL=http://localhost:3001 \
   -e DATA_DIR=/data \
+  -e TZ=Asia/Shanghai \
   -v reader-data:/data \
   reader
 ```
 
 - Set `API_PORT` and map the same container port with `-p` (`-e API_PORT=8080 -p 8080:8080`).
 - Export a strong `BETTER_AUTH_SECRET` in the host environment before running these commands; `-e BETTER_AUTH_SECRET` without a value forwards it from the host.
+- The container runs in UTC unless `TZ` is set; the Kindle daily send time is read in that zone.
 - The image ships no browser. Browser extraction connects to a CDP-compatible browser service the user runs and saves in the settings; inside the container `localhost` is the container, so the address must be reachable from it.
 - `/data` must be writable by UID 1000, the migration container's user and the runtime's `node`: a fresh named volume inherits the ownership the image gives `/data`, and a bind mount must be made writable by that uid.
 - Do not mount the same database into concurrent replicas: SQLite has one write lock and one file.

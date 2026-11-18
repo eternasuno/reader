@@ -13,9 +13,10 @@ import type { SavingAction, SettingStore } from './store';
 
 /**
  * Runs one write, reports it as a toast and clears the write state, so nothing
- * else may start meanwhile (settings.md Saving and unsaved changes).
+ * else may start meanwhile (settings.md Saving and unsaved changes). The `Kindle`
+ * section's writes use it too, so one write runs at a time for the whole page.
  */
-const run = async (
+export const run = async (
   store: SettingStore,
   action: SavingAction,
   task: () => Promise<void>,

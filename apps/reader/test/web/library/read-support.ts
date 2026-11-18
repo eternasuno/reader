@@ -78,6 +78,7 @@ vi.mock('../../../src/web/ui/toast', () => ({
 vi.mock('../../../src/web/feed', () => ({
   feeds: () => fake.stores.feeds,
   feedById: (id: string) => fake.stores.feeds.find((feed) => feed.id === id),
+  feedOrder: () => 'newest',
   feedUnreadCount: (id: string) => fake.stores.feedCounts.get(id) ?? 0,
   allUnreadCount: () =>
     [...fake.stores.feedCounts.values()].reduce((sum, count) => sum + count, 0),

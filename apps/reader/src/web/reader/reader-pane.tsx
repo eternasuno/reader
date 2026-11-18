@@ -7,6 +7,7 @@ import { ReaderContent } from './content';
 import { EmbeddedPage } from './embedded';
 import { ReaderHeader } from './header';
 import { readerMessages as copy } from './messages';
+import { startArticle } from './mode';
 
 /** No article open (RD-EMPTY-1). */
 const ReaderEmpty = () => (
@@ -35,7 +36,8 @@ const ReaderArticlePane = (props: { readonly article: Article }) => (
 
 /**
  * The reader pane the library shell shows beside the article list (reader.md): it
- * follows the URL to the article it names (RD-ARTICLE-1, RD-ARTICLE-2), and shows
+ * follows the URL to the article it names (RD-ARTICLE-1, RD-ARTICLE-2), starts it
+ * in its feed's reader mode (RD-MODE-4), and shows
  * that article with its header — its content, the embedded page or, with no
  * article open, the empty reader (RD-EMPTY-1). The confirmation before removing a
  * saved page is shown from here, because the reader's menu is where it is asked
@@ -43,6 +45,11 @@ const ReaderArticlePane = (props: { readonly article: Article }) => (
  */
 export const ReaderPane = () => {
   createEffect(() => followRoute());
+  createEffect(() => {
+    const article = readerArticle();
+
+    if (article !== undefined) startArticle(article);
+  });
 
   return (
     <>

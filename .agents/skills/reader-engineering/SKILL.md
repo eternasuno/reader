@@ -29,6 +29,7 @@ Changing one of these needs a reason stated to the user first.
 | Feed parsing | `feedsmith` | RSS, Atom, RDF and JSON Feed in one parser |
 | HTML parsing, extraction, sanitizing | `jsdom`, `@mozilla/readability`, `dompurify` | standard DOM on the server; Readability for the article; DOMPurify for safe HTML |
 | Page fetching | Jina reader API over Effect `HttpClient`; `puppeteer-core` over a `ws` CDP transport for a user-run browser | no bundled browser |
+| Send to Kindle | `fflate` (zip) + `jsdom` (XHTML) for EPUB; `nodemailer` for SMTP | Effect has no SMTP client; fflate is a small pure-JS zip with stored entries for `mimetype` |
 | Web UI | SolidJS 1 SPA, `@solidjs/router`, `@tanstack/solid-virtual` | fine-grained reactivity, small bundle; client rendering only |
 | Styling | Tailwind CSS 4 + daisyUI 5 | utilities and theme tokens only, no component CSS |
 | Tests | Vitest with `@effect/vitest` | one runner for every package |
@@ -44,15 +45,17 @@ Each package has one job. Adapters are separate packages so that each brings onl
 | `packages/sqlite` (`@reader/sqlite`) | reader SQLite connection (`reader.db`), reader migrations, the repository adapters, the cross-owner feed listing for the scheduler; `./testing` exports in-memory database Layers | `@reader/business`, `effect`, `@effect/sql-sqlite-node`, `node:` modules |
 | `packages/content` (`@reader/content`) | `FeedParser` (feedsmith), `HtmlParser` (jsdom), `ArticleExtractor` (Readability + DOMPurify), `DocumentSanitizer` (DOMPurify) | `@reader/business`, `effect`, those libraries |
 | `packages/webpage` (`@reader/webpage`) | `WebpageFetcher` Layers for Jina and for a browser service | `@reader/business`, `effect`, `puppeteer-core`, `ws` |
+| `packages/epub` (`@reader/epub`) | `EpubBuilder`: articles to an EPUB 3 file, images downloaded and embedded | `@reader/business`, `effect`, `fflate`, `jsdom` |
+| `packages/mail` (`@reader/mail`) | `MailSender`: one mail with an attachment over the user's SMTP server | `@reader/business`, `effect`, `nodemailer` |
 | `apps/reader` | the product: HTTP contract, server, web client | everything above |
 
 Dependency direction, enforced by `biome.json`:
 
 ```text
-apps/reader/src/server ──> contract, @reader/sqlite, @reader/content, @reader/webpage, @reader/business
+apps/reader/src/server ──> contract, @reader/sqlite, @reader/content, @reader/webpage, @reader/epub, @reader/mail, @reader/business
 apps/reader/src/web    ──> contract
 apps/reader/src/contract ──> @reader/business (entity and value schemas)
-@reader/sqlite, @reader/content, @reader/webpage ──> @reader/business
+@reader/sqlite, @reader/content, @reader/webpage, @reader/epub, @reader/mail ──> @reader/business
 @reader/business ──> effect
 ```
 
@@ -69,11 +72,12 @@ Two tsconfig files, both extending the root `tsconfig.json` (which keeps the sha
 
 ### Server
 
-- **Composition.** `main` builds every dependency Layer once and provides it once: the reader database and repositories from `@reader/sqlite`, the content adapters, `FetchHttpClient.layer`, the Better Auth instance over the auth database, the refresh queue and the scheduler. Route composition is separate from dependency provision, and dependencies are provided outside `HttpRouter.serve` so one reader connection and one queue serve the routes, the refreshes and the scheduler. Effective Layers carry the `Live` suffix. No one-off `make*` wrappers or Layers for one-use groupings; nest providers only for real dependencies.
+- **Composition.** `main` builds every dependency Layer once and provides it once: the reader database and repositories from `@reader/sqlite`, the content adapters, `FetchHttpClient.layer`, the Better Auth instance over the auth database, the refresh queue and its scheduler, the Kindle sender and its scheduler. Route composition is separate from dependency provision, and dependencies are provided outside `HttpRouter.serve` so one reader connection and one set of adapters serve the routes, the refreshes, the sends and both schedulers. Effective Layers carry the `Live` suffix. No one-off `make*` wrappers or Layers for one-use groupings; nest providers only for real dependencies.
 - **Auth.** Better Auth alone serves `/api/auth/*` through one wildcard route that converts the request to a Web `Request` and the answer back. Identity comes only from the session cookie (`getSession`); the `Authentication` middleware provides `Session` and forwards the headers Better Auth returns (renewed or cleared cookies) through a pre-response handler, so they reach error responses too. `OriginCheck` is attached to every state-changing endpoint.
 - **Handlers.** One module per domain in `http/` implements its contract group. A handler decodes input into business types once (`reader-spec` says which error each failed decoding returns), calls one use case or one port method, and maps business errors to contract errors through one table from business `_tag` to contract error. Handlers reach repositories, adapters and the queue only through business ports and the `FeedRefreshQueue` service. The only implementation a handler chooses is the `WebpageFetcher` (`http/fetcher.ts`, the only module in `http/` that imports `@reader/webpage`): inside the fetch it reads the owner's setting, asks `activeFetcher` and maps the result exhaustively to `JinaWebpageFetcherLive(key)` or `BrowserWebpageFetcherLive(endpoint)` for that request. Layer factories never query the database.
 - **Errors.** Contract errors are `Schema.TaggedError` classes whose status is an annotation; nothing writes `_tag` by hand. The business-to-contract table maps `HtmlParserError` to `ArticleExtractorError` (CM-FETCH-4). The `Authentication` middleware fails with the empty-body 401 `Unauthorized` when there is no session and with 500 `AuthUnavailable` when Better Auth's session check itself fails; `OriginCheck` fails with the empty-body 403 `Forbidden`. These two empty bodies are the only failures without a `_tag`. The server holds no user-facing text.
 - **Refresh.** `FeedRefreshQueue.enqueue(owner, feedId)` drops a request for a feed whose refresh is running, otherwise forks `refreshFeed` in the queue's scope; refreshes of different feeds run concurrently without a bound; a failure or defect is logged with owner and feed id and never stops the others. The scheduler enqueues every feed (through the cross-owner listing of `@reader/sqlite`) at start and every 30 minutes; a listing failure is logged and retried at the next tick. Both stop with the server scope.
+- **Kindle.** `KindleSender.send(owner)` runs one `sendToKindle` per owner at a time: a second send of a running owner fails with the server's own `KindleSendInProgress` (409) before anything is read, and the owner is released however the send ends. Its Live layer reads the repositories, `HtmlParser`, `ArticleExtractor` and one `HttpClient` from the environment and provides the `@reader/epub` builder, the `@reader/mail` sender and `webpageFetcherFor(owner)` for that one send, so extraction follows the owner's fetcher. `KindleSchedulerLive` checks once at start and then at each half-hour boundary: it lists the owners due through `listKindleDue` (stored `next_send_at` not later than now), moves each one's `next_send_at` to `nextOccurrence` of its send time (server-local, `TZ`, deployment.md; the only time-zone computation, shared with the settings handler) and forks the send in its scope without awaiting it; a failed check is logged and retried at the next half hour, a skipped send is silent, and any other failure is logged with owner and error tag, never the password.
 - **Adapters.** Adapter failures are typed errors with a message safe to log; secrets (Jina key, browser endpoint) are `Redacted` and never logged.
 
 ### Web

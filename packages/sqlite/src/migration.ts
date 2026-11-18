@@ -23,6 +23,8 @@ const READER_SCHEMA = [
     title TEXT NOT NULL,
     folder_id TEXT,
     updated_at INTEGER,
+    reader_mode TEXT NOT NULL DEFAULT 'default' CHECK (reader_mode IN ('default', 'extracted', 'embedded')),
+    sort_order TEXT NOT NULL DEFAULT 'newest' CHECK (sort_order IN ('newest', 'oldest')),
     UNIQUE (owner, url),
     UNIQUE (owner, id),
     FOREIGN KEY (owner, folder_id) REFERENCES folder (owner, id) ON DELETE CASCADE
@@ -64,8 +66,18 @@ const READER_SCHEMA = [
     retention INTEGER,
     provider TEXT,
     jina_key TEXT,
-    browser_endpoint TEXT
+    browser_endpoint TEXT,
+    kindle_email TEXT,
+    sender_email TEXT,
+    smtp_host TEXT,
+    smtp_port INTEGER,
+    smtp_security TEXT,
+    smtp_user TEXT,
+    send_time TEXT,
+    smtp_password TEXT,
+    next_send_at INTEGER
   ) STRICT`,
+  'CREATE INDEX setting_next_send_at ON setting (next_send_at)',
 ];
 
 const createReaderTables = Effect.gen(function* () {

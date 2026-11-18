@@ -5,7 +5,7 @@
  */
 export const settingMessages = {
   heading: '设置',
-  subtitle: '管理账号、文章保留与正文提取。',
+  subtitle: '管理账号、文章保留、正文提取与 Kindle 发送。',
   backToLibrary: '返回阅读',
   navigationLabel: '设置分区',
 

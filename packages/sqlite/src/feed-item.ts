@@ -5,6 +5,7 @@ import {
   type FeedItemQuery,
   FeedItemRepository,
   FeedItemRepositoryError,
+  type FeedOrder,
   type FolderId,
   type IFeedItemRepository,
   NormalizedUrl,
@@ -55,9 +56,10 @@ export const listByFeedStatement = (
   sql: SqlClient.SqlClient,
   owner: OwnerId,
   feedId: FeedId,
-  query: FeedItemQuery
+  query: FeedItemQuery,
+  order: FeedOrder
 ) =>
-  sql`${sql.literal(SELECT)} WHERE owner = ${owner} AND feed_id = ${feedId}${page(sql, query)}`;
+  sql`${sql.literal(SELECT)} WHERE owner = ${owner} AND feed_id = ${feedId}${page(sql, query, order)}`;
 
 export const listByFolderStatement = (
   sql: SqlClient.SqlClient,
@@ -82,8 +84,8 @@ const reads = (sql: SqlClient.SqlClient) => {
         Effect.flatMap(decodeItems),
         fail
       ),
-    listByFeed: (owner, feedId, query) =>
-      listByFeedStatement(sql, owner, feedId, query).pipe(
+    listByFeed: (owner, feedId, query, order) =>
+      listByFeedStatement(sql, owner, feedId, query, order).pipe(
         Effect.flatMap(decodeItems),
         fail
       ),

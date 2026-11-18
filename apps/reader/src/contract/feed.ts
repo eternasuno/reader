@@ -2,12 +2,14 @@ import {
   ArticleTitle,
   Feed,
   FeedId,
+  FeedOrder,
+  FeedReaderMode,
   FeedTitle,
   FolderId,
   NormalizedUrl,
   OptionFromOptionalNonEmpty,
 } from '@reader/business';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { created } from './common';
 import {
@@ -48,9 +50,20 @@ const FeedUnreadCounts = Schema.Struct({
 const feedParams = { id: FeedId };
 
 /**
- * Feeds: subscribing, the feed list and unread counts, marking a feed read, the
- * single-feed list, and moving a feed between folders (feeds.md and folders.md
- * API).
+ * The single-feed list also takes the feed's order, `newest` when absent
+ * (FD-PREF-3); any other value is a structural failure.
+ */
+const feedItemsOfFeedQuery = Schema.Struct({
+  ...feedItemListQuery.fields,
+  order: FeedOrder.pipe(
+    Schema.withDecodingDefaultType(Effect.succeed('newest' as const))
+  ),
+});
+
+/**
+ * Feeds: subscribing, the feed list and unread counts, a feed's preferences,
+ * marking a feed read, the single-feed list, and moving a feed between folders
+ * (feeds.md and folders.md API).
  */
 export const FeedApi = HttpApiGroup.make('feed').add(
   HttpApiEndpoint.get('listFeeds', '/feeds', {
@@ -86,6 +99,16 @@ export const FeedApi = HttpApiGroup.make('feed').add(
     payload: Schema.Struct({ folderId: Schema.NullOr(FolderId) }),
     error: [FolderNotFound, FeedRepositoryError, FolderRepositoryError],
   }).middleware(OriginCheck),
+  HttpApiEndpoint.put('setFeedReaderMode', '/feeds/:id/reader-mode', {
+    params: feedParams,
+    payload: Schema.Struct({ readerMode: FeedReaderMode }),
+    error: FeedRepositoryError,
+  }).middleware(OriginCheck),
+  HttpApiEndpoint.put('setFeedOrder', '/feeds/:id/order', {
+    params: feedParams,
+    payload: Schema.Struct({ order: FeedOrder }),
+    error: FeedRepositoryError,
+  }).middleware(OriginCheck),
   HttpApiEndpoint.get('feedUnreadCounts', '/feeds/unread-counts', {
     success: FeedUnreadCounts,
     error: FeedItemRepositoryError,
@@ -96,7 +119,7 @@ export const FeedApi = HttpApiGroup.make('feed').add(
   }).middleware(OriginCheck),
   HttpApiEndpoint.get('listFeedItemsOfFeed', '/feeds/:id/items', {
     params: feedParams,
-    query: feedItemListQuery,
+    query: feedItemsOfFeedQuery,
     success: feedItemListResponse,
     error: FeedItemRepositoryError,
   })

@@ -6,18 +6,23 @@ import {
   FolderName as FolderNameSchema,
   type JinaKey,
   JinaKey as JinaKeySchema,
+  type KindleDelivery,
+  KindleDelivery as KindleDeliverySchema,
   makeFeedTitle,
   type NormalizedUrl,
   NormalizedUrl as NormalizedUrlSchema,
   type PageInput,
   type Retention,
   Retention as RetentionSchema,
+  type SmtpPassword,
+  SmtpPassword as SmtpPasswordSchema,
 } from '@reader/business';
 import { Effect, Option, Schema } from 'effect';
 import {
   FeedUrlInvalid,
   InvalidEndpoint,
   InvalidFolderName,
+  InvalidKindleSetting,
   InvalidPageUrl,
   InvalidRetention,
 } from '../../contract';
@@ -89,6 +94,46 @@ export const decodeJinaKey = (
 ): Option.Option<JinaKey> =>
   Option.flatMap(Option.fromNullishOr(raw), (key) =>
     Schema.decodeOption(JinaKeySchema)(key)
+  );
+
+/** Absent or blank is not given (SET-VAL-6, SET-KINDLE-3). */
+const nonBlank = (raw: string | undefined): string | undefined =>
+  raw === undefined || raw.trim() === '' ? undefined : raw;
+
+/**
+ * The Kindle delivery of one save (SET-KINDLE-1). Every value must hold its
+ * rule, or the whole save is `InvalidKindleSetting`; a blank optional value
+ * counts as not given, so a blank send time is none (SET-KINDLE-3).
+ */
+export const decodeKindle = (payload: {
+  readonly kindleEmail: string;
+  readonly senderEmail: string;
+  readonly smtpHost: string;
+  readonly smtpPort: number;
+  readonly smtpSecurity: string;
+  readonly smtpUser?: string | undefined;
+  readonly sendTime?: string | undefined;
+}): Effect.Effect<KindleDelivery, InvalidKindleSetting> =>
+  Schema.decodeUnknownEffect(KindleDeliverySchema)({
+    kindleEmail: payload.kindleEmail,
+    senderEmail: payload.senderEmail,
+    smtpHost: payload.smtpHost,
+    smtpPort: payload.smtpPort,
+    smtpSecurity: payload.smtpSecurity,
+    smtpUser: nonBlank(payload.smtpUser),
+    sendTime: nonBlank(payload.sendTime),
+  }).pipe(Effect.mapError(() => new InvalidKindleSetting()));
+
+/**
+ * The SMTP password: absent or empty counts as not given, which keeps the
+ * stored one (SET-KINDLE-3); it is kept as typed and never shown again
+ * (SET-KINDLE-2).
+ */
+export const decodeSmtpPassword = (
+  raw: string | undefined
+): Option.Option<SmtpPassword> =>
+  Option.flatMap(Option.fromNullishOr(raw), (password) =>
+    Schema.decodeOption(SmtpPasswordSchema)(password)
   );
 
 /** A missing or blank subscribe title becomes the address's host (FD-SUB). */

@@ -39,14 +39,15 @@ Its own screen behavior:
 - RD-EXTRACT-5 The first extraction switches the reader to the extracted view only after the returned article replaces the open one; the reader never shows an empty extracted view while waiting.
 - RD-EXTRACT-6 Turning extraction off returns to the default content (RD-CONTENT) and changes nothing on the server; the stored extracted content is kept and reused the next time (FD-EXTRACT-2).
 - RD-EXTRACT-7 A failed extraction stores nothing and leaves the reader in the mode it had before the attempt, because the extracted mode is entered only after a successful answer (RD-EXTRACT-5): the spinner ends and the error toast shows the CM-FETCH-4 wording (Messages).
-- RD-EXTRACT-8 Choosing a different article while an extraction runs abandons its result: the late result changes neither the new article's mode nor its controls, and the new article starts on the default content.
+- RD-EXTRACT-8 Choosing a different article while an extraction runs abandons its result: the late result changes neither the new article's mode nor its controls, and the new article starts on its own starting mode (RD-MODE-4).
 - RD-EXTRACT-9 Extraction is disabled while it runs (RD-EXTRACT-4). No article lacks a URL — every feed item (FD-PARSE-2) and every saved page ([later.md](later.md) API) has one — so `打开原文` is shown for every article, and neither the extraction control nor the embedded-page item is withheld for want of a URL (RD-WEBPAGE-4).
 
 ### RD-MODE — What a switch of article does to the mode
 
-- RD-MODE-1 Changing the open article resets the view to the default content and stops any extraction state.
+- RD-MODE-1 Changing the open article resets the view to the article's starting mode (RD-MODE-4) and stops any extraction state.
 - RD-MODE-2 A change of the same article's content — the fetched article, a stored extracted content, a read mark — keeps the current mode; only a different article id resets it.
-- RD-MODE-3 The reader's mode is not part of the URL: reloading the reader shows the default content again.
+- RD-MODE-3 The reader's mode is not part of the URL: reloading the reader shows the starting mode again (RD-MODE-4).
+- RD-MODE-4 The starting mode of a feed item is its feed's reader mode (FD-PREF-1): `default` shows the default content, `embedded` the embedded web page (RD-WEBPAGE), and `extracted` the extracted content, shown at once when the item has it (RD-EXTRACT-3) and otherwise requested as if `提取正文` had been chosen (RD-EXTRACT-4 to RD-EXTRACT-7), so a failed extraction leaves the default content. A saved page, and a feed item whose feed the sidebar does not know, start on the default content; while the feed list is still loading the choice waits for it, unless the user changes the mode first, which then stands. The mode is applied once per opening: a later change of the feed's mode does not switch the open article.
 
 ### RD-WEBPAGE — Embedded web page
 

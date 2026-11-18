@@ -8,30 +8,44 @@ import {
   type Drafts,
   discardDraft,
 } from './drafts';
+import {
+  applyKindleRead,
+  createKindleDrafts,
+  discardKindleDraft,
+  type KindleDrafts,
+  kindleChanged,
+} from './kindle/drafts';
 import type { DraftSection, SettingsSection } from './section';
 
 export type { Setting } from '../api/setting';
 
 /** The write in flight; one runs at a time per page (settings.md). */
-export type SavingAction = 'retention' | 'fetcher' | 'key' | 'password';
+export type SavingAction =
+  | 'retention'
+  | 'fetcher'
+  | 'key'
+  | 'password'
+  | 'kindle'
+  | 'smtpPassword';
 
 /**
- * The settings page's state: what was read, the drafts of `文章` and `提取`, whether
- * `账号` holds text, and the one write in flight. The writes themselves are
- * `save.ts`; the `账号` section's fields belong to `PasswordForm` and only its
- * changed flag and its write are reported here (settings.md).
+ * The settings page's state: what was read, the drafts of `文章`, `提取` and
+ * `Kindle`, whether `账号` holds text, and the one write in flight. The writes
+ * themselves are `save.ts`; the `账号` section's fields belong to `PasswordForm`
+ * and only its changed flag and its write are reported here (settings.md).
  */
-export type SettingStore = Drafts & {
-  readonly setting: Accessor<Setting | undefined>;
-  readonly setSetting: Setter<Setting | undefined>;
-  readonly readError: Accessor<string>;
-  readonly setReadError: Setter<string>;
-  /** Any of the `账号` section's three password fields holds text. */
-  readonly accountChanged: Accessor<boolean>;
-  readonly setAccountChanged: Setter<boolean>;
-  readonly saving: Accessor<SavingAction | undefined>;
-  readonly setSaving: Setter<SavingAction | undefined>;
-};
+export type SettingStore = Drafts &
+  KindleDrafts & {
+    readonly setting: Accessor<Setting | undefined>;
+    readonly setSetting: Setter<Setting | undefined>;
+    readonly readError: Accessor<string>;
+    readonly setReadError: Setter<string>;
+    /** Any of the `账号` section's three password fields holds text. */
+    readonly accountChanged: Accessor<boolean>;
+    readonly setAccountChanged: Setter<boolean>;
+    readonly saving: Accessor<SavingAction | undefined>;
+    readonly setSaving: Setter<SavingAction | undefined>;
+  };
 
 export const createSettingStore = (): SettingStore => {
   const [setting, setSetting] = createSignal<Setting>();
@@ -41,6 +55,7 @@ export const createSettingStore = (): SettingStore => {
 
   return {
     ...createDrafts(),
+    ...createKindleDrafts(),
     setting,
     setSetting,
     readError,
@@ -73,6 +88,7 @@ export const loadSetting = async (store: SettingStore): Promise<void> => {
 
     store.setSetting(stored);
     applyRead(store, stored);
+    applyKindleRead(store, stored);
   } catch (error) {
     store.setReadError(messageOf(error));
   }
@@ -85,7 +101,10 @@ export const draftChanged = (
 ): boolean => {
   const stored = store.setting();
 
-  return stored !== undefined && changedDraft(store, stored, section);
+  if (stored === undefined) return false;
+  if (section === 'kindle') return kindleChanged(store, stored);
+
+  return changedDraft(store, stored, section);
 };
 
 /** Drops a section's drafts after a confirmed switch (settings.md Interface). */
@@ -95,7 +114,15 @@ export const discard = (
 ): void => {
   const stored = store.setting();
 
-  if (stored !== undefined) discardDraft(store, stored, section);
+  if (stored === undefined || section === 'account') return;
+
+  if (section === 'kindle') {
+    discardKindleDraft(store, stored);
+
+    return;
+  }
+
+  discardDraft(store, stored, section);
 };
 
 /** The page's one store. */

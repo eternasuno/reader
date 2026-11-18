@@ -1,4 +1,4 @@
-import type { OwnerId } from '@reader/business';
+import type { FeedOrder, OwnerId } from '@reader/business';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import type { SqlClient, SqlError, Statement } from 'effect/sql';
 
@@ -87,7 +87,8 @@ export const inList = (
 
 /**
  * One keyset clause for the three feed-item lists and the saved-page list
- * (database.md): unread filter, cursor, newest first.
+ * (database.md): unread filter, cursor, newest first, or oldest first for a
+ * single feed that stores it (FD-PREF-3).
  */
 export const page = (
   sql: SqlClient.SqlClient,
@@ -95,9 +96,12 @@ export const page = (
     readonly unread: boolean;
     readonly cursor: Option.Option<string>;
     readonly limit: number;
-  }
+  },
+  order: FeedOrder = 'newest'
 ): Statement.Fragment => {
   const cursor = Option.getOrNull(query.cursor);
+  const after = order === 'oldest' ? sql` AND id > ` : sql` AND id < `;
+  const direction = sql.literal(order === 'oldest' ? 'ASC' : 'DESC');
 
-  return sql`${query.unread ? sql` AND read = 0` : sql.literal('')}${cursor === null ? sql.literal('') : sql` AND id < ${cursor}`} ORDER BY id DESC LIMIT ${query.limit}`;
+  return sql`${query.unread ? sql` AND read = 0` : sql.literal('')}${cursor === null ? sql.literal('') : sql`${after}${cursor}`} ORDER BY id ${direction} LIMIT ${query.limit}`;
 };

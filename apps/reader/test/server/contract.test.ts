@@ -73,6 +73,8 @@ const extractionErrorSpecs = [
  * The domain errors of each endpoint in the spec API tables (later.md,
  * feeds.md, folders.md, settings.md); middleware errors are added per method.
  */
+const settingError = 'SettingRepositoryError 500';
+
 const expectedEndpointErrors: Readonly<Record<string, ReadonlyArray<string>>> =
   {
     'GET /api/saved-pages': ['SavedPageRepositoryError 500'],
@@ -115,6 +117,8 @@ const expectedEndpointErrors: Readonly<Record<string, ReadonlyArray<string>>> =
       'FeedRepositoryError 500',
       'FolderRepositoryError 500',
     ],
+    'PUT /api/feeds/:id/reader-mode': ['FeedRepositoryError 500'],
+    'PUT /api/feeds/:id/order': ['FeedRepositoryError 500'],
     'GET /api/feeds/unread-counts': ['FeedItemRepositoryError 500'],
     'POST /api/feeds/:id/read-all': ['FeedItemRepositoryError 500'],
     'GET /api/feeds/:id/items': ['FeedItemRepositoryError 500'],
@@ -143,18 +147,27 @@ const expectedEndpointErrors: Readonly<Record<string, ReadonlyArray<string>>> =
     'DELETE /api/folders/:id': ['FolderRepositoryError 500'],
     'POST /api/folders/:id/read-all': ['FeedItemRepositoryError 500'],
     'GET /api/folders/:id/items': ['FeedItemRepositoryError 500'],
-    'GET /api/settings': ['SettingRepositoryError 500'],
-    'PUT /api/settings/retention': [
-      'InvalidRetention 400',
-      'SettingRepositoryError 500',
-    ],
-    'PUT /api/settings/fetcher/jina': ['SettingRepositoryError 500'],
+    'GET /api/settings': [settingError],
+    'PUT /api/settings/retention': ['InvalidRetention 400', settingError],
+    'PUT /api/settings/fetcher/jina': [settingError],
     'PUT /api/settings/fetcher/browser': [
       'InvalidEndpoint 400',
       'BrowserEndpointRequired 422',
-      'SettingRepositoryError 500',
+      settingError,
     ],
-    'DELETE /api/settings/fetcher/jina/key': ['SettingRepositoryError 500'],
+    'DELETE /api/settings/fetcher/jina/key': [settingError],
+    'PUT /api/settings/kindle': ['InvalidKindleSetting 400', settingError],
+    'DELETE /api/settings/kindle/password': [settingError],
+    'POST /api/kindle/send': [
+      'KindleNotConfigured 422',
+      'KindleSendInProgress 409',
+      'MailSenderError 422',
+      'EpubBuilderError 500',
+      settingError,
+      'FeedRepositoryError 500',
+      'FeedItemRepositoryError 500',
+      'SavedPageRepositoryError 500',
+    ],
   };
 
 const middlewareErrors = (method: string): ReadonlyArray<string> =>

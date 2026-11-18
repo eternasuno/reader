@@ -142,9 +142,9 @@ const keepsFeedCases = (makeLayer: FeedStoreFactory) => (): void => {
       expect(stored.updatedAt).toStrictEqual(feed.updatedAt);
       expect(storedItem.read).toBe(true);
       expect(Option.getOrThrow(storedItem.extractedContent)).toBe(content);
-      expect(yield* items.listByFeed(alice, feed.id, feedItemQuery())).toEqual([
-        storedItem,
-      ]);
+      expect(
+        yield* items.listByFeed(alice, feed.id, feedItemQuery(), 'newest')
+      ).toEqual([storedItem]);
     }).pipe(Effect.provide(makeLayer()))
   );
 };

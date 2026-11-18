@@ -2,6 +2,7 @@ import {
   Feed,
   FeedRepository,
   FeedRepositoryError,
+  type IFeedRepository,
   type OwnerId,
 } from '@reader/business';
 import { DateTime, Effect, Layer, Option } from 'effect';
@@ -27,10 +28,24 @@ const decodeFeeds = decodeRows(Feed, ({ updatedAt, ...row }) => ({
 }));
 
 const SELECT =
-  'SELECT id, owner AS ownerId, url, title, folder_id AS folderId, updated_at AS updatedAt FROM feed';
+  'SELECT id, owner AS ownerId, url, title, folder_id AS folderId, updated_at AS updatedAt, reader_mode AS readerMode, sort_order AS "order" FROM feed';
 
 export const listFeedsStatement = (sql: SqlClient.SqlClient, owner: OwnerId) =>
   sql`${sql.literal(SELECT)} WHERE owner = ${owner} ORDER BY title, id`;
+
+const preferences = (sql: SqlClient.SqlClient) =>
+  ({
+    setReaderMode: (owner, id, readerMode) =>
+      sql`UPDATE feed SET reader_mode = ${readerMode} WHERE owner = ${owner} AND id = ${id}`.pipe(
+        Effect.asVoid,
+        fail
+      ),
+    setOrder: (owner, id, order) =>
+      sql`UPDATE feed SET sort_order = ${order} WHERE owner = ${owner} AND id = ${id}`.pipe(
+        Effect.asVoid,
+        fail
+      ),
+  }) satisfies Partial<IFeedRepository>;
 
 export const FeedRepositoryLive = Layer.effect(
   FeedRepository,
@@ -51,7 +66,7 @@ export const FeedRepositoryLive = Layer.effect(
         createEach(sql, owner, feeds, (feed) => {
           const folderId = Option.getOrNull(feed.folderId);
 
-          return sql`INSERT INTO feed (id, owner, url, title, folder_id, updated_at) SELECT ${feed.id}, ${feed.ownerId}, ${feed.url.href}, ${feed.title}, ${folderId}, ${millisOrNull(feed.updatedAt)} WHERE ${folderId} IS NULL OR EXISTS (SELECT 1 FROM folder WHERE owner = ${feed.ownerId} AND id = ${folderId}) ON CONFLICT DO NOTHING RETURNING id`;
+          return sql`INSERT INTO feed (id, owner, url, title, folder_id, updated_at, reader_mode, sort_order) SELECT ${feed.id}, ${feed.ownerId}, ${feed.url.href}, ${feed.title}, ${folderId}, ${millisOrNull(feed.updatedAt)}, ${feed.readerMode}, ${feed.order} WHERE ${folderId} IS NULL OR EXISTS (SELECT 1 FROM folder WHERE owner = ${feed.ownerId} AND id = ${folderId}) ON CONFLICT DO NOTHING RETURNING id`;
         }).pipe(fail),
       moveToFolder: (owner, id, folderId) => {
         const target = Option.getOrNull(folderId);
@@ -66,6 +81,7 @@ export const FeedRepositoryLive = Layer.effect(
           Effect.asVoid,
           fail
         ),
+      ...preferences(sql),
       remove: (owner, ids) =>
         sql`DELETE FROM feed WHERE owner = ${owner} AND ${inList(sql, 'id', ids)}`.pipe(
           Effect.asVoid,

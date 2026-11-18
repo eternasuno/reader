@@ -37,6 +37,8 @@ import {
   Session,
 } from '../../../src/contract';
 import { ReaderHandlersLive } from '../../../src/server/http';
+import type { KindleSend } from '../../../src/server/kindle/sender';
+import { KindleSender } from '../../../src/server/kindle/sender';
 import { FeedRefreshQueue } from '../../../src/server/refresh/queue';
 
 /** What an endpoint test may change about the environment. */
@@ -53,6 +55,8 @@ export type TestOptions = {
   readonly extractEmpty?: boolean;
   /** Reading the owner's setting fails `SettingRepositoryError` (CM-FETCH-4). */
   readonly settingFails?: boolean;
+  /** What a send-now request does; nothing unread by default (KD-SEND-8). */
+  readonly kindle?: KindleSend;
 };
 
 const document = (): HtmlDocument =>
@@ -122,6 +126,12 @@ const queueLayer = (calls: Array<FeedId>) =>
       }),
   });
 
+/** The send-now service, stubbed: the HTTP layer tests the request, not a send (KD-SEND). */
+const kindleLayer = ({ kindle }: TestOptions) =>
+  Layer.succeed(KindleSender, {
+    send: kindle ?? (() => Effect.succeed({ count: 0 })),
+  });
+
 /**
  * A request that carries no session and no origin passes both checks; the
  * real middleware is tested with the server (reader-engineering: Testing).
@@ -162,6 +172,7 @@ const environmentLayer = (options: TestOptions) =>
     contentLayer(options),
     httpClientLayer(options),
     queueLayer(options.calls ?? []),
+    kindleLayer(options),
     platformLayer
   );
 

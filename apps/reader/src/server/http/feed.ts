@@ -94,6 +94,32 @@ const move = HttpApiBuilder.handler(
     )
 );
 
+/** One preference written; an unknown feed changes nothing (FD-PREF-2). */
+const setReaderMode = HttpApiBuilder.handler(
+  ReaderApi,
+  'feed',
+  'setFeedReaderMode',
+  ({ params, payload }) =>
+    handle((owner) =>
+      Effect.flatMap(FeedRepository, (feeds) =>
+        feeds.setReaderMode(owner, params.id, payload.readerMode)
+      )
+    )
+);
+
+/** One preference written; an unknown feed changes nothing (FD-PREF-2). */
+const setOrder = HttpApiBuilder.handler(
+  ReaderApi,
+  'feed',
+  'setFeedOrder',
+  ({ params, payload }) =>
+    handle((owner) =>
+      Effect.flatMap(FeedRepository, (feeds) =>
+        feeds.setOrder(owner, params.id, payload.order)
+      )
+    )
+);
+
 /** Unread items per feed; a feed with none is absent (FD-COUNT-1). */
 const unreadCounts = HttpApiBuilder.handler(
   ReaderApi,
@@ -123,17 +149,20 @@ const markRead = HttpApiBuilder.handler(
     )
 );
 
-/** One page of one feed; an unknown feed is an empty page (FD-LIST-2). */
+/**
+ * One page of one feed in the requested order; an unknown feed is an empty
+ * page (FD-LIST-2, FD-PREF-3).
+ */
 const feedItems = HttpApiBuilder.handler(
   ReaderApi,
   'feed',
   'listFeedItemsOfFeed',
   ({ params, query }) =>
     handle((owner) =>
-      Effect.map(listFeedItems(owner, params.id, pageInput(query)), (page) => ({
-        items: [...page.items],
-        cursor: page.cursor,
-      }))
+      Effect.map(
+        listFeedItems(owner, params.id, pageInput(query), query.order),
+        (page) => ({ items: [...page.items], cursor: page.cursor })
+      )
     )
 );
 
@@ -147,6 +176,8 @@ export const FeedHandlersLive = HttpApiBuilder.group(
       subscribeFeed: subscribe,
       unsubscribeFeed: unsubscribe,
       moveFeed: move,
+      setFeedReaderMode: setReaderMode,
+      setFeedOrder: setOrder,
       feedUnreadCounts: unreadCounts,
       markFeedRead: markRead,
       listFeedItemsOfFeed: feedItems,

@@ -2,6 +2,7 @@ import { Show } from 'solid-js';
 import { Button } from '../ui/button';
 import { AccountSection } from './account-section';
 import { FetcherSection } from './fetcher-section';
+import { KindleSection } from './kindle/kindle-section';
 import { type SettingsLayout, sectionShown } from './layout';
 import { settingMessages as copy } from './messages';
 import { RetentionSection } from './retention-section';
@@ -46,7 +47,7 @@ export type SectionPanelsProps = {
 };
 
 /**
- * The three sections, always all mounted: the layout only decides which of them
+ * The four sections, always all mounted: the layout only decides which of them
  * are shown, so switching the layout hides or shows a section instead of
  * destroying it, and the drafts and the write in flight survive (settings.md
  * Interface). A hidden section carries the `hidden` attribute, so nothing in it
@@ -67,6 +68,7 @@ const ReadyPanels = (props: SectionPanelsProps) => {
       />
       <RetentionSection hidden={!shown('articles')} />
       <FetcherSection hidden={!shown('extraction')} />
+      <KindleSection hidden={!shown('kindle')} />
     </>
   );
 };

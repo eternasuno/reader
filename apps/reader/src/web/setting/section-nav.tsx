@@ -11,7 +11,7 @@ export type SectionNavProps = {
   readonly section: SettingsSection;
   /** A write is in flight: every item is disabled with the busy text (settings.md). */
   readonly saving: boolean;
-  /** Stacked layout: all three sections are on the page, so an item names its own. */
+  /** Stacked layout: all four sections are on the page, so an item names its own. */
   readonly stacked: boolean;
   readonly onPick: (section: SettingsSection) => void;
   readonly elementRef: (element: HTMLElement) => void;

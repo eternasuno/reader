@@ -20,6 +20,8 @@ import { AuthLive, AuthRoutesLive } from './auth';
 import { ServerConfig, ServerConfigLive } from './config';
 import { ReaderHandlersLive } from './http';
 import { AuthenticationLive, OriginCheckLive } from './http/middleware';
+import { KindleSchedulerLive } from './kindle/scheduler';
+import { KindleSenderLive } from './kindle/sender-live';
 import { FeedRefreshQueueLive } from './refresh/queue-live';
 import { RefreshSchedulerLive } from './refresh/scheduler';
 import { StaticRoutesLive } from './static';
@@ -39,8 +41,9 @@ const repositories = Layer.mergeAll(
  * Every dependency, built once over `<DATA_DIR>` (reader-engineering: Server >
  * Composition): the directory, the reader connection and its repositories, the
  * content adapters and HTTP client, Better Auth over `auth.db`, the refresh
- * queue and the scheduler. A single `store` instance is shared, so one
- * connection serves the routes, the queue and the scheduler.
+ * queue and its scheduler, the Kindle sender and its scheduler. A single
+ * `store` instance is shared, so one connection serves the routes, the queue,
+ * the sends and both schedulers.
  */
 const dependencies = Layer.unwrap(
   Effect.gen(function* () {
@@ -56,8 +59,22 @@ const dependencies = Layer.unwrap(
     const scheduler = RefreshSchedulerLive.pipe(
       Layer.provide(Layer.merge(store, queue))
     );
+    const kindleSender = KindleSenderLive.pipe(
+      Layer.provide(Layer.merge(store, adapters))
+    );
+    const kindleScheduler = KindleSchedulerLive.pipe(
+      Layer.provide(Layer.merge(store, kindleSender))
+    );
 
-    return Layer.mergeAll(store, adapters, AuthLive, queue, scheduler);
+    return Layer.mergeAll(
+      store,
+      adapters,
+      AuthLive,
+      queue,
+      scheduler,
+      kindleSender,
+      kindleScheduler
+    );
   })
 );
 

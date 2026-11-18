@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { Model } from 'effect/schema';
 import { ArticleTitle } from '../common/article';
 import { NormalizedUrl } from '../common/normalized-url';
@@ -33,6 +33,29 @@ export const makeFeedTitle = (text: string, url: URL): FeedTitle => {
 };
 
 /**
+ * What the reader shows first for an item of the feed (FD-PREF-1, RD-MODE-4):
+ * the feed's own content, the extracted article or the embedded web page.
+ * A new feed starts with `default`.
+ */
+export const FeedReaderMode = Schema.Literals([
+  'default',
+  'extracted',
+  'embedded',
+]).pipe(Schema.withConstructorDefault(Effect.succeed('default' as const)));
+
+export type FeedReaderMode = typeof FeedReaderMode.Type;
+
+/**
+ * The order of the feed's own list (FD-PREF-3): `newest` is arrival order,
+ * `oldest` its reverse. A new feed starts with `newest`.
+ */
+export const FeedOrder = Schema.Literals(['newest', 'oldest']).pipe(
+  Schema.withConstructorDefault(Effect.succeed('newest' as const))
+);
+
+export type FeedOrder = typeof FeedOrder.Type;
+
+/**
  * One owner's subscription to one source address. One feed per
  * `(ownerId, url)` (CM-ID-6, FD-ID-1).
  */
@@ -60,6 +83,10 @@ export const Feed = Schema.Struct({
    * (FD-SYNC step 5).
    */
   updatedAt: Schema.OptionFromOptional(Schema.DateTimeUtcFromDate),
+  /** Kept by refresh, sync and moving (FD-PREF-5). */
+  readerMode: FeedReaderMode,
+  /** Kept by refresh, sync and moving (FD-PREF-5). */
+  order: FeedOrder,
 });
 
 export type Feed = typeof Feed.Type;

@@ -1,0 +1,25 @@
+{
+  "name": "@reader/epub",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@reader/business": "workspace:*",
+    "effect": "4.1.4",
+    "fflate": "^0.8.2",
+    "jsdom": "^31.0.0"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.4",
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

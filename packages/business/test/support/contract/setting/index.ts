@@ -1,15 +1,16 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option, Redacted } from 'effect';
-import type { Setting } from '../../../src/entity/setting/setting';
-import { SettingRepository } from '../../../src/port/setting-repository';
+import type { Setting } from '../../../../src/entity/setting/setting';
+import { SettingRepository } from '../../../../src/port/setting-repository';
 import {
   alice,
   bob,
   decodeBrowserEndpoint,
   decodeJinaKey,
   decodeRetention,
-} from '../fixtures';
-import type { SettingStoreFactory } from './layer';
+} from '../../fixtures';
+import type { SettingStoreFactory } from '../layer';
+import { kindleCases } from './kindle';
 
 const jinaKey = decodeJinaKey('jina-secret');
 
@@ -265,6 +266,7 @@ export const settingRepositoryContract = (
     describe('jina provider', jinaCases(makeLayer));
     describe('browser provider', browserCases(makeLayer));
     describe('clearJinaKey', clearKeyCases(makeLayer));
+    describe('kindle delivery', kindleCases(makeLayer));
     describe('owner and concurrent writes', ownerCases(makeLayer));
   });
 };

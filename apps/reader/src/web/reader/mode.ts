@@ -1,5 +1,6 @@
 import { extractFeedItem } from '../api/feed-item';
 import { messageOf } from '../api/messages';
+import { feedById } from '../feed';
 import type { Article } from '../library';
 import { showToast } from '../ui/toast';
 import {
@@ -66,4 +67,33 @@ export const toggleExtraction = async (): Promise<void> => {
 /** Checks or unchecks the embedded page; unchecking returns to the content (RD-WEBPAGE-1). */
 export const setEmbeddedView = (on: boolean): void => {
   setReaderMode(on ? 'embedded' : 'default');
+};
+
+/** The navigation whose starting mode is settled (RD-MODE-4). */
+let startedRun = -1;
+
+/**
+ * Puts a newly opened feed item in its feed's reader mode (RD-MODE-4), once per
+ * navigation: `embedded` shows the page, `extracted` goes the way of `提取正文`.
+ * While the feed is not known yet the choice waits for the feed list; a mode
+ * the user already chose, or a saved page, keeps what is shown.
+ */
+export const startArticle = (article: Article): void => {
+  const current = articleRun();
+
+  if (startedRun === current) return;
+  if (article.kind === 'saved-page' || readerMode() !== 'default') {
+    startedRun = current;
+
+    return;
+  }
+
+  const feed = feedById(article.item.feedId);
+
+  if (feed === undefined) return;
+
+  startedRun = current;
+
+  if (feed.readerMode === 'embedded') setReaderMode('embedded');
+  if (feed.readerMode === 'extracted') void toggleExtraction();
 };

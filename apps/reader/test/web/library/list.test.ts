@@ -26,6 +26,10 @@ const api = vi.hoisted(() => ({
   listFolderItems: vi.fn(),
 }));
 
+const stored = vi.hoisted(() => ({
+  orders: new Map<string, 'newest' | 'oldest'>(),
+}));
+
 vi.mock('../../../src/web/api/saved-page', () => ({
   listSavedPages: api.listSavedPages,
 }));
@@ -40,6 +44,10 @@ vi.mock('../../../src/web/api/feed', () => ({
 
 vi.mock('../../../src/web/api/folder', () => ({
   listFolderItems: api.listFolderItems,
+}));
+
+vi.mock('../../../src/web/feed', () => ({
+  feedOrder: (id: string) => stored.orders.get(id) ?? 'newest',
 }));
 
 const emptyPage = { items: [], cursor: null };
@@ -88,7 +96,8 @@ describe('a page request', () => {
     expect(api.listFeedItems).toHaveBeenCalledTimes(1);
     expect(api.listFeedItemsOfFeed).toHaveBeenCalledWith(
       'feed-1',
-      expect.objectContaining({ limit: 30 })
+      expect.objectContaining({ limit: 30 }),
+      'newest'
     );
     expect(api.listFolderItems).toHaveBeenCalledWith(
       'folder-1',
@@ -340,5 +349,23 @@ describe('a row added while the list is shown', () => {
     prependRow({ kind: 'later' }, savedPageRow({ id: 'p0' }));
 
     expect(ids()).toEqual(['i1']);
+  });
+});
+
+describe('a feed list order', () => {
+  it('FD-PREF-3 lists a feed in its stored order on every page', async () => {
+    stored.orders.set('feed-2', 'oldest');
+    api.listFeedItemsOfFeed
+      .mockResolvedValueOnce(page([feedItem({ id: 'i1' })], 'i1'))
+      .mockResolvedValueOnce(emptyPage);
+
+    await reloadList({ kind: 'feed', id: 'feed-2' }, false);
+    stored.orders.set('feed-2', 'newest');
+    await loadNextPage();
+
+    expect(api.listFeedItemsOfFeed.mock.calls.map((call) => call[2])).toEqual([
+      'oldest',
+      'oldest',
+    ]);
   });
 });

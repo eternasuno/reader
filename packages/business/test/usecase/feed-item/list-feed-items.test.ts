@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Option } from 'effect';
+import type { FeedId } from '../../../src/entity/feed/feed';
+import type { FeedItemId } from '../../../src/entity/feed-item/feed-item';
 import { listFeedItems } from '../../../src/usecase/feed-item/list-feed-items';
 import {
   alice,
@@ -10,6 +12,17 @@ import {
 } from '../../support/fixtures';
 import { runItems, storeFeedWithItems } from './harness';
 
+const input = (
+  limit = 10,
+  cursor: Option.Option<FeedItemId> = Option.none()
+) => ({ limit, unread: false, cursor });
+
+const newest = (feedId: FeedId, page = input()) =>
+  listFeedItems(alice, feedId, page, 'newest');
+
+const oldest = (feedId: FeedId, page = input()) =>
+  listFeedItems(alice, feedId, page, 'oldest');
+
 describe('listFeedItems', () => {
   it.effect('FD-LIST-4 lists only the items of that feed, newest first', () =>
     runItems(
@@ -17,11 +30,7 @@ describe('listFeedItems', () => {
         const scope = yield* storeFeedWithItems(2);
         const other = yield* storeFeedWithItems(1);
 
-        const page = yield* listFeedItems(alice, scope.feed.id, {
-          limit: 10,
-          unread: false,
-          cursor: Option.none(),
-        });
+        const page = yield* newest(scope.feed.id, input());
 
         expect(idsOf(page.items)).toStrictEqual([
           rowAt(scope.items, 1).id,
@@ -35,11 +44,7 @@ describe('listFeedItems', () => {
   it.effect('FD-LIST-2 answers an empty page for an unknown feed', () =>
     runItems(
       Effect.gen(function* () {
-        const page = yield* listFeedItems(alice, makeUniqueFeed().id, {
-          limit: 10,
-          unread: false,
-          cursor: Option.none(),
-        });
+        const page = yield* newest(makeUniqueFeed().id, input());
 
         expect(page).toStrictEqual({ items: [], cursor: null });
       })
@@ -51,11 +56,7 @@ describe('listFeedItems', () => {
       Effect.gen(function* () {
         const theirs = yield* storeFeedWithItems(1, {}, bob);
 
-        const page = yield* listFeedItems(alice, theirs.feed.id, {
-          limit: 10,
-          unread: false,
-          cursor: Option.none(),
-        });
+        const page = yield* newest(theirs.feed.id, input());
 
         expect(page).toStrictEqual({ items: [], cursor: null });
       })
@@ -71,16 +72,11 @@ describe('listFeedItems paging', () => {
         Effect.gen(function* () {
           const { feed, items } = yield* storeFeedWithItems(3);
 
-          const first = yield* listFeedItems(alice, feed.id, {
-            limit: 2,
-            unread: false,
-            cursor: Option.none(),
-          });
-          const second = yield* listFeedItems(alice, feed.id, {
-            limit: 2,
-            unread: false,
-            cursor: Option.some(first.cursor ?? rowAt(items, 0).id),
-          });
+          const first = yield* newest(feed.id, input(2));
+          const second = yield* newest(
+            feed.id,
+            input(2, Option.some(first.cursor ?? rowAt(items, 0).id))
+          );
 
           expect(idsOf(first.items)).toStrictEqual([
             rowAt(items, 2).id,
@@ -91,5 +87,26 @@ describe('listFeedItems paging', () => {
           expect(second.cursor).toBeNull();
         })
       )
+  );
+
+  it.effect('FD-PREF-3 pages a feed oldest first when asked', () =>
+    runItems(
+      Effect.gen(function* () {
+        const { feed, items } = yield* storeFeedWithItems(3);
+
+        const first = yield* oldest(feed.id, input(2));
+        const second = yield* oldest(
+          feed.id,
+          input(2, Option.some(first.cursor ?? rowAt(items, 0).id))
+        );
+
+        expect(idsOf(first.items)).toStrictEqual([
+          rowAt(items, 0).id,
+          rowAt(items, 1).id,
+        ]);
+        expect(idsOf(second.items)).toStrictEqual([rowAt(items, 2).id]);
+        expect(second.cursor).toBeNull();
+      })
+    )
   );
 });

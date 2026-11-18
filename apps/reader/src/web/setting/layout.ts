@@ -11,7 +11,7 @@ export type SettingsLayout = 'beside' | 'stacked';
  * Whether a section is on screen. Every section stays mounted in both layouts —
  * a layout change only hides or shows it, so no draft is discarded and no write
  * is released (settings.md Interface). Beside the sections only the open one is
- * shown; stacked all three are, in page order.
+ * shown; stacked all four are, in page order.
  */
 export const sectionShown = (
   layout: SettingsLayout,

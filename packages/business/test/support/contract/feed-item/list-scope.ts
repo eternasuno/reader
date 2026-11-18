@@ -45,7 +45,7 @@ export const byFeedScope: ListScopeSetup = (makeRows) =>
     return {
       feedId: feed.id,
       rows,
-      list: (asked) => items.listByFeed(alice, feed.id, asked),
+      list: (asked) => items.listByFeed(alice, feed.id, asked, 'newest'),
     };
   });
 
@@ -103,9 +103,9 @@ const feedScopeCases = (makeLayer: FeedStoreFactory) => (): void => {
       const mine = itemRow(feed.id);
       yield* items.create(alice, [mine, itemRow(other.id)]);
 
-      expect(idsOf(yield* items.listByFeed(alice, feed.id, query))).toEqual([
-        mine.id,
-      ]);
+      expect(
+        idsOf(yield* items.listByFeed(alice, feed.id, query, 'newest'))
+      ).toEqual([mine.id]);
     }).pipe(Effect.provide(makeLayer()))
   );
 
@@ -121,12 +121,14 @@ const feedScopeCases = (makeLayer: FeedStoreFactory) => (): void => {
         yield* items.create(bob, [theirRow]);
 
         expect(
-          idsOf(yield* items.listByFeed(bob, theirFeed.id, query))
+          idsOf(yield* items.listByFeed(bob, theirFeed.id, query, 'newest'))
         ).toEqual([theirRow.id]);
         expect(
-          yield* items.listByFeed(alice, makeUniqueFeed().id, query)
+          yield* items.listByFeed(alice, makeUniqueFeed().id, query, 'newest')
         ).toEqual([]);
-        expect(yield* items.listByFeed(alice, theirFeed.id, query)).toEqual([]);
+        expect(
+          yield* items.listByFeed(alice, theirFeed.id, query, 'newest')
+        ).toEqual([]);
       }).pipe(Effect.provide(makeLayer()))
   );
 };

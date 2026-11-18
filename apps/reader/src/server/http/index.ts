@@ -2,6 +2,7 @@ import { Layer } from 'effect';
 import { FeedHandlersLive } from './feed';
 import { FeedItemHandlersLive } from './feed-item';
 import { FolderHandlersLive } from './folder';
+import { KindleHandlersLive } from './kindle';
 import { SavedPageHandlersLive } from './saved-page';
 import { SettingHandlersLive } from './setting';
 
@@ -11,5 +12,6 @@ export const ReaderHandlersLive = Layer.mergeAll(
   FeedHandlersLive,
   FeedItemHandlersLive,
   FolderHandlersLive,
-  SettingHandlersLive
+  SettingHandlersLive,
+  KindleHandlersLive
 );

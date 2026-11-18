@@ -1,7 +1,7 @@
 import { Effect, Option, Ref } from 'effect';
 import type { ArticleContent } from '../../../../src/entity/common/article';
 import type { OwnerId } from '../../../../src/entity/common/owner-id';
-import type { Feed, FeedId } from '../../../../src/entity/feed/feed';
+import type { Feed, FeedId, FeedOrder } from '../../../../src/entity/feed/feed';
 import type {
   FeedItem,
   FeedItemId,
@@ -63,21 +63,32 @@ const findItem =
       )
     );
 
-/** One page: owner, scope, unread filter, strictly after the cursor, id descending (CM-PAGE). */
+/**
+ * One page: owner, scope, unread filter, strictly after the cursor, id
+ * descending, or ascending under `oldest` (CM-PAGE, FD-PREF-3).
+ */
 const page = (
   store: { readonly items: ReadonlyArray<FeedItem> },
   owner: OwnerId,
   inScope: (item: FeedItem) => boolean,
-  query: FeedItemQuery
-): ReadonlyArray<FeedItem> =>
-  store.items
+  query: FeedItemQuery,
+  order: FeedOrder = 'newest'
+): ReadonlyArray<FeedItem> => {
+  const isAfter = (item: FeedItem, cursor: FeedItemId): boolean =>
+    order === 'oldest' ? item.id > cursor : item.id < cursor;
+  const rows = store.items
     .filter((item) => item.ownerId === owner && inScope(item))
     .filter((item) => !query.unread || !item.read)
-    .filter(
-      (item) => !Option.exists(query.cursor, (cursor) => item.id >= cursor)
+    .filter((item) =>
+      Option.match(query.cursor, {
+        onNone: () => true,
+        onSome: (cursor) => isAfter(item, cursor),
+      })
     )
-    .sort(byIdDescending)
-    .slice(0, query.limit);
+    .sort(byIdDescending);
+
+  return (order === 'oldest' ? rows.reverse() : rows).slice(0, query.limit);
+};
 
 const listAllItems =
   (state: FeedStateRef) =>
@@ -94,10 +105,11 @@ const listItemsByFeed =
   (
     owner: OwnerId,
     feedId: FeedId,
-    query: FeedItemQuery
+    query: FeedItemQuery,
+    order: FeedOrder
   ): Effect.Effect<ReadonlyArray<FeedItem>> =>
     Effect.map(Ref.get(state), (store) =>
-      page(store, owner, (item) => item.feedId === feedId, query)
+      page(store, owner, (item) => item.feedId === feedId, query, order)
     );
 
 const listItemsByFolder =

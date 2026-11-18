@@ -1,6 +1,12 @@
 import { Context, type DateTime, type Effect, type Option } from 'effect';
 import type { OwnerId } from '../entity/common/owner-id';
-import type { Feed, FeedId, FeedTitle } from '../entity/feed/feed';
+import type {
+  Feed,
+  FeedId,
+  FeedOrder,
+  FeedReaderMode,
+  FeedTitle,
+} from '../entity/feed/feed';
 import type { FolderId } from '../entity/folder/folder';
 import type { FeedRepositoryError } from '../error/feed';
 
@@ -53,6 +59,21 @@ export interface IFeedRepository {
     id: FeedId,
     title: FeedTitle,
     at: DateTime.Utc
+  ) => Effect.Effect<void, FeedRepositoryError>;
+  /**
+   * Sets the feed's `readerMode`; changes nothing when the feed is not the
+   * owner's (FD-PREF-2).
+   */
+  readonly setReaderMode: (
+    owner: OwnerId,
+    id: FeedId,
+    readerMode: FeedReaderMode
+  ) => Effect.Effect<void, FeedRepositoryError>;
+  /** Sets the feed's `order`; changes nothing when the feed is not the owner's (FD-PREF-2). */
+  readonly setOrder: (
+    owner: OwnerId,
+    id: FeedId,
+    order: FeedOrder
   ) => Effect.Effect<void, FeedRepositoryError>;
   /**
    * Removes the owner's feeds among `ids` together with all their items in one

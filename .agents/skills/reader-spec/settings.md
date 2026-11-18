@@ -52,6 +52,17 @@ Two operations, one per provider, because they write different fields and fail d
 - SET-ACTIVE-2 Provider `browser` with no stored endpoint cannot occur (SET-FETCH-4). `activeFetcher` treats it as a defect: it never falls back to Jina and never hides the broken state. The state can only come from a bug or a hand-edited database, so it is surfaced, not masked.
 - SET-ACTIVE-3 The outer layer maps `ActiveFetcher` to a `WebpageFetcher` by exhaustive match and reads no other setting field for that purpose (CM-FETCH-2). No business condition about providers lives outside business.
 
+### SET-KINDLE — Kindle delivery
+
+Where and how the unread articles are mailed (`kindle.md`). One group of values saved together.
+
+- SET-KINDLE-1 Values: the Kindle address and the sender address (`EmailAddress`: trimmed, one `@`, no whitespace), the SMTP host (trimmed, non-empty), the SMTP port (integer 1–65535, the form proposes 465), the security (`tls` = TLS from the start, `starttls` = upgrade a plain connection), the optional SMTP user (trimmed; blank is none) and the optional daily send time (`HH:00` or `HH:30`, 24-hour: whole and half hours only; blank is none). A value outside its rule is rejected at the boundary with `InvalidKindleSetting` and nothing is stored.
+- SET-KINDLE-2 The SMTP password is a secret like the Jina key (SET-VAL-4): stored as typed (not trimmed), never answered, never logged. A read reports only whether one is stored.
+- SET-KINDLE-3 Saving writes the whole group in one write. A password that is omitted, or empty, counts as not given and keeps the stored one (SET-VAL-6); a given one replaces it.
+- SET-KINDLE-4 Clearing the password removes it and changes nothing else; it answers success also when none was stored.
+- SET-KINDLE-5 A user who never saved the group has no Kindle delivery: a read answers no `kindle` object and a send fails with `KindleNotConfigured` (KD-SEND-1). There is no way to delete the group once saved; removing the send time stops the schedule.
+- SET-KINDLE-6 Saving the group also stores the next scheduled send (`nextSendAt`): the first server-local occurrence of the send time strictly after the save, or none without a send time (KD-SCHED-1). It is never answered. Changing the send time therefore never sends at once: a time already past today first comes due tomorrow.
+
 ### SET-OWN — Ownership
 
 - SET-OWN-1 Every operation reads and writes only the settings of the owner passed in (CM-OWN). The scheduler reads the retention of the feed's owner.
@@ -64,9 +75,9 @@ Two operations, one per provider, because they write different fields and fail d
 
 ### The settings page
 
-- `/settings` is one page with a header and three sections, `账号`, `文章` and `提取`, in that order. The header shows the page heading, its subtitle and the back link to the library, which leads to `稍后阅读` (`/` redirects there) (Messages: page heading, page subtitle, back to the library).
-- A navigation labelled with the section navigation label lists the three sections in the same order, marks the open one as selected and points each item at its section (Messages: section navigation, accessible label; section navigation items).
-- On a wide screen the navigation stands beside the sections and switches between them: only the open section is shown. When the navigation does not fit beside the content — decided by measuring the two areas, not by a screen-width breakpoint — the three sections are stacked in the order above and an item scrolls to its section instead of hiding the others, so nothing typed is discarded. The page starts on `账号`.
+- `/settings` is one page with a header and four sections, `账号`, `文章`, `提取` and `Kindle`, in that order. The header shows the page heading, its subtitle and the back link to the library, which leads to `稍后阅读` (`/` redirects there) (Messages: page heading, page subtitle, back to the library).
+- A navigation labelled with the section navigation label lists the four sections in the same order, marks the open one as selected and points each item at its section (Messages: section navigation, accessible label; section navigation items).
+- On a wide screen the navigation stands beside the sections and switches between them: only the open section is shown. When the navigation does not fit beside the content — decided by measuring the two areas, not by a screen-width breakpoint — the four sections are stacked in the order above and an item scrolls to its section instead of hiding the others, so nothing typed is discarded. The page starts on `账号`.
 - Reading the settings: while they load the page shows the reading label. If the read fails, an alert shows the wording of the failure with the retry button, which reads them again; the sections appear only after a successful read, so a failed read also hides `账号` until it succeeds (Messages: reading the settings; load error, retry button).
 - The page is only reachable with a session (see [SKILL.md](SKILL.md) and [account.md](account.md)).
 
@@ -91,10 +102,18 @@ Two operations, one per provider, because they write different fields and fail d
 - There is no control that removes the browser service address (SET-ENDPOINT-1); typing a new one replaces it (SET-FETCH-2).
 - Switching the select and saving never discards the other provider's stored configuration (SET-FETCH-5), so a saved browser address stays stored while Jina is in use and vice versa.
 
+### Kindle — delivery
+
+- The section shows its description line (Messages: Kindle section description) and, when a delivery is stored, the stored password line saying whether a password is stored (SET-KINDLE-2).
+- Fields, prefilled from the stored delivery (empty, port 465 and security `tls` when none is stored): Kindle address (required, `type=email`), sender address (required, `type=email`, its hint says it must be on the Kindle approved list), SMTP host (required), SMTP port (required number, `min` 1, `max` 65535), security select (`SSL/TLS` or `STARTTLS`), SMTP user (optional), SMTP password (password field, always empty when read; hint for a stored or no stored password) and daily send time (a select of the 48 whole and half hours, first the no-schedule option; its hint says the time is the server's).
+- The Kindle save button saves the group (SET-KINDLE-3) with the same pending, disabling, toast and failure behavior as the other sections (Messages: Kindle save button; Kindle settings saved). On success the password field is emptied.
+- When a password is stored a separated row offers the clear-password button, which asks the clear-password confirmation; confirming clears it (SET-KINDLE-4) and shows the password-cleared toast.
+- The send-now row that ends the section is `kindle.md` Interface.
+
 ### Saving and unsaved changes
 
 - One write runs at a time per page: while a request is in flight every field and button of the sections is disabled, the saving status line is shown, and each section navigation item is disabled with that text as its title (Messages: saving status line). Submitting again, switching section or leaving is ignored while a write is in flight (with the single exception below).
-- A section counts as changed when its draft differs from what was read: `文章` when the number differs from the stored retention, `提取` when the provider differs from the stored one or either secret field holds a non-blank value, `账号` when any of its three password fields is non-empty.
+- A section counts as changed when its draft differs from what was read: `文章` when the number differs from the stored retention, `提取` when the provider differs from the stored one or either secret field holds a non-blank value, `账号` when any of its three password fields is non-empty, `Kindle` when any field differs from the stored delivery (or from the empty form when none is stored) or the password field is non-empty.
 - Switching section with a changed section in the switching layout asks the confirmation for a section switch with unsaved changes (Messages). Confirming discards the current section's drafts (the retention is refilled from storage, the secret fields are emptied, the provider returns to the stored one) and opens the target section; cancelling stays where it is. In the stacked layout switching only scrolls, so nothing is asked and nothing is discarded.
 - Leaving the page with any changed section asks the confirmation for leaving with unsaved changes (Messages); confirming leaves, cancelling stays. A reload or a closed tab with a changed section raises the browser's own leave prompt.
 - While a write is in flight a navigation is blocked and shows the saving status line as an error toast, so a save cannot be lost; the one navigation that always goes through is the redirect to `/login` when the session ends.
@@ -113,13 +132,16 @@ The `账号` section changes the password of the signed-in account. Its fields, 
 | PUT | `/api/settings/fetcher/jina` | body `{ key?: string }` | 204 | `SettingRepositoryError` 500 |
 | PUT | `/api/settings/fetcher/browser` | body `{ endpoint?: string }` | 204 | `InvalidEndpoint` 400, `BrowserEndpointRequired` 422, `SettingRepositoryError` 500 |
 | DELETE | `/api/settings/fetcher/jina/key` | — | 204 | `SettingRepositoryError` 500 |
+| PUT | `/api/settings/kindle` | body `{ kindleEmail: string, senderEmail: string, smtpHost: string, smtpPort: number, smtpSecurity: "tls" \| "starttls", smtpUser?: string, smtpPassword?: string, sendTime?: string }` | 204 | `InvalidKindleSetting` 400, `SettingRepositoryError` 500 |
+| DELETE | `/api/settings/kindle/password` | — | 204 | `SettingRepositoryError` 500 |
 
-- `GET /api/settings` answers exactly the four fields of the table, in any order: never the key, never the endpoint (SET-VAL-4, SET-GET-2). A user who never saved anything gets `{ retention: 100, provider: "jina", jinaKeyConfigured: false, browserEndpointConfigured: false }` (SET-GET-1).
+- `GET /api/settings` answers the four fields of the table and, when a Kindle delivery is stored, `kindle: { kindleEmail, senderEmail, smtpHost, smtpPort, smtpSecurity, smtpUser?, sendTime?, smtpPasswordConfigured: boolean }`, in any order: never the key, the endpoint or the password (SET-VAL-4, SET-GET-2, SET-KINDLE-2). A user who never saved anything gets `{ retention: 100, provider: "jina", jinaKeyConfigured: false, browserEndpointConfigured: false }` (SET-GET-1).
 - `PUT /api/settings/retention` takes `{ retention: number }`. An absent `retention` or one that is not a number is a decode failure (400, empty body). A number that is zero, negative or not an integer answers 400 `InvalidRetention` (SET-VAL-1).
 - `PUT /api/settings/fetcher/jina` takes `{ key?: string }`; a `key` that is absent, empty or blank counts as not given (SET-VAL-6) and a given key is trimmed before storing (SET-VAL-2).
 - `PUT /api/settings/fetcher/browser` takes `{ endpoint?: string }`; an `endpoint` that is absent, empty or blank counts as not given (SET-VAL-6). A given endpoint that is not an http, https, ws or wss URL — including one of another protocol — answers 400 `InvalidEndpoint` (SET-VAL-3). No endpoint given and none stored answers 422 `BrowserEndpointRequired` (SET-FETCH-3).
 - `DELETE /api/settings/fetcher/jina/key` answers 204 also when no key was stored (SET-KEY-2). No request removes the browser endpoint (SET-ENDPOINT-1).
-- All five need a session, and the four writes are Origin-checked (see API conventions in [SKILL.md](SKILL.md)). A repository failure answers 500 `SettingRepositoryError` and changes nothing.
+- `PUT /api/settings/kindle`: a missing required field or a field of the wrong JSON type is a decode failure (400, empty body); a value that breaks its rule (SET-KINDLE-1) answers 400 `InvalidKindleSetting`. `smtpUser`, `smtpPassword` and `sendTime` that are absent or blank count as not given (SET-KINDLE-3).
+- All seven need a session, and the writes are Origin-checked (see API conventions in [SKILL.md](SKILL.md)). A repository failure answers 500 `SettingRepositoryError` and changes nothing.
 - Errors carry only `_tag` (see API conventions); the wordings are the web client's (Messages).
 
 ## Messages
@@ -127,10 +149,10 @@ The `账号` section changes the password of the signed-in account. Its fields, 
 | Situation or error tag | Text |
 | --- | --- |
 | page heading | 设置 |
-| page subtitle | 管理账号、文章保留与正文提取。 |
+| page subtitle | 管理账号、文章保留、正文提取与 Kindle 发送。 |
 | back to the library | 返回阅读 |
 | section navigation, accessible label | 设置分区 |
-| section navigation items | 账号 / 文章 / 提取 |
+| section navigation items | 账号 / 文章 / 提取 / Kindle |
 | saving status line, and the title of a disabled section item | 正在保存设置，完成前无法切换分区或离开本页。 |
 | reading the settings | 正在读取设置… |
 | load error, retry button | 重试 |
@@ -138,6 +160,7 @@ The `账号` section changes the password of the signed-in account. Its fields, 
 | `InvalidEndpoint` (400) | 请输入有效的浏览器服务地址 |
 | `BrowserEndpointRequired` (422) | 请填写浏览器服务地址 |
 | `SettingRepositoryError` (500) | 暂时无法访问设置，请稍后重试 |
+| `InvalidKindleSetting` (400) | Kindle 发送设置有误，请检查填写内容 |
 | retention section heading | 文章 |
 | retention section description | 每个订阅源最多保留最近的文章，超出数量的旧文章会自动清理。默认保留 100 篇。 |
 | retention field label | 每个订阅源保留文章数 |
@@ -162,6 +185,23 @@ The `账号` section changes the password of the signed-in account. Its fields, 
 | clear-key button | 删除 Key |
 | clear-key confirmation | 删除已保存的 Jina Key？删除后 Jina 提取将使用匿名访问。 |
 | key cleared | Jina Key 已删除 |
+| Kindle section heading | Kindle |
+| Kindle section description | 每天定时把未读文章打包成 EPUB，通过你的 SMTP 邮箱发送到 Kindle。 |
+| Kindle address field label | Kindle 邮箱 |
+| sender address field label and hint | 发件人邮箱 / 需在亚马逊账户的"已认可的发件人"列表中。 |
+| SMTP host, port, security field labels | SMTP 服务器 / 端口 / 加密方式 |
+| security options | SSL/TLS / STARTTLS |
+| SMTP user field label and hint | SMTP 用户名 / 留空则不登录。 |
+| SMTP password field label | SMTP 密码 |
+| SMTP password hint, password stored | 已保存密码，留空保持不变。 |
+| SMTP password hint, no password stored | 留空则不登录。 |
+| send time field label, no-schedule option and hint | 每日发送时间 / 不定时发送 / 按服务器时间，每天发送一次。 |
+| stored password line | SMTP 密码：已保存 (or `未保存`) |
+| Kindle save button | 保存 Kindle 设置 / 保存中… |
+| Kindle settings saved | Kindle 设置已保存 |
+| clear-password button | 删除密码 |
+| clear-password confirmation | 删除已保存的 SMTP 密码？ |
+| password cleared | SMTP 密码已删除 |
 | section switch with unsaved changes | 当前分区有未保存的修改，切换后将被丢弃。确定继续吗？ |
 | leaving the page with unsaved changes | 有未保存的修改，确定离开设置页吗？ |
 | toast dismiss button | 关闭 |
@@ -341,4 +381,21 @@ Feature: Settings
       Then the page scrolls to "提取" and no confirmation is asked
       When I press "文章" again
       Then the field still shows "60"
+
+  Rule: Kindle delivery
+
+    Scenario: Saving the Kindle delivery keeps the password secret
+      Given I fill the Kindle section with an SMTP password
+      When I press "保存 Kindle 设置"
+      Then the toast "Kindle 设置已保存" is shown
+      And the settings read reports a stored password but never its value
+
+    Scenario: A blank password keeps the stored one
+      Given an SMTP password is stored
+      When I change the send time to "07:30" and save with the password field empty
+      Then the stored password is kept
+
+    Scenario: An invalid address is rejected
+      When the Kindle delivery is saved with the Kindle address "kindle"
+      Then the request answers 400 "InvalidKindleSetting" and nothing is stored
 ```

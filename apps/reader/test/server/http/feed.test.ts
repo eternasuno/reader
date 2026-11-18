@@ -231,10 +231,71 @@ it.effect('GET /api/feeds/:id/items FD-LIST-2 pages one feed', () =>
     const api = yield* client();
     const body = yield* api.feed.listFeedItemsOfFeed({
       params: { id: feed.id },
-      query: { limit: 10, unread: false },
+      query: { limit: 10, unread: false, order: 'newest' },
     });
 
     expect(body.items.map((item) => item.id)).toEqual([rows[0]?.id]);
     expect(body.cursor).toBeNull();
   }).pipe(Effect.provide(httpLayer({ calls })))
+);
+
+it.effect('GET /api/feeds/:id/items FD-PREF-3 lists oldest first', () =>
+  Effect.gen(function* () {
+    const feed = yield* seedFeed();
+    const items = yield* FeedItemRepository;
+    const rows = [
+      makeUniqueFeedItem({ feedId: feed.id }),
+      makeUniqueFeedItem({ feedId: feed.id }),
+    ];
+    yield* items.create(alice, rows);
+    const api = yield* client();
+    const body = yield* api.feed.listFeedItemsOfFeed({
+      params: { id: feed.id },
+      query: { limit: 10, unread: false, order: 'oldest' },
+    });
+
+    expect(body.items.map((item) => item.id)).toEqual(
+      rows.map((row) => row.id).sort()
+    );
+  }).pipe(Effect.provide(httpLayer({ calls })))
+);
+
+it.effect('PUT /api/feeds/:id/reader-mode FD-PREF-2 stores the mode', () =>
+  Effect.gen(function* () {
+    const feed = yield* seedFeed();
+    const api = yield* client();
+    const response = yield* api.feed.setFeedReaderMode({
+      params: { id: feed.id },
+      payload: { readerMode: 'embedded' },
+      responseMode: 'response-only',
+    });
+    yield* api.feed.setFeedOrder({
+      params: { id: feed.id },
+      payload: { order: 'oldest' },
+    });
+
+    expect(response.status).toBe(204);
+    expect((yield* api.feed.listFeeds()).items[0]).toMatchObject({
+      readerMode: 'embedded',
+      order: 'oldest',
+    });
+  }).pipe(Effect.provide(httpLayer({ calls })))
+);
+
+it.effect(
+  'PUT /api/feeds/:id/order rejects an unknown order structurally',
+  () =>
+    Effect.gen(function* () {
+      const feed = yield* seedFeed();
+      const response = yield* rawCall(
+        new Request(`http://localhost/api/feeds/${feed.id}/order`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: '{"order":"random"}',
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect(yield* Effect.promise(() => response.text())).toBe('');
+    }).pipe(Effect.provide(httpLayer({ calls })))
 );

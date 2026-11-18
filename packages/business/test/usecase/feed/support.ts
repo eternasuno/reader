@@ -205,11 +205,16 @@ export const storedItems = (
   FeedItemRepository
 > =>
   Effect.flatMap(FeedItemRepository, (items) =>
-    items.listByFeed(owner, feedId, {
-      limit: Number.MAX_SAFE_INTEGER,
-      unread: false,
-      cursor: Option.none(),
-    })
+    items.listByFeed(
+      owner,
+      feedId,
+      {
+        limit: Number.MAX_SAFE_INTEGER,
+        unread: false,
+        cursor: Option.none(),
+      },
+      'newest'
+    )
   );
 
 /** Stores items so that the given order is the stored list order, newest first (FD-LIST-4). */

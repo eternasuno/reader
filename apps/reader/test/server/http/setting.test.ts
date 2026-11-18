@@ -1,7 +1,7 @@
 import { expect, it } from '@effect/vitest';
 import { BrowserEndpoint, JinaKey, SettingRepository } from '@reader/business';
 import { alice } from '@reader/business/testing';
-import { Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { HttpApiTest } from 'effect/http-api';
 import { ReaderApi } from '../../../src/contract';
 import { httpLayer } from './support';
@@ -136,5 +136,178 @@ it.effect(
 
       expect(response.status).toBe(204);
       expect(Option.isNone(stored.jinaKey)).toBe(true);
+    }).pipe(Effect.provide(httpLayer()))
+);
+
+const secretPassword = 'smtp-secret';
+
+/** The required values of a delivery (SET-KINDLE-1). */
+const delivery = {
+  kindleEmail: 'reader@kindle.com',
+  senderEmail: 'me@example.com',
+  smtpHost: 'smtp.example.com',
+  smtpPort: 465,
+  smtpSecurity: 'tls',
+};
+
+const deliveryWithSecrets = {
+  ...delivery,
+  smtpUser: 'login',
+  smtpPassword: secretPassword,
+  sendTime: '07:00',
+};
+
+it.effect(
+  'GET /api/settings SET-KINDLE-5 answers no kindle before it is saved',
+  () =>
+    Effect.gen(function* () {
+      const api = yield* client();
+      const response = yield* api.setting.getSetting({
+        responseMode: 'response-only',
+      });
+      const body = yield* response.json;
+
+      expect(Object.keys(body as Record<string, unknown>).sort()).toEqual([
+        'browserEndpointConfigured',
+        'jinaKeyConfigured',
+        'provider',
+        'retention',
+      ]);
+    }).pipe(Effect.provide(httpLayer()))
+);
+
+it.effect(
+  'PUT /api/settings/kindle SET-KINDLE-2 stores it and answers no password',
+  () =>
+    Effect.gen(function* () {
+      const api = yield* client();
+      yield* api.setting.setKindle({ payload: deliveryWithSecrets });
+      const response = yield* api.setting.getSetting({
+        responseMode: 'response-only',
+      });
+      const body = yield* response.json;
+
+      expect(body).toEqual({
+        retention: 100,
+        provider: 'jina',
+        jinaKeyConfigured: false,
+        browserEndpointConfigured: false,
+        kindle: {
+          kindleEmail: 'reader@kindle.com',
+          senderEmail: 'me@example.com',
+          smtpHost: 'smtp.example.com',
+          smtpPort: 465,
+          smtpSecurity: 'tls',
+          smtpUser: 'login',
+          sendTime: '07:00',
+          smtpPasswordConfigured: true,
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain(secretPassword);
+    }).pipe(Effect.provide(httpLayer()))
+);
+
+it.effect('PUT /api/settings/kindle SET-KINDLE-1 rejects a broken value', () =>
+  Effect.gen(function* () {
+    const settings = yield* SettingRepository;
+    const api = yield* client();
+    const response = yield* api.setting.setKindle({
+      payload: { ...deliveryWithSecrets, kindleEmail: 'kindle' },
+      responseMode: 'response-only',
+    });
+    const stored = yield* settings.get(alice);
+
+    expect(response.status).toBe(400);
+    expect(yield* response.json).toEqual({ _tag: 'InvalidKindleSetting' });
+    expect(Option.isNone(stored.kindle)).toBe(true);
+  }).pipe(Effect.provide(httpLayer()))
+);
+
+it.effect(
+  'PUT /api/settings/kindle SET-KINDLE-3 keeps the password and drops a blank send time',
+  () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+      const api = yield* client();
+      yield* api.setting.setKindle({ payload: deliveryWithSecrets });
+      yield* api.setting.setKindle({ payload: { ...delivery, sendTime: '' } });
+      const stored = yield* settings.get(alice);
+      const read = yield* api.setting.getSetting();
+
+      expect(Option.isSome(stored.smtpPassword)).toBe(true);
+      expect(read.kindle).not.toHaveProperty('sendTime');
+      expect(read.kindle).toMatchObject({ smtpPasswordConfigured: true });
+    }).pipe(Effect.provide(httpLayer()))
+);
+
+it.effect(
+  'DELETE /api/settings/kindle/password SET-KINDLE-4 clears the password',
+  () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+      const api = yield* client();
+      yield* api.setting.setKindle({ payload: deliveryWithSecrets });
+      const response = yield* api.setting.removeSmtpPassword({
+        responseMode: 'response-only',
+      });
+      const stored = yield* settings.get(alice);
+      const read = yield* api.setting.getSetting();
+
+      expect(response.status).toBe(204);
+      expect(Option.isNone(stored.smtpPassword)).toBe(true);
+      expect(read.kindle).toMatchObject({ smtpPasswordConfigured: false });
+    }).pipe(Effect.provide(httpLayer()))
+);
+
+it.effect(
+  'PUT /api/settings/kindle KD-SCHED-1 stores the next send after now',
+  () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+      const api = yield* client();
+      const before = yield* DateTime.now;
+
+      yield* api.setting.setKindle({ payload: deliveryWithSecrets });
+
+      const setting = yield* settings.get(alice);
+      const next = DateTime.toEpochMillis(
+        Option.getOrThrow(setting.nextSendAt)
+      );
+
+      expect(next).toBeGreaterThan(DateTime.toEpochMillis(before));
+      expect(next).toBeLessThanOrEqual(
+        DateTime.toEpochMillis(before) + 24 * 60 * 60 * 1000
+      );
+    }).pipe(Effect.provide(httpLayer()))
+);
+
+it.effect(
+  'PUT /api/settings/kindle KD-SCHED-1 a save without a time clears the next send',
+  () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+      const api = yield* client();
+
+      yield* api.setting.setKindle({ payload: deliveryWithSecrets });
+      yield* api.setting.setKindle({ payload: delivery });
+
+      expect(Option.isNone((yield* settings.get(alice)).nextSendAt)).toBe(true);
+    }).pipe(Effect.provide(httpLayer()))
+);
+
+it.effect(
+  'PUT /api/settings/kindle SET-KINDLE-1 rejects a time off the half hour',
+  () =>
+    Effect.gen(function* () {
+      const settings = yield* SettingRepository;
+      const api = yield* client();
+      const response = yield* api.setting.setKindle({
+        payload: { ...deliveryWithSecrets, sendTime: '07:15' },
+        responseMode: 'response-only',
+      });
+
+      expect(response.status).toBe(400);
+      expect(yield* response.json).toEqual({ _tag: 'InvalidKindleSetting' });
+      expect(Option.isNone((yield* settings.get(alice)).kindle)).toBe(true);
     }).pipe(Effect.provide(httpLayer()))
 );

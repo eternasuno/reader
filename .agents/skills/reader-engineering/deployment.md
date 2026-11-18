@@ -22,7 +22,7 @@ This file is the source of truth for setup, commands, environment variables and 
 
 - Node `>=22.19` (the `engines` floor that `node:sqlite` requires; the container builds on Node 24) and pnpm `12.3.4`, pinned in the root `package.json`.
 - `pnpm install`, then create the app's local environment file from `apps/reader/.env.example` and replace `BETTER_AUTH_SECRET` with a long random value (`openssl rand -base64 32`).
-- Internal workspace packages export TypeScript source (`./src/index.ts`) and are bundled into `dist/server.js` by `vite.server.config.ts`. Any library kept external by `ssr.external` in `vite.server.config.ts` (`@mozilla/readability`, `dompurify`, `feedsmith`, `jsdom`, `puppeteer-core`, `ws`) remains a runtime import of `dist/server.js` and must also be a direct `dependencies` entry of `apps/reader/package.json` — otherwise pnpm's strict `node_modules` (both locally and after `pnpm --filter reader deploy --prod`) links it only under the adapter package and `node server.js` fails to resolve it. TypeScript `include`/`exclude` does not control bundler externalization, and the pinned pnpm supports the default `deploy` (no `--legacy`).
+- Internal workspace packages export TypeScript source (`./src/index.ts`) and are bundled into `dist/server.js` by `vite.server.config.ts`. Any library kept external by `ssr.external` in `vite.server.config.ts` (`@mozilla/readability`, `dompurify`, `feedsmith`, `fflate`, `jsdom`, `nodemailer`, `puppeteer-core`, `ws`) remains a runtime import of `dist/server.js` and must also be a direct `dependencies` entry of `apps/reader/package.json` — otherwise pnpm's strict `node_modules` (both locally and after `pnpm --filter reader deploy --prod`) links it only under the adapter package and `node server.js` fails to resolve it. TypeScript `include`/`exclude` does not control bundler externalization, and the pinned pnpm supports the default `deploy` (no `--legacy`).
 
 ## Commands
 
@@ -54,6 +54,7 @@ This file is the source of truth for setup, commands, environment variables and 
 | `DATA_DIR` | `.data` | server, `db:migrate` | directory holding `reader.db` and `auth.db`, relative to the process working directory, created if missing |
 | `BETTER_AUTH_SECRET` | — (required) | server | Better Auth signing secret |
 | `BETTER_AUTH_URL` | `http://localhost:3000` | server | canonical public origin used for auth URLs and the `Origin` check on state-changing requests |
+| `TZ` | the system zone | server | time zone of the process, which decides the server-local date of a Kindle send and the instant its daily send time comes due (KD-SCHED-1) |
 
 - Deploy the web and `/api` on one public origin, set `BETTER_AUTH_URL` to it, and terminate HTTPS in a reverse proxy in front of the app.
 - Local development reads `.env` files (`--env-file-if-exists`); the container never does. Inject every container value through Docker environment variables, and keep environment files out of the build context.
@@ -85,6 +86,7 @@ docker run --rm --init \
 ```
 
 - Set `API_PORT` and map the same container port with `-p` (`-e API_PORT=8080 -p 8080:8080`).
+- The container's time zone is UTC unless `TZ` is set, so a saved send time would fire in UTC: pass the zone you mean, `-e TZ=Asia/Shanghai` (KD-SCHED-1).
 - Export a strong `BETTER_AUTH_SECRET` in the host environment before running these commands; `-e BETTER_AUTH_SECRET` without a value forwards it from the host.
 - The image ships no browser. Browser extraction connects to a CDP-compatible browser service the user runs and saves in the settings; inside the container `localhost` is the container, so the address must be reachable from it.
 - `/data` must be writable by UID 1000, the migration container's user and the runtime's `node`: a fresh named volume inherits the ownership the image gives `/data`, and a bind mount must be made writable by that uid.

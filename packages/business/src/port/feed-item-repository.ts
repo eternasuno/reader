@@ -1,7 +1,7 @@
 import { Context, type Effect, type Option } from 'effect';
 import type { ArticleContent } from '../entity/common/article';
 import type { OwnerId } from '../entity/common/owner-id';
-import type { FeedId } from '../entity/feed/feed';
+import type { FeedId, FeedOrder } from '../entity/feed/feed';
 import type { FeedItem, FeedItemId } from '../entity/feed-item/feed-item';
 import type { FolderId } from '../entity/folder/folder';
 import type { FeedItemRepositoryError } from '../error/feed-item';
@@ -46,11 +46,16 @@ export interface IFeedItemRepository {
     owner: OwnerId,
     query: FeedItemQuery
   ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
-  /** As `listAll`, restricted to one feed; an unknown or foreign feed gives an empty page (FD-LIST-2). */
+  /**
+   * As `listAll`, restricted to one feed; an unknown or foreign feed gives an
+   * empty page (FD-LIST-2). Under `oldest` the rows are `id` ascending and the
+   * cursor means strictly larger ids (FD-PREF-3).
+   */
   readonly listByFeed: (
     owner: OwnerId,
     feedId: FeedId,
-    query: FeedItemQuery
+    query: FeedItemQuery,
+    order: FeedOrder
   ) => Effect.Effect<ReadonlyArray<FeedItem>, FeedItemRepositoryError>;
   /**
    * As `listAll`, restricted to the items of the feeds whose `folderId` is that

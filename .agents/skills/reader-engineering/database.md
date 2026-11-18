@@ -37,21 +37,21 @@ The product's data is SQLite, and `@reader/sqlite` is the adapter for the busine
 
 ## Lists and paging
 
-- Lists use database-side keyset paging on `id` descending, always scoped by owner (CM-OWN), filtered by `unread` in both lists and, for feed items, by `feedId` (one feed) or by the feeds whose `folderId` is the folder (one folder). The cursor is the `id` of the last returned row and the next page is the rows with a smaller id.
+- Lists use database-side keyset paging on `id` descending (ascending, with `id >` the cursor, for a single feed that stores `oldest`; FD-PREF-3), always scoped by owner (CM-OWN), filtered by `unread` in both lists and, for feed items, by `feedId` (one feed) or by the feeds whose `folderId` is the folder (one folder). The cursor is the `id` of the last returned row and the next page is the rows with a smaller id.
 - `publishedAt` is display-only and belongs in no `ORDER BY`, keyset clause or index: it is optional, comes from outside, and does not order arrivals.
-- Keep the keyset clause builder in one place (the store's `page` fragment: unread clause, cursor clause, `ORDER BY id DESC LIMIT ?`) so the four paged list queries cannot drift apart.
+- Keep the keyset clause builder in one place (the store's `page` fragment: unread clause, cursor clause, `ORDER BY id DESC|ASC LIMIT ?`) so the four paged list queries cannot drift apart.
 
 ## Schema, constraints and indexes
 
 `packages/sqlite/src/migration.ts` (`0001_reader`) is the schema. What the DDL alone does not explain:
 
 - `content` is `NOT NULL` on `saved_page` and nullable on `feed_item`: adding a link stores the extracted article or fails, while a feed item may arrive with no text and gain content later through extraction or saving.
-- `setting` has at most one row per owner, created on its first write (`get` returns defaults without inserting a row); `jina_key` and `browser_endpoint` are secrets and must never be returned or logged.
+- `setting` has at most one row per owner, created on its first write (`get` returns defaults without inserting a row); `jina_key` and `browser_endpoint` are secrets and must never be returned or logged. The Kindle delivery is the `kindle_email` / `sender_email` / `smtp_*` / `send_time` / `smtp_password` columns: a delivery exists exactly when `kindle_email` is stored, and `smtp_password` is a secret like the Jina key. `next_send_at` (epoch ms) is the next scheduled send, written by `setKindle` in the same upsert as the group. `listKindleDue(now)` reads the rows with `next_send_at <= now`, a stored delivery and a send time, through `setting_next_send_at`; it orders by `next_send_at, owner`, because `ORDER BY owner` alone makes SQLite scan the primary key and ignore the index. `rescheduleKindle` moves one owner's `next_send_at`.
 - Unique constraints are `(owner, url)` on `feed`, `(feed_id, url)` on `feed_item`, `(owner, url)` on `saved_page` and `(owner, name)` on `folder`; names compare-as-stored (case-sensitive). The duplicate rules and the errors they produce live in `reader-spec` (CM-ID-6, CM-PORT-6).
 - Indexes are chosen from the target queries and verified with `EXPLAIN QUERY PLAN` (`packages/sqlite/test/sqlite.test.ts`); re-check with the real store SQL after changing paging or indexes, because existing measurements do not carry over. Include `owner` in every owner-scoped index and `feed_id` in feed-scoped ones:
   - `folder` needs no index beyond its unique constraints: `UNIQUE (owner, name)` also serves the folder list's `ORDER BY name, id`, and folders are not paged (CM-PAGE).
   - `feed` has `feed_owner_folder (owner, folder_id)` for the folder scope's feed lookup and `feed_owner_title (owner, title, id)` for the sidebar's title order; feeds are not paged.
-  - `feed_item` (`(owner, id)`, `(owner, feed_id, id)`, `(owner, read, id)`) and `saved_page` (`(owner, id)`, `(owner, read, id)`) cover the keyset-paged list queries without table scans or temporary B-trees.
+  - `feed_item` (`(owner, id)`, `(owner, feed_id, id)`, `(owner, read, id)`; the same indexes serve the oldest-first single-feed list, scanned forward) and `saved_page` (`(owner, id)`, `(owner, read, id)`) cover the keyset-paged list queries without table scans or temporary B-trees.
 
 ## Development phase
 

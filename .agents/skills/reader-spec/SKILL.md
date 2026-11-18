@@ -21,7 +21,8 @@ description: What the 留白 reader does. Read before changing or verifying any 
 | [feeds-refresh.md](feeds-refresh.md) | Refresh, scheduling, selection and retention, import, the feed parser contract (`FD-SEL`, `FD-SYNC`, `FD-PARSE`, …) | anything that runs during a refresh, the parser, retention |
 | [folders.md](folders.md) | Folders (`目录`), rules `FD-FOLDER`, `FD-MOVE` | creating, renaming, deleting folders, moving feeds, the folder scope, choosing a folder when subscribing |
 | [reader.md](reader.md) | The reader pane: default content, extracted content, embedded page, navigation | the reader view and its modes |
-| [settings.md](settings.md) | Settings, rules `SET-` | retention, the page fetcher (Jina or a browser service), the settings page |
+| [settings.md](settings.md) | Settings, rules `SET-` | retention, the page fetcher (Jina or a browser service), the Kindle delivery values, the settings page |
+| [kindle.md](kindle.md) | Send to Kindle, rules `KD-` | mailing unread articles as an EPUB, the daily schedule, the send-now button |
 | [account.md](account.md) | Accounts and sessions | registration, sign-in, sign-out, session guards, password change |
 
 ## Terms
@@ -137,15 +138,15 @@ A step of the refresh (`feeds-refresh.md`): it cleans the description and conten
 
 ### CM-PAGE — Paging a list
 
-Used by the saved-page list and the three feed-item lists, all ordered by `id` descending. Feeds and folders are not paged.
+Used by the saved-page list and the three feed-item lists, ordered by `id` descending except a single-feed list whose feed stores the order `oldest` (CM-PAGE-1). Feeds and folders are not paged.
 
-- CM-PAGE-1 Order: `id` descending. A single-feed or single-folder list is the all-items list restricted to that scope: same order, same cursor shape.
+- CM-PAGE-1 Order: `id` descending. A single-feed list whose feed stores the order `oldest` lists by `id` ascending instead, and its cursor then means larger ids (FD-PREF-3); otherwise a single-feed or single-folder list is the all-items list restricted to that scope: same order, same cursor shape.
 - CM-PAGE-2 `limit` is a positive integer supplied by the caller. Business defines no page size and no upper bound; the boundary rejects zero, negative and non-integer values.
 - CM-PAGE-3 A cursor is the `id` of a row. It carries no owner, scope or filter.
-- CM-PAGE-4 Given an optional cursor, the list use case asks the repository for `limit + 1` rows strictly after the cursor (smaller ids). It returns the first `limit` rows; if more than `limit` came back, the result's cursor is the id of the last returned row, otherwise `null`.
+- CM-PAGE-4 Given an optional cursor, the list use case asks the repository for `limit + 1` rows strictly after the cursor in the list's order, so of smaller ids under `newest` and of larger ids under `oldest` (CM-PAGE-1, FD-PREF-3). It returns the first `limit` rows; if more than `limit` came back, the result's cursor is the id of the last returned row, otherwise `null`.
 - CM-PAGE-5 A malformed cursor, including one that is not a lower-case version-7 UUID, is rejected at the boundary, so business has no cursor error.
 - CM-PAGE-6 A cursor stays valid after its row is deleted, because it is a position, not a lookup key.
-- CM-PAGE-7 Changing the scope or the filter starts a new list: the caller lists again with no cursor. Business does not check that a cursor belongs to the scope or filter it is used with.
+- CM-PAGE-7 Changing the scope, the filter or the order starts a new list: the caller lists again with no cursor. Business does not check that a cursor belongs to the scope, the filter or the order it is used with.
 - CM-PAGE-8 `unread` is a plain boolean. `true` returns unread rows only; `false` returns all rows.
 - CM-PAGE-9 To see current data the caller lists again from the first page. When to do so is the caller's decision; there is no background reload and no refresh-through request.
 - CM-PAGE-10 A row's id never changes while the row is stored, so paging never repeats or skips a row that stays stored. Rows deleted meanwhile do not appear. A row created meanwhile normally has a larger id and shows when the caller lists again from the first page. A row whose id was made before another row's id but written after it (syncs of different feeds in parallel), or made after a restart with the clock set back (CM-ID-4), may sort below rows already seen: it shows on a later page if its id is below the cursor, otherwise only when the caller lists again, and then not on top. A row removed and created again gets a new id: it is a new arrival, on top and unread.

@@ -14,6 +14,11 @@ import {
 import type { FeedStoreFactory } from '../layer';
 import { createCases } from './create';
 import { folderCases } from './folder';
+import {
+  oldestListCases,
+  preferenceCases,
+  preferenceKeptCases,
+} from './preference';
 import { removalCases } from './removal';
 
 const findCases = (makeLayer: FeedStoreFactory) => (): void => {
@@ -143,6 +148,9 @@ export const feedRepositoryContract = (makeLayer: FeedStoreFactory): void => {
     describe('create', createCases(makeLayer));
     describe('recordSync', recordSyncCases(makeLayer));
     describe('folder membership', folderCases(makeLayer));
+    describe('preferences', preferenceCases(makeLayer));
+    describe('preferences kept', preferenceKeptCases(makeLayer));
+    describe('oldest first', oldestListCases(makeLayer));
     describe('remove', removalCases(makeLayer));
   });
 };

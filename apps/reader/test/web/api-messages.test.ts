@@ -38,6 +38,16 @@ describe('the tag to wording table', () => {
     );
     expect(apiMessages.ArticleEmptyContent).toBe('未能提取到文章内容');
   });
+
+  it('carries the Kindle wordings of settings.md and kindle.md', () => {
+    expect(apiMessages.InvalidKindleSetting).toBe(
+      'Kindle 发送设置有误，请检查填写内容'
+    );
+    expect(apiMessages.KindleNotConfigured).toBe('请先保存 Kindle 发送设置');
+    expect(apiMessages.KindleSendInProgress).toBe('正在发送，请稍后再试');
+    expect(apiMessages.MailSenderError).toBe('邮件发送失败，请检查 SMTP 设置');
+    expect(apiMessages.EpubBuilderError).toBe('电子书生成失败，请稍后重试');
+  });
 });
 
 describe('the wording of a failure', () => {

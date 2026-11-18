@@ -191,7 +191,8 @@ let openKey: string | undefined;
 
 /**
  * Follows the URL (RD-ARTICLE-2): a new id fetches its article, starting on the
- * default content and ending any extraction (RD-MODE-1, RD-EXTRACT-8). The row
+ * default content until `startArticle` applies its feed's mode, and ending any
+ * extraction (RD-MODE-1, RD-MODE-4, RD-EXTRACT-8). The row
  * the list holds shows at once and the fetched article replaces it; only the
  * newest navigation counts (RD-ARTICLE-5).
  */

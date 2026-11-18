@@ -18,9 +18,9 @@ import {
   storedFolder,
   storedFolderFeed,
 } from '@reader/business/testing';
-import { Effect, Exit, Option } from 'effect';
+import { DateTime, Effect, Exit, Option } from 'effect';
 import { SqlClient, type Statement } from 'effect/sql';
-import { listAllFeeds } from '../src';
+import { listAllFeeds, listKindleDueStatement } from '../src';
 import { listFeedsStatement } from '../src/feed';
 import {
   listAllStatement,
@@ -39,6 +39,7 @@ const INDEX_NAMES = [
   'feed_owner_title',
   'saved_page_owner_id',
   'saved_page_owner_read_id',
+  'setting_next_send_at',
 ];
 
 const planOf = (
@@ -121,7 +122,11 @@ it.effect('the feed-item lists use their indexes', () =>
       const all = yield* planOf(sql, listAllStatement(sql, alice, query));
       const byFeed = yield* planOf(
         sql,
-        listByFeedStatement(sql, alice, feed.id, query)
+        listByFeedStatement(sql, alice, feed.id, query, 'newest')
+      );
+      const byFeedOldest = yield* planOf(
+        sql,
+        listByFeedStatement(sql, alice, feed.id, query, 'oldest')
       );
       const byFolder = yield* planOf(
         sql,
@@ -130,9 +135,10 @@ it.effect('the feed-item lists use their indexes', () =>
 
       expect(all).toContain('INDEX feed_item_owner_id');
       expect(byFeed).toContain('INDEX feed_item_owner_feed_id');
+      expect(byFeedOldest).toContain('INDEX feed_item_owner_feed_id');
       expect(byFolder).toContain('INDEX feed_item_owner_id');
       expect(byFolder).toContain('INDEX feed_owner_folder');
-      for (const plan of [all, byFeed, byFolder]) {
+      for (const plan of [all, byFeed, byFeedOldest, byFolder]) {
         expect(plan).not.toContain('SCAN feed_item');
         expect(plan).not.toContain('SCAN feed');
         expect(plan).not.toContain('TEMP B-TREE');
@@ -153,14 +159,18 @@ it.effect('the unread feed-item lists use the unread index', () =>
       const all = yield* planOf(sql, listAllStatement(sql, alice, query));
       const byFeed = yield* planOf(
         sql,
-        listByFeedStatement(sql, alice, feed.id, query)
+        listByFeedStatement(sql, alice, feed.id, query, 'newest')
+      );
+      const byFeedOldest = yield* planOf(
+        sql,
+        listByFeedStatement(sql, alice, feed.id, query, 'oldest')
       );
       const byFolder = yield* planOf(
         sql,
         listByFolderStatement(sql, alice, folder.id, query)
       );
 
-      for (const plan of [all, byFeed, byFolder]) {
+      for (const plan of [all, byFeed, byFeedOldest, byFolder]) {
         expect(plan).toContain('INDEX feed_item_owner_read_id');
         expect(plan).not.toContain('SCAN feed_item');
         expect(plan).not.toContain('SCAN feed');
@@ -212,6 +222,19 @@ it.effect('the saved-page, feed and folder lists use their indexes', () =>
     expect(folders).toContain('INDEX sqlite_autoindex_folder_2');
     expect(folders).not.toContain('SCAN folder');
     expect(folders).not.toContain('TEMP B-TREE');
+  }).pipe(Effect.provide(memoryDatabaseLayer))
+);
+
+it.effect('the Kindle due listing uses the next-send index', () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const plan = yield* planOf(
+      sql,
+      listKindleDueStatement(sql, DateTime.fromDateUnsafe(new Date(0)))
+    );
+
+    expect(plan).toContain('INDEX setting_next_send_at');
+    expect(plan).not.toContain('SCAN setting');
   }).pipe(Effect.provide(memoryDatabaseLayer))
 );
 

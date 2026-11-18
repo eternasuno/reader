@@ -19,9 +19,9 @@ const scrollToSection = (section: SettingsSection): void => {
 };
 
 /**
- * `/settings`: the `账号`, `文章` and `提取` sections in one page, beside their
- * navigation on a wide screen and stacked when it does not fit, with drafts that
- * are neither saved nor lost silently (settings.md).
+ * `/settings`: the `账号`, `文章`, `提取` and `Kindle` sections in one page, beside
+ * their navigation on a wide screen and stacked when it does not fit, with drafts
+ * that are neither saved nor lost silently (settings.md).
  */
 export const SettingsPage = () => {
   const [layout, setLayout] = createSignal<SettingsLayout>('beside');

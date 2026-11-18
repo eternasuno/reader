@@ -1,9 +1,13 @@
-import { Effect, Layer, Option, Ref, Schema } from 'effect';
+import { type DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
 import type { OwnerId } from '../../../src/entity/common/owner-id';
 import type {
   BrowserEndpoint,
   JinaKey,
 } from '../../../src/entity/setting/fetcher';
+import type {
+  KindleDelivery,
+  SmtpPassword,
+} from '../../../src/entity/setting/kindle';
 import type { Retention } from '../../../src/entity/setting/retention';
 import { Setting } from '../../../src/entity/setting/setting';
 import {
@@ -55,6 +59,23 @@ const makeSettingRepository = (rows: SettingsRef): ISettingRepository => ({
       ...setting,
       provider: 'browser',
       browserEndpoint: Option.some(endpoint),
+    })),
+  setKindle: (
+    owner,
+    kindle: KindleDelivery,
+    password: Option.Option<SmtpPassword>,
+    nextSendAt: Option.Option<DateTime.Utc>
+  ) =>
+    write(rows, owner, (setting) => ({
+      ...setting,
+      kindle: Option.some(kindle),
+      smtpPassword: Option.isSome(password) ? password : setting.smtpPassword,
+      nextSendAt,
+    })),
+  clearSmtpPassword: (owner) =>
+    write(rows, owner, (setting) => ({
+      ...setting,
+      smtpPassword: Option.none(),
     })),
 });
 

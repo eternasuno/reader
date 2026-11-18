@@ -6,7 +6,7 @@ The library is the one screen where a signed-in user reads: the sidebar of scope
 
 The screen has no business rules of its own. It behaves according to these rules, which live in their own files and are not repeated here:
 
-- **CM-PAGE-1 … CM-PAGE-10** — lists are ordered by `id` descending, a cursor is a row's id, `unread` narrows the list, and seeing current data means listing again from the first page.
+- **CM-PAGE-1 … CM-PAGE-10** — lists are ordered by `id` descending (a single feed may store oldest first, FD-PREF-3), a cursor is a row's id, `unread` narrows the list, and seeing current data means listing again from the first page.
 - **CM-ID-1, CM-ID-2, CM-ID-6** — ids are made in creation order, so the newest row sorts first and a stored row keeps its id.
 - **FD-LIST-1** — each feed-item scope is one use case and one port call, so no layer branches on a scope value.
 - **FD-READ, SP-READ** — marking is idempotent, unknown and foreign ids change nothing, and "mark everything read" is each domain's own mark-all, invoked separately.
@@ -97,7 +97,7 @@ The screen-level rules below are the ones no domain file holds.
 
 **Account menu.** The trigger opens the account menu; its items, the sign-out pending label and sign-out failure are [account.md](account.md).
 
-**List pane.** The heading is one compact row: the scope's name — its feed or folder name, `目录` for a folder that is not loaded, `订阅` for a feed that is not loaded — with the scope's unread count beside it, on the left. On the right only `将已加载文章标为已读` and the `⋯` list menu. The list menu holds `只显示未读`, `全部标记为已读` (never disabled, LIB-READ-5), the add action of `稍后阅读` ([later.md](later.md) Messages), and `删除 RSS 源` for a single feed, which asks first ([feeds.md](feeds.md)). Folder rename and delete are only in the sidebar ([folders.md](folders.md)).
+**List pane.** The heading is one compact row: the scope's name — its feed or folder name, `目录` for a folder that is not loaded, `订阅` for a feed that is not loaded — with the scope's unread count beside it, on the left. On the right only `将已加载文章标为已读` and the `⋯` list menu. The list menu holds `只显示未读`, `全部标记为已读` (never disabled, LIB-READ-5), the add action of `稍后阅读` ([later.md](later.md) Messages), and for a single feed the items of its row menu — its preferences, `移动到目录` and `删除 RSS 源`, which asks first ([feeds.md](feeds.md)). Folder rename and delete are only in the sidebar ([folders.md](folders.md)).
 
 **Rows.** Each row is full width with a hover surface and a selected surface, its height follows its content. It carries the source and, when the row has a publish time, the relative time at the right of that line (SKILL.md shared messages); the title over at most three lines; the summary over at most two. The read control sits at the left of the row, as a ring for read and a ring with a solid centre for unread, visible while hovering the row or focusing it, always visible on coarse pointers. Activating the title opens the article; modified clicks are left to the browser (LIB-ROW-3).
 

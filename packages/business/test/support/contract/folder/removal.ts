@@ -36,9 +36,9 @@ const cascadeCase = (makeLayer: FeedStoreFactory): void => {
         expect(Option.isNone(yield* folders.find(alice, folder.id))).toBe(true);
         expect(Option.isNone(yield* feeds.find(alice, fed.id))).toBe(true);
         expect(Option.isNone(yield* items.find(alice, row.id))).toBe(true);
-        expect(yield* items.listByFeed(alice, fed.id, feedItemQuery())).toEqual(
-          []
-        );
+        expect(
+          yield* items.listByFeed(alice, fed.id, feedItemQuery(), 'newest')
+        ).toEqual([]);
       }).pipe(Effect.provide(makeLayer()))
   );
 };

@@ -43,6 +43,13 @@ export const apiMessages: Record<ApiFailureTag, string> = {
   InvalidEndpoint: '请输入有效的浏览器服务地址',
   BrowserEndpointRequired: '请填写浏览器服务地址',
   SettingRepositoryError: '暂时无法访问设置，请稍后重试',
+  InvalidKindleSetting: 'Kindle 发送设置有误，请检查填写内容',
+
+  // kindle.md
+  KindleNotConfigured: '请先保存 Kindle 发送设置',
+  KindleSendInProgress: '正在发送，请稍后再试',
+  MailSenderError: '邮件发送失败，请检查 SMTP 设置',
+  EpubBuilderError: '电子书生成失败，请稍后重试',
 };
 
 /** The shared messages that are not an error tag (reader-spec Shared messages). */

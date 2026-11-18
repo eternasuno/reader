@@ -118,6 +118,20 @@ const recordFeedSync =
       ),
     }));
 
+const updateFeed =
+  (state: FeedStateRef) =>
+  (
+    owner: OwnerId,
+    id: FeedId,
+    change: Partial<Pick<Feed, 'readerMode' | 'order'>>
+  ): Effect.Effect<void> =>
+    Ref.update(state, (store) => ({
+      ...store,
+      feeds: store.feeds.map((feed) =>
+        feed.ownerId === owner && feed.id === id ? { ...feed, ...change } : feed
+      ),
+    }));
+
 const removeFeeds =
   (state: FeedStateRef) =>
   (owner: OwnerId, ids: ReadonlyArray<FeedId>): Effect.Effect<void> =>
@@ -144,5 +158,8 @@ export const makeMemoryFeedRepository = (
   create: createFeeds(state),
   moveToFolder: moveFeedToFolder(state),
   recordSync: recordFeedSync(state),
+  setReaderMode: (owner, id, readerMode) =>
+    updateFeed(state)(owner, id, { readerMode }),
+  setOrder: (owner, id, order) => updateFeed(state)(owner, id, { order }),
   remove: removeFeeds(state),
 });

@@ -1,6 +1,6 @@
 # Feeds and feed items
 
-The feeds a user subscribes to and the items collected from them: preview, subscribe, unsubscribe, the feed-item lists, read state, unread counts and extracting an item. Refresh, selection, retention and the parser are in `feeds-refresh.md`; folders and moving a feed are in `folders.md`; the library screen as a whole (sidebar, article list, unread filter, paging, toasts) is in `library.md`; the reader pane is in `reader.md`; saving an item to read later is in `later.md`. A feed item and a saved page are independent: saving an item makes a copy.
+The feeds a user subscribes to and the items collected from them: preview, subscribe, unsubscribe, the feed-item lists, read state, unread counts, a feed's reading preferences and extracting an item. Refresh, selection, retention and the parser are in `feeds-refresh.md`; folders and moving a feed are in `folders.md`; the library screen as a whole (sidebar, article list, unread filter, paging, toasts) is in `library.md`; the reader pane is in `reader.md`; saving an item to read later is in `later.md`. A feed item and a saved page are independent: saving an item makes a copy.
 
 ## Rules
 
@@ -39,12 +39,12 @@ The HTTP layer enqueues the new feed for refresh after the use case succeeds (FD
 
 ### FD-LIST — List items
 
-There are three item lists: all items, the items of one feed, and the items of the feeds in one folder (the folder list is stated here because it shares the ordering and paging rules; the folder scope is in `folders.md`). Each takes `unread`, `limit` and an optional `cursor` and pages by CM-PAGE.
+There are three item lists: all items, the items of one feed, and the items of the feeds in one folder (the folder list is stated here because it shares the ordering and paging rules; the folder scope is in `folders.md`). Each takes `unread`, `limit` and an optional `cursor` and pages by CM-PAGE; the single-feed list also takes `order` (FD-PREF-3).
 
 - FD-LIST-1 Each scope is one use case and one port call, with no branching on a scope value anywhere: listing all items lists the items of all of the owner's feeds (`listAll`), listing one feed only that feed's items (`listByFeed`), listing one folder the items of the feeds in that folder (`listByFolder`). No feed or folder is looked up first.
 - FD-LIST-2 A `feedId` that does not exist, or is not the owner's, gives an empty page (CM-OWN-3).
 - FD-LIST-3 Feeds themselves are listed by title ascending, then id ascending, titles compared in UTF-8 byte order (SQLite `BINARY`; test doubles must match); the client shows this order without sorting again.
-- FD-LIST-4 Items are listed by `id` descending (CM-PAGE-1), so the newest item is on top; the single-feed and single-folder lists are that same order restricted to their scope.
+- FD-LIST-4 Items are listed by `id` descending (CM-PAGE-1), so the newest item is on top; the single-feed and single-folder lists are that same order restricted to their scope. A single-feed list lists by `id` ascending instead when its feed stores the order `oldest` (FD-PREF-3).
 - FD-LIST-5 Items keep their position while they are stored (CM-PAGE-10): a row's id never changes. An item that retention removes and a later sync imports again gets a new id: it is a new arrival, on top, and unread.
 - FD-LIST-6 A folder lists the items of the feeds that are in it when the page is listed. A feed moved in or out between two pages changes the following pages; nothing checks a cursor against the scope (CM-PAGE-7).
 - FD-LIST-7 A `folderId` that does not exist, or is not the owner's, gives an empty page (CM-OWN-3); so does an empty folder.
@@ -64,6 +64,16 @@ There are three item lists: all items, the items of one feed, and the items of t
 
 - FD-EXTRACT-1 Extraction failure or empty content fails the operation and stores nothing.
 - FD-EXTRACT-2 Later requests reuse the stored content. Two requests at once may both fetch; each stores and returns what it extracted, and the last write wins.
+
+### FD-PREF — Reading preferences of a feed
+
+Each feed remembers how the user reads it. The preferences belong to the feed, not to the account.
+
+- FD-PREF-1 Every feed stores two preferences: its default reader mode (`default` = the feed's own content, `extracted` = the extracted article, `embedded` = the embedded web page) and the order of its own list (`newest` first, or `oldest` first). A new feed starts with `default` and `newest`. They are part of the feed: every feed of the list response carries them (API).
+- FD-PREF-2 Each preference has its own write, a single port call (`setReaderMode`, `setOrder`) with no use case. An unknown feed, or one of another owner, changes nothing and the request still answers 204 (FD-OWN-2, CM-OWN-3).
+- FD-PREF-3 `oldest` lists that feed's items by `id` ascending, and the cursor means strictly larger ids; `newest` is the arrival order of FD-LIST-4. The order affects only the single-feed list: `全部订阅` and a folder's list always use arrival order. The list endpoint takes the order as a query parameter (API), and the client sends the feed's stored order.
+- FD-PREF-4 Opening an item of the feed starts the reader in the feed's reader mode, in every scope that lists the item (`reader.md` RD-MODE-4).
+- FD-PREF-5 Refreshing a feed, renaming it by sync (FD-SYNC step 5) and moving it to another folder (FD-MOVE) keep its preferences. Unsubscribing removes them along with the feed (FD-UNSUB).
 
 ### FD-READ — Read state
 
@@ -112,10 +122,16 @@ Finding one item, marking items, marking feeds, marking folders, marking all, un
 ### Sidebar `订阅源` section
 
 - Feeds are rows under the section label `订阅源`; folders come first, then top-level feeds (the grouping and the folder rows are in `folders.md`; the sidebar frame is in `library.md`). A feed row shows the feed's title and, on the right, that feed's unread count (FD-COUNT-1); its `title` is the feed's address. Selecting the row opens `/feed/:feedId`.
-- The feed row menu offers `只显示未读` and `全部标记为已读`, applied to the clicked feed, then `移动到目录` (only when at least one folder exists; `folders.md`) and `删除 RSS 源`.
+- The feed row menu offers `只显示未读` and `全部标记为已读`, applied to the clicked feed, then the feed's preferences (FD-PREF): `从旧到新` as a checkbox checked from the stored order, and the three reader-mode items `默认显示：原文内容`, `默认显示：提取正文`, `默认显示：嵌入式网页` as a radio group checked from the stored mode, then `移动到目录` (only when at least one folder exists; `folders.md`) and `删除 RSS 源`.
 - The plus button beside the `订阅源` label opens the add menu, whose subscribe entry opens this file's dialog (`folders.md`).
 - With no feeds and no folders the section shows the empty-subscription hint of Messages.
 - The `全部订阅` row's count is the sum of the feeds' unread counts (FD-COUNT-2). A feed's count drops to zero when its items are read and rises when a refresh imports unread items.
+
+### Changing a feed's preferences
+
+- Choosing a preference item updates the feed in the sidebar at once and sends that preference's write (FD-PREF-2); it is a quick action, never disabled (SKILL.md Client conventions). A failed write puts the previous value back and shows the `FeedRepositoryError` toast.
+- Changing the order of the feed whose list is shown lists it again from the first page in the new order (CM-PAGE-7); the order of another feed changes no list.
+- Changing the reader mode changes no open article: it applies to the next item of the feed that is opened (RD-MODE-4).
 
 ### The `新增 RSS 订阅` dialog
 
@@ -131,7 +147,7 @@ Finding one item, marking items, marking feeds, marking folders, marking all, un
 ### `全部订阅` (`/all`) and single-feed (`/feed/:feedId`) scopes
 
 - `全部订阅` lists the items of all feeds, newest first (FD-LIST-4). The sidebar row and the list heading show `全部订阅`.
-- A single-feed scope lists only that feed's items, newest first, and its heading is the feed's title with that feed's unread count. Its list overflow menu additionally offers `删除 RSS 源`; aggregates do not.
+- A single-feed scope lists only that feed's items in the feed's stored order (FD-PREF-3): newest first unless the feed stores `oldest`, in which case the oldest is on top. Its heading is the feed's title with that feed's unread count. Its list overflow menu additionally offers the feed's preferences, `移动到目录` and `删除 RSS 源`, the same items as the feed row menu; aggregates do not.
 - Row source label: the title of the item's feed. When no feed row matches (a saved page, or a feed the list does not know yet) the label is the host of the item's address, and `稍后阅读` when there is none.
 - Empty list: `全部订阅` and a single feed each have their own empty state in Messages; a single feed's says the feed has no items yet, because the user already follows it (the unread-filter empty state and the other scopes' copies are in `library.md`).
 - Read state, marking, the unread filter and paging behave as in `library.md`; what is specific here is which operation each scope maps to (FD-READ): one feed's `全部标记为已读` marks every item of that feed, the list's mark-loaded action marks the loaded ids only, and `全部订阅` marks every item of the owner.
@@ -150,10 +166,11 @@ Every endpoint needs a session and the owner is the session's user (see API conv
 
 ```json
 { "id": "FeedId", "ownerId": "OwnerId", "url": "https://…",
-  "title": "…", "folderId": "FolderId?", "updatedAt": "ISO 8601?" }
+  "title": "…", "folderId": "FolderId?", "updatedAt": "ISO 8601?",
+  "readerMode": "default", "order": "newest" }
 ```
 
-`folderId` is omitted at the top level; `updatedAt` is omitted until the first successful sync. `FeedItem`:
+`folderId` is omitted at the top level; `updatedAt` is omitted until the first successful sync. `readerMode` and `order` are always present (FD-PREF-1): `readerMode` is `default`, `extracted` or `embedded`, and `order` is `newest` or `oldest`. `FeedItem`:
 
 ```json
 { "id": "FeedItemId", "ownerId": "OwnerId", "feedId": "FeedId", "url": "https://…",
@@ -167,9 +184,11 @@ Every endpoint needs a session and the owner is the session's user (see API conv
 | POST | `/api/feeds/preview` | `{url: string}` | 200 `{preview: {url, title, description?, titles: string[]}}` | `FeedUrlInvalid` 400, `FetchFeedError` 422, `FeedParserError` 422 |
 | POST | `/api/feeds` | `{url: string, title?: string, folderId?: FolderId}` | 201 `{item: Feed}` | `FeedUrlInvalid` 400, `FolderNotFound` 404 `{id}`, `FeedAlreadyExists` 409 `{url}`, `FolderRepositoryError` 500, `FeedRepositoryError` 500 |
 | DELETE | `/api/feeds/:id` | `id` | 204 | `FeedRepositoryError` 500 |
+| PUT | `/api/feeds/:id/reader-mode` | `id`, `{readerMode: "default" \| "extracted" \| "embedded"}` | 204 | `FeedRepositoryError` 500 |
+| PUT | `/api/feeds/:id/order` | `id`, `{order: "newest" \| "oldest"}` | 204 | `FeedRepositoryError` 500 |
 | GET | `/api/feeds/unread-counts` | — | 200 `{items: [{feedId, count}]}` | `FeedItemRepositoryError` 500 |
 | POST | `/api/feeds/:id/read-all` | `id` | 204 | `FeedItemRepositoryError` 500 |
-| GET | `/api/feeds/:id/items` | `id`, `limit`, `unread`, `cursor?` | 200 `{items: FeedItem[], cursor: FeedItemId\|null}` | `FeedItemRepositoryError` 500 |
+| GET | `/api/feeds/:id/items` | `id`, `limit`, `unread`, `order?`, `cursor?` | 200 `{items: FeedItem[], cursor: FeedItemId\|null}` | `FeedItemRepositoryError` 500 |
 | GET | `/api/feed-items` | `limit`, `unread`, `cursor?` | 200 `{items: FeedItem[], cursor: FeedItemId\|null}` | `FeedItemRepositoryError` 500 |
 | GET | `/api/feed-items/:id` | `id` | 200 `{item: FeedItem \| null}` | `FeedItemRepositoryError` 500 |
 | PATCH | `/api/feed-items/:id` | `id`, `{read: boolean}` | 204 | `FeedItemRepositoryError` 500 |
@@ -177,11 +196,12 @@ Every endpoint needs a session and the owner is the session's user (see API conv
 | POST | `/api/feed-items/read-all` | — | 204 | `FeedItemRepositoryError` 500 |
 | POST | `/api/feed-items/:id/extract` | `id` | 200 `{item: FeedItem}` | `FeedItemNotFound` 404 `{id}`, `ArticleEmptyContent` 422, `WebpageFetcherError` 422, `ArticleExtractorError` 422, `SettingRepositoryError` 500, `FeedItemRepositoryError` 500 |
 
-- `GET /api/feeds` answers the owner's feeds ordered by title, then id (FD-LIST-3). It is not paged.
+- `GET /api/feeds` answers the owner's feeds ordered by title, then id (FD-LIST-3), each with its preferences (FD-PREF-1). It is not paged.
 - `POST /api/feeds/preview` stores nothing (FD-PREVIEW-1). Its `preview.url` is the submitted address after normalization, not a redirect target; the client sends that address back when subscribing. `titles` holds every entry title in source order; the client shows the first three. It is a POST that changes nothing, so the origin check of the API conventions applies to it like to the other writes.
 - `POST /api/feeds` takes the optional `title` from the preview (blank or absent becomes the address's host, FD-SUB) and the optional `folderId`; it enqueues a refresh of the new feed and answers 201 at once (FD-SUB, FD-SCHED-7). A duplicate answers 409 with the URL, so the client can find the existing feed (CM-ID-7).
 - Moving a feed (`PATCH /api/feeds/:id`), the folder endpoints, the folder's item list and marking a folder's items read are in `folders.md`; saving an item (`POST /api/feed-items/:id/save`) is in `later.md`.
-- The three item lists follow CM-PAGE: `limit` is a required positive integer, `unread` is a boolean defaulting to `false`, `cursor` is the id of the last row of the previous page. `GET /api/feed-items` is the `全部订阅` list, `GET /api/feeds/:id/items` the single-feed list; an unknown or foreign feed id answers an empty page, not an error (FD-LIST-2).
+- `PUT /api/feeds/:id/reader-mode` and `PUT /api/feeds/:id/order` each write one preference (FD-PREF-2). Each body is decoded against the literals of the table, so a value outside them is a structural decode failure (400, empty body); an unknown or foreign feed answers 204 and changes nothing (FD-OWN-2). Both are Origin-checked (SKILL.md API conventions), and a repository failure answers 500 `FeedRepositoryError` with nothing written.
+- The three item lists follow CM-PAGE: `limit` is a required positive integer, `unread` is a boolean defaulting to `false`, `cursor` is the id of the last row of the previous page. `GET /api/feed-items` is the `全部订阅` list, `GET /api/feeds/:id/items` the single-feed list; an unknown or foreign feed id answers an empty page, not an error (FD-LIST-2). Only the single-feed list takes `order`: `newest` (default) or `oldest` (FD-PREF-3), and the request is decoded against those two literals.
 - `GET /api/feeds/unread-counts` answers one row per feed that has unread items (FD-COUNT-1); a feed that is absent counts as 0, and the client sums the rows for the `全部订阅` count and per folder (FD-COUNT-3).
 - `PATCH /api/feed-items/:id` sets `read` to the given value, so it reads and unreads one item. `POST /api/feed-items/read` sets `read = true` on exactly the given ids (the items loaded in the list), `POST /api/feed-items/read-all` on every item of the owner, and `POST /api/feeds/:id/read-all` on every item of that feed. Unknown and foreign ids change nothing and still succeed (FD-READ-1, FD-READ-2); marking is idempotent (FD-READ-4).
 - `GET /api/feed-items/:id` answers `{item: null}` for an unknown or foreign id (FD-OPEN). Nothing looks up the feed.
@@ -209,6 +229,8 @@ Every endpoint needs a session and the owner is the session's user (see API conv
 | Section label above the feed rows | 订阅源 |
 | Sidebar with no feeds | 尚未订阅。点击订阅源右侧的加号添加 RSS 源。 |
 | Feed row menu and single-feed list menu: unsubscribe | 删除 RSS 源 |
+| Feed row menu and single-feed list menu: order checkbox | 从旧到新 |
+| Feed row menu and single-feed list menu: reader-mode radio items | 默认显示：原文内容 / 默认显示：提取正文 / 默认显示：嵌入式网页 |
 | Confirmation before unsubscribing | 取消订阅并删除该源的文章？已保存的稍后阅读不会删除。 |
 | Empty list of `全部订阅`: title | 从一个订阅源开始 |
 | Its hint | 添加 RSS 订阅，让新的文章汇集到这里。 |
@@ -275,6 +297,11 @@ Feature: Feeds and feed items
       And the error toast is shown
       And my current reading scope does not change
 
+    Scenario: A new feed starts with the default preferences
+      Given I confirmed a previewed subscription
+      When the feed list is read
+      Then the new feed carries the reader mode "default" and the order "newest"
+
   Rule: Reading the item lists
 
     Scenario: All subscriptions list every feed's articles newest first
@@ -286,6 +313,14 @@ Feature: Feeds and feed items
       Then the list shows the articles of "Go Blog" only
       And each row shows "Go Blog" as its source
       And the heading shows the title "Go Blog" and its unread count
+
+    Scenario: A feed ordered oldest first lists its oldest article on top
+      Given the feed "Go Blog" stores the order "oldest"
+      When I open "Go Blog"
+      Then the list is requested with the order "oldest"
+      And its oldest article is on top
+      When I open "全部订阅"
+      Then that list is requested without an order and still shows the newest on top
 
     Scenario: An unknown feed in the URL is not an error
       When I open the address "/feed/00000000-0000-7000-8000-000000000000"
@@ -308,6 +343,28 @@ Feature: Feeds and feed items
       Given I just subscribed to "Go Blog" and it has not been refreshed yet
       When I open "Go Blog"
       Then the list shows "这个订阅源还没有文章" and "订阅源刷新后，新的文章会出现在这里。"
+
+  Rule: A feed's preferences
+
+    Scenario: Ordering a feed oldest first
+      Given I am reading the list of "Go Blog" newest first
+      When I check "从旧到新" in the menu of "Go Blog"
+      Then the order "oldest" of "Go Blog" is stored
+      And the list of "Go Blog" is listed again from the first page with its oldest article on top
+      When I reload the page
+      Then the list of "Go Blog" still shows its oldest article on top
+
+    Scenario: Choosing the default reader mode of a feed
+      Given the feed "Go Blog" stores the reader mode "default"
+      When I choose "默认显示：嵌入式网页" in the menu of "Go Blog"
+      Then the reader mode "embedded" of "Go Blog" is stored
+      And the next article of "Go Blog" I open shows the embedded web page
+
+    Scenario: A failed preference write is undone
+      Given the server fails to store preferences
+      When I check "从旧到新" in the menu of "Go Blog"
+      Then "从旧到新" is unchecked again
+      And the toast "暂时无法访问订阅，请稍后重试" is shown
 
   Rule: Read state
 

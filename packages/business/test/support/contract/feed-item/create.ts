@@ -129,7 +129,7 @@ const uniqueCases = (makeLayer: FeedStoreFactory) => (): void => {
 
       expect(created).toHaveLength(2);
       expect(
-        yield* items.listByFeed(alice, secondFeed.id, feedItemQuery())
+        yield* items.listByFeed(alice, secondFeed.id, feedItemQuery(), 'newest')
       ).toHaveLength(1);
     }).pipe(Effect.provide(makeLayer()))
   );

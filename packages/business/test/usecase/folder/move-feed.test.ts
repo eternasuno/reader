@@ -16,6 +16,7 @@ import {
   updatedTime,
 } from '../../support/fixtures';
 import { MemoryFeedStoreLive } from '../../support/memory/feed-store';
+import { storedItems } from '../feed-item/harness';
 
 type Env = FeedRepository | FolderRepository | FeedItemRepository;
 
@@ -149,11 +150,7 @@ describe('moveFeed keeps the feed', () => {
             return {
               stored: item,
               found: yield* feeds.find(alice, feed.id),
-              items: yield* items.listByFeed(alice, feed.id, {
-                limit: 10,
-                unread: false,
-                cursor: Option.none(),
-              }),
+              items: yield* storedItems(feed.id),
             };
           })
         );

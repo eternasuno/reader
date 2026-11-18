@@ -1,6 +1,7 @@
-import { Context, type Effect } from 'effect';
+import { Context, type DateTime, type Effect, type Option } from 'effect';
 import type { OwnerId } from '../entity/common/owner-id';
 import type { BrowserEndpoint, JinaKey } from '../entity/setting/fetcher';
+import type { KindleDelivery, SmtpPassword } from '../entity/setting/kindle';
 import type { Retention } from '../entity/setting/retention';
 import type { Setting } from '../entity/setting/setting';
 import type { SettingRepositoryError } from '../error/setting';
@@ -51,6 +52,23 @@ export interface ISettingRepository {
   readonly selectBrowserWithEndpoint: (
     owner: OwnerId,
     endpoint: BrowserEndpoint
+  ) => Effect.Effect<void, SettingRepositoryError>;
+  /**
+   * Writes the whole Kindle delivery and the instant of the next scheduled
+   * send in one write; a given password is written with it, none keeps the
+   * stored one (SET-KINDLE-2, SET-KINDLE-3). None as the instant writes no
+   * scheduled send; the server computes the instant, the port only stores it
+   * (KD-SCHED-1).
+   */
+  readonly setKindle: (
+    owner: OwnerId,
+    kindle: KindleDelivery,
+    password: Option.Option<SmtpPassword>,
+    nextSendAt: Option.Option<DateTime.Utc>
+  ) => Effect.Effect<void, SettingRepositoryError>;
+  /** Clears the SMTP password; nothing else changes (SET-KINDLE-4). */
+  readonly clearSmtpPassword: (
+    owner: OwnerId
   ) => Effect.Effect<void, SettingRepositoryError>;
 }
 

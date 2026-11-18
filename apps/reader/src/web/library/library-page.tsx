@@ -1,5 +1,5 @@
 import { createEffect, createMemo, on } from 'solid-js';
-import { loadSidebar } from '../feed';
+import { feedOrder, loadSidebar } from '../feed';
 import { ReaderPane } from '../reader';
 import { AddLinkDialog, reloadSavedPageCount } from '../saved-page';
 import { reloadList } from './list';
@@ -23,6 +23,16 @@ const reloadKey = (): string => {
   const id = scope.kind === 'feed' || scope.kind === 'folder' ? scope.id : '';
 
   return `${scope.kind}:${id}:${unreadFilter()}`;
+};
+
+/**
+ * What the list also depends on: a single feed's stored order, so choosing it,
+ * or the feed list arriving after the first page, lists again (FD-PREF-3).
+ */
+const listKey = (): string => {
+  const scope = currentScope();
+
+  return `${reloadKey()}:${scope.kind === 'feed' ? feedOrder(scope.id) : ''}`;
 };
 
 const workspaceClass =
@@ -72,10 +82,16 @@ export const LibraryPage = () => {
   keepPanelFocus();
 
   const scopeKey = createMemo(reloadKey);
+  const orderedKey = createMemo(listKey);
+
+  createEffect(
+    on(orderedKey, () => {
+      void reloadList(currentScope(), unreadFilter());
+    })
+  );
 
   createEffect(
     on(scopeKey, () => {
-      void reloadList(currentScope(), unreadFilter());
       void loadSidebar();
       void reloadSavedPageCount();
     })

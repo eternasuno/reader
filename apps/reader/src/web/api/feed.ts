@@ -17,6 +17,12 @@ const { endpoints } = FeedApi;
 /** One subscription in its wire (JSON) form (feeds.md API). */
 export type Feed = EncodedSuccess<typeof endpoints.subscribeFeed>['item'];
 
+/** What the reader shows first for an item of the feed (FD-PREF-1). */
+export type FeedReaderMode = Feed['readerMode'];
+
+/** The order of the feed's own list (FD-PREF-3). */
+export type FeedOrder = Feed['order'];
+
 /** The preview of a subscription in its wire (JSON) form (feeds.md API). */
 export type FeedPreview = EncodedSuccess<
   typeof endpoints.previewFeed
@@ -67,6 +73,24 @@ export const moveFeed = (feedId: string, folderId: string | null) =>
     })
   );
 
+/** Stores the feed's reader mode; an unknown feed changes nothing (FD-PREF-2). */
+export const setFeedReaderMode = (feedId: string, readerMode: FeedReaderMode) =>
+  request((client) =>
+    client.feed.setFeedReaderMode({
+      params: { id: contractId(feedId) },
+      payload: { readerMode },
+    })
+  );
+
+/** Stores the order of the feed's list; an unknown feed changes nothing (FD-PREF-2). */
+export const setFeedOrder = (feedId: string, order: FeedOrder) =>
+  request((client) =>
+    client.feed.setFeedOrder({
+      params: { id: contractId(feedId) },
+      payload: { order },
+    })
+  );
+
 /** The unread count of every feed (LIB-COUNT). */
 export const getFeedUnreadCounts = () =>
   requestJson(endpoints.feedUnreadCounts, (client) =>
@@ -79,14 +103,15 @@ export const markFeedRead = (feedId: string) =>
     client.feed.markFeedRead({ params: { id: contractId(feedId) } })
   );
 
-/** One page of a single feed's items, newest first (CM-PAGE-1). */
+/** One page of a single feed's items in the feed's order (CM-PAGE-1, FD-PREF-3). */
 export const listFeedItemsOfFeed = (
   feedId: string,
-  query: ListQuery
+  query: ListQuery,
+  order: FeedOrder
 ): Promise<ListPage<FeedItem>> =>
   requestJson(endpoints.listFeedItemsOfFeed, (client) =>
     client.feed.listFeedItemsOfFeed({
       params: { id: contractId(feedId) },
-      query: listQuery(query),
+      query: { ...listQuery(query), order },
     })
   );

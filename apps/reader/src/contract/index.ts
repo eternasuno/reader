@@ -4,6 +4,7 @@ export * from './errors';
 export * from './feed';
 export * from './feed-item';
 export * from './folder';
+export * from './kindle';
 export * from './middleware';
 export * from './saved-page';
 export * from './setting';

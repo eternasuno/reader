@@ -14,6 +14,8 @@ export const feedFixture = (
   url,
   title,
   ...(folderId === undefined ? {} : { folderId }),
+  readerMode: 'default',
+  order: 'newest',
 });
 
 export const folderFixture = (id: string, name: string): Folder => ({

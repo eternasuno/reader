@@ -19,6 +19,7 @@ describe('Setting', () => {
     expect(setting.provider).toBe('jina');
     expect(setting.jinaKey).toEqual(Option.none());
     expect(setting.browserEndpoint).toEqual(Option.none());
+    expect(setting.nextSendAt).toEqual(Option.none());
   });
 
   it('SET-VAL-1 keeps a stored retention', () => {

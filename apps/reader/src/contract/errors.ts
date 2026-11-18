@@ -53,6 +53,12 @@ export class InvalidEndpoint extends Schema.TaggedError<
   ContractErrorBrand
 >()('InvalidEndpoint', {}, { httpApiStatus: 400 }) {}
 
+/** A Kindle delivery value breaks its rule (settings.md, SET-KINDLE-1). */
+export class InvalidKindleSetting extends Schema.TaggedError<
+  InvalidKindleSetting,
+  ContractErrorBrand
+>()('InvalidKindleSetting', {}, { httpApiStatus: 400 }) {}
+
 // --- missing rows: 404 with the id -------------------------------------------
 
 /** The item does not exist for the owner (feeds.md, FD-EXTRACT step 1). */
@@ -128,6 +134,24 @@ export class BrowserEndpointRequired extends Schema.TaggedError<
   ContractErrorBrand
 >()('BrowserEndpointRequired', {}, { httpApiStatus: 422 }) {}
 
+/** No Kindle delivery is saved (kindle.md, KD-SEND-1). */
+export class KindleNotConfigured extends Schema.TaggedError<
+  KindleNotConfigured,
+  ContractErrorBrand
+>()('KindleNotConfigured', {}, { httpApiStatus: 422 }) {}
+
+/** The SMTP server failed the mail (kindle.md, KD-SEND-6). */
+export class MailSenderError extends Schema.TaggedError<
+  MailSenderError,
+  ContractErrorBrand
+>()('MailSenderError', {}, { httpApiStatus: 422 }) {}
+
+/** A send of this owner is running (kindle.md, KD-SEND-7). */
+export class KindleSendInProgress extends Schema.TaggedError<
+  KindleSendInProgress,
+  ContractErrorBrand
+>()('KindleSendInProgress', {}, { httpApiStatus: 409 }) {}
+
 // --- storage and the auth service: 500 ---------------------------------------
 
 /** The `FeedItemRepository` failed, so no feed item data is available. */
@@ -159,6 +183,12 @@ export class SettingRepositoryError extends Schema.TaggedError<
   SettingRepositoryError,
   ContractErrorBrand
 >()('SettingRepositoryError', {}, { httpApiStatus: 500 }) {}
+
+/** The EPUB could not be built (kindle.md, KD-SEND-5). */
+export class EpubBuilderError extends Schema.TaggedError<
+  EpubBuilderError,
+  ContractErrorBrand
+>()('EpubBuilderError', {}, { httpApiStatus: 500 }) {}
 
 /** Better Auth's session check itself failed (SKILL.md API conventions). */
 export class AuthUnavailable extends Schema.TaggedError<

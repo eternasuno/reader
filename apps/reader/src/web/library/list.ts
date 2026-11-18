@@ -1,10 +1,11 @@
 import { createSignal } from 'solid-js';
 import type { ListPage } from '../api/client';
-import { listFeedItemsOfFeed } from '../api/feed';
+import { type FeedOrder, listFeedItemsOfFeed } from '../api/feed';
 import { listFeedItems } from '../api/feed-item';
 import { listFolderItems } from '../api/folder';
 import { messageOf } from '../api/messages';
 import { listSavedPages } from '../api/saved-page';
+import { feedOrder } from '../feed';
 import {
   type Article,
   type FeedItem,
@@ -25,6 +26,8 @@ type ListState = {
   readonly rows: ReadonlyArray<Article>;
   readonly scope: Scope;
   readonly unread: boolean;
+  /** The order the list was started with; only a single feed uses it (FD-PREF-3). */
+  readonly order: FeedOrder;
   readonly cursor: string | null;
   readonly loading: boolean;
   readonly initialized: boolean;
@@ -36,6 +39,7 @@ const initialState: ListState = {
   rows: [],
   scope: { kind: 'later' },
   unread: false,
+  order: 'newest',
   cursor: null,
   loading: false,
   initialized: false,
@@ -180,8 +184,7 @@ const savedPageRow = (item: SavedPage): Article => ({
 const feedItemRow = (item: FeedItem): Article => ({ kind: 'feed-item', item });
 
 const listPage = async (
-  scope: Scope,
-  unread: boolean,
+  { scope, unread, order }: ListState,
   cursor: string | undefined
 ): Promise<ListPage<Article>> => {
   const query = { limit: pageSize, unread, cursor };
@@ -198,7 +201,7 @@ const listPage = async (
       return { items: page.items.map(feedItemRow), cursor: page.cursor };
     }
     case 'feed': {
-      const page = await listFeedItemsOfFeed(scope.id, query);
+      const page = await listFeedItemsOfFeed(scope.id, query, order);
 
       return { items: page.items.map(feedItemRow), cursor: page.cursor };
     }
@@ -229,7 +232,7 @@ const loadPage = async (
   if (current.generation !== generation) return;
 
   try {
-    const page = await listPage(current.scope, current.unread, cursor);
+    const page = await listPage(current, cursor);
 
     if (state().generation !== generation) return;
 
@@ -255,7 +258,8 @@ const loadPage = async (
 /**
  * Starts the list over from the first page (LIB-RELOAD-1, LIB-RELOAD-2): the
  * loaded rows go, the banner clears, and an answer of the previous list is
- * discarded.
+ * discarded. A single feed is listed in its stored order, kept for every page
+ * of this list (FD-PREF-3, CM-PAGE-7).
  */
 export const reloadList = async (
   scope: Scope,
@@ -267,6 +271,7 @@ export const reloadList = async (
     rows: [],
     scope,
     unread,
+    order: scope.kind === 'feed' ? feedOrder(scope.id) : 'newest',
     cursor: null,
     loading: true,
     initialized: false,

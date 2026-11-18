@@ -93,3 +93,24 @@ describe('Feed', () => {
     );
   });
 });
+
+describe('Feed preferences', () => {
+  it('FD-PREF-1 starts a new feed with the default reader mode and newest first', () => {
+    const feed = makeFeed();
+
+    expect(feed.readerMode).toBe('default');
+    expect(feed.order).toBe('newest');
+  });
+
+  it('FD-PREF-1 rejects a reader mode or an order outside the literals', () => {
+    const encoded = Schema.encodeUnknownSync(Feed)(makeFeed());
+    const decode = Schema.decodeUnknownResult(Feed);
+
+    expect(Result.isFailure(decode({ ...encoded, readerMode: 'raw' }))).toBe(
+      true
+    );
+    expect(Result.isFailure(decode({ ...encoded, order: 'random' }))).toBe(
+      true
+    );
+  });
+});

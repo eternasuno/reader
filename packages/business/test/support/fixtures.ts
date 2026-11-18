@@ -6,7 +6,13 @@ import {
 } from '../../src/entity/common/article';
 import { NormalizedUrl } from '../../src/entity/common/normalized-url';
 import { OwnerId } from '../../src/entity/common/owner-id';
-import { Feed, type FeedId, FeedTitle } from '../../src/entity/feed/feed';
+import {
+  Feed,
+  type FeedId,
+  type FeedOrder,
+  type FeedReaderMode,
+  FeedTitle,
+} from '../../src/entity/feed/feed';
 import {
   FeedItem,
   type FeedItemId,
@@ -21,6 +27,15 @@ import {
   type SavedPageId,
 } from '../../src/entity/saved-page/saved-page';
 import { BrowserEndpoint, JinaKey } from '../../src/entity/setting/fetcher';
+import {
+  EmailAddress,
+  KindleDelivery,
+  SendTime,
+  SmtpHost,
+  SmtpPassword,
+  SmtpPort,
+  SmtpUser,
+} from '../../src/entity/setting/kindle';
 import { Retention } from '../../src/entity/setting/retention';
 import type { FeedRepositoryError } from '../../src/error/feed';
 import type { FolderRepositoryError } from '../../src/error/folder';
@@ -46,6 +61,35 @@ export const decodeJinaKey = Schema.decodeSync(JinaKey);
 
 export const decodeBrowserEndpoint = Schema.decodeSync(BrowserEndpoint);
 
+export const decodeEmailAddress = Schema.decodeSync(EmailAddress);
+
+export const decodeSmtpHost = Schema.decodeSync(SmtpHost);
+
+export const decodeSmtpPort = Schema.decodeSync(SmtpPort);
+
+export const decodeSmtpUser = Schema.decodeSync(SmtpUser);
+
+export const decodeSmtpPassword = Schema.decodeSync(SmtpPassword);
+
+export const decodeSendTime = Schema.decodeSync(SendTime);
+
+export type KindleDeliveryOverrides = Partial<KindleDelivery>;
+
+/** A saved Kindle delivery; no login and no send time unless overridden (SET-KINDLE-1). */
+export const kindleDelivery = (
+  overrides: KindleDeliveryOverrides = {}
+): KindleDelivery =>
+  KindleDelivery.make({
+    kindleEmail: decodeEmailAddress('kindle@example.com'),
+    senderEmail: decodeEmailAddress('sender@example.com'),
+    smtpHost: decodeSmtpHost('smtp.example.com'),
+    smtpPort: decodeSmtpPort(465),
+    smtpSecurity: 'tls',
+    smtpUser: Option.none(),
+    sendTime: Option.none(),
+    ...overrides,
+  });
+
 let counter = 0;
 
 const nextTag = (): number => {
@@ -67,6 +111,8 @@ export type FeedOverrides = {
   readonly title?: FeedTitle;
   readonly folderId?: Option.Option<FolderId>;
   readonly updatedAt?: Option.Option<DateTime.Utc>;
+  readonly readerMode?: FeedReaderMode;
+  readonly order?: FeedOrder;
 };
 
 export const makeFeed = (overrides: FeedOverrides = {}): Feed =>
@@ -232,6 +278,10 @@ export const unreadCountFor = (
 
 export const updatedTime = (): DateTime.Utc =>
   DateTime.fromDateUnsafe(new Date('2026-01-01T00:00:00.000Z'));
+
+/** One instant of the Kindle schedule, the stored next send (KD-SCHED-1). */
+export const sendAt = (iso: string): DateTime.Utc =>
+  DateTime.fromDateUnsafe(new Date(iso));
 
 export const feedItemQuery = (
   overrides: Partial<FeedItemQuery> = {}

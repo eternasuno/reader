@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { leaveDecision } from '../../../src/web/setting/leave';
 import {
   createSectionSwitch,
+  settingsSections,
   switchSection,
 } from '../../../src/web/setting/section';
 import { dismissToast, toasts } from '../../../src/web/ui/toast';
@@ -155,21 +156,46 @@ describe('leaving the page', () => {
   });
 });
 
-describe('the page’s open section', () => {
-  const pageSwitch = (
-    over: Partial<Parameters<typeof createSectionSwitch>[0]> = {}
-  ) =>
-    createSectionSwitch({
-      beside: () => true,
-      accountChanged: () => false,
-      draftChanged: () => false,
-      saving: () => false,
-      confirm: () => true,
-      discard: () => undefined,
-      scroll: () => undefined,
-      ...over,
+const pageSwitch = (
+  over: Partial<Parameters<typeof createSectionSwitch>[0]> = {}
+) =>
+  createSectionSwitch({
+    beside: () => true,
+    accountChanged: () => false,
+    draftChanged: () => false,
+    saving: () => false,
+    confirm: () => true,
+    discard: () => undefined,
+    scroll: () => undefined,
+    ...over,
+  });
+
+describe('the sections of the page', () => {
+  it('lists the four sections in page order (settings.md Interface)', () => {
+    expect(settingsSections.map((item) => item.id)).toEqual([
+      'account',
+      'articles',
+      'extraction',
+      'kindle',
+    ]);
+    expect(settingsSections.map((item) => item.name)).toEqual([
+      '账号',
+      '文章',
+      '提取',
+      'Kindle',
+    ]);
+  });
+
+  it('counts a changed Kindle section as unsaved changes', () => {
+    const switched = pageSwitch({
+      draftChanged: (section) => section === 'kindle',
     });
 
+    expect(switched.anyChanged()).toBe(true);
+  });
+});
+
+describe('the page’s open section', () => {
   it('starts on 账号', () => {
     expect(pageSwitch().open()).toBe('account');
   });

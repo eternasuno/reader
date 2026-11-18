@@ -224,6 +224,86 @@
       }
     },
     {
+      "includes": ["packages/epub/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "*",
+                      "**",
+                      "!effect",
+                      "!effect/**",
+                      "!@reader/business",
+                      "!fflate",
+                      "!jsdom",
+                      "!./**",
+                      "!../**",
+                      "**/apps/**"
+                    ],
+                    "message": "packages/epub depends on effect, @reader/business, fflate and jsdom only; no package imports apps/reader (reader-engineering: Packages)"
+                  },
+                  {
+                    "group": [
+                      "**/test/**",
+                      "**/test",
+                      "@reader/business/testing",
+                      "@reader/sqlite/testing"
+                    ],
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/mail/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "*",
+                      "**",
+                      "!effect",
+                      "!effect/**",
+                      "!@reader/business",
+                      "!nodemailer",
+                      "!node:*",
+                      "!./**",
+                      "!../**",
+                      "**/apps/**"
+                    ],
+                    "message": "packages/mail depends on effect, @reader/business, nodemailer and node: modules only; no package imports apps/reader (reader-engineering: Packages)"
+                  },
+                  {
+                    "group": [
+                      "**/test/**",
+                      "**/test",
+                      "@reader/business/testing",
+                      "@reader/sqlite/testing"
+                    ],
+                    "message": "src/ must not import test/ code or a */testing entry (reader-engineering: Testing)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["apps/reader/src/contract/**"],
       "linter": {
         "rules": {

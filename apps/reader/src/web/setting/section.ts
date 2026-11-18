@@ -1,10 +1,11 @@
 import { createSignal } from 'solid-js';
 import { accountMessages } from '../account/messages';
 import type { Confirm } from './confirm';
+import { kindleMessages } from './kindle/messages';
 import { settingMessages as copy } from './messages';
 
-/** The three sections of `/settings`, in page order (settings.md Interface). */
-export type SettingsSection = 'account' | 'articles' | 'extraction';
+/** The four sections of `/settings`, in page order (settings.md Interface). */
+export type SettingsSection = 'account' | 'articles' | 'extraction' | 'kindle';
 
 /** The sections whose drafts the settings store keeps; `账号` owns its own fields. */
 export type DraftSection = Exclude<SettingsSection, 'account'>;
@@ -17,6 +18,7 @@ export const settingsSections: ReadonlyArray<{
   { id: 'account', name: accountMessages.accountSectionHeading },
   { id: 'articles', name: copy.retentionHeading },
   { id: 'extraction', name: copy.fetcherHeading },
+  { id: 'kindle', name: kindleMessages.heading },
 ];
 
 /** Whether a section differs from what was read. */
@@ -85,7 +87,8 @@ export const createSectionSwitch = (options: SectionSwitchOptions) => {
   const anyChanged = (): boolean =>
     changed('account') ||
     options.draftChanged('articles') ||
-    options.draftChanged('extraction');
+    options.draftChanged('extraction') ||
+    options.draftChanged('kindle');
 
   const pick = (target: SettingsSection): void => {
     const result = switchSection({

@@ -1,9 +1,15 @@
 import { createSignal } from 'solid-js';
 import type { Setting } from '../api/setting';
-import type { DraftSection, SettingsSection } from './section';
+import type { DraftSection } from './section';
 
 /** The two providers of settings.md SET-FETCH. */
 export type FetcherProvider = Setting['provider'];
+
+/**
+ * The sections whose drafts this module keeps: `Kindle` keeps its own in
+ * `kindle/` (settings.md SET-KINDLE).
+ */
+export type OwnDraftSection = Exclude<DraftSection, 'kindle'>;
 
 /** What a draft is compared with: the retention and the provider that were read. */
 export type StoredValues = {
@@ -56,7 +62,7 @@ export const applyRead = (drafts: Drafts, stored: StoredValues): void => {
 export const changedDraft = (
   drafts: Drafts,
   stored: StoredValues,
-  section: DraftSection
+  section: OwnDraftSection
 ): boolean => {
   if (section === 'articles') {
     return drafts.retentionDraft() !== String(stored.retention);
@@ -73,7 +79,7 @@ export const changedDraft = (
 export const discardDraft = (
   drafts: Drafts,
   stored: StoredValues,
-  section: SettingsSection
+  section: OwnDraftSection
 ): void => {
   if (section === 'articles') {
     drafts.setRetentionDraft(String(stored.retention));

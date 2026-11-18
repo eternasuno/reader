@@ -1,7 +1,12 @@
 import { createSignal } from 'solid-js';
-import { type Feed, listFeeds } from '../api/feed';
+import {
+  type Feed,
+  type FeedOrder,
+  type FeedReaderMode,
+  listFeeds,
+} from '../api/feed';
 
-export type { Feed } from '../api/feed';
+export type { Feed, FeedOrder, FeedReaderMode } from '../api/feed';
 
 const [feedList, setFeedList] = createSignal<ReadonlyArray<Feed>>([]);
 
@@ -15,6 +20,21 @@ export const setFeeds = (next: ReadonlyArray<Feed>): void => {
 
 export const feedById = (id: string): Feed | undefined =>
   feedList().find((feed) => feed.id === id);
+
+/** The stored order of a feed's list; `newest` for a feed not loaded (FD-PREF-3). */
+export const feedOrder = (id: string): FeedOrder =>
+  feedById(id)?.order ?? 'newest';
+
+/** The stored reader mode of a feed; `default` for a feed not loaded (RD-MODE-4). */
+export const feedReaderMode = (id: string): FeedReaderMode =>
+  feedById(id)?.readerMode ?? 'default';
+
+/** Changes one loaded feed in place; a feed not loaded is left out. */
+export const changeFeed = (id: string, change: (feed: Feed) => Feed): void => {
+  setFeedList((list) =>
+    list.map((feed) => (feed.id === id ? change(feed) : feed))
+  );
+};
 
 /** The feed the owner follows at an address (CM-ID-7). */
 export const feedByUrl = (url: string): Feed | undefined =>
