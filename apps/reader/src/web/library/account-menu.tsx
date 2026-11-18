@@ -1,4 +1,4 @@
-import { A, useNavigate } from '@solidjs/router';
+import { A } from '@solidjs/router';
 import { createSignal, Show } from 'solid-js';
 import { accountMessages } from '../account/messages';
 import { signOut } from '../account/sign-out';
@@ -8,9 +8,12 @@ import { Icon } from '../ui/icon';
 import { Menu } from '../ui/menu';
 import { copy } from './messages';
 
-/** The sign-out item: pending label while it runs, its wording under it on failure. */
+/**
+ * The sign-out item: pending label while it runs, its wording under it on failure.
+ * It does not navigate: Better Auth reads the session again after sign-out, and
+ * the session guard takes the page to `/login` once that read answers.
+ */
 const SignOutItem = (props: { readonly close: () => void }) => {
-  const navigate = useNavigate();
   const [busy, setBusy] = createSignal(false);
   const [failure, setFailure] = createSignal<string>();
 
@@ -21,7 +24,6 @@ const SignOutItem = (props: { readonly close: () => void }) => {
 
     try {
       await signOut();
-      navigate('/login', { replace: true });
     } catch (error) {
       setFailure(messageOf(error));
     } finally {

@@ -215,7 +215,7 @@ Feature: The library screen
       Given the first page of "稍后阅读" fails
       Then the list shows "暂时无法加载文章" and "请点击上方重试。"
 
-  Rule: The list reloads only when the library is entered, a scope is selected, the filter changes or refresh is pressed
+  Rule: The list reloads only when the library is entered, a scope is selected or the filter changes
     Scenario: Entering the library reloads the current scope
       Given I reload the page on "/all"
       Then the library lists the first page of "全部订阅" and reloads the sidebar
@@ -225,6 +225,12 @@ Feature: The library screen
       When I close the reader
       Then the list shows the same rows without a reload
       And the URL is the feed's list URL
+
+    Scenario: Opening and moving between articles does not reload
+      Given the unread filter is on and I open an unread article from the list
+      When I move to the next article and then close the reader
+      Then neither the list nor the sidebar is requested again
+      And the article I read is still listed, shown as read
 
     Scenario: A read mark does not reload the list
       Given a loaded row

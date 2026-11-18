@@ -78,9 +78,10 @@ type UnauthorizedListener = () => void;
 const unauthorizedListeners = new Set<UnauthorizedListener>();
 
 /**
- * Registers the reaction to a 401 from any request — the router redirects to
- * `/login` (AC-SESSION-4). `api/` imports no router, so whoever owns the
- * navigation registers it; the returned function unsubscribes.
+ * Registers the reaction to a 401 from any request — the session guard reads
+ * the session again and redirects to `/login` on "no session" (AC-SESSION-8).
+ * `api/` imports no Solid or router API, so the guard registers it; the
+ * returned function unsubscribes.
  */
 export const onUnauthorized = (
   listener: UnauthorizedListener

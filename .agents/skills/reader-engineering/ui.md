@@ -53,6 +53,7 @@ Domain-free components; data arrives through props.
 - Every mount generates two secrets from `crypto.getRandomValues`: the CSP nonce for the inline reporter script and a separate token for resize messages. A new frame gets new values, so a token from an earlier mount is useless.
 - The reporter posts `{ type: 'article-frame-resize', token, height }`. The parent accepts a message only when `event.source` is that iframe's own window, the type is known, the token equals the current mount's token and the height is a finite number in a sane range; nothing else may change layout. The measured height is applied as a custom property in `rem`, with `scrolling="auto"` until the first measurement.
 - Sanitized article HTML arrives with its own classes stripped and a fixed per-element class map reapplied, because the stored HTML carries no styling of the app. That map is the single place article typography lives.
+- The frame body uses the app's `font-sans` stack, never only `system-ui` or a generic family: fontconfig can map generic `sans-serif` and `system-ui` to a monospace font (seen in Firefox on Linux), which the app's named fonts avoid.
 - The embedded-page frame is a different component and a different risk: it loads the third-party site's URL (http or https, no credentials, never the app's own origin) with `allow-same-origin`, because it is a foreign page, not article HTML. Do not merge the two frames.
 
 ## Verification
