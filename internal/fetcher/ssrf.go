@@ -142,7 +142,7 @@ func redirectPolicy(req *http.Request, via []*http.Request) error {
 }
 
 func shouldStripAuthorization(via []*http.Request, next *http.Request) bool {
-	if len(via) == 0 || via[0] == nil || via[0].URL == nil || next == nil || next.URL == nil {
+	if len(via) == 0 || via[0] == nil || via[0].URL == nil {
 		return true
 	}
 
@@ -151,24 +151,24 @@ func shouldStripAuthorization(via []*http.Request, next *http.Request) bool {
 	initialHTTPS := strings.EqualFold(initialURL.Scheme, "https")
 
 	for _, hop := range via[1:] {
-		if hop == nil || hop.URL == nil {
-			return true
-		}
-
-		if requestOrigin(hop.URL) != initialOrigin {
-			return true
-		}
-
-		if initialHTTPS && strings.ToLower(hop.URL.Scheme) == "http" {
+		if breaksAuthScope(hop, initialOrigin, initialHTTPS) {
 			return true
 		}
 	}
 
-	if requestOrigin(next.URL) != initialOrigin {
+	return breaksAuthScope(next, initialOrigin, initialHTTPS)
+}
+
+func breaksAuthScope(req *http.Request, initialOrigin string, initialHTTPS bool) bool {
+	if req == nil || req.URL == nil {
 		return true
 	}
 
-	return initialHTTPS && strings.ToLower(next.URL.Scheme) == "http"
+	if requestOrigin(req.URL) != initialOrigin {
+		return true
+	}
+
+	return initialHTTPS && strings.EqualFold(req.URL.Scheme, "http")
 }
 
 func requestOrigin(parsed *url.URL) string {

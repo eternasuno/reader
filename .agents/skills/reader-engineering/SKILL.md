@@ -23,7 +23,7 @@ Conditional files:
 | Readability | `codeberg.org/readeck/go-readability/v2` | Readability.js v0.6.0 compatible, faster & lower memory than archived `go-shiori/go-readability`, preserves Tailwind utility classes |
 | HTML sanitizing | `golang.org/x/net/html` + `github.com/microcosm-cc/bluemonday` | relative `href`/`src` resolution, strict allowlist sanitization, link `target="_blank"` |
 | Webpage fetch | Go `net/http` (default); optional Jina API or external CDP via `github.com/chromedp/chromedp` (`NewRemoteAllocator`) | zero-dependency fast path; heavy JS pages delegated only when an external endpoint is configured |
-| Kindle EPUB & Mail | stdlib `archive/zip` (EPUB 3) + `github.com/wneessen/go-mail` | stored `mimetype` zip entry; context-aware SMTP with implicit TLS & STARTTLS |
+| Kindle EPUB & Mail | stdlib `archive/zip` + `image/{jpeg,png}` (EPUB 3) + `github.com/wneessen/go-mail` | in-memory EPUB assembly with stored `mimetype` zip entry and bounded-memory image downscaling (`<= 1200×1600`, JPEG quality 75); context-aware SMTP (`3m` timeout) with implicit TLS (`465`) & mandatory STARTTLS (`587`) |
 | Frontend SPA | SolidJS 2 (`solid-js` `^2.0.0`, `@solidjs/web` `^2.0.0`), `@solidjs/router` `^2.0.0`, `@solid-primitives/i18n@next` (`^3.0.0-next.7`), `@tanstack/virtual-core` | async-in-graph reactivity, Solid 2 primitive i18n, thin custom wrapper over framework-agnostic `@tanstack/virtual-core` (avoids 1.x-only `@tanstack/solid-virtual` peer mismatch) |
 | Styling & Build | Tailwind CSS 4 (`@tailwindcss/vite`), daisyUI 5, Vite 8/9 (`@solidjs/vite-plugin` `^3.0.0`), TypeScript, Biome, Vitest | native OXC Solid compiler (no Babel needed), zero runtime CSS-in-JS |
 

@@ -8,6 +8,8 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"slices"
 	"strings"
@@ -686,6 +688,58 @@ func TestBuildBooksRejectsOversizedSingleImageInFirstDraft(t *testing.T) {
 	if strings.Contains(chapter, "<img") {
 		t.Fatalf("expected oversized image to be stripped in first draft, got:\n%s", chapter)
 	}
+}
+
+func TestBuildBooksDownscalesAndCompressesLargeImages(t *testing.T) {
+	t.Parallel()
+
+	rawPNG := encodeTestPNG(t, 2400, 1800)
+	fetcher := newFakeImageFetcher(map[string]fakeImage{
+		"https://example.com/photo.png": {data: rawPNG, mediaType: "image/png"},
+	})
+	articles := []domain.KindleArticle{{
+		ID:       "article-1",
+		URL:      "https://example.com/posts/1",
+		Title:    "高清大图",
+		HTMLBody: `<p>正文</p><img src="https://example.com/photo.png">`,
+	}}
+
+	books, err := NewBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", articles)
+	if err != nil {
+		t.Fatalf("BuildBooks() error = %v", err)
+	}
+
+	reader := openArchive(t, books[0].Data)
+	jpgBytes := entryBody(t, entryByName(t, reader, "OEBPS/images/img-0001.jpg"))
+	if len(jpgBytes) >= len(rawPNG) {
+		t.Fatalf("compressed image size = %d, want smaller than raw PNG %d", len(jpgBytes), len(rawPNG))
+	}
+
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(jpgBytes))
+	if err != nil {
+		t.Fatalf("DecodeConfig() error = %v", err)
+	}
+
+	if format != "jpeg" || cfg.Width != 1200 || cfg.Height != 900 {
+		t.Fatalf("decoded format=%q size=%dx%d, want jpeg 1200x900", format, cfg.Width, cfg.Height)
+	}
+}
+
+func encodeTestPNG(t *testing.T, width int, height int) []byte {
+	t.Helper()
+
+	canvas := image.NewNRGBA(image.Rect(0, 0, width, height))
+	if _, err := rand.Read(canvas.Pix); err != nil {
+		t.Fatalf("rand.Read() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	encoder := png.Encoder{CompressionLevel: png.NoCompression}
+	if err := encoder.Encode(&buf, canvas); err != nil {
+		t.Fatalf("png.Encode() error = %v", err)
+	}
+
+	return buf.Bytes()
 }
 
 func openArchive(t *testing.T, data []byte) *zip.Reader {

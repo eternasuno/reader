@@ -19,7 +19,7 @@ func (r *FolderRepo) List(ctx context.Context) ([]domain.Folder, error) {
 		return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	folders := []domain.Folder{}
 	for rows.Next() {

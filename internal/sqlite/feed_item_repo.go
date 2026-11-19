@@ -42,7 +42,7 @@ func (r *FeedItemRepo) ListByFeedForRetention(ctx context.Context, feedID string
 		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	items := []domain.FeedItem{}
 	for rows.Next() {
@@ -67,7 +67,7 @@ func (r *FeedItemRepo) ListStoredRefsByFeed(ctx context.Context, feedID string) 
 		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	refs := []StoredFeedItemRef{}
 	for rows.Next() {
@@ -106,7 +106,7 @@ func (r *FeedItemRepo) UnreadCounts(ctx context.Context) ([]domain.FeedUnreadCou
 		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	counts := []domain.FeedUnreadCount{}
 	for rows.Next() {
@@ -316,7 +316,7 @@ func (r *FeedItemRepo) list(ctx context.Context, query feedItemQuery) (domain.Pa
 		return domain.PageResult[domain.FeedItem]{}, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	items := []domain.FeedItem{}
 	for rows.Next() {

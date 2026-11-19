@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"net/url"
 	"strings"
 	"sync"
@@ -20,6 +23,12 @@ import (
 const (
 	defaultImageConcurrency = 4
 	minImageCacheBytes      = 64 << 20
+	maxEPUBImageWidth       = 1200
+	maxEPUBImageHeight      = 1600
+	imageReencodeMinBytes   = 128 << 10
+	maxImageDecodeDimension = 8192
+	maxImageDecodePixels    = 25_000_000
+	epubJPEGQuality         = 75
 	epubMimetype            = "application/epub+zip"
 	bookCreator             = "留白"
 	untitledArticle         = "Untitled"
@@ -212,53 +221,78 @@ func (b *Builder) renderNumberedBooks(
 	drafts []epubDraft,
 	cache *imageCache,
 ) ([]domain.EPUBBook, error) {
+	current := drafts
 	for {
-		books := make([]domain.EPUBBook, len(drafts))
-		splitIndex := -1
-
-		for i, draft := range drafts {
-			title, filename := domain.FormatKindleBookMeta(dateStr, i+1, len(drafts))
-			finalDraft, data, overflowMulti, err := b.renderBook(ctx, draft, title, cache)
-			if err != nil {
-				return nil, err
-			}
-
-			if overflowMulti {
-				splitIndex = i
-				break
-			}
-
-			books[i] = domain.EPUBBook{
-				Title:        title,
-				Filename:     filename,
-				Data:         data,
-				SavedPageIDs: finalDraft.savedPageIDs(),
-				FeedItemIDs:  finalDraft.feedItemIDs(),
-				ArticleCount: len(finalDraft.chapters),
-			}
+		books, splitIndex, err := b.tryRenderBooks(ctx, dateStr, current, cache)
+		if err != nil {
+			return nil, err
 		}
 
 		if splitIndex < 0 {
 			return books, nil
 		}
 
-		leftArticles, rightArticles := domain.HalveKindleArticles(drafts[splitIndex].articles())
-		leftDraft, err := b.buildDraft(ctx, leftArticles, true, cache)
+		current, err = b.splitDraftAt(ctx, current, splitIndex, cache)
 		if err != nil {
 			return nil, err
 		}
-
-		rightDraft, err := b.buildDraft(ctx, rightArticles, true, cache)
-		if err != nil {
-			return nil, err
-		}
-
-		nextDrafts := make([]epubDraft, 0, len(drafts)+1)
-		nextDrafts = append(nextDrafts, drafts[:splitIndex]...)
-		nextDrafts = append(nextDrafts, leftDraft, rightDraft)
-		nextDrafts = append(nextDrafts, drafts[splitIndex+1:]...)
-		drafts = nextDrafts
 	}
+}
+
+func (b *Builder) tryRenderBooks(
+	ctx context.Context,
+	dateStr string,
+	drafts []epubDraft,
+	cache *imageCache,
+) ([]domain.EPUBBook, int, error) {
+	books := make([]domain.EPUBBook, len(drafts))
+	for i, draft := range drafts {
+		title, filename := domain.FormatKindleBookMeta(dateStr, i+1, len(drafts))
+		finalDraft, data, overflowMulti, err := b.renderBook(ctx, draft, title, cache)
+		if err != nil {
+			return nil, -1, err
+		}
+
+		if overflowMulti {
+			return nil, i, nil
+		}
+
+		books[i] = domain.EPUBBook{
+			Title:        title,
+			Filename:     filename,
+			Data:         data,
+			SavedPageIDs: finalDraft.savedPageIDs(),
+			FeedItemIDs:  finalDraft.feedItemIDs(),
+			ArticleCount: len(finalDraft.chapters),
+		}
+	}
+
+	return books, -1, nil
+}
+
+func (b *Builder) splitDraftAt(
+	ctx context.Context,
+	drafts []epubDraft,
+	splitIndex int,
+	cache *imageCache,
+) ([]epubDraft, error) {
+	leftArticles, rightArticles := domain.HalveKindleArticles(drafts[splitIndex].articles())
+	leftDraft, err := b.buildDraft(ctx, leftArticles, true, cache)
+	if err != nil {
+		return nil, err
+	}
+
+	rightDraft, err := b.buildDraft(ctx, rightArticles, true, cache)
+	if err != nil {
+		return nil, err
+	}
+
+	nextDrafts := make([]epubDraft, 0, len(drafts)+1)
+	nextDrafts = append(nextDrafts, drafts[:splitIndex]...)
+	nextDrafts = append(nextDrafts, leftDraft, rightDraft)
+	nextDrafts = append(nextDrafts, drafts[splitIndex+1:]...)
+
+	return nextDrafts, nil
 }
 
 func measurementBookTitle(dateStr string, articleCount int) string {
@@ -290,26 +324,33 @@ func (b *Builder) renderBook(
 		return epubDraft{}, nil, false, fmt.Errorf("kindle book %q is %d bytes, exceeding the %d byte limit", title, len(data), b.maxEPUBBytes)
 	}
 
-	identifier := draft.identifier
-	modifiedAt := draft.modifiedAt
-	draft, err = b.buildDraft(ctx, draft.articles(), false, cache)
+	return b.renderBookWithoutImages(ctx, draft, title, cache)
+}
+
+func (b *Builder) renderBookWithoutImages(
+	ctx context.Context,
+	draft epubDraft,
+	title string,
+	cache *imageCache,
+) (epubDraft, []byte, bool, error) {
+	textOnlyDraft, err := b.buildDraft(ctx, draft.articles(), false, cache)
 	if err != nil {
 		return epubDraft{}, nil, false, err
 	}
 
-	draft.identifier = identifier
-	draft.modifiedAt = modifiedAt
+	textOnlyDraft.identifier = draft.identifier
+	textOnlyDraft.modifiedAt = draft.modifiedAt
 
-	data, err = renderEPUB(title, draft)
+	data, err := renderEPUB(title, textOnlyDraft)
 	if err != nil {
 		return epubDraft{}, nil, false, err
 	}
 
 	if len(data) > b.maxEPUBBytes {
-		return epubDraft{}, nil, false, fmt.Errorf("kindle article %q is %d bytes even without images, exceeding the %d byte limit", draft.chapters[0].article.ID, len(data), b.maxEPUBBytes)
+		return epubDraft{}, nil, false, fmt.Errorf("kindle article %q is %d bytes even without images, exceeding the %d byte limit", textOnlyDraft.chapters[0].article.ID, len(data), b.maxEPUBBytes)
 	}
 
-	return draft, data, false, nil
+	return textOnlyDraft, data, false, nil
 }
 
 func (b *Builder) buildDraft(ctx context.Context, articles []domain.KindleArticle, includeImages bool, cache *imageCache) (epubDraft, error) {
@@ -347,6 +388,20 @@ func newChapter(article domain.KindleArticle) (chapter, error) {
 }
 
 func (b *Builder) prepareImages(ctx context.Context, chapters []chapter, includeImages bool, cache *imageCache) []embeddedImage {
+	nodeURLs, orderedURLs := collectImageTargets(chapters)
+
+	var images []embeddedImage
+	var rewrites map[string]string
+	if includeImages && b.imageFetcher != nil {
+		images, rewrites = b.buildEmbeddedImages(ctx, orderedURLs, cache)
+	}
+
+	rewriteChapterImages(chapters, nodeURLs, rewrites)
+
+	return images
+}
+
+func collectImageTargets(chapters []chapter) (map[*html.Node]string, []string) {
 	nodeURLs := make(map[*html.Node]string)
 	orderedURLs := make([]string, 0)
 	seenURLs := make(map[string]struct{})
@@ -368,27 +423,37 @@ func (b *Builder) prepareImages(ctx context.Context, chapters []chapter, include
 		}
 	}
 
+	return nodeURLs, orderedURLs
+}
+
+func (b *Builder) buildEmbeddedImages(
+	ctx context.Context,
+	orderedURLs []string,
+	cache *imageCache,
+) ([]embeddedImage, map[string]string) {
+	results := b.fetchImages(ctx, orderedURLs, cache)
 	images := make([]embeddedImage, 0, len(orderedURLs))
 	rewrites := make(map[string]string, len(orderedURLs))
 
-	if includeImages && b.imageFetcher != nil {
-		results := b.fetchImages(ctx, orderedURLs, cache)
-		for i, rawURL := range orderedURLs {
-			if !results[i].ok {
-				continue
-			}
-
-			image := embeddedImage{
-				Number:    len(images) + 1,
-				Extension: results[i].asset.Extension,
-				MediaType: imageMediaType(results[i].asset.Extension),
-				Data:      results[i].asset.Data,
-			}
-			images = append(images, image)
-			rewrites[rawURL] = "../images/" + image.fileName()
+	for i, rawURL := range orderedURLs {
+		if !results[i].ok {
+			continue
 		}
+
+		image := embeddedImage{
+			Number:    len(images) + 1,
+			Extension: results[i].asset.Extension,
+			MediaType: imageMediaType(results[i].asset.Extension),
+			Data:      results[i].asset.Data,
+		}
+		images = append(images, image)
+		rewrites[rawURL] = "../images/" + image.fileName()
 	}
 
+	return images, rewrites
+}
+
+func rewriteChapterImages(chapters []chapter, nodeURLs map[*html.Node]string, rewrites map[string]string) {
 	for _, ch := range chapters {
 		for _, node := range imageNodes(ch.root) {
 			if source, ok := rewrites[nodeURLs[node]]; ok {
@@ -399,8 +464,6 @@ func (b *Builder) prepareImages(ctx context.Context, chapters []chapter, include
 			removeNode(node)
 		}
 	}
-
-	return images
 }
 
 func (b *Builder) fetchImages(ctx context.Context, urls []string, cache *imageCache) []cachedImageResult {
@@ -415,32 +478,48 @@ func (b *Builder) fetchImages(ctx context.Context, urls []string, cache *imageCa
 		pending = append(pending, i)
 	}
 
-	queue := make(chan int, len(pending))
-	for _, index := range pending {
-		queue <- index
-	}
-
-	close(queue)
+	queue := newIndexQueue(pending)
 
 	var waitGroup sync.WaitGroup
 	for range min(b.imageConcurrency, len(pending)) {
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
-			for index := range queue {
-				if ctx.Err() != nil {
-					return
-				}
-
-				result := b.fetchImage(ctx, urls[index])
-				results[index] = cache.store(urls[index], result)
-			}
+			b.fetchImageWorker(ctx, queue, urls, results, cache)
 		}()
 	}
 
 	waitGroup.Wait()
 
 	return results
+}
+
+func newIndexQueue(indices []int) <-chan int {
+	queue := make(chan int, len(indices))
+	for _, index := range indices {
+		queue <- index
+	}
+
+	close(queue)
+
+	return queue
+}
+
+func (b *Builder) fetchImageWorker(
+	ctx context.Context,
+	queue <-chan int,
+	urls []string,
+	results []cachedImageResult,
+	cache *imageCache,
+) {
+	for index := range queue {
+		if ctx.Err() != nil {
+			return
+		}
+
+		result := b.fetchImage(ctx, urls[index])
+		results[index] = cache.store(urls[index], result)
+	}
 }
 
 func (b *Builder) fetchImage(ctx context.Context, rawURL string) imageResult {
@@ -454,7 +533,97 @@ func (b *Builder) fetchImage(ctx context.Context, rawURL string) imageResult {
 		return imageResult{}
 	}
 
+	data, extension = optimizeImage(data, extension)
+
 	return imageResult{Data: data, Extension: extension, OK: true}
+}
+
+func optimizeImage(data []byte, extension string) ([]byte, string) {
+	if extension != ".jpg" && extension != ".png" {
+		return data, extension
+	}
+
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || !shouldOptimizeImage(cfg, len(data)) {
+		return data, extension
+	}
+
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return data, extension
+	}
+
+	targetW, targetH := fitImageDimensions(cfg.Width, cfg.Height)
+	dst := resampleOntoWhite(src, targetW, targetH)
+
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, dst, &jpeg.Options{Quality: epubJPEGQuality}); err != nil {
+		return data, extension
+	}
+
+	if encoded.Len() >= len(data) {
+		return data, extension
+	}
+
+	return encoded.Bytes(), ".jpg"
+}
+
+func shouldOptimizeImage(cfg image.Config, byteLen int) bool {
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return false
+	}
+
+	if cfg.Width > maxImageDecodeDimension || cfg.Height > maxImageDecodeDimension {
+		return false
+	}
+
+	if cfg.Width*cfg.Height > maxImageDecodePixels {
+		return false
+	}
+
+	return cfg.Width > maxEPUBImageWidth || cfg.Height > maxEPUBImageHeight || byteLen > imageReencodeMinBytes
+}
+
+func fitImageDimensions(width int, height int) (int, int) {
+	targetW := width
+	targetH := height
+
+	if targetW > maxEPUBImageWidth {
+		targetH = max(1, (targetH*maxEPUBImageWidth)/targetW)
+		targetW = maxEPUBImageWidth
+	}
+
+	if targetH > maxEPUBImageHeight {
+		targetW = max(1, (targetW*maxEPUBImageHeight)/targetH)
+		targetH = maxEPUBImageHeight
+	}
+
+	return targetW, targetH
+}
+
+func resampleOntoWhite(src image.Image, dstW int, dstH int) *image.RGBA {
+	bounds := src.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+
+	for y := range dstH {
+		srcY := bounds.Min.Y + ((2*y+1)*srcH)/(2*dstH)
+		rowOffset := y * dst.Stride
+
+		for x := range dstW {
+			srcX := bounds.Min.X + ((2*x+1)*srcW)/(2*dstW)
+			r, g, b, a := src.At(srcX, srcY).RGBA()
+			white := uint32(0xffff) - a
+			pix := dst.Pix[rowOffset+x*4 : rowOffset+x*4+4]
+			pix[0] = uint8((r + white) >> 8)
+			pix[1] = uint8((g + white) >> 8)
+			pix[2] = uint8((b + white) >> 8)
+			pix[3] = 0xff
+		}
+	}
+
+	return dst
 }
 
 func newImageCache(maxEPUBBytes int) *imageCache {
@@ -760,7 +929,7 @@ func renderNCX(title string, draft epubDraft) []byte {
 	out.WriteString("<docTitle><text>" + escapeXMLText(title) + "</text></docTitle>\n<navMap>\n")
 
 	for i, ch := range draft.chapters {
-		out.WriteString(fmt.Sprintf("<navPoint id=\"navPoint-%04d\" playOrder=\"%d\">\n", i+1, i+1))
+		_, _ = fmt.Fprintf(&out, "<navPoint id=\"navPoint-%04d\" playOrder=\"%d\">\n", i+1, i+1)
 		out.WriteString("<navLabel><text>" + escapeXMLText(chapterTitle(ch.article)) + "</text></navLabel>\n")
 		out.WriteString("<content src=\"" + chapterHref(i) + "\"/>\n</navPoint>\n")
 	}
@@ -786,17 +955,17 @@ func renderOPF(title string, draft epubDraft) []byte {
 	out.WriteString("<item id=\"css\" href=\"styles.css\" media-type=\"text/css\"/>\n")
 
 	for i := range draft.chapters {
-		out.WriteString(fmt.Sprintf("<item id=\"chapter-%04d\" href=\"%s\" media-type=\"application/xhtml+xml\"/>\n", i+1, chapterHref(i)))
+		_, _ = fmt.Fprintf(&out, "<item id=\"chapter-%04d\" href=\"%s\" media-type=\"application/xhtml+xml\"/>\n", i+1, chapterHref(i))
 	}
 
 	for _, image := range draft.images {
-		out.WriteString(fmt.Sprintf("<item id=\"img-%04d\" href=\"images/%s\" media-type=\"%s\"/>\n", image.Number, image.fileName(), image.MediaType))
+		_, _ = fmt.Fprintf(&out, "<item id=\"img-%04d\" href=\"images/%s\" media-type=\"%s\"/>\n", image.Number, image.fileName(), image.MediaType)
 	}
 
 	out.WriteString("</manifest>\n<spine toc=\"ncx\">\n")
 
 	for i := range draft.chapters {
-		out.WriteString(fmt.Sprintf("<itemref idref=\"chapter-%04d\"/>\n", i+1))
+		_, _ = fmt.Fprintf(&out, "<itemref idref=\"chapter-%04d\"/>\n", i+1)
 	}
 
 	out.WriteString("</spine>\n</package>\n")

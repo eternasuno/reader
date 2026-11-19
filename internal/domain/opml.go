@@ -25,8 +25,13 @@ type opmlXMLOutline struct {
 	Outlines []opmlXMLOutline `xml:"outline"`
 }
 
+type opmlWalkState struct {
+	document    OPMLDocument
+	seenFeeds   map[string]struct{}
+	seenFolders map[string]struct{}
+}
+
 func ParseOPML(data []byte) (OPMLDocument, error) {
-	document := OPMLDocument{}
 	parsed := opmlXMLDocument{}
 	payload := bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
 	decoder := xml.NewDecoder(bytes.NewReader(payload))
@@ -42,50 +47,67 @@ func ParseOPML(data []byte) (OPMLDocument, error) {
 		return OPMLDocument{}, err
 	}
 
-	seenFeeds := make(map[string]struct{}, len(parsed.Body.Outlines))
-	seenFolders := make(map[string]struct{}, len(parsed.Body.Outlines))
-	var walk func(outlines []opmlXMLOutline, folder *string)
-	walk = func(outlines []opmlXMLOutline, folder *string) {
-		for _, outline := range outlines {
-			rawXMLURL, hasXMLURL := opmlAttribute(outline.Attrs, "xmlUrl")
-			outlineType, _ := opmlAttribute(outline.Attrs, "type")
-			isRSS := strings.EqualFold(strings.TrimSpace(outlineType), "rss")
-
-			if !hasXMLURL && isRSS && len(outline.Outlines) == 0 {
-				// A feed outline without any url is invalid; it must not become a folder.
-				document.SkippedInvalid++
-				continue
-			}
-
-			if !hasXMLURL {
-				walk(outline.Outlines, opmlFolderName(outline, folder, &document, seenFolders))
-				continue
-			}
-
-			xmlURL := strings.TrimSpace(rawXMLURL)
-			if xmlURL == "" {
-				document.SkippedInvalid++
-				continue
-			}
-
-			feedURL, err := ParseNormalizedURL(xmlURL, ErrFeedUrlInvalid)
-			if err != nil {
-				document.SkippedInvalid++
-				continue
-			}
-
-			if _, duplicate := seenFeeds[feedURL.Raw()]; duplicate {
-				document.SkippedInvalid++
-				continue
-			}
-
-			seenFeeds[feedURL.Raw()] = struct{}{}
-			document.Feeds = append(document.Feeds, OPMLFeedInput{URL: feedURL, Title: opmlFeedTitle(outline, feedURL), FolderName: folder})
-		}
+	state := opmlWalkState{
+		seenFeeds:   make(map[string]struct{}, len(parsed.Body.Outlines)),
+		seenFolders: make(map[string]struct{}, len(parsed.Body.Outlines)),
 	}
-	walk(parsed.Body.Outlines, nil)
+	state.walk(parsed.Body.Outlines, nil)
 
-	return document, nil
+	return state.document, nil
+}
+
+func (s *opmlWalkState) walk(outlines []opmlXMLOutline, folder *string) {
+	for _, outline := range outlines {
+		s.processOutline(outline, folder)
+	}
+}
+
+func (s *opmlWalkState) processOutline(outline opmlXMLOutline, folder *string) {
+	rawXMLURL, hasXMLURL := opmlAttribute(outline.Attrs, "xmlUrl")
+	if !hasXMLURL {
+		if isInvalidEmptyRSSOutline(outline) {
+			// A feed outline without any url is invalid; it must not become a folder.
+			s.document.SkippedInvalid++
+			return
+		}
+
+		s.walk(outline.Outlines, opmlFolderName(outline, folder, &s.document, s.seenFolders))
+		return
+	}
+
+	s.addFeed(outline, rawXMLURL, folder)
+}
+
+func isInvalidEmptyRSSOutline(outline opmlXMLOutline) bool {
+	outlineType, _ := opmlAttribute(outline.Attrs, "type")
+
+	return strings.EqualFold(strings.TrimSpace(outlineType), "rss") && len(outline.Outlines) == 0
+}
+
+func (s *opmlWalkState) addFeed(outline opmlXMLOutline, rawXMLURL string, folder *string) {
+	xmlURL := strings.TrimSpace(rawXMLURL)
+	if xmlURL == "" {
+		s.document.SkippedInvalid++
+		return
+	}
+
+	feedURL, err := ParseNormalizedURL(xmlURL, ErrFeedUrlInvalid)
+	if err != nil {
+		s.document.SkippedInvalid++
+		return
+	}
+
+	if _, duplicate := s.seenFeeds[feedURL.Raw()]; duplicate {
+		s.document.SkippedInvalid++
+		return
+	}
+
+	s.seenFeeds[feedURL.Raw()] = struct{}{}
+	s.document.Feeds = append(s.document.Feeds, OPMLFeedInput{
+		URL:        feedURL,
+		Title:      opmlFeedTitle(outline, feedURL),
+		FolderName: folder,
+	})
 }
 
 func opmlDecodeRoot(decoder *xml.Decoder, payload []byte, parsed *opmlXMLDocument) error {
@@ -97,26 +119,39 @@ func opmlDecodeRoot(decoder *xml.Decoder, payload []byte, parsed *opmlXMLDocumen
 			return NewError(ErrInvalidOpml, err)
 		}
 
-		switch typed := tok.(type) {
-		case xml.Comment, xml.ProcInst, xml.Directive:
-		case xml.CharData:
-			if !isXMLWhitespace(typed) || !isXMLWhitespace(payload[start:end]) {
-				return NewError(ErrInvalidOpml, errors.New("unexpected content before the opml root element"))
-			}
-		case xml.StartElement:
-			if typed.Name.Local != "opml" {
-				return NewError(ErrInvalidOpml, errors.New("opml root element is missing"))
-			}
-
-			if err := decoder.DecodeElement(parsed, &typed); err != nil {
-				return NewError(ErrInvalidOpml, err)
-			}
-
-			return nil
-		default:
-			return NewError(ErrInvalidOpml, errors.New("unexpected token before the opml root element"))
+		done, err := opmlHandleRootToken(decoder, tok, payload[start:end], parsed)
+		if err != nil || done {
+			return err
 		}
 	}
+}
+
+func opmlHandleRootToken(decoder *xml.Decoder, tok xml.Token, raw []byte, parsed *opmlXMLDocument) (bool, error) {
+	switch typed := tok.(type) {
+	case xml.Comment, xml.ProcInst, xml.Directive:
+		return false, nil
+	case xml.CharData:
+		if !isXMLWhitespacePair(typed, raw) {
+			return false, NewError(ErrInvalidOpml, errors.New("unexpected content before the opml root element"))
+		}
+		return false, nil
+	case xml.StartElement:
+		return true, opmlDecodeStartElement(decoder, typed, parsed)
+	default:
+		return false, NewError(ErrInvalidOpml, errors.New("unexpected token before the opml root element"))
+	}
+}
+
+func opmlDecodeStartElement(decoder *xml.Decoder, start xml.StartElement, parsed *opmlXMLDocument) error {
+	if start.Name.Local != "opml" {
+		return NewError(ErrInvalidOpml, errors.New("opml root element is missing"))
+	}
+
+	if err := decoder.DecodeElement(parsed, &start); err != nil {
+		return NewError(ErrInvalidOpml, err)
+	}
+
+	return nil
 }
 
 func opmlCheckTrailing(decoder *xml.Decoder, payload []byte) error {
@@ -132,16 +167,28 @@ func opmlCheckTrailing(decoder *xml.Decoder, payload []byte) error {
 			return NewError(ErrInvalidOpml, err)
 		}
 
-		switch typed := tok.(type) {
-		case xml.Comment, xml.ProcInst:
-		case xml.CharData:
-			if !isXMLWhitespace(typed) || !isXMLWhitespace(payload[start:end]) {
-				return NewError(ErrInvalidOpml, errors.New("unexpected content after the opml root element"))
-			}
-		default:
-			return NewError(ErrInvalidOpml, errors.New("unexpected element after the opml root element"))
+		if err := opmlValidateTrailingToken(tok, payload[start:end]); err != nil {
+			return err
 		}
 	}
+}
+
+func opmlValidateTrailingToken(tok xml.Token, raw []byte) error {
+	switch typed := tok.(type) {
+	case xml.Comment, xml.ProcInst:
+		return nil
+	case xml.CharData:
+		if !isXMLWhitespacePair(typed, raw) {
+			return NewError(ErrInvalidOpml, errors.New("unexpected content after the opml root element"))
+		}
+		return nil
+	default:
+		return NewError(ErrInvalidOpml, errors.New("unexpected element after the opml root element"))
+	}
+}
+
+func isXMLWhitespacePair(charData []byte, raw []byte) bool {
+	return isXMLWhitespace(charData) && isXMLWhitespace(raw)
 }
 
 func isXMLWhitespace(data []byte) bool {

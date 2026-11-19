@@ -30,7 +30,7 @@ func (r *FeedRepo) List(ctx context.Context) ([]domain.Feed, error) {
 		return nil, domain.NewError(domain.ErrFeedRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	feeds := []domain.Feed{}
 	for rows.Next() {
@@ -76,25 +76,10 @@ func (r *FeedRepo) GetByURL(ctx context.Context, url domain.NormalizedURL) (*dom
 }
 
 func (r *FeedRepo) Create(ctx context.Context, feed domain.Feed) (domain.Feed, error) {
-	readerMode := feed.ReaderMode
-	if readerMode == "" {
-		readerMode = domain.ReaderModeDefault
-	}
+	readerMode, order := feedDefaults(feed)
 
-	order := feed.Order
-	if order == "" {
-		order = domain.SortOrderNewest
-	}
-
-	if feed.FolderID != nil {
-		exists, err := folderExists(ctx, r.read, *feed.FolderID)
-		if err != nil {
-			return domain.Feed{}, err
-		}
-
-		if !exists {
-			return domain.Feed{}, domain.NewError(domain.ErrFolderNotFound, nil)
-		}
+	if err := ensureFolderExists(ctx, r.read, feed.FolderID); err != nil {
+		return domain.Feed{}, err
 	}
 
 	created, err := scanFeed(r.write.QueryRowContext(
@@ -107,19 +92,37 @@ func (r *FeedRepo) Create(ctx context.Context, feed domain.Feed) (domain.Feed, e
 		string(readerMode),
 		string(order),
 	))
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Feed{}, domain.NewConflictURL(domain.ErrFeedAlreadyExists, feed.URL.RedactedString())
-	}
-
 	if err != nil {
-		if isForeignKeyViolation(err) {
-			return domain.Feed{}, domain.NewError(domain.ErrFolderNotFound, nil)
-		}
-
-		return domain.Feed{}, domain.NewError(domain.ErrFeedRepositoryError, err)
+		return domain.Feed{}, mapCreateFeedError(err, feed.URL)
 	}
 
 	return created, nil
+}
+
+func feedDefaults(feed domain.Feed) (domain.ReaderMode, domain.SortOrder) {
+	readerMode := feed.ReaderMode
+	if readerMode == "" {
+		readerMode = domain.ReaderModeDefault
+	}
+
+	order := feed.Order
+	if order == "" {
+		order = domain.SortOrderNewest
+	}
+
+	return readerMode, order
+}
+
+func mapCreateFeedError(err error, url domain.NormalizedURL) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.NewConflictURL(domain.ErrFeedAlreadyExists, url.RedactedString())
+	}
+
+	if isForeignKeyViolation(err) {
+		return domain.NewError(domain.ErrFolderNotFound, nil)
+	}
+
+	return domain.NewError(domain.ErrFeedRepositoryError, err)
 }
 
 func (r *FeedRepo) Delete(ctx context.Context, id string) error {
@@ -148,29 +151,26 @@ func (r *FeedRepo) UpdateOrder(ctx context.Context, id string, order domain.Sort
 
 func (r *FeedRepo) MoveToFolder(ctx context.Context, id string, folderID *string) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		if folderID != nil {
-			exists, err := folderExists(ctx, tx, *folderID)
-			if err != nil {
-				return err
-			}
-
-			if !exists {
-				return domain.NewError(domain.ErrFolderNotFound, nil)
-			}
+		if err := ensureFolderExists(ctx, tx, folderID); err != nil {
+			return err
 		}
 
-		if _, err := tx.ExecContext(ctx, `UPDATE feed SET folder_id = ? WHERE id = ?`, optionalString(folderID), id); err != nil {
-			if isForeignKeyViolation(err) {
-				return domain.NewError(domain.ErrFolderNotFound, nil)
-			}
-
-			return domain.NewError(domain.ErrFeedRepositoryError, err)
-		}
-
-		return nil
+		return updateFeedFolder(ctx, tx, id, folderID)
 	})
 	if err != nil {
 		return wrapRepositoryError(err, domain.ErrFeedRepositoryError)
+	}
+
+	return nil
+}
+
+func updateFeedFolder(ctx context.Context, tx *sql.Tx, id string, folderID *string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE feed SET folder_id = ? WHERE id = ?`, optionalString(folderID), id); err != nil {
+		if isForeignKeyViolation(err) {
+			return domain.NewError(domain.ErrFolderNotFound, nil)
+		}
+
+		return domain.NewError(domain.ErrFeedRepositoryError, err)
 	}
 
 	return nil
@@ -192,57 +192,71 @@ func (r *FeedRepo) RecordRefreshFailure(ctx context.Context, id string, errSumma
 
 func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, newTitle string, updatedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(
-			ctx,
-			`UPDATE feed SET title = ?, updated_at = ?, failure_count = 0, last_error = NULL WHERE id = ?`,
-			newTitle,
-			timeToMillis(updatedAt),
-			feedID,
-		)
-		if err != nil {
+		if err := updateFeedSyncMeta(ctx, tx, feedID, newTitle, updatedAt); err != nil {
 			return err
 		}
 
-		for _, item := range newItems {
-			_, err := tx.ExecContext(
-				ctx,
-				`INSERT INTO feed_item (id, feed_id, url, title, description, content, extracted_content, published_at, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (feed_id, url) DO NOTHING`,
-				item.ID,
-				feedID,
-				item.URL.Raw(),
-				item.Title,
-				optionalString(item.Description),
-				optionalString(item.Content),
-				optionalString(item.ExtractedContent),
-				optionalTime(item.PublishedAt),
-				boolInt(item.Read),
-			)
-			if err != nil {
-				return err
-			}
-		}
-
-		if len(deleteIDs) == 0 {
-			return nil
-		}
-
-		payload, err := encodeIDs(deleteIDs)
-		if err != nil {
+		if err := insertSyncItems(ctx, tx, feedID, newItems); err != nil {
 			return err
 		}
 
-		_, err = tx.ExecContext(ctx, `DELETE FROM feed_item WHERE feed_id = ? AND id IN (SELECT value FROM json_each(?))`, feedID, payload)
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return deleteSyncItems(ctx, tx, feedID, deleteIDs)
 	})
 	if err != nil {
 		return wrapRepositoryError(err, domain.ErrFeedRepositoryError)
 	}
 
 	return nil
+}
+
+func updateFeedSyncMeta(ctx context.Context, tx *sql.Tx, feedID string, newTitle string, updatedAt time.Time) error {
+	_, err := tx.ExecContext(
+		ctx,
+		`UPDATE feed SET title = ?, updated_at = ?, failure_count = 0, last_error = NULL WHERE id = ?`,
+		newTitle,
+		timeToMillis(updatedAt),
+		feedID,
+	)
+
+	return err
+}
+
+func insertSyncItems(ctx context.Context, tx *sql.Tx, feedID string, items []domain.FeedItem) error {
+	for _, item := range items {
+		_, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO feed_item (id, feed_id, url, title, description, content, extracted_content, published_at, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (feed_id, url) DO NOTHING`,
+			item.ID,
+			feedID,
+			item.URL.Raw(),
+			item.Title,
+			optionalString(item.Description),
+			optionalString(item.Content),
+			optionalString(item.ExtractedContent),
+			optionalTime(item.PublishedAt),
+			boolInt(item.Read),
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func deleteSyncItems(ctx context.Context, tx *sql.Tx, feedID string, deleteIDs []string) error {
+	if len(deleteIDs) == 0 {
+		return nil
+	}
+
+	payload, err := encodeIDs(deleteIDs)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM feed_item WHERE feed_id = ? AND id IN (SELECT value FROM json_each(?))`, feedID, payload)
+
+	return err
 }
 
 func (r *FeedRepo) ImportOPML(ctx context.Context, doc domain.OPMLDocument) (domain.OPMLImportResult, []string, error) {
@@ -293,27 +307,7 @@ func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
 func importOPML(ctx context.Context, db *sql.DB, doc domain.OPMLDocument) (domain.OPMLImportResult, []domain.Feed, error) {
 	importer := &opmlImporter{ctx: ctx, result: domain.OPMLImportResult{SkippedFeeds: doc.SkippedInvalid}, created: []domain.Feed{}}
 	err := withTx(ctx, db, func(tx *sql.Tx) error {
-		folderIDs, err := loadFolderIDs(ctx, tx)
-		if err != nil {
-			return err
-		}
-
-		importer.tx = tx
-		importer.folderIDs = folderIDs
-
-		for _, name := range doc.Folders {
-			if _, err := importer.ensureFolder(name); err != nil {
-				return err
-			}
-		}
-
-		for _, input := range doc.Feeds {
-			if err := importer.importFeed(input); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return importer.run(tx, doc)
 	})
 	if err != nil {
 		return domain.OPMLImportResult{}, nil, wrapRepositoryError(err, domain.ErrFeedRepositoryError)
@@ -322,13 +316,37 @@ func importOPML(ctx context.Context, db *sql.DB, doc domain.OPMLDocument) (domai
 	return importer.result, importer.created, nil
 }
 
+func (i *opmlImporter) run(tx *sql.Tx, doc domain.OPMLDocument) error {
+	folderIDs, err := loadFolderIDs(i.ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	i.tx = tx
+	i.folderIDs = folderIDs
+
+	for _, name := range doc.Folders {
+		if _, err := i.ensureFolder(name); err != nil {
+			return err
+		}
+	}
+
+	for _, input := range doc.Feeds {
+		if err := i.importFeed(input); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func loadFolderIDs(ctx context.Context, tx *sql.Tx) (map[string]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, name FROM folder`)
 	if err != nil {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	folderIDs := map[string]string{}
 	for rows.Next() {
@@ -369,15 +387,23 @@ func (i *opmlImporter) ensureFolder(rawName string) (string, error) {
 	return id, nil
 }
 
-func (i *opmlImporter) importFeed(input domain.OPMLFeedInput) error {
-	var folderID *string
-	if input.FolderName != nil {
-		id, err := i.ensureFolder(*input.FolderName)
-		if err != nil {
-			return err
-		}
+func (i *opmlImporter) resolveFeedFolder(folderName *string) (*string, error) {
+	if folderName == nil {
+		return nil, nil
+	}
 
-		folderID = &id
+	id, err := i.ensureFolder(*folderName)
+	if err != nil {
+		return nil, err
+	}
+
+	return &id, nil
+}
+
+func (i *opmlImporter) importFeed(input domain.OPMLFeedInput) error {
+	folderID, err := i.resolveFeedFolder(input.FolderName)
+	if err != nil {
+		return err
 	}
 
 	id := domain.NewID()
@@ -404,6 +430,12 @@ func (i *opmlImporter) importFeed(input domain.OPMLFeedInput) error {
 		return nil
 	}
 
+	i.recordCreatedFeed(id, folderID, input)
+
+	return nil
+}
+
+func (i *opmlImporter) recordCreatedFeed(id string, folderID *string, input domain.OPMLFeedInput) {
 	i.result.ImportedFeeds++
 	i.created = append(i.created, domain.Feed{
 		ID:         id,
@@ -413,12 +445,27 @@ func (i *opmlImporter) importFeed(input domain.OPMLFeedInput) error {
 		ReaderMode: domain.ReaderModeDefault,
 		Order:      domain.SortOrderNewest,
 	})
-
-	return nil
 }
 
 type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func ensureFolderExists(ctx context.Context, db rowQuerier, folderID *string) error {
+	if folderID == nil {
+		return nil
+	}
+
+	exists, err := folderExists(ctx, db, *folderID)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return domain.NewError(domain.ErrFolderNotFound, nil)
+	}
+
+	return nil
 }
 
 func folderExists(ctx context.Context, db rowQuerier, id string) (bool, error) {

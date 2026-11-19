@@ -97,51 +97,58 @@ var (
 )
 
 func New(cfg Config) *Client {
-	client := &Client{
-		settings:       cfg.Settings,
-		feedTimeout:    cfg.FeedTimeout,
-		webpageTimeout: cfg.WebpageTimeout,
-		imageTimeout:   cfg.ImageTimeout,
-		maxBodyBytes:   cfg.MaxBodyBytes,
-		jinaBaseURL:    strings.TrimSpace(cfg.JinaBaseURL),
-		userAgent:      strings.TrimSpace(cfg.UserAgent),
-		browserFetch:   cfg.BrowserFetch,
+	resolved := applyConfigDefaults(cfg)
+
+	return &Client{
+		httpClient:     newHTTPClient(resolved.AllowPrivateNetwork),
+		settings:       resolved.Settings,
+		feedTimeout:    resolved.FeedTimeout,
+		webpageTimeout: resolved.WebpageTimeout,
+		imageTimeout:   resolved.ImageTimeout,
+		maxBodyBytes:   resolved.MaxBodyBytes,
+		jinaBaseURL:    resolved.JinaBaseURL,
+		userAgent:      resolved.UserAgent,
+		browserFetch:   resolved.BrowserFetch,
+	}
+}
+
+func applyConfigDefaults(cfg Config) Config {
+	resolved := cfg
+	if resolved.FeedTimeout <= 0 {
+		resolved.FeedTimeout = defaultFeedTimeout
 	}
 
-	if client.feedTimeout <= 0 {
-		client.feedTimeout = defaultFeedTimeout
+	if resolved.WebpageTimeout <= 0 {
+		resolved.WebpageTimeout = defaultWebpageTimeout
 	}
 
-	if client.webpageTimeout <= 0 {
-		client.webpageTimeout = defaultWebpageTimeout
+	if resolved.ImageTimeout <= 0 {
+		resolved.ImageTimeout = defaultImageTimeout
 	}
 
-	if client.imageTimeout <= 0 {
-		client.imageTimeout = defaultImageTimeout
+	if resolved.MaxBodyBytes <= 0 {
+		resolved.MaxBodyBytes = defaultMaxBodyBytes
 	}
 
-	if client.maxBodyBytes <= 0 {
-		client.maxBodyBytes = defaultMaxBodyBytes
+	resolved.JinaBaseURL = strings.TrimSpace(resolved.JinaBaseURL)
+	if resolved.JinaBaseURL == "" {
+		resolved.JinaBaseURL = defaultJinaBaseURL
 	}
 
-	if client.jinaBaseURL == "" {
-		client.jinaBaseURL = defaultJinaBaseURL
+	if !strings.HasSuffix(resolved.JinaBaseURL, "/") {
+		resolved.JinaBaseURL += "/"
 	}
 
-	if !strings.HasSuffix(client.jinaBaseURL, "/") {
-		client.jinaBaseURL += "/"
+	resolved.UserAgent = strings.TrimSpace(resolved.UserAgent)
+	if resolved.UserAgent == "" {
+		resolved.UserAgent = defaultUserAgent
 	}
 
-	if client.userAgent == "" {
-		client.userAgent = defaultUserAgent
+	if resolved.BrowserFetch == nil {
+		resolved.BrowserFetch = defaultBrowserFetch(resolved.MaxBodyBytes)
 	}
 
-	client.httpClient = newHTTPClient(cfg.AllowPrivateNetwork)
-	if client.browserFetch == nil {
-		client.browserFetch = defaultBrowserFetch(client.maxBodyBytes)
-	}
-
-	return client
+	return resolved
 }
 
 func (c *Client) FetchFeed(ctx context.Context, target domain.NormalizedURL) (body []byte, finalURL string, err error) {
@@ -327,7 +334,7 @@ func (c *Client) do(ctx context.Context, req *http.Request, timeout time.Duratio
 		return nil, sanitizedError(err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := readLimitedBody(resp.Body, c.maxBodyBytes)
 	if err != nil {
@@ -382,73 +389,97 @@ func detectImageType(data []byte) (mediaType string, ext string, ok bool) {
 
 func defaultBrowserFetch(maxBodyBytes int64) BrowserFetchFunc {
 	return func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (string, string, error) {
-		if timeout <= 0 {
-			timeout = defaultWebpageTimeout
-		}
-
-		allocCtx, allocCancel := remote.NewAllocator(ctx, endpoint, remote.WithDialTimeout(timeout))
-		defer allocCancel()
-
-		tabCtx, tabCancel := chromedp.NewContext(allocCtx)
-		defer tabCancel()
-
-		runCtx, runCancel := context.WithTimeout(tabCtx, timeout)
-		defer runCancel()
-
-		err := chromedp.Do(runCtx, chromedp.Navigate(targetURL), chromedp.WaitReady(chromedp.CSS("body")))
-		if err != nil {
-			return "", "", fmt.Errorf("browser navigation failed: %w", err)
-		}
-
-		finalURL, err := chromedp.Run(runCtx, chromedp.Location())
-		if err != nil {
-			return "", "", fmt.Errorf("browser location failed: %w", err)
-		}
-
-		frameTree, err := chromedp.Call(runCtx, page.GetFrameTree, cdp.Empty{})
-		if err != nil {
-			return "", "", fmt.Errorf("browser frame tree failed: %w", err)
-		}
-
-		if frameTree.FrameTree == nil || frameTree.FrameTree.Frame == nil {
-			return "", "", errBrowserFetchFailed
-		}
-
-		world, err := chromedp.Call(
-			runCtx,
-			page.CreateIsolatedWorld,
-			page.CreateIsolatedWorldParams{
-				FrameID:   frameTree.FrameTree.Frame.ID,
-				WorldName: "liubai-snapshot",
-			},
-		)
-		if err != nil {
-			return "", "", fmt.Errorf("browser isolated world failed: %w", err)
-		}
-
-		snapshot, err := chromedp.Run(
-			runCtx,
-			chromedp.Evaluate[browserSnapshot](
-				fmt.Sprintf(browserHTMLScript, maxBodyBytes),
-				func(params *runtime.EvaluateParams) {
-					params.ContextID = world.ExecutionContextID
-				},
-			),
-		)
-		if err != nil {
-			return "", "", fmt.Errorf("browser html failed: %w", err)
-		}
-
-		if snapshot.TooLarge {
-			return "", "", errResponseTooLarge
-		}
-
-		if int64(len(snapshot.HTML)) > maxBodyBytes {
-			return "", "", errResponseTooLarge
-		}
-
-		return snapshot.HTML, finalURL, nil
+		return runBrowserFetch(ctx, endpoint, targetURL, timeout, maxBodyBytes)
 	}
+}
+
+func runBrowserFetch(
+	ctx context.Context,
+	endpoint string,
+	targetURL string,
+	timeout time.Duration,
+	maxBodyBytes int64,
+) (string, string, error) {
+	if timeout <= 0 {
+		timeout = defaultWebpageTimeout
+	}
+
+	allocCtx, allocCancel := remote.NewAllocator(ctx, endpoint, remote.WithDialTimeout(timeout))
+	defer allocCancel()
+
+	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
+	defer tabCancel()
+
+	runCtx, runCancel := context.WithTimeout(tabCtx, timeout)
+	defer runCancel()
+
+	err := chromedp.Do(runCtx, chromedp.Navigate(targetURL), chromedp.WaitReady(chromedp.CSS("body")))
+	if err != nil {
+		return "", "", fmt.Errorf("browser navigation failed: %w", err)
+	}
+
+	finalURL, err := chromedp.Run(runCtx, chromedp.Location())
+	if err != nil {
+		return "", "", fmt.Errorf("browser location failed: %w", err)
+	}
+
+	htmlBody, err := captureBrowserSnapshot(runCtx, maxBodyBytes)
+	if err != nil {
+		return "", "", err
+	}
+
+	return htmlBody, finalURL, nil
+}
+
+func captureBrowserSnapshot(ctx context.Context, maxBodyBytes int64) (string, error) {
+	contextID, err := createSnapshotWorld(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	snapshot, err := chromedp.Run(
+		ctx,
+		chromedp.Evaluate[browserSnapshot](
+			fmt.Sprintf(browserHTMLScript, maxBodyBytes),
+			func(params *runtime.EvaluateParams) {
+				params.ContextID = contextID
+			},
+		),
+	)
+	if err != nil {
+		return "", fmt.Errorf("browser html failed: %w", err)
+	}
+
+	if snapshot.TooLarge || int64(len(snapshot.HTML)) > maxBodyBytes {
+		return "", errResponseTooLarge
+	}
+
+	return snapshot.HTML, nil
+}
+
+func createSnapshotWorld(ctx context.Context) (runtime.ExecutionContextID, error) {
+	frameTree, err := chromedp.Call(ctx, page.GetFrameTree, cdp.Empty{})
+	if err != nil {
+		return 0, fmt.Errorf("browser frame tree failed: %w", err)
+	}
+
+	if frameTree.FrameTree == nil || frameTree.FrameTree.Frame == nil {
+		return 0, errBrowserFetchFailed
+	}
+
+	world, err := chromedp.Call(
+		ctx,
+		page.CreateIsolatedWorld,
+		page.CreateIsolatedWorldParams{
+			FrameID:   frameTree.FrameTree.Frame.ID,
+			WorldName: "liubai-snapshot",
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("browser isolated world failed: %w", err)
+	}
+
+	return world.ExecutionContextID, nil
 }
 
 func sanitizedError(err error) error {

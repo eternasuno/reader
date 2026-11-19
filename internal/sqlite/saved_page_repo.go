@@ -24,7 +24,7 @@ func (r *SavedPageRepo) List(ctx context.Context, params domain.PageParams) (dom
 		return domain.PageResult[domain.SavedPage]{}, domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	pages := []domain.SavedPage{}
 	for rows.Next() {

@@ -22,36 +22,14 @@ func NewArticleExtractor(sanitizer domain.HTMLSanitizer) *Extractor {
 }
 
 func (e *Extractor) ExtractArticle(htmlBody string, pageURL string) (domain.ExtractedArticle, error) {
-	parsedURL, err := url.Parse(pageURL)
+	article, err := extractReadableArticle(htmlBody, pageURL)
 	if err != nil {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleExtractorError, err)
+		return domain.ExtractedArticle{}, err
 	}
 
-	if strings.TrimSpace(htmlBody) == "" {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleEmptyContent, nil)
-	}
-
-	article, err := readability.FromReader(strings.NewReader(htmlBody), parsedURL)
+	sanitized, err := e.renderSanitizedArticle(article, pageURL)
 	if err != nil {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleExtractorError, err)
-	}
-
-	if article.Node == nil {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleEmptyContent, nil)
-	}
-
-	var rendered bytes.Buffer
-	if err := article.RenderHTML(&rendered); err != nil {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleExtractorError, err)
-	}
-
-	sanitized, err := e.sanitizer.SanitizeHTML(rendered.String(), pageURL)
-	if err != nil {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleExtractorError, err)
-	}
-
-	if !hasVisibleContent(sanitized) {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleEmptyContent, nil)
+		return domain.ExtractedArticle{}, err
 	}
 
 	description, err := e.articleExcerpt(article, pageURL)
@@ -70,6 +48,46 @@ func (e *Extractor) ExtractArticle(htmlBody string, pageURL string) (domain.Extr
 		Content:     *content,
 		PublishedAt: articlePublishedAt(article),
 	}, nil
+}
+
+func extractReadableArticle(htmlBody string, pageURL string) (readability.Article, error) {
+	parsedURL, err := url.Parse(pageURL)
+	if err != nil {
+		return readability.Article{}, domain.NewError(domain.ErrArticleExtractorError, err)
+	}
+
+	if strings.TrimSpace(htmlBody) == "" {
+		return readability.Article{}, domain.NewError(domain.ErrArticleEmptyContent, nil)
+	}
+
+	article, err := readability.FromReader(strings.NewReader(htmlBody), parsedURL)
+	if err != nil {
+		return readability.Article{}, domain.NewError(domain.ErrArticleExtractorError, err)
+	}
+
+	if article.Node == nil {
+		return readability.Article{}, domain.NewError(domain.ErrArticleEmptyContent, nil)
+	}
+
+	return article, nil
+}
+
+func (e *Extractor) renderSanitizedArticle(article readability.Article, pageURL string) (string, error) {
+	var rendered bytes.Buffer
+	if err := article.RenderHTML(&rendered); err != nil {
+		return "", domain.NewError(domain.ErrArticleExtractorError, err)
+	}
+
+	sanitized, err := e.sanitizer.SanitizeHTML(rendered.String(), pageURL)
+	if err != nil {
+		return "", domain.NewError(domain.ErrArticleExtractorError, err)
+	}
+
+	if !hasVisibleContent(sanitized) {
+		return "", domain.NewError(domain.ErrArticleEmptyContent, nil)
+	}
+
+	return sanitized, nil
 }
 
 func (e *Extractor) articleExcerpt(article readability.Article, pageURL string) (*string, error) {

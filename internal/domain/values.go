@@ -147,36 +147,51 @@ func ComputeNextSendAt(sendTime string, now time.Time, loc *time.Location) (time
 	baseDate := time.Date(local.Year(), local.Month(), local.Day(), 12, 0, 0, 0, loc)
 	for dayOffset := 0; dayOffset < 8; dayOffset++ {
 		target := baseDate.AddDate(0, 0, dayOffset)
-		baseCandidate := time.Date(target.Year(), target.Month(), target.Day(), hour, minute, 0, 0, loc)
-		_, beforeOff := baseCandidate.Add(-3 * time.Hour).Zone()
-		_, afterOff := baseCandidate.Add(3 * time.Hour).Zone()
-		shift := time.Duration(beforeOff-afterOff) * time.Second
-		if shift < 0 {
-			shift = -shift
-		}
-
-		deltas := []time.Duration{0}
-		if shift > 0 {
-			deltas = []time.Duration{-shift, 0, shift}
-		}
-
-		for _, delta := range deltas {
-			candidate := baseCandidate.Add(delta).In(loc)
-			if candidate.Year() != target.Year() || candidate.Month() != target.Month() || candidate.Day() != target.Day() {
-				continue
-			}
-
-			if candidate.Hour() != hour || candidate.Minute() != minute {
-				continue
-			}
-
-			if candidate.After(now) {
-				return candidate.UTC(), nil
-			}
+		if candidate, ok := candidateSendTimeForDay(target, hour, minute, now, loc); ok {
+			return candidate, nil
 		}
 	}
 
 	return time.Time{}, NewError(ErrInvalidKindleSetting, nil)
+}
+
+func candidateSendTimeForDay(target time.Time, hour int, minute int, now time.Time, loc *time.Location) (time.Time, bool) {
+	baseCandidate := time.Date(target.Year(), target.Month(), target.Day(), hour, minute, 0, 0, loc)
+	for _, delta := range sendTimeDeltas(dstShift(baseCandidate)) {
+		candidate := baseCandidate.Add(delta).In(loc)
+		if isMatchingLocalTime(candidate, target, hour, minute) && candidate.After(now) {
+			return candidate.UTC(), true
+		}
+	}
+
+	return time.Time{}, false
+}
+
+func dstShift(baseCandidate time.Time) time.Duration {
+	_, beforeOff := baseCandidate.Add(-3 * time.Hour).Zone()
+	_, afterOff := baseCandidate.Add(3 * time.Hour).Zone()
+	shift := time.Duration(beforeOff-afterOff) * time.Second
+	if shift < 0 {
+		return -shift
+	}
+
+	return shift
+}
+
+func sendTimeDeltas(shift time.Duration) []time.Duration {
+	if shift <= 0 {
+		return []time.Duration{0}
+	}
+
+	return []time.Duration{-shift, 0, shift}
+}
+
+func isMatchingLocalTime(candidate time.Time, target time.Time, hour int, minute int) bool {
+	if candidate.Year() != target.Year() || candidate.Month() != target.Month() || candidate.Day() != target.Day() {
+		return false
+	}
+
+	return candidate.Hour() == hour && candidate.Minute() == minute
 }
 
 func ValidateKindleSettings(k KindleSettings, now time.Time, loc *time.Location) (KindleSettings, error) {
@@ -190,39 +205,51 @@ func ValidateKindleSettings(k KindleSettings, now time.Time, loc *time.Location)
 		return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
 	}
 
-	smtpHost := strings.TrimSpace(k.SMTPHost)
-	if smtpHost == "" {
-		return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
+	smtpHost, err := validateSMTPSettings(k)
+	if err != nil {
+		return KindleSettings{}, err
 	}
 
-	if k.SMTPPort < 1 || k.SMTPPort > 65535 {
-		return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
-	}
-
-	if k.SMTPSecurity != SMTPSecurityTLS && k.SMTPSecurity != SMTPSecuritySTARTTLS {
-		return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
+	sendTime, nextSendAt, err := resolveKindleSchedule(k.SendTime, now, loc)
+	if err != nil {
+		return KindleSettings{}, err
 	}
 
 	settings := k
 	settings.KindleEmail = kindleEmail
 	settings.SenderEmail = senderEmail
 	settings.SMTPHost = smtpHost
-
-	if k.SendTime != nil && strings.TrimSpace(*k.SendTime) != "" {
-		trimmed := strings.TrimSpace(*k.SendTime)
-		nextSendAt, err := ComputeNextSendAt(trimmed, now, loc)
-		if err != nil {
-			return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
-		}
-
-		settings.SendTime = &trimmed
-		settings.NextSendAt = &nextSendAt
-	} else {
-		settings.SendTime = nil
-		settings.NextSendAt = nil
-	}
+	settings.SendTime = sendTime
+	settings.NextSendAt = nextSendAt
 
 	return settings, nil
+}
+
+func validateSMTPSettings(k KindleSettings) (string, error) {
+	smtpHost := strings.TrimSpace(k.SMTPHost)
+	if smtpHost == "" || k.SMTPPort < 1 || k.SMTPPort > 65535 {
+		return "", NewError(ErrInvalidKindleSetting, nil)
+	}
+
+	if k.SMTPSecurity != SMTPSecurityTLS && k.SMTPSecurity != SMTPSecuritySTARTTLS {
+		return "", NewError(ErrInvalidKindleSetting, nil)
+	}
+
+	return smtpHost, nil
+}
+
+func resolveKindleSchedule(rawSendTime *string, now time.Time, loc *time.Location) (*string, *time.Time, error) {
+	if rawSendTime == nil || strings.TrimSpace(*rawSendTime) == "" {
+		return nil, nil, nil
+	}
+
+	trimmed := strings.TrimSpace(*rawSendTime)
+	nextSendAt, err := ComputeNextSendAt(trimmed, now, loc)
+	if err != nil {
+		return nil, nil, NewError(ErrInvalidKindleSetting, nil)
+	}
+
+	return &trimmed, &nextSendAt, nil
 }
 
 func trimOptional(value *string) *string {
@@ -263,24 +290,33 @@ func isValidEmailHost(host string) bool {
 		return false
 	}
 
-	labels := strings.Split(host, ".")
-	for _, label := range labels {
-		if label == "" || len(label) > 63 {
+	for _, label := range strings.Split(host, ".") {
+		if !isValidHostLabel(label) {
 			return false
-		}
-
-		if label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-
-		for i := 0; i < len(label); i++ {
-			ch := label[i]
-			isAlphaNum := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
-			if !isAlphaNum && ch != '-' {
-				return false
-			}
 		}
 	}
 
 	return true
+}
+
+func isValidHostLabel(label string) bool {
+	if label == "" || len(label) > 63 {
+		return false
+	}
+
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+
+	for i := 0; i < len(label); i++ {
+		if !isHostLabelChar(label[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func isHostLabelChar(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-'
 }

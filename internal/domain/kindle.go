@@ -68,33 +68,41 @@ func splitKindleChunks[T any](articles []KindleArticle, maxBytes int, build func
 	case KindleActionAccept:
 		return []T{built}, nil
 	case KindleActionSplitHalves:
-		left, right := HalveKindleArticles(articles)
-
-		books, err := splitKindleChunks(left, maxBytes, build)
-		if err != nil {
-			return nil, err
-		}
-
-		tail, err := splitKindleChunks(right, maxBytes, build)
-		if err != nil {
-			return nil, err
-		}
-
-		return append(books, tail...), nil
+		return splitKindleHalves(articles, maxBytes, build)
 	case KindleActionRetryTextOnly:
-		textBuilt, textBytes, err := build(articles, true)
-		if err != nil {
-			return nil, err
-		}
-
-		if DecideKindleSplit(len(articles), textBytes, maxBytes, true) == KindleActionAccept {
-			return []T{textBuilt}, nil
-		}
-
-		return nil, fmt.Errorf("kindle article %q is %d bytes even without images, exceeding the %d byte limit", articles[0].ID, textBytes, maxBytes)
+		return buildTextOnlyKindleChunk(articles, maxBytes, build)
 	default:
 		return nil, fmt.Errorf("kindle article %q is %d bytes, exceeding the %d byte limit", articles[0].ID, encodedBytes, maxBytes)
 	}
+}
+
+func splitKindleHalves[T any](articles []KindleArticle, maxBytes int, build func(chunk []KindleArticle, textOnly bool) (T, int, error)) ([]T, error) {
+	left, right := HalveKindleArticles(articles)
+
+	books, err := splitKindleChunks(left, maxBytes, build)
+	if err != nil {
+		return nil, err
+	}
+
+	tail, err := splitKindleChunks(right, maxBytes, build)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(books, tail...), nil
+}
+
+func buildTextOnlyKindleChunk[T any](articles []KindleArticle, maxBytes int, build func(chunk []KindleArticle, textOnly bool) (T, int, error)) ([]T, error) {
+	textBuilt, textBytes, err := build(articles, true)
+	if err != nil {
+		return nil, err
+	}
+
+	if DecideKindleSplit(len(articles), textBytes, maxBytes, true) == KindleActionAccept {
+		return []T{textBuilt}, nil
+	}
+
+	return nil, fmt.Errorf("kindle article %q is %d bytes even without images, exceeding the %d byte limit", articles[0].ID, textBytes, maxBytes)
 }
 
 func FormatKindleBookMeta(dateStr string, index int, total int) (title string, filename string) {

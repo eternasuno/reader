@@ -21,4 +21,4 @@ Operator setup, commands, environment variables, and `docker run` examples live 
   1. `GET /healthz` — verifies SQLite `SELECT 1`; returns `200 ok` or `503`.
   2. `/api/*` — API handlers (unmatched `/api/*` returns `404` JSON, never SPA HTML).
   3. Embedded static assets — serve hashed assets (`/assets/*`) with long-lived `Cache-Control: public, max-age=31536000, immutable`; serve `index.html` with `Cache-Control: no-cache` for SPA fallback on extensionless `GET`/`HEAD` routes.
-- In local development, Vite serves `web/` (e.g. `http://localhost:5173`) and proxies `/api/*` to the Go server on `PORT`; set `APP_URL` to Vite's origin so CSRF `Origin` checks pass.
+- In local development (`devenv.nix` + `secretspec.toml` with the `dotenv` provider), Vite serves `web/` on `http://localhost:5173` and proxies `/api/*` to the Go server on `PORT` (`8080`), with `APP_URL` set to `http://localhost:5173`. Because `:8080` also serves the embedded `web/dist/` SPA, opening `:8080` or `127.0.0.1:5173` in the browser sends a mismatched `Origin` and fails CSRF (`403 Forbidden`); always open the exact `APP_URL` origin (`http://localhost:5173`).

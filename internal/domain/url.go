@@ -57,28 +57,42 @@ func IsValidUUIDv7(s string) bool {
 }
 
 func ParseNormalizedURL(raw string, invalidCode ErrorCode) (NormalizedURL, error) {
+	parsed, host, err := parseHTTPURL(raw, invalidCode)
+	if err != nil {
+		return NormalizedURL{}, err
+	}
+
+	return buildNormalizedURL(parsed, host), nil
+}
+
+func parseHTTPURL(raw string, invalidCode ErrorCode) (*url.URL, string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if strings.ContainsAny(trimmed, " \t\r\n") {
-		return NormalizedURL{}, NewError(invalidCode, errors.New("invalid url"))
+		return nil, "", NewError(invalidCode, errors.New("invalid url"))
 	}
 
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return NormalizedURL{}, NewError(invalidCode, errors.New("invalid url"))
+		return nil, "", NewError(invalidCode, errors.New("invalid url"))
 	}
 
 	scheme := strings.ToLower(parsed.Scheme)
 	if scheme != "http" && scheme != "https" {
-		return NormalizedURL{}, NewError(invalidCode, nil)
+		return nil, "", NewError(invalidCode, nil)
 	}
 
 	host := strings.ToLower(parsed.Hostname())
 	if host == "" {
-		return NormalizedURL{}, NewError(invalidCode, nil)
+		return nil, "", NewError(invalidCode, nil)
 	}
 
 	parsed.Scheme = scheme
 	parsed.Host = buildHost(host, parsed.Port(), scheme)
+
+	return parsed, host, nil
+}
+
+func buildNormalizedURL(parsed *url.URL, host string) NormalizedURL {
 	parsed.Fragment = ""
 	parsed.RawFragment = ""
 	parsed.RawQuery = stripTrackingQuery(parsed.RawQuery)
@@ -111,7 +125,7 @@ func ParseNormalizedURL(raw string, invalidCode ErrorCode) (NormalizedURL, error
 		username: username,
 		password: password,
 		hasPass:  hasPass,
-	}, nil
+	}
 }
 
 func ParseStoredNormalizedURL(raw string) (NormalizedURL, error) {

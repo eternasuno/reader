@@ -217,8 +217,6 @@ func TestOPMLParseRejectsTrailingContent(t *testing.T) {
 	}
 
 	for name, payload := range cases {
-		name := name
-		payload := payload
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

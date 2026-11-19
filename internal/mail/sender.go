@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultTimeout  = 30 * time.Second
+	defaultTimeout  = 3 * time.Minute
 	epubContentType = gomail.ContentType("application/epub+zip")
 	defaultSubject  = "留白"
 	redactedMarker  = "[redacted]"

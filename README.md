@@ -19,6 +19,7 @@
 
 - Go `>= 1.27`
 - Node `>= 24` (Active LTS) and `pnpm` (to build the frontend assets under `web/`)
+- Optional: [devenv](https://devenv.sh/) + direnv for the reproducible dev shell in `devenv.nix`
 
 ## Target Docker Deployment
 
@@ -62,6 +63,43 @@ Only bootstrap/infrastructure options use environment variables. **External serv
 | `ALLOW_PRIVATE_NETWORK` | `false` | No | Set `true` only if you intentionally subscribe to local/LAN feeds (e.g. local RSSHub); otherwise Go's outbound HTTP fetcher blocks private/loopback IPs against SSRF |
 
 ## Local Development
+
+With `devenv.nix` (one command starts both servers):
+
+```sh
+pnpm --dir web install   # first checkout only
+pnpm --dir web build     # first checkout only; go:embed needs web/dist
+devenv up                # Go API on :8080 + Vite HMR on :5173
+```
+
+Open `http://localhost:5173` and log in with `APP_PASSWORD` (default
+`dev-password`).
+
+Development variables are declared in `secretspec.toml`, not in `devenv.nix`.
+SecretSpec's `dotenv` provider stores values in `.env` (gitignored) and
+`secretspec run` injects them into the Go process; `SESSION_SECRET` is generated
+on first run and reused afterwards. Inspect or change values with:
+
+```sh
+secretspec check --provider dotenv
+secretspec get APP_PASSWORD --provider dotenv
+secretspec set APP_PASSWORD --provider dotenv
+```
+
+`APP_URL` defaults to `http://localhost:5173` so CSRF `Origin` checks pass
+through the Vite proxy.
+
+Helper scripts available inside the devenv shell:
+
+| Command | What it does                                                        |
+| ------- | ------------------------------------------------------------------- |
+| `check` | `go vet ./...` + `go tool golangci-lint run ./...` + `pnpm --dir web check` |
+| `tests` | `go test -race ./...` + `pnpm --dir web test`                        |
+
+`tests` (plural) is used because `test` is a shell builtin that would shadow
+the script in `PATH`.
+
+Without devenv:
 
 ```sh
 # 1. Build web/dist once so go:embed compiles, then start Vite dev server (e.g. :5173)

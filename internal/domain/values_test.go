@@ -82,7 +82,6 @@ func TestPageParamsValidation(t *testing.T) {
 		t.Parallel()
 
 		for _, blank := range []string{"", "   "} {
-			blank := blank
 			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &blank)
 			requireDomainError(t, err, ErrRequestFailed)
 		}
@@ -100,7 +99,6 @@ func TestPageParamsValidation(t *testing.T) {
 			"urn:uuid:" + id,
 			" " + id,
 		} {
-			cursor := cursor
 			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &cursor)
 			requireDomainError(t, err, ErrRequestFailed)
 		}
@@ -477,8 +475,6 @@ func TestValueKindleSettings(t *testing.T) {
 	}
 
 	for name, mutate := range invalidCases {
-		name := name
-		mutate := mutate
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

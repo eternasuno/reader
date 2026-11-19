@@ -16,64 +16,74 @@ type SettingRepo struct {
 	write *sql.DB
 }
 
-func (r *SettingRepo) Get(ctx context.Context) (domain.Settings, error) {
-	var (
-		retention       int64
-		provider        string
-		jinaKey         sql.NullString
-		browserEndpoint sql.NullString
-		kindleEmail     sql.NullString
-		senderEmail     sql.NullString
-		smtpHost        sql.NullString
-		smtpPort        sql.NullInt64
-		smtpSecurity    sql.NullString
-		smtpUser        sql.NullString
-		smtpPassword    sql.NullString
-		sendTime        sql.NullString
-		nextSendAt      sql.NullInt64
-	)
+type settingsRow struct {
+	retention       int64
+	provider        string
+	jinaKey         sql.NullString
+	browserEndpoint sql.NullString
+	kindleEmail     sql.NullString
+	senderEmail     sql.NullString
+	smtpHost        sql.NullString
+	smtpPort        sql.NullInt64
+	smtpSecurity    sql.NullString
+	smtpUser        sql.NullString
+	smtpPassword    sql.NullString
+	sendTime        sql.NullString
+	nextSendAt      sql.NullInt64
+}
 
-	err := r.read.QueryRowContext(ctx, `SELECT `+settingColumns+` FROM setting WHERE id = 1`).Scan(
-		&retention,
-		&provider,
-		&jinaKey,
-		&browserEndpoint,
-		&kindleEmail,
-		&senderEmail,
-		&smtpHost,
-		&smtpPort,
-		&smtpSecurity,
-		&smtpUser,
-		&smtpPassword,
-		&sendTime,
-		&nextSendAt,
-	)
+func (r *SettingRepo) Get(ctx context.Context) (domain.Settings, error) {
+	row, err := scanSettingsRow(r.read.QueryRowContext(ctx, `SELECT `+settingColumns+` FROM setting WHERE id = 1`))
 	if err != nil {
 		return domain.Settings{}, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	settings := domain.Settings{
-		Retention:       int(retention),
-		Provider:        domain.ExtractorProvider(provider),
-		JinaKey:         optionalText(jinaKey),
-		BrowserEndpoint: optionalText(browserEndpoint),
+	return domain.Settings{
+		Retention:       int(row.retention),
+		Provider:        domain.ExtractorProvider(row.provider),
+		JinaKey:         optionalText(row.jinaKey),
+		BrowserEndpoint: optionalText(row.browserEndpoint),
+		Kindle:          buildKindleSettings(row),
+	}, nil
+}
+
+func scanSettingsRow(row *sql.Row) (settingsRow, error) {
+	var s settingsRow
+	err := row.Scan(
+		&s.retention,
+		&s.provider,
+		&s.jinaKey,
+		&s.browserEndpoint,
+		&s.kindleEmail,
+		&s.senderEmail,
+		&s.smtpHost,
+		&s.smtpPort,
+		&s.smtpSecurity,
+		&s.smtpUser,
+		&s.smtpPassword,
+		&s.sendTime,
+		&s.nextSendAt,
+	)
+
+	return s, err
+}
+
+func buildKindleSettings(s settingsRow) *domain.KindleSettings {
+	if !hasKindleDelivery(s.kindleEmail, s.senderEmail, s.smtpHost, s.smtpPort, s.smtpSecurity) {
+		return nil
 	}
 
-	if hasKindleDelivery(kindleEmail, senderEmail, smtpHost, smtpPort, smtpSecurity) {
-		settings.Kindle = &domain.KindleSettings{
-			KindleEmail:  kindleEmail.String,
-			SenderEmail:  senderEmail.String,
-			SMTPHost:     smtpHost.String,
-			SMTPPort:     int(smtpPort.Int64),
-			SMTPSecurity: domain.SMTPSecurity(smtpSecurity.String),
-			SMTPUser:     optionalText(smtpUser),
-			SMTPPassword: optionalText(smtpPassword),
-			SendTime:     optionalText(sendTime),
-			NextSendAt:   optionalMillis(nextSendAt),
-		}
+	return &domain.KindleSettings{
+		KindleEmail:  s.kindleEmail.String,
+		SenderEmail:  s.senderEmail.String,
+		SMTPHost:     s.smtpHost.String,
+		SMTPPort:     int(s.smtpPort.Int64),
+		SMTPSecurity: domain.SMTPSecurity(s.smtpSecurity.String),
+		SMTPUser:     optionalText(s.smtpUser),
+		SMTPPassword: optionalText(s.smtpPassword),
+		SendTime:     optionalText(s.sendTime),
+		NextSendAt:   optionalMillis(s.nextSendAt),
 	}
-
-	return settings, nil
 }
 
 func (r *SettingRepo) UpdateRetention(ctx context.Context, retention int) error {

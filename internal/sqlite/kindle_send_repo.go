@@ -45,7 +45,7 @@ func (r *KindleSendRepo) ListRecent(ctx context.Context) ([]domain.KindleSendRec
 		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	records := []domain.KindleSendRecord{}
 	for rows.Next() {
@@ -133,54 +133,67 @@ func (r *KindleSendRepo) ListUnreadForKindle(ctx context.Context) ([]domain.Save
 
 func (r *KindleSendRepo) RecordBookAccepted(ctx context.Context, sendID string, savedPageIDs []string, feedItemIDs []string, articleDelta int) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(
-			ctx,
-			`UPDATE kindle_send SET article_count = article_count + ?, book_count = book_count + 1 WHERE id = ? AND status = 'running'`,
-			articleDelta,
-			sendID,
-		)
-		if err != nil {
+		if err := incrementKindleSendBookInTx(ctx, tx, sendID, articleDelta); err != nil {
 			return err
 		}
 
-		affected, err := result.RowsAffected()
-		if err != nil {
+		if err := markSavedPagesReadInTx(ctx, tx, savedPageIDs); err != nil {
 			return err
 		}
 
-		if affected != 1 {
-			return fmt.Errorf("kindle send %s is not running", sendID)
-		}
-
-		if len(savedPageIDs) > 0 {
-			payload, err := encodeIDs(savedPageIDs)
-			if err != nil {
-				return err
-			}
-
-			if _, err := tx.ExecContext(ctx, `UPDATE saved_page SET read = 1 WHERE id IN (SELECT value FROM json_each(?))`, payload); err != nil {
-				return err
-			}
-		}
-
-		if len(feedItemIDs) > 0 {
-			payload, err := encodeIDs(feedItemIDs)
-			if err != nil {
-				return err
-			}
-
-			if _, err := tx.ExecContext(ctx, `UPDATE feed_item SET read = 1 WHERE id IN (SELECT value FROM json_each(?))`, payload); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return markFeedItemsReadInTx(ctx, tx, feedItemIDs)
 	})
 	if err != nil {
 		return wrapRepositoryError(err, domain.ErrSettingRepositoryError)
 	}
 
 	return nil
+}
+
+func incrementKindleSendBookInTx(ctx context.Context, tx *sql.Tx, sendID string, articleDelta int) error {
+	result, err := tx.ExecContext(
+		ctx,
+		`UPDATE kindle_send SET article_count = article_count + ?, book_count = book_count + 1 WHERE id = ? AND status = 'running'`,
+		articleDelta,
+		sendID,
+	)
+	if err != nil {
+		return err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if affected != 1 {
+		return fmt.Errorf("kindle send %s is not running", sendID)
+	}
+
+	return nil
+}
+
+func markSavedPagesReadInTx(ctx context.Context, tx *sql.Tx, ids []string) error {
+	return markTableReadInTx(ctx, tx, `UPDATE saved_page SET read = 1 WHERE id IN (SELECT value FROM json_each(?))`, ids)
+}
+
+func markFeedItemsReadInTx(ctx context.Context, tx *sql.Tx, ids []string) error {
+	return markTableReadInTx(ctx, tx, `UPDATE feed_item SET read = 1 WHERE id IN (SELECT value FROM json_each(?))`, ids)
+}
+
+func markTableReadInTx(ctx context.Context, tx *sql.Tx, query string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	payload, err := encodeIDs(ids)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, query, payload)
+
+	return err
 }
 
 func (r *KindleSendRepo) CompleteSend(ctx context.Context, sendID string, status domain.KindleStatus, errSummary *string, finishedAt time.Time) error {
@@ -220,7 +233,7 @@ func (r *KindleSendRepo) listUnreadSavedPages(ctx context.Context) ([]domain.Sav
 		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	pages := []domain.SavedPage{}
 	for rows.Next() {
@@ -248,7 +261,7 @@ func (r *KindleSendRepo) listFeedsWithUnread(ctx context.Context) ([]domain.Feed
 		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	feeds := []domain.Feed{}
 	for rows.Next() {
@@ -278,7 +291,7 @@ func (r *KindleSendRepo) listUnreadFeedItems(ctx context.Context, feed domain.Fe
 		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	defer rows.Close()
+	defer closeRows(rows)
 
 	items := []domain.FeedItem{}
 	for rows.Next() {

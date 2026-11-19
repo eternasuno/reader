@@ -42,7 +42,7 @@ type Store struct {
 }
 
 func Open(ctx context.Context, dbPath string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
@@ -291,4 +291,8 @@ func encodeIDs(ids []string) (string, error) {
 	}
 
 	return string(payload), nil
+}
+
+func closeRows(rows *sql.Rows) {
+	_ = rows.Close()
 }

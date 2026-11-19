@@ -1,10 +1,8 @@
 # Project Guide
 
-> **Target Architecture Notice**: This guide and `.agents/skills/` specify the **target Go + SQLite + SolidJS 2 single-binary architecture** for the upcoming rewrite. Until migration is complete, the working tree still contains the legacy Node/TypeScript workspace (`apps/reader`, `packages/*`).
-
 留白 is a single-user self-hosted RSS reader, read-later app, and Kindle EPUB mailer built as a single Go binary with an embedded SolidJS 2 SPA (`web/`) and SQLite.
 
-## Target Repository Layout
+## Repository Layout
 
 - `cmd/reader/` — application entrypoint: config, SQLite startup migration, background workers, HTTP server.
 - `internal/domain/` — core entities, value normalization/validation, selection/retention logic, and repository/adapter interfaces.
@@ -29,4 +27,4 @@ Read the relevant skill before making changes:
 - **Spec & code in sync**: update the matching `reader-spec` file in the same change when product behavior changes.
 - **Security**: never log or return secrets (`APP_PASSWORD`, `SESSION_SECRET`, Jina key, browser endpoint, SMTP password, or URL `user:pass@` credentials). Keep Go SSRF IP filtering enabled unless `ALLOW_PRIVATE_NETWORK=true`. Enforce parsed `Origin` (or fallback `Referer` origin when `Origin` is absent) matching `APP_URL` on every state-changing `/api/*` endpoint.
 - **Resource bounds**: every outbound HTTP/CDP request, feed parse, image download, list `limit`, and refresh worker pool must have explicit bounds/timeouts.
-- **Verification**: once the Go + SolidJS 2 layout is in place, run `go test ./...`, `go vet ./...`, frontend typecheck/lint/test/build under `web/`, and verify UI changes in a browser when touching layout or iframe rendering.
+- **Verification**: run `go test ./...`, `go vet ./...`, `go tool golangci-lint run ./...`, and frontend typecheck/lint/test/build under `web/` (`pnpm --dir web check`, `pnpm --dir web test`, `pnpm --dir web build`), and verify UI changes in a browser when touching layout or iframe rendering.

@@ -67,24 +67,9 @@ func (p *Parser) ParseFeed(body []byte, baseURL string) (domain.ParsedFeed, erro
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
 	}
 
-	var (
-		entries     []domain.ParsedFeedEntry
-		description *string
-	)
-
-	switch feed := parsed.OriginalFeed().(type) {
-	case *rss.Feed:
-		isRDF := strings.EqualFold(scan.root, "RDF") || feed.Version == "1.0"
-		entries = p.parseRSSItems(feed.Items, baseURL, isRDF)
-		description = optionalText(feed.Description)
-	case *atom.Feed:
-		entries = p.parseAtomEntries(feed.Entries, scan.summaryTypes, baseURL)
-		description = optionalText(feed.Subtitle)
-	case *gofeedjson.Feed:
-		entries = p.parseJSONItems(feed.Items, baseURL)
-		description = optionalText(feed.Description)
-	default:
-		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, errors.New("unsupported feed format"))
+	entries, description, err := p.extractParsedFeed(parsed, scan, baseURL)
+	if err != nil {
+		return domain.ParsedFeed{}, err
 	}
 
 	return domain.ParsedFeed{
@@ -92,6 +77,20 @@ func (p *Parser) ParseFeed(body []byte, baseURL string) (domain.ParsedFeed, erro
 		Description: description,
 		Entries:     entries,
 	}, nil
+}
+
+func (p *Parser) extractParsedFeed(parsed *gofeed.Feed, scan payloadScan, baseURL string) ([]domain.ParsedFeedEntry, *string, error) {
+	switch feed := parsed.OriginalFeed().(type) {
+	case *rss.Feed:
+		isRDF := strings.EqualFold(scan.root, "RDF") || feed.Version == "1.0"
+		return p.parseRSSItems(feed.Items, baseURL, isRDF), optionalText(feed.Description), nil
+	case *atom.Feed:
+		return p.parseAtomEntries(feed.Entries, scan.summaryTypes, baseURL), optionalText(feed.Subtitle), nil
+	case *gofeedjson.Feed:
+		return p.parseJSONItems(feed.Items, baseURL), optionalText(feed.Description), nil
+	default:
+		return nil, nil, domain.NewError(domain.ErrFeedParserError, errors.New("unsupported feed format"))
+	}
 }
 
 func (p *Parser) parseRSSItems(
@@ -332,37 +331,37 @@ func rssPublishedAt(item *rss.Item, isRDF bool) *time.Time {
 }
 
 func atomEntryHref(links []*atom.Link) string {
-	for _, link := range links {
-		if link == nil {
-			continue
-		}
-
-		if isAlternateLink(link) && strings.EqualFold(link.Type, "text/html") && strings.TrimSpace(link.Href) != "" {
-			return link.Href
-		}
+	if href := findAlternateHref(links, func(linkType string) bool {
+		return strings.EqualFold(linkType, "text/html")
+	}); href != "" {
+		return href
 	}
 
-	for _, link := range links {
-		if link == nil {
-			continue
-		}
-
-		if isAlternateLink(link) && strings.TrimSpace(link.Type) == "" && strings.TrimSpace(link.Href) != "" {
-			return link.Href
-		}
+	if href := findAlternateHref(links, func(linkType string) bool {
+		return strings.TrimSpace(linkType) == ""
+	}); href != "" {
+		return href
 	}
 
-	for _, link := range links {
-		if link == nil {
-			continue
-		}
+	return findAlternateHref(links, func(string) bool { return true })
+}
 
-		if isAlternateLink(link) && strings.TrimSpace(link.Href) != "" {
+func findAlternateHref(links []*atom.Link, matchType func(string) bool) string {
+	for _, link := range links {
+		if isMatchingAlternateLink(link, matchType) {
 			return link.Href
 		}
 	}
 
 	return ""
+}
+
+func isMatchingAlternateLink(link *atom.Link, matchType func(string) bool) bool {
+	if link == nil || strings.TrimSpace(link.Href) == "" || !isAlternateLink(link) {
+		return false
+	}
+
+	return matchType(link.Type)
 }
 
 func isAlternateLink(link *atom.Link) bool {
@@ -463,73 +462,121 @@ func validateJSONPayload(payload []byte) (payloadScan, error) {
 	return payloadScan{}, nil
 }
 
+type xmlPayloadValidator struct {
+	scan         payloadScan
+	depth        int
+	entryDepth   int
+	summaryFound bool
+}
+
 func validateXMLPayload(payload []byte) (payloadScan, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(payload))
-	scan := payloadScan{}
-	depth := 0
-	entryDepth := 0
-	summaryFound := false
+	validator := xmlPayloadValidator{}
 
 	for {
 		token, err := decoder.Token()
 		if errors.Is(err, io.EOF) {
-			if depth != 0 {
-				return payloadScan{}, errors.New("truncated xml feed")
-			}
-
-			if scan.root == "" {
-				return payloadScan{}, errors.New("missing xml root element")
-			}
-
-			return scan, nil
+			return validator.finish()
 		}
 		if err != nil {
 			return payloadScan{}, err
 		}
 
-		switch typed := token.(type) {
-		case xml.StartElement:
-			if depth == 0 {
-				if scan.root != "" {
-					return payloadScan{}, errors.New("multiple xml root elements")
-				}
-
-				if err := validateRootElement(typed.Name.Local); err != nil {
-					return payloadScan{}, err
-				}
-
-				scan.root = typed.Name.Local
-			}
-
-			depth++
-			if strings.EqualFold(scan.root, "feed") && depth == 2 && isAtomElement(typed.Name, "entry") && entryDepth == 0 {
-				entryDepth = depth
-				summaryFound = false
-				scan.summaryTypes = append(scan.summaryTypes, "")
-
-				continue
-			}
-
-			if entryDepth == 2 && depth == 3 && isAtomElement(typed.Name, "summary") && !summaryFound {
-				scan.summaryTypes[len(scan.summaryTypes)-1] = xmlAttributeValue(typed, "type")
-				summaryFound = true
-			}
-		case xml.EndElement:
-			if depth == 0 {
-				return payloadScan{}, errors.New("unexpected closing element")
-			}
-
-			if depth == entryDepth {
-				entryDepth = 0
-			}
-
-			depth--
-		case xml.CharData:
-			if depth == 0 && strings.TrimSpace(string(typed)) != "" {
-				return payloadScan{}, errors.New("content outside root element")
-			}
+		if err := validator.handleToken(token); err != nil {
+			return payloadScan{}, err
 		}
 	}
+}
+
+func (v *xmlPayloadValidator) finish() (payloadScan, error) {
+	if v.depth != 0 {
+		return payloadScan{}, errors.New("truncated xml feed")
+	}
+
+	if v.scan.root == "" {
+		return payloadScan{}, errors.New("missing xml root element")
+	}
+
+	return v.scan, nil
+}
+
+func (v *xmlPayloadValidator) handleToken(token xml.Token) error {
+	switch typed := token.(type) {
+	case xml.StartElement:
+		return v.handleStart(typed)
+	case xml.EndElement:
+		return v.handleEnd()
+	case xml.CharData:
+		if v.depth == 0 && strings.TrimSpace(string(typed)) != "" {
+			return errors.New("content outside root element")
+		}
+	}
+
+	return nil
+}
+
+func (v *xmlPayloadValidator) handleStart(element xml.StartElement) error {
+	if v.depth == 0 {
+		if err := v.setRoot(element.Name.Local); err != nil {
+			return err
+		}
+	}
+
+	v.depth++
+	v.trackAtomEntry(element)
+
+	return nil
+}
+
+func (v *xmlPayloadValidator) setRoot(name string) error {
+	if v.scan.root != "" {
+		return errors.New("multiple xml root elements")
+	}
+
+	if err := validateRootElement(name); err != nil {
+		return err
+	}
+
+	v.scan.root = name
+
+	return nil
+}
+
+func (v *xmlPayloadValidator) trackAtomEntry(element xml.StartElement) {
+	if v.isNewAtomEntry(element) {
+		v.entryDepth = v.depth
+		v.summaryFound = false
+		v.scan.summaryTypes = append(v.scan.summaryTypes, "")
+
+		return
+	}
+
+	if v.isEntrySummary(element) {
+		v.scan.summaryTypes[len(v.scan.summaryTypes)-1] = xmlAttributeValue(element, "type")
+		v.summaryFound = true
+	}
+}
+
+func (v *xmlPayloadValidator) isNewAtomEntry(element xml.StartElement) bool {
+	return strings.EqualFold(v.scan.root, "feed") && v.depth == 2 && v.entryDepth == 0 && isAtomElement(element.Name, "entry")
+}
+
+func (v *xmlPayloadValidator) isEntrySummary(element xml.StartElement) bool {
+	return v.entryDepth == 2 && v.depth == 3 && !v.summaryFound && isAtomElement(element.Name, "summary")
+}
+
+func (v *xmlPayloadValidator) handleEnd() error {
+	if v.depth == 0 {
+		return errors.New("unexpected closing element")
+	}
+
+	if v.depth == v.entryDepth {
+		v.entryDepth = 0
+	}
+
+	v.depth--
+
+	return nil
 }
 
 func isAtomElement(name xml.Name, local string) bool {
