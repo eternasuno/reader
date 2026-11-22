@@ -1,112 +1,124 @@
 # 留白
 
-留白 is a self-hosted read-later and feed reader. Save web pages to read later, subscribe to RSS, Atom, RDF and JSON feeds, group feeds into folders, and read everything in one place. Each account sees only its own data, and the UI is in Chinese.
+> **Target Architecture Notice**: This README and `.agents/skills/` define the **target Go + SQLite + SolidJS 2 single-binary architecture** for the upcoming rewrite. Until that migration lands, the repository tree still holds the previous Node/TypeScript workspace (`apps/reader`, `packages/*`).
 
-## Workspace
+留白 is a lightweight, single-user self-hosted RSS reader and read-later app with scheduled Send-to-Kindle support.
 
-One pnpm workspace (`reader-workspace`) managed with Turborepo; one app, `reader`, ships everything (package and image name `reader`).
+- **Read later**: save web URLs (or browser bookmarklet quick-save) with automatic article extraction and clean reading typography.
+- **RSS / Atom / RDF / JSON Feed**: organize feeds into single-level folders, import/export OPML, read with per-feed sort order and default display mode, and auto-prune to the latest N articles per feed.
+- **Send to Kindle**: bundle unread articles into EPUB 3 (auto-split at 20 MiB) and mail via SMTP on a daily schedule or on demand.
+- **Single-container, low footprint**: compiled into one static Go binary with the SPA embedded via `go:embed` and SQLite storage (~25–40 MB Docker image, ~20–50 MB RAM).
 
-- `apps/reader` — the product: the HTTP contract (`src/contract`), the Effect HttpServer with Better Auth and the feed refresh queue and scheduler (`src/server`), and the SolidJS 1 SPA (`src/web`).
-- `packages/business` — the business core: entities, ports and use cases for feeds, folders, feed items, saved pages and settings.
-- `packages/sqlite` — the SQLite adapters: connections, migrations, repositories and the in-memory test setup.
-- `packages/content` — feed parsing, HTML parsing, article extraction and sanitizing.
-- `packages/webpage` — page fetching through Jina or a browser service.
+## Target Architecture Overview
 
-See [`AGENTS.md`](AGENTS.md) for the project guide and the skills that describe the product and the engineering rules.
+- **Backend**: Go `1.27+` (`net/http`, `modernc.org/sqlite`, `github.com/mmcdole/gofeed`, `codeberg.org/readeck/go-readability/v2`, `github.com/microcosm-cc/bluemonday`, `archive/zip` EPUB 3 builder, `github.com/wneessen/go-mail`).
+- **Frontend**: SolidJS 2 SPA (`web/`: `solid-js` `^2.0.0`, `@solidjs/web` `^2.0.0`, `@solidjs/router` `^2.0.0`, `@solid-primitives/i18n@next` for bilingual `zh-CN` / `en`, `@tanstack/virtual-core`, Tailwind CSS 4, daisyUI 5, built with Vite 8/9 + `@solidjs/vite-plugin` `^3.0.0`) embedded into the Go binary via `go:embed`.
+- **Storage**: single SQLite file (`<DATA_DIR>/reader.db`) with WAL mode and embedded startup migrations.
 
-## Requirements
+## Requirements (Local Build)
 
-- Node `>=22.19` (the `engines` floor that `node:sqlite` requires; the container builds on Node 24).
-- pnpm `12.3.4`, pinned in the root `package.json`.
+- Go `>= 1.27`
+- Node `>= 24` (Active LTS) and `pnpm` (to build the frontend assets under `web/`)
+- Optional: [devenv](https://devenv.sh/) + direnv for the reproducible dev shell in `devenv.nix`
 
-## Setup
-
-```sh
-pnpm install
-cp apps/reader/.env.example apps/reader/.env
-```
-
-Replace `BETTER_AUTH_SECRET` in `apps/reader/.env` with a long random value, for example from `openssl rand -base64 32`.
-
-## Commands
-
-| Command            | Does                                                                                                                          |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev`         | `dev:web` (Vite) and `dev:server` (`tsx watch --env-file-if-exists=.env src/server/main.ts`), each as its own persistent task |
-| `pnpm build`       | the server bundle and the web build, both into `apps/reader/dist` (`dist/server.js`, `dist/public`)                           |
-| `pnpm start`       | the built server (`cd dist && node --env-file-if-exists=../.env server.js`)                                                   |
-| `pnpm db:migrate`  | Better Auth's migrations against `auth.db` and the reader migration against `reader.db`                                       |
-| `pnpm test`        | every Vitest suite                                                                                                            |
-| `pnpm typecheck`   | TypeScript across every package and both app tsconfig files, tests included                                                   |
-| `pnpm check`       | Biome lint and format for JavaScript, TypeScript, CSS and JSON                                                                |
-| `pnpm check --fix` | the same, applying safe fixes                                                                                                 |
-
-## Development
-
-`pnpm dev` runs two persistent Turborepo tasks:
-
-- `dev:web` serves the web with Vite on `WEB_PORT` (default `3000`).
-- `dev:server` runs the server with `tsx watch --env-file-if-exists=.env src/server/main.ts` on `API_PORT` (default `3001`).
-
-Vite proxies `/api` to the server, so the browser talks to one origin during development and the server needs no CORS middleware. The proxy target is read from the same `API_PORT` the server reads (the app's `.env`), so one value configures both.
-
-In development the server runs from `apps/reader` with `tsx`, so its working directory holds no `public/` unless a build ran there. The web comes from the Vite dev server and nothing is served statically, which makes the static layer irrelevant in development.
-
-The web's Vite config builds with the Solid plugin (`ssr: false`) and the Tailwind plugin, reads its environment from the app directory, and uses `strictPort` so a busy port fails loudly instead of silently moving to another one. Vitest runs from the same configs with `environment: 'node'`.
-
-## Environment variables
-
-| Variable             | Default                 | Read by                 | Purpose                                                                                                    |
-| -------------------- | ----------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `API_PORT`           | `3001`                  | server, Vite dev proxy  | port of the HTTP server (also the proxy target in development and the public port in the container)        |
-| `WEB_PORT`           | `3000`                  | Vite dev/preview server | dev and preview port for the web; not used by the built app                                                |
-| `DATA_DIR`           | `.data`                 | server, `db:migrate`    | directory holding `reader.db` and `auth.db`, relative to the process working directory, created if missing |
-| `BETTER_AUTH_SECRET` | — (required)            | server                  | Better Auth signing secret                                                                                 |
-| `BETTER_AUTH_URL`    | `http://localhost:3000` | server                  | canonical public origin used for auth URLs and the `Origin` check on state-changing requests               |
-
-Deploy the web and `/api` on one public origin, set `BETTER_AUTH_URL` to it, and terminate HTTPS in a reverse proxy in front of the app.
-
-Local development reads `.env` files (`--env-file-if-exists`); the container never does. Inject every container value through Docker environment variables, and keep environment files out of the build context.
-
-## Docker
-
-The build stage installs the pinned pnpm, runs `pnpm install --frozen-lockfile` and `pnpm build`, exports the server's production deployment directory (`pnpm --filter reader deploy --prod`) and creates `/data` owned by `node` (UID 1000). The runtime stage starts from `node:24-bookworm-slim`, copies only that `node_modules` and the build output (`dist/server.js` as `server.js`, `dist/public` as `public/`), sets `NODE_ENV=production`, creates `/data` owned by `node`, switches to the non-root `node` user and runs `node server.js`. Both stages create `/data` because a fresh named volume takes its ownership from the image that first mounts it, and that image is the build stage when the migration runs before the first start.
-
-The runtime image contains no migration tooling, so apply the schema with the application stopped, the same `DATA_DIR` and the build stage as a migration image. The order is: build both images, create the volume, migrate into it, then start the service.
+## Target Docker Deployment
 
 ```sh
-docker build -t reader .
-docker build --target build -t reader-migrate .
 docker volume create reader-data
-docker run --rm --init \
-  -e BETTER_AUTH_SECRET \
-  -e DATA_DIR=/data \
+
+docker run -d --name reader --restart unless-stopped \
+  -p 8080:8080 \
+  -e APP_PASSWORD="change-me-to-a-strong-password" \
+  -e APP_URL="http://localhost:8080" \
+  -e TZ="Asia/Shanghai" \
   -v reader-data:/data \
-  --user 1000:1000 \
-  reader-migrate pnpm db:migrate
-docker run --rm --init \
-  -p 3001:3001 \
-  -e BETTER_AUTH_SECRET \
-  -e API_PORT=3001 \
-  -e BETTER_AUTH_URL=http://localhost:3001 \
-  -e DATA_DIR=/data \
-  -v reader-data:/data \
-  reader
+  reader:latest
 ```
 
-- Set `API_PORT` and map the same container port with `-p` (`-e API_PORT=8080 -p 8080:8080`).
-- Export a strong `BETTER_AUTH_SECRET` in the host environment before running these commands; `-e BETTER_AUTH_SECRET` without a value forwards it from the host.
-- The image ships no browser. Browser extraction connects to a CDP-compatible browser service the user runs and saves in the settings; inside the container `localhost` is the container, so the address must be reachable from it.
-- `/data` must be writable by UID 1000, the migration container's user and the runtime's `node`: a fresh named volume inherits the ownership the image gives `/data`, and a bind mount must be made writable by that uid.
-- Do not mount the same database into concurrent replicas: SQLite has one write lock and one file.
-- Never apply migrations automatically at startup: a restart loop would race the deployed instances instead of migrating once.
-
-## Production serving
-
-Assemble the runtime directory (`server.js`, `public/`, production `node_modules`) and start it from there:
+Build the image locally:
 
 ```sh
-NODE_ENV=production node server.js
+docker build -t reader:latest .
 ```
 
-The server answers `/api/*` and the static routes on `API_PORT`; the browser loads the app from `/` and the article iframe loads the shared stylesheet from the same origin, so the app must not be split across two origins.
+Notes:
+- **Migrations**: SQLite schema migrations are embedded in the binary and applied idempotently on startup before serving traffic. During early development, delete `reader.db` and restart whenever the schema changes. Do not run concurrent replicas against the same SQLite file.
+- **Volume permissions**: the distroless container runs as non-root UID `65532`. Always mount the `/data` directory (never a single file mount, so SQLite can create `-wal`/`-shm` files) and ensure bind-mounted host directories are writable by UID `65532`.
+- **Reverse proxy**: terminate HTTPS in front of the container, set `APP_URL` to the public `https://` origin, and forward `Origin` / `Host` headers.
+- **Health check**: `GET /healthz` returns `200 OK` when the server and SQLite database are healthy.
+- **External extractors (optional)**: Jina API Key and external CDP `ws://` / `http://` endpoints are configured in the web UI. When running a headless browser in another container on the same Docker network, `localhost` refers to the reader container itself, and outbound egress from that browser container should be firewalled if you fetch untrusted pages (Go's SSRF IP filter only governs direct Go HTTP fetches).
+
+## Environment Variables
+
+Only bootstrap/infrastructure options use environment variables. **External service settings and keys (Jina API Key, external CDP browser endpoint, Kindle email & SMTP credentials) are all configured dynamically in the `/settings` web UI and persisted in SQLite**, taking effect immediately without restarting the container. Background feed refresh interval is fixed at `30 minutes`.
+
+| Variable | Default | Required | Purpose |
+| --- | --- | --- | --- |
+| `APP_PASSWORD` | — | Yes | Login password for the single user |
+| `APP_URL` | `http://localhost:8080` | Yes (prod) | Canonical public origin for cookie `Secure` flag and CSRF `Origin` checks |
+| `PORT` | `8080` | No | HTTP listen port |
+| `DATA_DIR` | `/data` (Docker) / `.data` (local) | No | Directory storing `reader.db` |
+| `SESSION_SECRET` | random per startup | No | Fixed 32+ byte secret so login cookies survive container restarts |
+| `TZ` | system zone | No | Time zone for daily Kindle schedule and EPUB date titles |
+| `ALLOW_PRIVATE_NETWORK` | `false` | No | Set `true` only if you intentionally subscribe to local/LAN feeds (e.g. local RSSHub); otherwise Go's outbound HTTP fetcher blocks private/loopback IPs against SSRF |
+
+## Local Development
+
+With `devenv.nix` (one command starts both servers):
+
+```sh
+pnpm --dir web install   # first checkout only
+pnpm --dir web build     # first checkout only; go:embed needs web/dist
+devenv up                # Go API on :8080 + Vite HMR on :5173
+```
+
+Open `http://localhost:5173` and log in with `APP_PASSWORD` (default
+`dev-password`).
+
+Development variables are declared in `secretspec.toml`, not in `devenv.nix`.
+SecretSpec's `dotenv` provider stores values in `.env` (gitignored) and
+`secretspec run` injects them into the Go process; `SESSION_SECRET` is generated
+on first run and reused afterwards. Inspect or change values with:
+
+```sh
+secretspec check --provider dotenv
+secretspec get APP_PASSWORD --provider dotenv
+secretspec set APP_PASSWORD --provider dotenv
+```
+
+`APP_URL` defaults to `http://localhost:5173` so CSRF `Origin` checks pass
+through the Vite proxy.
+
+Helper scripts available inside the devenv shell:
+
+| Command | What it does                                                        |
+| ------- | ------------------------------------------------------------------- |
+| `check` | `go vet ./...` + `go tool golangci-lint run ./...` + `pnpm --dir web check` |
+| `tests` | `go test -race ./...` + `pnpm --dir web test`                        |
+
+`tests` (plural) is used because `test` is a shell builtin that would shadow
+the script in `PATH`.
+
+Without devenv:
+
+```sh
+# 1. Build web/dist once so go:embed compiles, then start Vite dev server (e.g. :5173)
+pnpm --dir web install
+pnpm --dir web build
+pnpm --dir web dev
+
+# 2. Start Go server with APP_URL matching Vite's dev origin so CSRF Origin checks pass
+APP_PASSWORD=dev-password APP_URL=http://localhost:5173 DATA_DIR=.data go run ./cmd/reader
+```
+
+Production binary build:
+
+```sh
+pnpm --dir web build
+CGO_ENABLED=0 go build -o reader ./cmd/reader
+APP_PASSWORD=secret DATA_DIR=.data ./reader
+```
+
+## Quick-Save Bookmarklet
+
+In **设置 → 文章与订阅**, copy the generated bookmarklet to your browser bookmarks bar (or open `<APP_URL>/save?url=<encoded_url>`) to prefill and save the current page to 稍后阅读.

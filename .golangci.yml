@@ -1,0 +1,150 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bidichk
+    - bodyclose
+    - copyloopvar
+    - depguard
+    - durationcheck
+    - errcheck
+    - errorlint
+    - fatcontext
+    - funlen
+    - gocognit
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - nilerr
+    - nilnesserr
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unconvert
+    - unused
+    - usestdlibvars
+
+  settings:
+    gocognit:
+      min-complexity: 10
+
+    funlen:
+      lines: 40
+      statements: 40
+      ignore-comments: true
+
+    gosec:
+      excludes:
+        - G115
+        - G120
+        - G124
+        - G703
+
+    revive:
+      rules:
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: modifies-parameter
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unnecessary-stmt
+        - name: unreachable-code
+        - name: var-declaration
+
+    depguard:
+      rules:
+        domain:
+          files:
+            - "**/internal/domain/*.go"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - reader/internal/domain
+        sqlite:
+          files:
+            - "**/internal/sqlite/*.go"
+          allow:
+            - $gostd
+            - reader/internal/domain
+            - reader/internal/sqlite
+            - modernc.org/sqlite
+        content:
+          files:
+            - "**/internal/content/*.go"
+          allow:
+            - $gostd
+            - reader/internal/domain
+            - reader/internal/content
+            - github.com/mmcdole/gofeed
+            - codeberg.org/readeck/go-readability/v2
+            - github.com/microcosm-cc/bluemonday
+            - golang.org/x/net/html
+        fetcher:
+          files:
+            - "**/internal/fetcher/*.go"
+          allow:
+            - $gostd
+            - reader/internal/domain
+            - reader/internal/fetcher
+            - github.com/chromedp/chromedp
+            - github.com/chromedp/cdproto
+        epub:
+          files:
+            - "**/internal/epub/*.go"
+          allow:
+            - $gostd
+            - reader/internal/domain
+            - reader/internal/epub
+            - github.com/google/uuid
+            - golang.org/x/net/html
+        mail:
+          files:
+            - "**/internal/mail/*.go"
+          allow:
+            - $gostd
+            - reader/internal/domain
+            - reader/internal/mail
+            - github.com/wneessen/go-mail
+        worker:
+          files:
+            - "**/internal/worker/*.go"
+          allow:
+            - $gostd
+            - reader/internal/domain
+            - reader/internal/worker
+        http:
+          files:
+            - "**/internal/http/*.go"
+          allow:
+            - $gostd
+            - reader/internal/domain
+            - reader/internal/http
+
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - funlen
+          - gocognit
+          - gosec
+
+formatters:
+  enable:
+    - gofmt

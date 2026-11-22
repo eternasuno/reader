@@ -1,0 +1,269 @@
+{
+  "$schema": "node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "src/**",
+      "test/**",
+      "vite.config.ts",
+      "package.json",
+      "tsconfig.json",
+      "biome.json"
+    ]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 80
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "semicolons": "always",
+      "trailingCommas": "es5"
+    }
+  },
+  "linter": {
+    "domains": {
+      "solid": "all"
+    },
+    "rules": {
+      "preset": "recommended",
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": { "maxAllowedComplexity": 10 }
+        },
+        "noExcessiveLinesPerFunction": {
+          "level": "error",
+          "options": { "maxLines": 40, "skipBlankLines": true }
+        },
+        "useMathMinMax": "off"
+      },
+      "correctness": {
+        "noSolidDestructuredProps": "error",
+        "noUndeclaredDependencies": "error"
+      },
+      "nursery": {
+        "noFloatingPromises": "error",
+        "noMisusedPromises": "error"
+      },
+      "performance": {
+        "noAccumulatingSpread": "error",
+        "useSolidForComponent": "error"
+      },
+      "security": {
+        "noSecrets": "off"
+      },
+      "style": {
+        "useConsistentArrayType": {
+          "level": "error",
+          "options": { "syntax": "generic" }
+        },
+        "noExcessiveLinesPerFile": {
+          "level": "error",
+          "options": { "maxLines": 300, "skipBlankLines": true }
+        },
+        "noExportedImports": "error",
+        "noNestedTernary": "error",
+        "noParameterAssign": {
+          "level": "error",
+          "options": { "propertyAssignment": "deny" }
+        },
+        "noUselessElse": "error",
+        "useReadonlyClassProperties": "error"
+      },
+      "suspicious": {
+        "noVar": "error"
+      }
+    }
+  },
+  "vcs": {
+    "clientKind": "git",
+    "enabled": true,
+    "useIgnoreFile": true,
+    "root": ".."
+  },
+  "overrides": [
+    {
+      "includes": ["src/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "error"
+          },
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/test/**", "**/test"],
+                    "message": "src/ must not import test/ code (reader-engineering: Testing)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/api/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "error"
+          },
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "solid-js",
+                      "solid-js/*",
+                      "@solidjs/*",
+                      "**/i18n/**",
+                      "**/i18n",
+                      "**/state/**",
+                      "**/state",
+                      "**/ui/**",
+                      "**/ui",
+                      "**/components/**",
+                      "**/components",
+                      "**/routes/**",
+                      "**/routes"
+                    ],
+                    "message": "api/ must not use Solid, the router, or other web modules; it only exposes Promise-returning functions (reader-engineering: Frontend Architecture)"
+                  },
+                  {
+                    "group": ["**/test/**", "**/test"],
+                    "message": "src/ must not import test/ code (reader-engineering: Testing)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/i18n/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "error"
+          },
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@solidjs/router",
+                      "**/api/**",
+                      "**/api",
+                      "**/state/**",
+                      "**/state",
+                      "**/ui/**",
+                      "**/ui",
+                      "**/components/**",
+                      "**/components",
+                      "**/routes/**",
+                      "**/routes"
+                    ],
+                    "message": "i18n/ must not import api, state, ui, components, or routes (reader-engineering: Frontend Architecture)"
+                  },
+                  {
+                    "group": ["**/test/**", "**/test"],
+                    "message": "src/ must not import test/ code (reader-engineering: Testing)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/ui/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "error"
+          },
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@solidjs/router",
+                      "**/api/**",
+                      "**/api",
+                      "**/i18n/**",
+                      "**/i18n",
+                      "**/state/**",
+                      "**/state",
+                      "**/components/**",
+                      "**/components",
+                      "**/routes/**",
+                      "**/routes"
+                    ],
+                    "message": "ui/ carries no domain: it may not use the api client, i18n, state, components, or routes (reader-engineering: ui.md)"
+                  },
+                  {
+                    "group": ["**/test/**", "**/test"],
+                    "message": "src/ must not import test/ code (reader-engineering: Testing)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/state/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "error"
+          },
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@solidjs/router",
+                      "**/components/**",
+                      "**/components",
+                      "**/routes/**",
+                      "**/routes"
+                    ],
+                    "message": "state/ must not import @solidjs/router, components, or routes (reader-engineering: Frontend Architecture)"
+                  },
+                  {
+                    "group": ["**/test/**", "**/test"],
+                    "message": "src/ must not import test/ code (reader-engineering: Testing)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
