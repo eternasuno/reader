@@ -19,12 +19,15 @@ import (
 	"mime/quotedprintable"
 	"net"
 	netmail "net/mail"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	gomail "github.com/wneessen/go-mail"
 
 	"reader/internal/domain"
 )
@@ -55,7 +58,7 @@ func TestSendEPUBImplicitTLS(t *testing.T) {
 	}
 	startSMTPServer(t, server)
 
-	settings := kindleSettings(t, server.address, domain.SMTPSecurityTLS, "reader", "smtp-secret")
+	delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, "reader", "smtp-secret")
 	book := domain.EPUBBook{
 		Title:        "Liubai 2026-11-19",
 		Filename:     "liubai-2026-11-19.epub",
@@ -64,12 +67,12 @@ func TestSendEPUBImplicitTLS(t *testing.T) {
 	}
 
 	sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
-	if err := sender.SendEPUB(context.Background(), settings, book); err != nil {
+	if err := sender.SendEPUB(context.Background(), delivery, book); err != nil {
 		t.Fatalf("SendEPUB() error = %v", err)
 	}
 
 	message := receiveMail(t, server.messages)
-	assertEPUBDelivery(t, message, settings, book, book.Title)
+	assertEPUBDelivery(t, message, delivery, book, book.Title)
 }
 
 func TestSendEPUBSTARTTLS(t *testing.T) {
@@ -82,7 +85,7 @@ func TestSendEPUBSTARTTLS(t *testing.T) {
 	}
 	startSMTPServer(t, server)
 
-	settings := kindleSettings(t, server.address, domain.SMTPSecuritySTARTTLS, "reader", "smtp-secret")
+	delivery := kindleDelivery(t, server.address, domain.SMTPSecuritySTARTTLS, "reader", "smtp-secret")
 	book := domain.EPUBBook{
 		Title:    "Liubai 2026-11-20",
 		Filename: "liubai-2026-11-20.epub",
@@ -90,7 +93,7 @@ func TestSendEPUBSTARTTLS(t *testing.T) {
 	}
 
 	sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
-	if err := sender.SendEPUB(context.Background(), settings, book); err != nil {
+	if err := sender.SendEPUB(context.Background(), delivery, book); err != nil {
 		t.Fatalf("SendEPUB() error = %v", err)
 	}
 
@@ -99,7 +102,7 @@ func TestSendEPUBSTARTTLS(t *testing.T) {
 	}
 
 	message := receiveMail(t, server.messages)
-	assertEPUBDelivery(t, message, settings, book, book.Title)
+	assertEPUBDelivery(t, message, delivery, book, book.Title)
 }
 
 func TestSendEPUBIgnoresCloseFailureAfterAcceptance(t *testing.T) {
@@ -112,7 +115,7 @@ func TestSendEPUBIgnoresCloseFailureAfterAcceptance(t *testing.T) {
 	}
 	startSMTPServer(t, server)
 
-	settings := kindleSettings(t, server.address, domain.SMTPSecurityTLS, "", "")
+	delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, "", "")
 	book := domain.EPUBBook{
 		Title:    "Liubai 2026-11-22",
 		Filename: "liubai-2026-11-22.epub",
@@ -120,12 +123,12 @@ func TestSendEPUBIgnoresCloseFailureAfterAcceptance(t *testing.T) {
 	}
 
 	sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
-	if err := sender.SendEPUB(context.Background(), settings, book); err != nil {
+	if err := sender.SendEPUB(context.Background(), delivery, book); err != nil {
 		t.Fatalf("SendEPUB() error = %v, want nil after the server accepted DATA", err)
 	}
 
 	message := receiveMail(t, server.messages)
-	assertEPUBDelivery(t, message, settings, book, book.Title)
+	assertEPUBDelivery(t, message, delivery, book, book.Title)
 }
 
 func TestSendEPUBSTARTTLSKeepsConfiguredPort(t *testing.T) {
@@ -136,8 +139,8 @@ func TestSendEPUBSTARTTLSKeepsConfiguredPort(t *testing.T) {
 	}
 	startSMTPServer(t, server)
 
-	settings := kindleSettings(t, server.address, domain.SMTPSecuritySTARTTLS, "", "")
-	settings.SMTPPort = 25
+	delivery := kindleDelivery(t, server.address, domain.SMTPSecuritySTARTTLS, "", "")
+	delivery.SMTP.Port = 25
 	book := domain.EPUBBook{
 		Title:    "Liubai 2026-11-23",
 		Filename: "liubai-2026-11-23.epub",
@@ -156,7 +159,7 @@ func TestSendEPUBSTARTTLSKeepsConfiguredPort(t *testing.T) {
 	}
 
 	sender := NewSender(Config{Timeout: 5 * time.Second, DialContext: dialContext, TLSConfig: clientTLS})
-	if err := sender.SendEPUB(context.Background(), settings, book); err != nil {
+	if err := sender.SendEPUB(context.Background(), delivery, book); err != nil {
 		t.Fatalf("SendEPUB() error = %v", err)
 	}
 
@@ -173,7 +176,7 @@ func TestSendEPUBSTARTTLSKeepsConfiguredPort(t *testing.T) {
 	}
 
 	message := receiveMail(t, server.messages)
-	assertEPUBDelivery(t, message, settings, book, book.Title)
+	assertEPUBDelivery(t, message, delivery, book, book.Title)
 }
 
 func TestSendEPUBEmptyTitleFallsBackToDefaultSubject(t *testing.T) {
@@ -185,19 +188,19 @@ func TestSendEPUBEmptyTitleFallsBackToDefaultSubject(t *testing.T) {
 	}
 	startSMTPServer(t, server)
 
-	settings := kindleSettings(t, server.address, domain.SMTPSecurityTLS, "", "")
+	delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, "", "")
 	book := domain.EPUBBook{
 		Filename: "liubai-2026-11-21.epub",
 		Data:     []byte("PK\x03\x04untitled epubs"),
 	}
 
 	sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
-	if err := sender.SendEPUB(context.Background(), settings, book); err != nil {
+	if err := sender.SendEPUB(context.Background(), delivery, book); err != nil {
 		t.Fatalf("SendEPUB() error = %v", err)
 	}
 
 	message := receiveMail(t, server.messages)
-	assertEPUBDelivery(t, message, settings, book, defaultSubject)
+	assertEPUBDelivery(t, message, delivery, book, defaultSubject)
 }
 
 func TestSendEPUBAuthFailureRedactsPassword(t *testing.T) {
@@ -213,11 +216,11 @@ func TestSendEPUBAuthFailureRedactsPassword(t *testing.T) {
 	}
 	startSMTPServer(t, server)
 
-	settings := kindleSettings(t, server.address, domain.SMTPSecurityTLS, "reader", password)
+	delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, "reader", password)
 	book := domain.EPUBBook{Title: "Liubai", Filename: "liubai.epub", Data: []byte("PK\x03\x04")}
 
 	sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
-	err := sender.SendEPUB(context.Background(), settings, book)
+	err := sender.SendEPUB(context.Background(), delivery, book)
 	if err == nil {
 		t.Fatal("SendEPUB() error = nil, want authentication failure")
 	}
@@ -228,6 +231,231 @@ func TestSendEPUBAuthFailureRedactsPassword(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "535") {
 		t.Errorf("SendEPUB() error = %q, want an smtp 535 rejection", err)
+	}
+}
+
+func TestSendEPUBAuthFailureEchoesBase64PLAIN(t *testing.T) {
+	serverTLS, clientTLS := newTestTLSConfigs(t)
+	user := "reader"
+	password := "sup3r+s3cret/pass?="
+	server := &smtpServer{
+		tlsConfig:   serverTLS,
+		implicitTLS: true,
+		authUser:    user,
+		authPass:    password,
+		rejectAuth:  true,
+		echoRawAuth: true,
+		messages:    make(chan capturedMail, 1),
+	}
+	startSMTPServer(t, server)
+
+	delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, user, password)
+	book := domain.EPUBBook{Title: "Liubai", Filename: "liubai.epub", Data: []byte("PK\x03\x04")}
+
+	sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
+	err := sender.SendEPUB(context.Background(), delivery, book)
+	if err == nil {
+		t.Fatal("SendEPUB() error = nil, want authentication failure")
+	}
+
+	want := "send kindle epub: dial smtp server: smtp authentication failed (535)"
+	if err.Error() != want {
+		t.Errorf("SendEPUB() error = %q, want %q", err.Error(), want)
+	}
+
+	assertNoAuthSecrets(t, err.Error(), user, password)
+}
+
+func TestSendEPUBAuthFailureStatusCodes(t *testing.T) {
+	codes := []int{454, 530, 534, 535, 538}
+	for _, code := range codes {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			serverTLS, clientTLS := newTestTLSConfigs(t)
+			user := "reader"
+			password := "sup3r+s3cret/pass?="
+			server := &smtpServer{
+				tlsConfig:      serverTLS,
+				implicitTLS:    true,
+				authUser:       user,
+				authPass:       password,
+				rejectAuth:     true,
+				echoRawAuth:    true,
+				authRejectCode: code,
+				messages:       make(chan capturedMail, 1),
+			}
+			startSMTPServer(t, server)
+
+			delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, user, password)
+			book := domain.EPUBBook{Title: "Liubai", Filename: "liubai.epub", Data: []byte("PK\x03\x04")}
+
+			sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
+			err := sender.SendEPUB(context.Background(), delivery, book)
+			if err == nil {
+				t.Fatalf("SendEPUB() error = nil, want %d authentication failure", code)
+			}
+
+			want := fmt.Sprintf("send kindle epub: dial smtp server: smtp authentication failed (%d)", code)
+			if err.Error() != want {
+				t.Errorf("SendEPUB() error = %q, want %q", err.Error(), want)
+			}
+
+			assertNoAuthSecrets(t, err.Error(), user, password)
+		})
+	}
+
+	t.Run("auth_not_advertised", func(t *testing.T) {
+		serverTLS, clientTLS := newTestTLSConfigs(t)
+		server := &smtpServer{
+			tlsConfig:   serverTLS,
+			implicitTLS: true,
+			omitAuthExt: true,
+			messages:    make(chan capturedMail, 1),
+		}
+		startSMTPServer(t, server)
+
+		delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, "reader", "smtp-secret")
+		book := domain.EPUBBook{Title: "Liubai", Filename: "liubai.epub", Data: []byte("PK\x03\x04")}
+
+		sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
+		err := sender.SendEPUB(context.Background(), delivery, book)
+		if err == nil {
+			t.Fatal("SendEPUB() error = nil, want authentication failure")
+		}
+
+		want := "send kindle epub: dial smtp server: smtp authentication failed"
+		if err.Error() != want {
+			t.Errorf("SendEPUB() error = %q, want %q", err.Error(), want)
+		}
+	})
+}
+
+func TestSendEPUBSendStageAuthRejection(t *testing.T) {
+	for _, code := range []int{454, 530, 535} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			serverTLS, clientTLS := newTestTLSConfigs(t)
+			user := "reader"
+			password := "sup3r+s3cret/pass?="
+			plainBlob := base64.StdEncoding.EncodeToString([]byte("\x00" + user + "\x00" + password))
+			server := &smtpServer{
+				tlsConfig:         serverTLS,
+				implicitTLS:       true,
+				authUser:          user,
+				authPass:          password,
+				rejectData:        true,
+				rejectDataCode:    code,
+				rejectDataMessage: "Authentication required: " + plainBlob,
+				messages:          make(chan capturedMail, 1),
+			}
+			startSMTPServer(t, server)
+
+			delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, user, password)
+			book := domain.EPUBBook{Title: "Liubai", Filename: "liubai.epub", Data: []byte("PK\x03\x04")}
+
+			sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
+			err := sender.SendEPUB(context.Background(), delivery, book)
+			if err == nil {
+				t.Fatalf("SendEPUB() error = nil, want %d rejection", code)
+			}
+
+			want := fmt.Sprintf("send kindle epub: send epub mail: smtp authentication failed (%d)", code)
+			if err.Error() != want {
+				t.Errorf("SendEPUB() error = %q, want %q", err.Error(), want)
+			}
+
+			assertNoAuthSecrets(t, err.Error(), user, password)
+		})
+	}
+}
+
+func TestSanitizedErrorAuthSentinelsAndBase64Redaction(t *testing.T) {
+	user := "u"
+	password := ">>?pass/+"
+	smtp := domain.SMTPSettings{
+		User:     &user,
+		Password: &password,
+	}
+
+	t.Run("go_mail_auth_sentinels", func(t *testing.T) {
+		for _, sentinel := range []error{
+			gomail.ErrPlainAuthNotSupported,
+			gomail.ErrNoSupportedAuthDiscovered,
+			fmt.Errorf("SMTP AUTH failed: %w", errors.New("unexpected eof "+password)),
+		} {
+			got := sanitizedError(smtp, dialStep, sentinel).Error()
+			want := "send kindle epub: dial smtp server: smtp authentication failed"
+			if got != want {
+				t.Errorf("sanitizedError(%v) = %q, want %q", sentinel, got, want)
+			}
+		}
+	})
+
+	t.Run("starttls_454_not_classified_as_auth", func(t *testing.T) {
+		err := &textproto.Error{Code: 454, Msg: "TLS not available"}
+		got := sanitizedError(smtp, dialStep, err).Error()
+		want := "send kindle epub: dial smtp server: " + err.Error()
+		if got != want {
+			t.Errorf("sanitizedError(STARTTLS 454) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("non_auth_error_redacts_password_plain_and_login_encodings", func(t *testing.T) {
+		plainNull := []byte("\x00" + user + "\x00" + password)
+		plainAuthzid := []byte(user + "\x00" + user + "\x00" + password)
+
+		tokens := []string{
+			password,
+			base64.StdEncoding.EncodeToString([]byte(password)),
+			base64.RawStdEncoding.EncodeToString([]byte(password)),
+			base64.URLEncoding.EncodeToString([]byte(password)),
+			base64.RawURLEncoding.EncodeToString([]byte(password)),
+			base64.StdEncoding.EncodeToString(plainNull),
+			base64.RawStdEncoding.EncodeToString(plainNull),
+			base64.URLEncoding.EncodeToString(plainNull),
+			base64.RawURLEncoding.EncodeToString(plainNull),
+			base64.StdEncoding.EncodeToString(plainAuthzid),
+			base64.RawStdEncoding.EncodeToString(plainAuthzid),
+			base64.URLEncoding.EncodeToString(plainAuthzid),
+			base64.RawURLEncoding.EncodeToString(plainAuthzid),
+		}
+
+		for _, token := range tokens {
+			rawErr := fmt.Errorf("relay echoed %s via https://%s:urlsecret@relay.example.com/submit", token, user)
+			got := sanitizedError(smtp, "send epub mail", rawErr).Error()
+			want := "send kindle epub: send epub mail: relay echoed [redacted] via https://relay.example.com/submit"
+			if got != want {
+				t.Errorf("token %q: sanitizedError() = %q, want %q", token, got, want)
+			}
+			assertNoAuthSecrets(t, got, user, password)
+		}
+	})
+}
+
+func assertNoAuthSecrets(t *testing.T, errText, user, password string) {
+	t.Helper()
+
+	if strings.Contains(errText, password) {
+		t.Errorf("error %q must not contain SMTP password %q", errText, password)
+	}
+
+	rawBlobs := [][]byte{
+		[]byte(password),
+		[]byte("\x00" + user + "\x00" + password),
+		[]byte(user + "\x00" + user + "\x00" + password),
+	}
+	encodings := []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	}
+
+	for _, blob := range rawBlobs {
+		for _, enc := range encodings {
+			encoded := enc.EncodeToString(blob)
+			if encoded != "" && strings.Contains(errText, encoded) {
+				t.Errorf("error %q must not contain base64-encoded secret %q", errText, encoded)
+			}
+		}
 	}
 }
 
@@ -244,11 +472,11 @@ func TestSendEPUBMessageRejected(t *testing.T) {
 	}
 	startSMTPServer(t, server)
 
-	settings := kindleSettings(t, server.address, domain.SMTPSecurityTLS, "reader", password)
+	delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, "reader", password)
 	book := domain.EPUBBook{Title: "Liubai", Filename: "liubai.epub", Data: []byte("PK\x03\x04")}
 
 	sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
-	err := sender.SendEPUB(context.Background(), settings, book)
+	err := sender.SendEPUB(context.Background(), delivery, book)
 	if err == nil {
 		t.Fatal("SendEPUB() error = nil, want message rejection")
 	}
@@ -263,17 +491,19 @@ func TestSendEPUBMessageRejected(t *testing.T) {
 }
 
 func TestSendEPUBUnsupportedSecurity(t *testing.T) {
-	settings := domain.KindleSettings{
-		KindleEmail:  "reader@kindle.com",
-		SenderEmail:  "sender@example.com",
-		SMTPHost:     "127.0.0.1",
-		SMTPPort:     2525,
-		SMTPSecurity: domain.SMTPSecurity("ssl"),
+	delivery := domain.KindleDelivery{
+		SMTP: domain.SMTPSettings{
+			SenderEmail: "sender@example.com",
+			Host:        "127.0.0.1",
+			Port:        2525,
+			Security:    domain.SMTPSecurity("ssl"),
+		},
+		KindleEmail: "reader@kindle.com",
 	}
 	book := domain.EPUBBook{Title: "Liubai", Filename: "liubai.epub", Data: []byte("PK\x03\x04")}
 
 	sender := NewSender(Config{})
-	err := sender.SendEPUB(context.Background(), settings, book)
+	err := sender.SendEPUB(context.Background(), delivery, book)
 	if err == nil {
 		t.Fatal("SendEPUB() error = nil, want unsupported security error")
 	}
@@ -286,17 +516,17 @@ func TestSendEPUBUnsupportedSecurity(t *testing.T) {
 func assertEPUBDelivery(
 	t *testing.T,
 	message capturedMail,
-	settings domain.KindleSettings,
+	delivery domain.KindleDelivery,
 	book domain.EPUBBook,
 	subject string,
 ) {
 	t.Helper()
 
-	if want := "<" + settings.SenderEmail + ">"; message.from != want {
+	if want := "<" + delivery.SMTP.SenderEmail + ">"; message.from != want {
 		t.Errorf("MAIL FROM = %q, want %q", message.from, want)
 	}
 
-	if want := "<" + settings.KindleEmail + ">"; len(message.rcptTo) != 1 || message.rcptTo[0] != want {
+	if want := "<" + delivery.KindleEmail + ">"; len(message.rcptTo) != 1 || message.rcptTo[0] != want {
 		t.Errorf("RCPT TO = %v, want [%q]", message.rcptTo, want)
 	}
 
@@ -305,12 +535,12 @@ func assertEPUBDelivery(
 		t.Errorf("Subject = %q, want %q", parsed.subject, subject)
 	}
 
-	if parsed.from != settings.SenderEmail {
-		t.Errorf("From = %q, want %q", parsed.from, settings.SenderEmail)
+	if parsed.from != delivery.SMTP.SenderEmail {
+		t.Errorf("From = %q, want %q", parsed.from, delivery.SMTP.SenderEmail)
 	}
 
-	if parsed.to != settings.KindleEmail {
-		t.Errorf("To = %q, want %q", parsed.to, settings.KindleEmail)
+	if parsed.to != delivery.KindleEmail {
+		t.Errorf("To = %q, want %q", parsed.to, delivery.KindleEmail)
 	}
 
 	if want := string(epubContentType); parsed.attachmentType != want {
@@ -425,13 +655,13 @@ func receiveMail(t *testing.T, messages <-chan capturedMail) capturedMail {
 	}
 }
 
-func kindleSettings(
+func kindleDelivery(
 	t *testing.T,
 	address string,
 	security domain.SMTPSecurity,
 	user string,
 	password string,
-) domain.KindleSettings {
+) domain.KindleDelivery {
 	t.Helper()
 
 	host, portText, err := net.SplitHostPort(address)
@@ -444,20 +674,22 @@ func kindleSettings(
 		t.Fatalf("parse smtp port: %v", err)
 	}
 
-	settings := domain.KindleSettings{
-		KindleEmail:  "reader@kindle.com",
-		SenderEmail:  "sender@example.com",
-		SMTPHost:     host,
-		SMTPPort:     port,
-		SMTPSecurity: security,
+	delivery := domain.KindleDelivery{
+		SMTP: domain.SMTPSettings{
+			SenderEmail: "sender@example.com",
+			Host:        host,
+			Port:        port,
+			Security:    security,
+		},
+		KindleEmail: "reader@kindle.com",
 	}
 
 	if user != "" {
-		settings.SMTPUser = &user
-		settings.SMTPPassword = &password
+		delivery.SMTP.User = &user
+		delivery.SMTP.Password = &password
 	}
 
-	return settings
+	return delivery
 }
 
 func newTestTLSConfigs(t *testing.T) (*tls.Config, *tls.Config) {
@@ -505,17 +737,22 @@ func newTestTLSConfigs(t *testing.T) (*tls.Config, *tls.Config) {
 }
 
 type smtpServer struct {
-	address        string
-	tlsConfig      *tls.Config
-	implicitTLS    bool
-	authUser       string
-	authPass       string
-	rejectAuth     bool
-	rejectData     bool
-	closeAfterData bool
-	messages       chan capturedMail
-	startTLS       atomic.Bool
-	wg             sync.WaitGroup
+	address           string
+	tlsConfig         *tls.Config
+	implicitTLS       bool
+	authUser          string
+	authPass          string
+	omitAuthExt       bool
+	rejectAuth        bool
+	echoRawAuth       bool
+	authRejectCode    int
+	rejectData        bool
+	rejectDataCode    int
+	rejectDataMessage string
+	closeAfterData    bool
+	messages          chan capturedMail
+	startTLS          atomic.Bool
+	wg                sync.WaitGroup
 }
 
 func startSMTPServer(t *testing.T, server *smtpServer) {
@@ -648,7 +885,10 @@ func (s *smtpSession) handleCommand(line string) (bool, error) {
 }
 
 func (s *smtpSession) replyEHLO() error {
-	lines := []string{"127.0.0.1", "AUTH PLAIN"}
+	lines := []string{"127.0.0.1"}
+	if !s.server.omitAuthExt {
+		lines = append(lines, "AUTH PLAIN")
+	}
 	if !s.encrypted && s.server.tlsConfig != nil {
 		lines = append(lines, "STARTTLS")
 	}
@@ -692,12 +932,16 @@ func (s *smtpSession) authenticate(line string) error {
 
 	parts := strings.Split(string(credentials), "\x00")
 	details := line
-	if len(parts) == 3 {
+	if !s.server.echoRawAuth && len(parts) == 3 {
 		details = parts[1] + ":" + parts[2]
 	}
 
 	if s.server.rejectAuth || len(parts) != 3 || parts[1] != s.server.authUser || parts[2] != s.server.authPass {
-		return s.reply(535, "Authentication failed: "+details)
+		code := s.server.authRejectCode
+		if code == 0 {
+			code = 535
+		}
+		return s.reply(code, "Authentication failed: "+details)
 	}
 
 	return s.reply(235, "Authentication successful")
@@ -723,7 +967,15 @@ func (s *smtpSession) receiveData() error {
 	}
 
 	if s.server.rejectData {
-		return s.reply(550, "Message rejected")
+		code := s.server.rejectDataCode
+		if code == 0 {
+			code = 550
+		}
+		message := s.server.rejectDataMessage
+		if message == "" {
+			message = "Message rejected"
+		}
+		return s.reply(code, message)
 	}
 
 	s.server.messages <- capturedMail{

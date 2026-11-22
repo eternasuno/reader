@@ -4,7 +4,7 @@
  */
 
 import { createSignal, flush } from 'solid-js';
-import type { Feed, Folder } from '../api';
+import type { Feed, FeedUnreadCount, Folder } from '../api';
 import { feedsApi, foldersApi, savedPagesApi } from '../api';
 
 /** `folders.md:16`: folder collapse state persists in `localStorage`. */
@@ -19,6 +19,7 @@ const [feedUnreadMap, setFeedUnreadMap] = createSignal<
 const [collapsedFolders, setCollapsedFolders] = createSignal<
   ReadonlySet<string>
 >(loadCollapsed());
+let snapshotGeneration = 0;
 
 export { collapsedFolders, feeds, feedUnreadMap, folders, savedUnreadCount };
 
@@ -81,18 +82,19 @@ export const folderUnreadCount = (folderId: string): number =>
 export const allFeedsUnreadCount = (): number =>
   feeds().reduce((sum, feed) => sum + feedUnreadCount(feed.id), 0);
 
-/** `LIB-RELOAD-1`: entering/switching a scope refreshes feeds, folders and unread counts. The
- * sidebar is auxiliary, so a failed request keeps the previous value instead of breaking the list.
- */
-export const refreshSidebar = async (): Promise<void> => {
-  const [feedsResult, foldersResult, countsResult, savedResult] =
-    await Promise.allSettled([
-      feedsApi.list(),
-      foldersApi.list(),
-      feedsApi.unreadCounts(),
-      savedPagesApi.unreadCount(),
-    ]);
+type SidebarSnapshotResults = [
+  PromiseSettledResult<Array<Feed>>,
+  PromiseSettledResult<Array<Folder>>,
+  PromiseSettledResult<Array<FeedUnreadCount>>,
+  PromiseSettledResult<number>,
+];
 
+const applySidebarSnapshot = ([
+  feedsResult,
+  foldersResult,
+  countsResult,
+  savedResult,
+]: SidebarSnapshotResults): void => {
   if (feedsResult.status === 'fulfilled') setFeeds(feedsResult.value);
   if (foldersResult.status === 'fulfilled') setFolders(foldersResult.value);
   if (countsResult.status === 'fulfilled') {
@@ -106,6 +108,24 @@ export const refreshSidebar = async (): Promise<void> => {
     setSavedUnreadSignal(Math.max(0, savedResult.value));
 
   flush();
+};
+
+/** `LIB-RELOAD-1`: entering/switching a scope refreshes feeds, folders and unread counts. The
+ * sidebar is auxiliary, so a failed request keeps the previous value instead of breaking the list.
+ * Local feed/folder removals invalidate in-flight snapshots so a racing refresh re-fetches.
+ */
+export const refreshSidebar = async (): Promise<void> => {
+  const generation = snapshotGeneration;
+  const results = await Promise.allSettled([
+    feedsApi.list(),
+    foldersApi.list(),
+    feedsApi.unreadCounts(),
+    savedPagesApi.unreadCount(),
+  ]);
+
+  if (generation !== snapshotGeneration) return refreshSidebar();
+
+  applySidebarSnapshot(results);
 };
 
 export const toggleFolderCollapse = (folderId: string): void => {
@@ -180,12 +200,14 @@ export const updateFeedLocal = (feedId: string, patch: Partial<Feed>): void => {
 };
 
 export const removeFeedLocal = (feedId: string): void => {
+  snapshotGeneration += 1;
   setFeeds((current) => current.filter((feed) => feed.id !== feedId));
   clearFeedUnread(feedId);
 };
 
 /** `FD-FOLDER-4`: deleting a folder keeps its feeds and moves them to the top level. */
 export const removeFolderLocal = (folderId: string): void => {
+  snapshotGeneration += 1;
   setFolders((current) => current.filter((folder) => folder.id !== folderId));
   setFeeds((current) =>
     current.map((feed) =>

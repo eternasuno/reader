@@ -34,18 +34,21 @@ const VirtualRows = <T,>(props: RowsProps<T>): JSX.Element => (
   <div class="relative w-full" style={{ height: `${props.totalSize}px` }}>
     <For each={props.rows} keyed={(item) => item.key}>
       {(item) => (
-        <div
-          data-index={item().index}
-          ref={(el) => {
-            // Attributes are applied after `ref` runs; measure once the
-            // `data-index` attribute has been written.
-            queueMicrotask(() => props.virtualizer.measureElement(el));
-          }}
-          class="absolute inset-x-0 top-0"
-          style={{ transform: `translateY(${item().start}px)` }}
-        >
-          {props.render(props.items[item().index], () => item().index)}
-        </div>
+        // Virtual rows trail `items` by one update; a row past the end of a shrunk list renders nothing.
+        <Show when={item().index < props.items.length}>
+          <div
+            data-index={item().index}
+            ref={(el) => {
+              // Attributes are applied after `ref` runs; measure once the
+              // `data-index` attribute has been written.
+              queueMicrotask(() => props.virtualizer.measureElement(el));
+            }}
+            class="absolute inset-x-0 top-0"
+            style={{ transform: `translateY(${item().start}px)` }}
+          >
+            {props.render(props.items[item().index] as T, () => item().index)}
+          </div>
+        </Show>
       )}
     </For>
   </div>

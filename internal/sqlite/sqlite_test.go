@@ -76,7 +76,7 @@ func TestOpenMigratesDatabase(t *testing.T) {
 		t.Fatalf("default settings = %+v, want retention 100 and provider direct", settings)
 	}
 
-	if settings.Kindle != nil || settings.JinaKey != nil || settings.BrowserEndpoint != nil {
+	if settings.SMTP != nil || settings.Kindle != nil || settings.JinaKey != nil || settings.BrowserEndpoint != nil {
 		t.Fatalf("default settings carry unexpected optional values: %+v", settings)
 	}
 
@@ -1323,7 +1323,7 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 	}
 }
 
-func TestSettingRepoFetcherSwitching(t *testing.T) {
+func TestSettingRepoProvider(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	repo := store.Settings()
@@ -1341,8 +1341,8 @@ func TestSettingRepoFetcherSwitching(t *testing.T) {
 		t.Fatalf("update retention: %v", err)
 	}
 
-	if err := repo.UpdateFetcherJina(ctx, ptr("  key-1  ")); err != nil {
-		t.Fatalf("update jina: %v", err)
+	if err := repo.UpdateProvider(ctx, domain.ProviderJina); err != nil {
+		t.Fatalf("update provider jina without key: %v", err)
 	}
 
 	settings, err = repo.Get(ctx)
@@ -1350,45 +1350,11 @@ func TestSettingRepoFetcherSwitching(t *testing.T) {
 		t.Fatalf("get settings after jina: %v", err)
 	}
 
-	if settings.Retention != 250 || settings.Provider != domain.ProviderJina {
+	if settings.Retention != 250 || settings.Provider != domain.ProviderJina || settings.JinaKey != nil {
 		t.Fatalf("settings after jina = %+v", settings)
 	}
 
-	if settings.JinaKey == nil || *settings.JinaKey != "key-1" {
-		t.Fatalf("jina key = %v, want key-1", settings.JinaKey)
-	}
-
-	if err := repo.UpdateFetcherJina(ctx, nil); err != nil {
-		t.Fatalf("update jina without key: %v", err)
-	}
-
-	if err := repo.UpdateFetcherJina(ctx, ptr("   ")); err != nil {
-		t.Fatalf("update jina with blank key: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after blank jina updates: %v", err)
-	}
-
-	if settings.Provider != domain.ProviderJina || settings.JinaKey == nil || *settings.JinaKey != "key-1" {
-		t.Fatalf("settings after blank jina updates = %+v", settings)
-	}
-
-	if err := repo.DeleteJinaKey(ctx); err != nil {
-		t.Fatalf("delete jina key: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after deleting jina key: %v", err)
-	}
-
-	if settings.JinaKey != nil || settings.Provider != domain.ProviderJina {
-		t.Fatalf("settings after deleting jina key = %+v", settings)
-	}
-
-	if err := repo.UpdateFetcherBrowser(ctx, nil); err == nil {
+	if err := repo.UpdateProvider(ctx, domain.ProviderBrowser); err == nil {
 		t.Fatal("expected a required browser endpoint error")
 	} else {
 		requireCode(t, err, domain.ErrBrowserEndpointRequired)
@@ -1403,8 +1369,22 @@ func TestSettingRepoFetcherSwitching(t *testing.T) {
 		t.Fatalf("settings after failed browser switch = %+v", settings)
 	}
 
-	if err := repo.UpdateFetcherBrowser(ctx, ptr("  wss://browser.internal:3000  ")); err != nil {
-		t.Fatalf("update browser: %v", err)
+	if err := repo.UpdateBrowserEndpoint(ctx, "   "); err != nil {
+		t.Fatalf("update blank browser endpoint: %v", err)
+	}
+
+	if err := repo.UpdateProvider(ctx, domain.ProviderBrowser); err == nil {
+		t.Fatal("expected a required browser endpoint error for blank endpoint")
+	} else {
+		requireCode(t, err, domain.ErrBrowserEndpointRequired)
+	}
+
+	if err := repo.UpdateBrowserEndpoint(ctx, "wss://browser.internal:3000"); err != nil {
+		t.Fatalf("update browser endpoint: %v", err)
+	}
+
+	if err := repo.UpdateProvider(ctx, domain.ProviderBrowser); err != nil {
+		t.Fatalf("update provider browser: %v", err)
 	}
 
 	settings, err = repo.Get(ctx)
@@ -1416,21 +1396,44 @@ func TestSettingRepoFetcherSwitching(t *testing.T) {
 		t.Fatalf("settings after browser = %+v", settings)
 	}
 
-	if err := repo.UpdateFetcherDirect(ctx); err != nil {
-		t.Fatalf("update direct: %v", err)
-	}
-
-	if err := repo.UpdateFetcherBrowser(ctx, nil); err != nil {
-		t.Fatalf("update browser without endpoint: %v", err)
+	if err := repo.DeleteBrowserEndpoint(ctx); err != nil {
+		t.Fatalf("delete browser endpoint while provider=browser: %v", err)
 	}
 
 	settings, err = repo.Get(ctx)
 	if err != nil {
-		t.Fatalf("get settings after preserving browser endpoint: %v", err)
+		t.Fatalf("get settings after deleting browser endpoint: %v", err)
 	}
 
-	if settings.Provider != domain.ProviderBrowser || settings.BrowserEndpoint == nil || *settings.BrowserEndpoint != "wss://browser.internal:3000" {
-		t.Fatalf("settings after preserving browser endpoint = %+v", settings)
+	if settings.Provider != domain.ProviderDirect || settings.BrowserEndpoint != nil {
+		t.Fatalf("settings after deleting browser endpoint = %+v", settings)
+	}
+
+	if err := repo.UpdateBrowserEndpoint(ctx, "https://browser.internal:3001"); err != nil {
+		t.Fatalf("set browser endpoint again: %v", err)
+	}
+
+	if err := repo.UpdateProvider(ctx, domain.ProviderJina); err != nil {
+		t.Fatalf("switch provider to jina: %v", err)
+	}
+
+	if err := repo.DeleteBrowserEndpoint(ctx); err != nil {
+		t.Fatalf("delete browser endpoint while provider=jina: %v", err)
+	}
+
+	settings, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after deleting browser endpoint under jina: %v", err)
+	}
+
+	if settings.Provider != domain.ProviderJina || settings.BrowserEndpoint != nil {
+		t.Fatalf("settings after deleting browser endpoint under jina = %+v", settings)
+	}
+
+	if err := repo.UpdateProvider(ctx, domain.ExtractorProvider("unknown")); err == nil {
+		t.Fatal("expected an invalid provider constraint error")
+	} else {
+		requireCode(t, err, domain.ErrSettingRepositoryError)
 	}
 
 	if err := repo.UpdateRetention(ctx, 0); err == nil {
@@ -1440,6 +1443,153 @@ func TestSettingRepoFetcherSwitching(t *testing.T) {
 	}
 }
 
+func TestSettingRepoServices(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.Settings()
+
+	if err := repo.UpdateJinaKey(ctx, "key-1"); err != nil {
+		t.Fatalf("update jina key: %v", err)
+	}
+
+	settings, err := repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after jina key: %v", err)
+	}
+
+	if settings.JinaKey == nil || *settings.JinaKey != "key-1" {
+		t.Fatalf("jina key = %v, want key-1", settings.JinaKey)
+	}
+
+	if err := repo.DeleteJinaKey(ctx); err != nil {
+		t.Fatalf("delete jina key: %v", err)
+	}
+
+	settings, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after deleting jina key: %v", err)
+	}
+
+	if settings.JinaKey != nil {
+		t.Fatalf("jina key after delete = %v, want nil", settings.JinaKey)
+	}
+
+	smtp := domain.SMTPSettings{
+		SenderEmail: "sender@example.com",
+		Host:        "smtp.example.com",
+		Port:        587,
+		Security:    domain.SMTPSecuritySTARTTLS,
+		User:        ptr("smtp-user"),
+		Password:    ptr("smtp-password"),
+	}
+
+	if err := repo.UpdateSMTP(ctx, smtp); err != nil {
+		t.Fatalf("update smtp: %v", err)
+	}
+
+	settings, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after smtp: %v", err)
+	}
+
+	if settings.SMTP == nil {
+		t.Fatal("smtp settings are missing")
+	}
+
+	if settings.Kindle != nil {
+		t.Fatalf("kindle settings should be nil before UpdateKindle: %+v", settings.Kindle)
+	}
+
+	assertSMTPSettings(t, *settings.SMTP, smtp)
+
+	smtpWithoutPassword := smtp
+	smtpWithoutPassword.Password = nil
+	if err := repo.UpdateSMTP(ctx, smtpWithoutPassword); err != nil {
+		t.Fatalf("update smtp without password: %v", err)
+	}
+
+	settings, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after nil smtp password: %v", err)
+	}
+
+	if settings.SMTP == nil || settings.SMTP.Password == nil || *settings.SMTP.Password != "smtp-password" {
+		t.Fatalf("password was not preserved: %+v", settings.SMTP)
+	}
+
+	smtpWithBlankPassword := smtp
+	smtpWithBlankPassword.Password = ptr("   ")
+	if err := repo.UpdateSMTP(ctx, smtpWithBlankPassword); err != nil {
+		t.Fatalf("update smtp with blank password: %v", err)
+	}
+
+	settings, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after blank smtp password: %v", err)
+	}
+
+	if settings.SMTP == nil || settings.SMTP.Password == nil || *settings.SMTP.Password != "smtp-password" {
+		t.Fatalf("password was not preserved after blank update: %+v", settings.SMTP)
+	}
+
+	rotated := smtp
+	rotated.Password = ptr("rotated-password")
+	if err := repo.UpdateSMTP(ctx, rotated); err != nil {
+		t.Fatalf("update smtp with rotated password: %v", err)
+	}
+
+	settings, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after rotated smtp password: %v", err)
+	}
+
+	if settings.SMTP == nil || settings.SMTP.Password == nil || *settings.SMTP.Password != "rotated-password" {
+		t.Fatalf("rotated password = %+v", settings.SMTP)
+	}
+
+	if err := repo.DeleteSMTPPassword(ctx); err != nil {
+		t.Fatalf("delete smtp password: %v", err)
+	}
+
+	settings, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after deleting smtp password: %v", err)
+	}
+
+	if settings.SMTP == nil || settings.SMTP.Password != nil {
+		t.Fatalf("smtp password after delete = %+v", settings.SMTP)
+	}
+
+	nextSendAt := time.Date(2024, 6, 1, 8, 30, 0, 0, time.UTC)
+	kindle := domain.KindleSettings{
+		KindleEmail: "reader@kindle.com",
+		SendTime:    ptr("08:30"),
+		NextSendAt:  &nextSendAt,
+	}
+	if err := repo.UpdateKindle(ctx, kindle); err != nil {
+		t.Fatalf("update kindle before deleting smtp: %v", err)
+	}
+
+	if err := repo.DeleteSMTP(ctx); err != nil {
+		t.Fatalf("delete smtp: %v", err)
+	}
+
+	settings, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after deleting smtp: %v", err)
+	}
+
+	if settings.SMTP != nil {
+		t.Fatalf("smtp after delete = %+v, want nil", settings.SMTP)
+	}
+
+	if settings.Kindle == nil {
+		t.Fatal("kindle settings were cleared by DeleteSMTP")
+	}
+
+	assertKindleSettings(t, *settings.Kindle, kindle)
+}
+
 func TestSettingRepoKindle(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -1447,76 +1597,53 @@ func TestSettingRepoKindle(t *testing.T) {
 
 	nextSendAt := time.Date(2024, 6, 1, 8, 30, 0, 0, time.UTC)
 	kindle := domain.KindleSettings{
-		KindleEmail:  "reader@kindle.com",
-		SenderEmail:  "sender@example.com",
-		SMTPHost:     "smtp.example.com",
-		SMTPPort:     587,
-		SMTPSecurity: domain.SMTPSecuritySTARTTLS,
-		SMTPUser:     ptr("smtp-user"),
-		SMTPPassword: ptr("smtp-password"),
-		SendTime:     ptr("08:30"),
-		NextSendAt:   &nextSendAt,
+		KindleEmail: "reader@kindle.com",
+		SendTime:    ptr("08:30"),
+		NextSendAt:  &nextSendAt,
+	}
+
+	if err := repo.UpdateKindle(ctx, kindle); err == nil {
+		t.Fatal("expected an SMTP not configured error")
+	} else {
+		requireCode(t, err, domain.ErrSMTPNotConfigured)
+	}
+
+	settings, err := repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after rejected kindle update: %v", err)
+	}
+
+	if settings.SMTP != nil || settings.Kindle != nil {
+		t.Fatalf("settings after rejected kindle update = %+v", settings)
+	}
+
+	smtp := domain.SMTPSettings{
+		SenderEmail: "sender@example.com",
+		Host:        "smtp.example.com",
+		Port:        587,
+		Security:    domain.SMTPSecuritySTARTTLS,
+		User:        ptr("smtp-user"),
+		Password:    ptr("smtp-password"),
+	}
+	if err := repo.UpdateSMTP(ctx, smtp); err != nil {
+		t.Fatalf("update smtp: %v", err)
 	}
 
 	if err := repo.UpdateKindle(ctx, kindle); err != nil {
 		t.Fatalf("update kindle: %v", err)
 	}
 
-	settings, err := repo.Get(ctx)
+	settings, err = repo.Get(ctx)
 	if err != nil {
 		t.Fatalf("get settings: %v", err)
 	}
 
-	if settings.Kindle == nil {
-		t.Fatal("kindle settings are missing")
+	if settings.SMTP == nil || settings.Kindle == nil {
+		t.Fatalf("expected both smtp and kindle settings, got %+v", settings)
 	}
 
+	assertSMTPSettings(t, *settings.SMTP, smtp)
 	assertKindleSettings(t, *settings.Kindle, kindle)
-
-	kindleWithoutPassword := kindle
-	kindleWithoutPassword.SMTPPassword = nil
-	if err := repo.UpdateKindle(ctx, kindleWithoutPassword); err != nil {
-		t.Fatalf("update kindle without password: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after nil password: %v", err)
-	}
-
-	if settings.Kindle == nil || settings.Kindle.SMTPPassword == nil || *settings.Kindle.SMTPPassword != "smtp-password" {
-		t.Fatalf("password was not preserved: %+v", settings.Kindle)
-	}
-
-	kindleWithBlankPassword := kindle
-	kindleWithBlankPassword.SMTPPassword = ptr("   ")
-	if err := repo.UpdateKindle(ctx, kindleWithBlankPassword); err != nil {
-		t.Fatalf("update kindle with blank password: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after blank password: %v", err)
-	}
-
-	if settings.Kindle == nil || settings.Kindle.SMTPPassword == nil || *settings.Kindle.SMTPPassword != "smtp-password" {
-		t.Fatalf("password was not preserved after blank update: %+v", settings.Kindle)
-	}
-
-	rotated := kindle
-	rotated.SMTPPassword = ptr("rotated-password")
-	if err := repo.UpdateKindle(ctx, rotated); err != nil {
-		t.Fatalf("update kindle with rotated password: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after rotated password: %v", err)
-	}
-
-	if settings.Kindle == nil || settings.Kindle.SMTPPassword == nil || *settings.Kindle.SMTPPassword != "rotated-password" {
-		t.Fatalf("rotated password = %+v", settings.Kindle)
-	}
 
 	advanced := time.Date(2024, 6, 2, 8, 30, 0, 0, time.UTC)
 	if err := repo.AdvanceNextSendAt(ctx, advanced); err != nil {
@@ -1532,17 +1659,20 @@ func TestSettingRepoKindle(t *testing.T) {
 		t.Fatalf("next send at = %+v", settings.Kindle)
 	}
 
-	if err := repo.DeleteKindlePassword(ctx); err != nil {
-		t.Fatalf("delete kindle password: %v", err)
+	manualOnly := domain.KindleSettings{
+		KindleEmail: "reader@kindle.com",
+	}
+	if err := repo.UpdateKindle(ctx, manualOnly); err != nil {
+		t.Fatalf("update kindle without schedule: %v", err)
 	}
 
 	settings, err = repo.Get(ctx)
 	if err != nil {
-		t.Fatalf("get settings after deleting password: %v", err)
+		t.Fatalf("get settings after clearing schedule: %v", err)
 	}
 
-	if settings.Kindle == nil || settings.Kindle.SMTPPassword != nil {
-		t.Fatalf("kindle password after delete = %+v", settings.Kindle)
+	if settings.Kindle == nil || settings.Kindle.KindleEmail != "reader@kindle.com" || settings.Kindle.SendTime != nil || settings.Kindle.NextSendAt != nil {
+		t.Fatalf("manual-only kindle = %+v", settings.Kindle)
 	}
 }
 
@@ -2191,23 +2321,27 @@ func requireCode(t *testing.T, err error, code domain.ErrorCode) *domain.DomainE
 	return domainErr
 }
 
-func assertKindleSettings(t *testing.T, got domain.KindleSettings, want domain.KindleSettings) {
+func assertSMTPSettings(t *testing.T, got domain.SMTPSettings, want domain.SMTPSettings) {
 	t.Helper()
 
-	if got.KindleEmail != want.KindleEmail || got.SenderEmail != want.SenderEmail {
-		t.Fatalf("kindle emails = %q/%q, want %q/%q", got.KindleEmail, got.SenderEmail, want.KindleEmail, want.SenderEmail)
-	}
-
-	if got.SMTPHost != want.SMTPHost || got.SMTPPort != want.SMTPPort || got.SMTPSecurity != want.SMTPSecurity {
+	if got.SenderEmail != want.SenderEmail || got.Host != want.Host || got.Port != want.Port || got.Security != want.Security {
 		t.Fatalf("smtp settings = %+v, want %+v", got, want)
 	}
 
-	if got.SMTPUser == nil || *got.SMTPUser != *want.SMTPUser {
-		t.Fatalf("smtp user = %v, want %v", got.SMTPUser, want.SMTPUser)
+	if got.User == nil || *got.User != *want.User {
+		t.Fatalf("smtp user = %v, want %v", got.User, want.User)
 	}
 
-	if got.SMTPPassword == nil || *got.SMTPPassword != *want.SMTPPassword {
+	if got.Password == nil || *got.Password != *want.Password {
 		t.Fatalf("smtp password was not stored")
+	}
+}
+
+func assertKindleSettings(t *testing.T, got domain.KindleSettings, want domain.KindleSettings) {
+	t.Helper()
+
+	if got.KindleEmail != want.KindleEmail {
+		t.Fatalf("kindle email = %q, want %q", got.KindleEmail, want.KindleEmail)
 	}
 
 	if got.SendTime == nil || *got.SendTime != *want.SendTime {

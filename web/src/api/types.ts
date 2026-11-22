@@ -24,8 +24,12 @@ export type ErrorCode =
   | 'FolderNotFound'
   | 'FolderRepositoryError'
   | 'InvalidRetention'
+  | 'InvalidProvider'
+  | 'InvalidJinaKey'
   | 'InvalidEndpoint'
   | 'BrowserEndpointRequired'
+  | 'InvalidSMTPSetting'
+  | 'SMTPNotConfigured'
   | 'InvalidKindleSetting'
   | 'SettingRepositoryError'
   | 'KindleNotConfigured'
@@ -125,23 +129,29 @@ export interface OPMLImportResult {
   createdFolders: number;
 }
 
+export interface SmtpSettings {
+  senderEmail: string;
+  host: string;
+  port: number;
+  security: SMTPSecurity;
+  user?: string;
+}
+
+export interface SmtpSettingsView extends SmtpSettings {
+  passwordConfigured: boolean;
+}
+
+export interface SmtpSettingsInput extends SmtpSettings {
+  password?: string;
+}
+
 export interface KindleSettings {
   kindleEmail: string;
-  senderEmail: string;
-  smtpHost: string;
-  smtpPort: number;
-  smtpSecurity: SMTPSecurity;
-  smtpUser?: string;
   sendTime?: string;
-  nextSendAt?: string;
 }
 
 export interface KindleSettingsView extends KindleSettings {
-  smtpPasswordConfigured: boolean;
-}
-
-export interface KindleSettingsInput extends KindleSettings {
-  smtpPassword?: string;
+  nextSendAt?: string;
 }
 
 export interface Settings {
@@ -149,6 +159,7 @@ export interface Settings {
   provider: ExtractorProvider;
   jinaKeyConfigured: boolean;
   browserEndpointConfigured: boolean;
+  smtp?: SmtpSettingsView;
   kindle?: KindleSettingsView;
 }
 

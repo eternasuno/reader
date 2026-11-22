@@ -113,12 +113,12 @@ func (s *KindleSender) EnqueueManual(ctx context.Context) (domain.KindleSendReco
 		return domain.KindleSendRecord{}, err
 	}
 
-	if !isKindleConfigured(settings.Kindle) {
+	if !isKindleUsable(settings) {
 		s.mu.Unlock()
 		return domain.KindleSendRecord{}, domain.NewError(domain.ErrKindleNotConfigured, nil)
 	}
 
-	snapshot := cloneKindleSettings(*settings.Kindle)
+	snapshot := cloneKindleDelivery(*settings.SMTP, settings.Kindle.KindleEmail)
 
 	rec, err := s.kindleSends.CreateRunning(ctx, domain.KindleSendRecord{
 		ID:        domain.NewID(),
@@ -148,7 +148,7 @@ func (s *KindleSender) CheckSchedule(ctx context.Context) error {
 		return err
 	}
 
-	if !isKindleConfigured(settings.Kindle) || settings.Kindle.SendTime == nil || settings.Kindle.NextSendAt == nil {
+	if !isKindleUsable(settings) || settings.Kindle.SendTime == nil || settings.Kindle.NextSendAt == nil {
 		return nil
 	}
 
@@ -162,10 +162,10 @@ func (s *KindleSender) CheckSchedule(ctx context.Context) error {
 		return err
 	}
 
-	return s.startScheduledJob(ctx, *settings.Kindle, now, nextSendAt)
+	return s.startScheduledJob(ctx, *settings.SMTP, settings.Kindle.KindleEmail, now, nextSendAt)
 }
 
-func (s *KindleSender) startScheduledJob(ctx context.Context, kindle domain.KindleSettings, now, nextSendAt time.Time) error {
+func (s *KindleSender) startScheduledJob(ctx context.Context, smtp domain.SMTPSettings, kindleEmail string, now, nextSendAt time.Time) error {
 	// The running flag and the schedule advance are decided under one lock so a
 	// manual send cannot slip in between the check and the create.
 	s.mu.Lock()
@@ -178,7 +178,7 @@ func (s *KindleSender) startScheduledJob(ctx context.Context, kindle domain.Kind
 		return s.settings.AdvanceNextSendAt(ctx, nextSendAt)
 	}
 
-	snapshot := cloneKindleSettings(kindle)
+	snapshot := cloneKindleDelivery(smtp, kindleEmail)
 
 	// Create the running record before advancing the schedule: a failed insert
 	// leaves nextSendAt due so the next tick retries instead of losing the run.
@@ -230,7 +230,7 @@ func (s *KindleSender) StartScheduler(ctx context.Context) {
 	}
 }
 
-func (s *KindleSender) runJob(sendID string, snapshot domain.KindleSettings) {
+func (s *KindleSender) runJob(sendID string, snapshot domain.KindleDelivery) {
 	defer func() {
 		s.mu.Lock()
 		s.running = false
@@ -262,7 +262,7 @@ func (s *KindleSender) runJob(sendID string, snapshot domain.KindleSettings) {
 	s.completeSend(ctx, sendID, domain.KindleStatusSucceeded, nil)
 }
 
-func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot domain.KindleSettings, articles []domain.KindleArticle) error {
+func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot domain.KindleDelivery, articles []domain.KindleArticle) error {
 	dateStr := s.now().In(s.loc).Format(kindleDateLayout)
 
 	books, err := s.epubBuilder.BuildBooks(ctx, dateStr, articles)
@@ -391,29 +391,27 @@ func (s *KindleSender) completeSend(ctx context.Context, sendID string, status d
 	}
 }
 
-func isKindleConfigured(k *domain.KindleSettings) bool {
-	return k != nil &&
-		strings.TrimSpace(k.KindleEmail) != "" &&
-		strings.TrimSpace(k.SenderEmail) != "" &&
-		strings.TrimSpace(k.SMTPHost) != "" &&
-		k.SMTPPort >= 1 &&
-		k.SMTPPort <= 65535
+func isKindleUsable(settings domain.Settings) bool {
+	return settings.SMTP != nil &&
+		settings.Kindle != nil &&
+		strings.TrimSpace(settings.Kindle.KindleEmail) != "" &&
+		strings.TrimSpace(settings.SMTP.SenderEmail) != "" &&
+		strings.TrimSpace(settings.SMTP.Host) != "" &&
+		settings.SMTP.Port >= 1 &&
+		settings.SMTP.Port <= 65535
 }
 
-// cloneKindleSettings deep-copies a delivery configuration so later settings
+// cloneKindleDelivery deep-copies a delivery configuration so later settings
 // updates never mutate an accepted job.
-func cloneKindleSettings(k domain.KindleSettings) domain.KindleSettings {
-	cloned := k
-	cloned.SMTPUser = cloneString(k.SMTPUser)
-	cloned.SMTPPassword = cloneString(k.SMTPPassword)
-	cloned.SendTime = cloneString(k.SendTime)
+func cloneKindleDelivery(smtp domain.SMTPSettings, kindleEmail string) domain.KindleDelivery {
+	clonedSMTP := smtp
+	clonedSMTP.User = cloneString(smtp.User)
+	clonedSMTP.Password = cloneString(smtp.Password)
 
-	if k.NextSendAt != nil {
-		next := *k.NextSendAt
-		cloned.NextSendAt = &next
+	return domain.KindleDelivery{
+		SMTP:        clonedSMTP,
+		KindleEmail: kindleEmail,
 	}
-
-	return cloned
 }
 
 func cloneString(value *string) *string {

@@ -43,6 +43,7 @@ func (r *SettingRepo) Get(ctx context.Context) (domain.Settings, error) {
 		Provider:        domain.ExtractorProvider(row.provider),
 		JinaKey:         optionalText(row.jinaKey),
 		BrowserEndpoint: optionalText(row.browserEndpoint),
+		SMTP:            buildSMTPSettings(row),
 		Kindle:          buildKindleSettings(row),
 	}, nil
 }
@@ -68,21 +69,30 @@ func scanSettingsRow(row *sql.Row) (settingsRow, error) {
 	return s, err
 }
 
+func buildSMTPSettings(s settingsRow) *domain.SMTPSettings {
+	if !hasSMTPSettings(s.senderEmail, s.smtpHost, s.smtpPort, s.smtpSecurity) {
+		return nil
+	}
+
+	return &domain.SMTPSettings{
+		SenderEmail: s.senderEmail.String,
+		Host:        s.smtpHost.String,
+		Port:        int(s.smtpPort.Int64),
+		Security:    domain.SMTPSecurity(s.smtpSecurity.String),
+		User:        optionalText(s.smtpUser),
+		Password:    optionalText(s.smtpPassword),
+	}
+}
+
 func buildKindleSettings(s settingsRow) *domain.KindleSettings {
-	if !hasKindleDelivery(s.kindleEmail, s.senderEmail, s.smtpHost, s.smtpPort, s.smtpSecurity) {
+	if !s.kindleEmail.Valid {
 		return nil
 	}
 
 	return &domain.KindleSettings{
-		KindleEmail:  s.kindleEmail.String,
-		SenderEmail:  s.senderEmail.String,
-		SMTPHost:     s.smtpHost.String,
-		SMTPPort:     int(s.smtpPort.Int64),
-		SMTPSecurity: domain.SMTPSecurity(s.smtpSecurity.String),
-		SMTPUser:     optionalText(s.smtpUser),
-		SMTPPassword: optionalText(s.smtpPassword),
-		SendTime:     optionalText(s.sendTime),
-		NextSendAt:   optionalMillis(s.nextSendAt),
+		KindleEmail: s.kindleEmail.String,
+		SendTime:    optionalText(s.sendTime),
+		NextSendAt:  optionalMillis(s.nextSendAt),
 	}
 }
 
@@ -94,60 +104,33 @@ func (r *SettingRepo) UpdateRetention(ctx context.Context, retention int) error 
 	return nil
 }
 
-func (r *SettingRepo) UpdateFetcherDirect(ctx context.Context) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET provider = 'direct' WHERE id = 1`); err != nil {
-		return domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
-	return nil
-}
-
-func (r *SettingRepo) UpdateFetcherJina(ctx context.Context, key *string) error {
-	var err error
-	if key != nil && strings.TrimSpace(*key) != "" {
-		_, err = r.write.ExecContext(
-			ctx,
-			`UPDATE setting SET provider = 'jina', jina_key = ? WHERE id = 1`,
-			strings.TrimSpace(*key),
-		)
-	} else {
-		_, err = r.write.ExecContext(ctx, `UPDATE setting SET provider = 'jina' WHERE id = 1`)
-	}
-
-	if err != nil {
-		return domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
-	return nil
-}
-
-func (r *SettingRepo) UpdateFetcherBrowser(ctx context.Context, endpoint *string) error {
+func (r *SettingRepo) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		if endpoint != nil && strings.TrimSpace(*endpoint) != "" {
-			_, err := tx.ExecContext(
-				ctx,
-				`UPDATE setting SET provider = 'browser', browser_endpoint = ? WHERE id = 1`,
-				strings.TrimSpace(*endpoint),
-			)
+		if provider == domain.ProviderBrowser {
+			var stored sql.NullString
+			if err := tx.QueryRowContext(ctx, `SELECT browser_endpoint FROM setting WHERE id = 1`).Scan(&stored); err != nil {
+				return err
+			}
 
-			return err
+			if !stored.Valid || strings.TrimSpace(stored.String) == "" {
+				return domain.NewError(domain.ErrBrowserEndpointRequired, nil)
+			}
 		}
 
-		var stored sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT browser_endpoint FROM setting WHERE id = 1`).Scan(&stored); err != nil {
-			return err
-		}
-
-		if !stored.Valid || strings.TrimSpace(stored.String) == "" {
-			return domain.NewError(domain.ErrBrowserEndpointRequired, nil)
-		}
-
-		_, err := tx.ExecContext(ctx, `UPDATE setting SET provider = 'browser' WHERE id = 1`)
+		_, err := tx.ExecContext(ctx, `UPDATE setting SET provider = ? WHERE id = 1`, string(provider))
 
 		return err
 	})
 	if err != nil {
 		return wrapRepositoryError(err, domain.ErrSettingRepositoryError)
+	}
+
+	return nil
+}
+
+func (r *SettingRepo) UpdateJinaKey(ctx context.Context, key string) error {
+	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET jina_key = ? WHERE id = 1`, key); err != nil {
+		return domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
 	return nil
@@ -161,22 +144,39 @@ func (r *SettingRepo) DeleteJinaKey(ctx context.Context) error {
 	return nil
 }
 
-func (r *SettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
-	query := `UPDATE setting SET kindle_email = ?, sender_email = ?, smtp_host = ?, smtp_port = ?, smtp_security = ?, smtp_user = ?, send_time = ?, next_send_at = ?`
-	args := []any{
-		kindle.KindleEmail,
-		kindle.SenderEmail,
-		kindle.SMTPHost,
-		kindle.SMTPPort,
-		string(kindle.SMTPSecurity),
-		optionalString(kindle.SMTPUser),
-		optionalString(kindle.SendTime),
-		optionalTime(kindle.NextSendAt),
+func (r *SettingRepo) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
+	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET browser_endpoint = ? WHERE id = 1`, endpoint); err != nil {
+		return domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	if kindle.SMTPPassword != nil && strings.TrimSpace(*kindle.SMTPPassword) != "" {
+	return nil
+}
+
+func (r *SettingRepo) DeleteBrowserEndpoint(ctx context.Context) error {
+	_, err := r.write.ExecContext(
+		ctx,
+		`UPDATE setting SET browser_endpoint = NULL, provider = CASE WHEN provider = 'browser' THEN 'direct' ELSE provider END WHERE id = 1`,
+	)
+	if err != nil {
+		return domain.NewError(domain.ErrSettingRepositoryError, err)
+	}
+
+	return nil
+}
+
+func (r *SettingRepo) UpdateSMTP(ctx context.Context, smtp domain.SMTPSettings) error {
+	query := `UPDATE setting SET sender_email = ?, smtp_host = ?, smtp_port = ?, smtp_security = ?, smtp_user = ?`
+	args := []any{
+		smtp.SenderEmail,
+		smtp.Host,
+		smtp.Port,
+		string(smtp.Security),
+		optionalString(smtp.User),
+	}
+
+	if smtp.Password != nil && strings.TrimSpace(*smtp.Password) != "" {
 		query += `, smtp_password = ?`
-		args = append(args, *kindle.SMTPPassword)
+		args = append(args, *smtp.Password)
 	}
 
 	query += ` WHERE id = 1`
@@ -188,9 +188,56 @@ func (r *SettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSett
 	return nil
 }
 
-func (r *SettingRepo) DeleteKindlePassword(ctx context.Context) error {
+func (r *SettingRepo) DeleteSMTPPassword(ctx context.Context) error {
 	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET smtp_password = NULL WHERE id = 1`); err != nil {
 		return domain.NewError(domain.ErrSettingRepositoryError, err)
+	}
+
+	return nil
+}
+
+func (r *SettingRepo) DeleteSMTP(ctx context.Context) error {
+	_, err := r.write.ExecContext(
+		ctx,
+		`UPDATE setting SET sender_email = NULL, smtp_host = NULL, smtp_port = NULL, smtp_security = NULL, smtp_user = NULL, smtp_password = NULL WHERE id = 1`,
+	)
+	if err != nil {
+		return domain.NewError(domain.ErrSettingRepositoryError, err)
+	}
+
+	return nil
+}
+
+func (r *SettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		var senderEmail sql.NullString
+		var smtpHost sql.NullString
+		var smtpPort sql.NullInt64
+		var smtpSecurity sql.NullString
+		err := tx.QueryRowContext(
+			ctx,
+			`SELECT sender_email, smtp_host, smtp_port, smtp_security FROM setting WHERE id = 1`,
+		).Scan(&senderEmail, &smtpHost, &smtpPort, &smtpSecurity)
+		if err != nil {
+			return err
+		}
+
+		if !hasSMTPSettings(senderEmail, smtpHost, smtpPort, smtpSecurity) {
+			return domain.NewError(domain.ErrSMTPNotConfigured, nil)
+		}
+
+		_, err = tx.ExecContext(
+			ctx,
+			`UPDATE setting SET kindle_email = ?, send_time = ?, next_send_at = ? WHERE id = 1`,
+			kindle.KindleEmail,
+			optionalString(kindle.SendTime),
+			optionalTime(kindle.NextSendAt),
+		)
+
+		return err
+	})
+	if err != nil {
+		return wrapRepositoryError(err, domain.ErrSettingRepositoryError)
 	}
 
 	return nil
@@ -204,6 +251,6 @@ func (r *SettingRepo) AdvanceNextSendAt(ctx context.Context, nextSendAt time.Tim
 	return nil
 }
 
-func hasKindleDelivery(kindleEmail sql.NullString, senderEmail sql.NullString, smtpHost sql.NullString, smtpPort sql.NullInt64, smtpSecurity sql.NullString) bool {
-	return kindleEmail.Valid && senderEmail.Valid && smtpHost.Valid && smtpPort.Valid && smtpSecurity.Valid
+func hasSMTPSettings(senderEmail sql.NullString, smtpHost sql.NullString, smtpPort sql.NullInt64, smtpSecurity sql.NullString) bool {
+	return senderEmail.Valid && smtpHost.Valid && smtpPort.Valid && smtpSecurity.Valid
 }

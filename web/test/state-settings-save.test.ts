@@ -25,6 +25,7 @@ beforeEach(async () => {
   localStorage.clear();
   await fresh();
 });
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
     status,
@@ -40,6 +41,7 @@ const queue = (body: unknown, status = 200): void => {
 const queueEmpty = (): void => {
   fetchMock.mockResolvedValueOnce(noContent());
 };
+
 const requestUrl = (call = 0): string =>
   String(fetchMock.mock.calls[call]?.[0]);
 
@@ -50,22 +52,12 @@ const requestBody = (call = 0): unknown => {
   const body = requestInit(call).body;
   return typeof body === 'string' ? JSON.parse(body) : body;
 };
+
 const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   retention: 100,
   provider: 'direct',
   jinaKeyConfigured: false,
   browserEndpointConfigured: false,
-  kindle: {
-    kindleEmail: 'kindle@example.com',
-    senderEmail: 'sender@example.com',
-    smtpHost: 'smtp.example.com',
-    smtpPort: 587,
-    smtpSecurity: 'starttls',
-    smtpUser: 'smtp-user',
-    sendTime: '08:00',
-    nextSendAt: '2026-11-20T08:00:00Z',
-    smtpPasswordConfigured: true,
-  },
   ...overrides,
 });
 
@@ -87,6 +79,7 @@ describe('retention save', () => {
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/retention');
+    expect(requestInit(2).method).toBe('PUT');
     expect(requestBody(2)).toEqual({ retention: 50 });
     expect(state.settings()?.retention).toBe(50);
     expect(state.isSectionDirty('articles')).toBe(false);
@@ -115,69 +108,49 @@ describe('retention failure', () => {
   });
 });
 
-describe('extraction providers', () => {
-  it('saves each extraction provider', async () => {
-    await load();
+describe('provider save', () => {
+  it('saves each extraction provider via /api/settings/provider', async () => {
+    await load(makeSettings({ browserEndpointConfigured: true }));
 
     queueEmpty();
-    await state.saveExtraction();
-    expect(requestUrl(2)).toBe('/api/settings/fetcher/direct');
+    await expect(state.saveProvider()).resolves.toBe(true);
+    expect(requestUrl(2)).toBe('/api/settings/provider');
+    expect(requestInit(2).method).toBe('PUT');
+    expect(requestBody(2)).toEqual({ provider: 'direct' });
 
     state.setProviderDraft('jina');
-    state.setJinaKeyDraft('jina-key');
     solid.flush();
     queueEmpty();
-    await expect(state.saveExtraction()).resolves.toBe(true);
-    expect(requestUrl(3)).toBe('/api/settings/fetcher/jina');
-    expect(requestBody(3)).toEqual({ key: 'jina-key' });
+    await expect(state.saveProvider()).resolves.toBe(true);
+    expect(requestUrl(3)).toBe('/api/settings/provider');
+    expect(requestBody(3)).toEqual({ provider: 'jina' });
     expect(state.settings()?.provider).toBe('jina');
-    expect(state.settings()?.jinaKeyConfigured).toBe(true);
-    expect(state.jinaKeyDraft()).toBe('');
     expect(state.isSectionDirty('extraction')).toBe(false);
 
-    state.setBrowserEndpointDraft('https://browser.example:9222');
     state.setProviderDraft('browser');
     solid.flush();
     queueEmpty();
-    await expect(state.saveExtraction()).resolves.toBe(true);
-    expect(requestUrl(4)).toBe('/api/settings/fetcher/browser');
-    expect(requestBody(4)).toEqual({
-      endpoint: 'https://browser.example:9222',
-    });
-    expect(state.settings()?.browserEndpointConfigured).toBe(true);
+    await expect(state.saveProvider()).resolves.toBe(true);
+    expect(requestUrl(4)).toBe('/api/settings/provider');
+    expect(requestBody(4)).toEqual({ provider: 'browser' });
+    expect(state.settings()?.provider).toBe('browser');
+    expect(ui.currentToast()?.message).toBe(
+      String(i18n.t('settings.extractionSavedToast'))
+    );
   });
-});
 
-describe('missing browser endpoint', () => {
-  it('reports a missing browser endpoint', async () => {
+  it('reports missing browser endpoint when saving browser provider', async () => {
     await load();
     state.setProviderDraft('browser');
     solid.flush();
 
     queue({ error: 'BrowserEndpointRequired' }, 422);
-    await expect(state.saveExtraction()).resolves.toBe(false);
+    await expect(state.saveProvider()).resolves.toBe(false);
     solid.flush();
 
     expect(state.settings()?.provider).toBe('direct');
     expect(ui.currentToast()?.message).toBe(
       i18n.translateErrorCode('BrowserEndpointRequired')
-    );
-  });
-});
-
-describe('jina key removal', () => {
-  it('deletes the stored Jina key', async () => {
-    await load(makeSettings({ jinaKeyConfigured: true }));
-
-    queueEmpty();
-    await expect(state.removeJinaKey()).resolves.toBe(true);
-    solid.flush();
-
-    expect(requestUrl(2)).toBe('/api/settings/fetcher/jina/key');
-    expect(requestInit(2).method).toBe('DELETE');
-    expect(state.settings()?.jinaKeyConfigured).toBe(false);
-    expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.jinaKeyDeletedToast'))
     );
   });
 });

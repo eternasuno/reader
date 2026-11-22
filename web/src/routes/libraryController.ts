@@ -15,6 +15,7 @@ import {
   refreshSidebar,
   feeds as sidebarFeeds,
   folders as sidebarFolders,
+  startFirstRefreshWait,
 } from '../state';
 import { useOpmlImport } from './importOpml';
 
@@ -55,6 +56,7 @@ export interface LibraryController {
   handleSavedPage: (page: SavedPage) => void;
   openExistingPage: (page: SavedPage) => void;
   openFeed: (feed: Feed) => void;
+  openSubscribedFeed: (feed: Feed) => void;
   handleMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
   mobileHeader: (element: HTMLElement) => void;
   opmlInput: (element: HTMLInputElement) => void;
@@ -207,20 +209,61 @@ const useLibraryEffects = (routeState: () => RouteState | null): void => {
   );
 };
 
+const leaveMovedFolderArticle = (
+  current: LibraryScope,
+  unreadOnly: boolean,
+  feedId: string,
+  targetFolderId: string | null,
+  navigate: (url: string) => void
+): void => {
+  if (current.kind !== 'folder' || current.folderId === targetFolderId) return;
+
+  const open = openArticle();
+  if (open === null || open.kind !== 'feed' || open.feedId !== feedId) return;
+
+  navigate(buildLibraryUrl(current, { unreadOnly }));
+};
+
+/** Reads the scope after the move settles, so a scope switch during the request wins. */
+const moveFeedAndCleanArticle = async (
+  feed: Feed,
+  targetFolderId: string | null,
+  scope: Accessor<LibraryScope>,
+  unreadOnly: Accessor<boolean>,
+  navigate: (url: string) => void
+): Promise<void> => {
+  if (!(await moveFeedToFolder(feed, targetFolderId))) return;
+
+  leaveMovedFolderArticle(
+    scope(),
+    unreadOnly(),
+    feed.id,
+    targetFolderId,
+    navigate
+  );
+};
+
 /** `SP-ADD-1`, `FD-MOVE-1`: navigation that keeps the sidebar summaries in sync. */
 const useArticleActions = (
   scope: Accessor<LibraryScope>,
   unreadOnly: Accessor<boolean>,
   navigate: (url: string) => void
 ) => {
-  const openExistingPage = (page: SavedPage): void => {
+  const openScope = (target: LibraryScope, articleId?: string): void => {
     void refreshSidebar();
-    navigate(buildLibraryUrl({ kind: 'later' }, { articleId: page.id }));
+    navigate(buildLibraryUrl(target, { articleId }));
   };
 
-  const openFeed = (feed: Feed): void => {
-    void refreshSidebar();
-    navigate(buildLibraryUrl({ kind: 'feed', feedId: feed.id }));
+  const openExistingPage = (page: SavedPage): void =>
+    openScope({ kind: 'later' }, page.id);
+
+  const openFeed = (feed: Feed): void =>
+    openScope({ kind: 'feed', feedId: feed.id });
+
+  /** `FD-SUB-2`: opens the new feed and waits for its first background refresh. */
+  const openSubscribedFeed = (feed: Feed): void => {
+    openFeed(feed);
+    startFirstRefreshWait(feed.id);
   };
 
   const handleSavedPage = (page: SavedPage): void => {
@@ -228,26 +271,16 @@ const useArticleActions = (
     openExistingPage(page);
   };
 
-  /** Leaving the open folder scope leaves the open article from that feed. */
-  const handleMoveFeed = async (
-    feed: Feed,
-    targetFolderId: string | null
-  ): Promise<void> => {
-    const moved = await moveFeedToFolder(feed, targetFolderId);
-    if (!moved) return;
+  const handleMoveFeed = (feed: Feed, folderId: string | null): Promise<void> =>
+    moveFeedAndCleanArticle(feed, folderId, scope, unreadOnly, navigate);
 
-    const current = scope();
-    if (current.kind !== 'folder' || current.folderId === targetFolderId)
-      return;
-
-    const open = openArticle();
-    if (open === null || open.kind !== 'feed' || open.feedId !== feed.id)
-      return;
-
-    navigate(buildLibraryUrl(current, { unreadOnly: unreadOnly() }));
+  return {
+    openExistingPage,
+    openFeed,
+    openSubscribedFeed,
+    handleSavedPage,
+    handleMoveFeed,
   };
-
-  return { openExistingPage, openFeed, handleSavedPage, handleMoveFeed };
 };
 
 export const createLibraryController = (): LibraryController => {

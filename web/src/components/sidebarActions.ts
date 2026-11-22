@@ -1,13 +1,15 @@
-import { type Feed, type Folder, feedsApi, foldersApi } from '../api';
+import { type Feed, type Folder, foldersApi } from '../api';
 import { t } from '../i18n';
 import {
   buildLibraryUrl,
   expandFolder,
+  isLibraryMounted,
   isSameScope,
   type LibraryScope,
+  openArticle,
   refreshSidebar,
-  removeFeedLocal,
   removeFolderLocal,
+  unsubscribeFeed,
 } from '../state';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
@@ -46,17 +48,18 @@ export const deleteFeed = async (
   feed: Feed
 ): Promise<void> => {
   if (!window.confirm(String(t('feeds.unsubscribeConfirm')))) return;
+  if (!(await unsubscribeFeed(feed))) return;
+  // The user may have left the library while the request ran; don't navigate them back.
+  if (!isLibraryMounted()) return;
 
-  try {
-    await feedsApi.remove(feed.id);
-  } catch (error) {
-    showToast(errorText(error), 'error');
+  if (props.scope.kind === 'feed' && props.scope.feedId === feed.id) {
+    navigateToAll(props);
     return;
   }
 
-  removeFeedLocal(feed.id);
-  if (props.scope.kind === 'feed' && props.scope.feedId === feed.id) {
-    navigateToAll(props);
+  const open = openArticle();
+  if (open?.kind === 'feed' && open.feedId === feed.id) {
+    selectScope(props, props.scope);
   }
 };
 

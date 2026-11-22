@@ -90,6 +90,24 @@ func ValidateRetention(n int) error {
 	return nil
 }
 
+func ValidateProvider(p ExtractorProvider) error {
+	switch p {
+	case ProviderDirect, ProviderJina, ProviderBrowser:
+		return nil
+	}
+
+	return NewError(ErrInvalidProvider, nil)
+}
+
+func ValidateJinaKey(raw string) (string, error) {
+	key := strings.TrimSpace(raw)
+	if key == "" {
+		return "", NewError(ErrInvalidJinaKey, nil)
+	}
+
+	return key, nil
+}
+
 func ValidateBrowserEndpoint(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -194,20 +212,33 @@ func isMatchingLocalTime(candidate time.Time, target time.Time, hour int, minute
 	return candidate.Hour() == hour && candidate.Minute() == minute
 }
 
+func ValidateSMTPSettings(s SMTPSettings) (SMTPSettings, error) {
+	senderEmail := strings.TrimSpace(s.SenderEmail)
+	if !isValidEmail(senderEmail) {
+		return SMTPSettings{}, NewError(ErrInvalidSMTPSetting, nil)
+	}
+
+	host := strings.TrimSpace(s.Host)
+	if host == "" || s.Port < 1 || s.Port > 65535 {
+		return SMTPSettings{}, NewError(ErrInvalidSMTPSetting, nil)
+	}
+
+	if s.Security != SMTPSecurityTLS && s.Security != SMTPSecuritySTARTTLS {
+		return SMTPSettings{}, NewError(ErrInvalidSMTPSetting, nil)
+	}
+
+	settings := s
+	settings.SenderEmail = senderEmail
+	settings.Host = host
+	settings.User = trimOptional(s.User)
+
+	return settings, nil
+}
+
 func ValidateKindleSettings(k KindleSettings, now time.Time, loc *time.Location) (KindleSettings, error) {
 	kindleEmail := strings.TrimSpace(k.KindleEmail)
 	if !isValidEmail(kindleEmail) {
 		return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
-	}
-
-	senderEmail := strings.TrimSpace(k.SenderEmail)
-	if !isValidEmail(senderEmail) {
-		return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
-	}
-
-	smtpHost, err := validateSMTPSettings(k)
-	if err != nil {
-		return KindleSettings{}, err
 	}
 
 	sendTime, nextSendAt, err := resolveKindleSchedule(k.SendTime, now, loc)
@@ -215,27 +246,11 @@ func ValidateKindleSettings(k KindleSettings, now time.Time, loc *time.Location)
 		return KindleSettings{}, err
 	}
 
-	settings := k
-	settings.KindleEmail = kindleEmail
-	settings.SenderEmail = senderEmail
-	settings.SMTPHost = smtpHost
-	settings.SendTime = sendTime
-	settings.NextSendAt = nextSendAt
-
-	return settings, nil
-}
-
-func validateSMTPSettings(k KindleSettings) (string, error) {
-	smtpHost := strings.TrimSpace(k.SMTPHost)
-	if smtpHost == "" || k.SMTPPort < 1 || k.SMTPPort > 65535 {
-		return "", NewError(ErrInvalidKindleSetting, nil)
-	}
-
-	if k.SMTPSecurity != SMTPSecurityTLS && k.SMTPSecurity != SMTPSecuritySTARTTLS {
-		return "", NewError(ErrInvalidKindleSetting, nil)
-	}
-
-	return smtpHost, nil
+	return KindleSettings{
+		KindleEmail: kindleEmail,
+		SendTime:    sendTime,
+		NextSendAt:  nextSendAt,
+	}, nil
 }
 
 func resolveKindleSchedule(rawSendTime *string, now time.Time, loc *time.Location) (*string, *time.Time, error) {

@@ -1,115 +1,82 @@
 /**
- * Kindle delivery state (`SET-KINDLE-1`, `SET-VAL-3`, `KD-SEND-1`, `KD-LOG-1`): the Kindle/SMTP
- * section save, the stored password removal and manual sends.
+ * Kindle delivery state (`SET-KINDLE-1`, `KD-SEND-1`, `KD-LOG-1`): the Kindle section save and
+ * manual sends.
  */
 
 import { flush } from 'solid-js';
-import type { KindleSettingsInput, KindleSettingsView, Settings } from '../api';
-import { ApiError, kindleApi, settingsApi } from '../api';
+import type { KindleSettings, KindleSettingsView, Settings } from '../api';
+import { kindleApi, settingsApi } from '../api';
 import { t, translateErrorCode } from '../i18n';
 import { showToast } from '../ui';
 import {
+  errorCodeOf,
   kindleEmailDraft,
   kindleSending,
+  optionalText,
   runSave,
-  senderEmailDraft,
   sendTimeDraft,
+  setKindleEmailDraft,
   setKindleRunning,
   setKindleSending,
   setKindleSends,
+  setSendTimeDraft,
   setSettings,
-  setSmtpPasswordDraft,
   settings,
-  smtpHostDraft,
-  smtpPasswordDraft,
-  smtpPortDraft,
-  smtpSecurityDraft,
-  smtpUserDraft,
+  toastSettingsError,
 } from './settings-store';
 
-const codeOf = (error: unknown): string =>
-  error instanceof ApiError ? error.code : 'RequestFailed';
-
-const optionalText = (value: string): string | undefined =>
-  value.trim().length > 0 ? value.trim() : undefined;
-
-/** `SET-VAL-3`: a blank secret is omitted so the stored one is preserved. */
-const kindleInputOf = (): KindleSettingsInput => {
-  const smtpPassword = smtpPasswordDraft();
-
-  return {
-    kindleEmail: kindleEmailDraft().trim(),
-    senderEmail: senderEmailDraft().trim(),
-    smtpHost: smtpHostDraft().trim(),
-    smtpPort: smtpPortDraft(),
-    smtpSecurity: smtpSecurityDraft(),
-    smtpUser: optionalText(smtpUserDraft()),
-    smtpPassword: smtpPassword.length > 0 ? smtpPassword : undefined,
-    sendTime: optionalText(sendTimeDraft()),
-  };
-};
-
-const kindleFromInput = (
-  input: KindleSettingsInput,
+const fallbackKindle = (
+  input: KindleSettings,
   previous: Settings['kindle']
-): KindleSettingsView => ({
-  kindleEmail: input.kindleEmail,
-  senderEmail: input.senderEmail,
-  smtpHost: input.smtpHost,
-  smtpPort: input.smtpPort,
-  smtpSecurity: input.smtpSecurity,
-  smtpUser: input.smtpUser,
-  sendTime: input.sendTime,
-  nextSendAt: previous?.nextSendAt,
-  smtpPasswordConfigured:
-    previous?.smtpPasswordConfigured === true ||
-    input.smtpPassword !== undefined,
-});
+): KindleSettingsView =>
+  input.sendTime !== undefined && previous?.nextSendAt !== undefined
+    ? { ...input, nextSendAt: previous.nextSendAt }
+    : { ...input };
+
+const fetchSavedKindle = async (
+  input: KindleSettings,
+  previous: Settings['kindle']
+): Promise<KindleSettingsView> => {
+  try {
+    const refreshed = await settingsApi.get();
+
+    return refreshed.kindle ?? fallbackKindle(input, previous);
+  } catch {
+    return fallbackKindle(input, previous);
+  }
+};
 
 export const saveKindle = (): Promise<boolean> =>
   runSave('kindle', async () => {
     const loaded = settings();
     if (loaded === null) return false;
 
-    const input = kindleInputOf();
+    const input: KindleSettings = {
+      kindleEmail: kindleEmailDraft().trim(),
+      sendTime: optionalText(sendTimeDraft()),
+    };
+
     try {
       await settingsApi.updateKindle(input);
-      setSettings({ ...loaded, kindle: kindleFromInput(input, loaded.kindle) });
-      setSmtpPasswordDraft('');
+      const kindle = await fetchSavedKindle(input, loaded.kindle);
+      setSettings({ ...loaded, kindle });
+      setKindleEmailDraft(input.kindleEmail);
+      setSendTimeDraft(input.sendTime ?? '');
       showToast(String(t('settings.kindleSavedToast')), 'success');
+
       return true;
     } catch (error) {
-      showToast(translateErrorCode(codeOf(error)), 'error');
-      return false;
+      return toastSettingsError(error);
     }
   });
 
-export const removeKindlePassword = (): Promise<boolean> =>
-  runSave('kindle-password', async () => {
-    try {
-      await settingsApi.deleteKindlePassword();
-      const loaded = settings();
-      if (loaded !== null && loaded.kindle !== undefined) {
-        setSettings({
-          ...loaded,
-          kindle: { ...loaded.kindle, smtpPasswordConfigured: false },
-        });
-      }
-      setSmtpPasswordDraft('');
-      showToast(String(t('settings.smtpPasswordDeletedToast')), 'success');
-      return true;
-    } catch (error) {
-      showToast(translateErrorCode(codeOf(error)), 'error');
-      return false;
-    }
-  });
-
-/** `KD-SEND-1` / `KD-LOG-1`: re-reads the running state once, without polling. */
-const resyncSends = async (): Promise<void> => {
+/** `KD-SEND-1` / `KD-LOG-1`: re-reads the running state and history once, without polling. */
+export const refreshKindleSends = async (): Promise<void> => {
   try {
     const sends = await kindleApi.listSends();
     setKindleSends(sends.items);
     setKindleRunning(sends.running);
+    flush();
   } catch {
     // The button state is derived from `running`; keep the previous snapshot on failure.
   }
@@ -130,11 +97,13 @@ export const triggerKindleSend = async (): Promise<boolean> => {
     setKindleSends((current) => [record, ...current]);
     setKindleRunning(record.status === 'running');
     showToast(String(t('kindle.queuedToast')), 'success');
+
     return true;
   } catch (error) {
-    const code = codeOf(error);
-    if (code === 'KindleSendInProgress') await resyncSends();
+    const code = errorCodeOf(error);
+    if (code === 'KindleSendInProgress') await refreshKindleSends();
     showToast(translateErrorCode(code), 'error');
+
     return false;
   } finally {
     setKindleSending(false);

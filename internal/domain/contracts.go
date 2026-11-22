@@ -35,8 +35,12 @@ const (
 	ErrFolderNotFound           ErrorCode = "FolderNotFound"
 	ErrFolderRepositoryError    ErrorCode = "FolderRepositoryError"
 	ErrInvalidRetention         ErrorCode = "InvalidRetention"
+	ErrInvalidProvider          ErrorCode = "InvalidProvider"
+	ErrInvalidJinaKey           ErrorCode = "InvalidJinaKey"
 	ErrInvalidEndpoint          ErrorCode = "InvalidEndpoint"
 	ErrBrowserEndpointRequired  ErrorCode = "BrowserEndpointRequired"
+	ErrInvalidSMTPSetting       ErrorCode = "InvalidSMTPSetting"
+	ErrSMTPNotConfigured        ErrorCode = "SMTPNotConfigured"
 	ErrInvalidKindleSetting     ErrorCode = "InvalidKindleSetting"
 	ErrSettingRepositoryError   ErrorCode = "SettingRepositoryError"
 	ErrKindleNotConfigured      ErrorCode = "KindleNotConfigured"
@@ -264,16 +268,19 @@ type OPMLImportResult struct {
 	CreatedFolders int
 }
 
+type SMTPSettings struct {
+	SenderEmail string
+	Host        string
+	Port        int
+	Security    SMTPSecurity
+	User        *string
+	Password    *string // nil/blank on update = keep stored password
+}
+
 type KindleSettings struct {
-	KindleEmail  string
-	SenderEmail  string
-	SMTPHost     string
-	SMTPPort     int
-	SMTPSecurity SMTPSecurity
-	SMTPUser     *string
-	SMTPPassword *string
-	SendTime     *string
-	NextSendAt   *time.Time
+	KindleEmail string
+	SendTime    *string
+	NextSendAt  *time.Time
 }
 
 type Settings struct {
@@ -281,7 +288,14 @@ type Settings struct {
 	Provider        ExtractorProvider
 	JinaKey         *string
 	BrowserEndpoint *string
-	Kindle          *KindleSettings
+	SMTP            *SMTPSettings   // nil unless sender_email, smtp_host, smtp_port, smtp_security all non-NULL
+	Kindle          *KindleSettings // nil unless kindle_email non-NULL (independent of SMTP)
+}
+
+// KindleDelivery is the snapshot used by the Kindle worker and mail sender.
+type KindleDelivery struct {
+	SMTP        SMTPSettings
+	KindleEmail string
 }
 
 type KindleSendRecord struct {
@@ -366,12 +380,15 @@ type SavedPageRepository interface {
 type SettingRepository interface {
 	Get(ctx context.Context) (Settings, error)
 	UpdateRetention(ctx context.Context, retention int) error
-	UpdateFetcherDirect(ctx context.Context) error
-	UpdateFetcherJina(ctx context.Context, key *string) error
-	UpdateFetcherBrowser(ctx context.Context, endpoint *string) error
+	UpdateProvider(ctx context.Context, provider ExtractorProvider) error
+	UpdateJinaKey(ctx context.Context, key string) error
 	DeleteJinaKey(ctx context.Context) error
+	UpdateBrowserEndpoint(ctx context.Context, endpoint string) error
+	DeleteBrowserEndpoint(ctx context.Context) error
+	UpdateSMTP(ctx context.Context, smtp SMTPSettings) error
+	DeleteSMTPPassword(ctx context.Context) error
+	DeleteSMTP(ctx context.Context) error
 	UpdateKindle(ctx context.Context, kindle KindleSettings) error
-	DeleteKindlePassword(ctx context.Context) error
 	AdvanceNextSendAt(ctx context.Context, nextSendAt time.Time) error
 }
 
@@ -413,5 +430,5 @@ type EPUBBuilder interface {
 }
 
 type MailSender interface {
-	SendEPUB(ctx context.Context, cfg KindleSettings, book EPUBBook) error
+	SendEPUB(ctx context.Context, delivery KindleDelivery, book EPUBBook) error
 }

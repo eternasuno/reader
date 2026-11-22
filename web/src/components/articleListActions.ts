@@ -1,8 +1,11 @@
-import { type Feed, feedsApi } from '../api';
+import type { Feed } from '../api';
 import { t } from '../i18n';
-import { buildLibraryUrl, type LibraryScope, removeFeedLocal } from '../state';
-import { showToast } from '../ui';
-import { errorText } from './errorText';
+import {
+  buildLibraryUrl,
+  isLibraryMounted,
+  type LibraryScope,
+  unsubscribeFeed,
+} from '../state';
 
 export interface FeedListActions {
   scope: LibraryScope;
@@ -16,15 +19,10 @@ export const deleteFeed = async (
   feed: Feed
 ): Promise<void> => {
   if (!window.confirm(String(t('feeds.unsubscribeConfirm')))) return;
+  if (!(await unsubscribeFeed(feed))) return;
+  // The user may have left the library while the request ran; don't navigate them back.
+  if (!isLibraryMounted()) return;
 
-  try {
-    await feedsApi.remove(feed.id);
-  } catch (error) {
-    showToast(errorText(error), 'error');
-    return;
-  }
-
-  removeFeedLocal(feed.id);
   actions.onNavigate(
     buildLibraryUrl({ kind: 'all' }, { unreadOnly: actions.unreadOnly })
   );

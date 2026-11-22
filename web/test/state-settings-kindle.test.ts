@@ -25,6 +25,7 @@ beforeEach(async () => {
   localStorage.clear();
   await fresh();
 });
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
     status,
@@ -40,6 +41,7 @@ const queue = (body: unknown, status = 200): void => {
 const queueEmpty = (): void => {
   fetchMock.mockResolvedValueOnce(noContent());
 };
+
 const requestUrl = (call = 0): string =>
   String(fetchMock.mock.calls[call]?.[0]);
 
@@ -50,21 +52,24 @@ const requestBody = (call = 0): unknown => {
   const body = requestInit(call).body;
   return typeof body === 'string' ? JSON.parse(body) : body;
 };
+
 const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   retention: 100,
   provider: 'direct',
   jinaKeyConfigured: false,
   browserEndpointConfigured: false,
+  smtp: {
+    senderEmail: 'sender@example.com',
+    host: 'smtp.example.com',
+    port: 587,
+    security: 'starttls',
+    user: 'smtp-user',
+    passwordConfigured: true,
+  },
   kindle: {
     kindleEmail: 'kindle@example.com',
-    senderEmail: 'sender@example.com',
-    smtpHost: 'smtp.example.com',
-    smtpPort: 587,
-    smtpSecurity: 'starttls',
-    smtpUser: 'smtp-user',
     sendTime: '08:00',
     nextSendAt: '2026-11-20T08:00:00Z',
-    smtpPasswordConfigured: true,
   },
   ...overrides,
 });
@@ -77,25 +82,40 @@ const load = async (loaded: Settings = makeSettings()): Promise<void> => {
 };
 
 describe('kindle save', () => {
-  it('saves Kindle settings and omits blank secrets', async () => {
+  it('saves only kindleEmail and sendTime and clears dirty state', async () => {
     await load();
-    state.setKindleEmailDraft('new@kindle.com');
-    state.setSmtpPortDraft(465);
-    state.setSmtpSecurityDraft('tls');
+    state.setKindleEmailDraft(' new@kindle.com ');
+    state.setSendTimeDraft('07:30');
     solid.flush();
 
     queueEmpty();
+    queue(
+      makeSettings({
+        retention: 999,
+        kindle: {
+          kindleEmail: 'new@kindle.com',
+          sendTime: '07:30',
+          nextSendAt: '2026-11-21T07:30:00Z',
+        },
+      })
+    );
     await expect(state.saveKindle()).resolves.toBe(true);
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/kindle');
-    const body = requestBody(2) as Record<string, unknown>;
-    expect(body.kindleEmail).toBe('new@kindle.com');
-    expect(body.smtpPort).toBe(465);
-    expect(body.smtpSecurity).toBe('tls');
-    expect(body.smtpUser).toBe('smtp-user');
-    expect('smtpPassword' in body).toBe(false);
-    expect(state.settings()?.kindle?.smtpPasswordConfigured).toBe(true);
+    expect(requestInit(2).method).toBe('PUT');
+    expect(requestBody(2)).toEqual({
+      kindleEmail: 'new@kindle.com',
+      sendTime: '07:30',
+    });
+    expect(requestUrl(3)).toBe('/api/settings');
+    expect(state.settings()?.retention).toBe(100);
+    expect(state.settings()?.kindle).toEqual({
+      kindleEmail: 'new@kindle.com',
+      sendTime: '07:30',
+      nextSendAt: '2026-11-21T07:30:00Z',
+    });
+    expect(state.kindleEmailDraft()).toBe('new@kindle.com');
     expect(state.isSectionDirty('kindle')).toBe(false);
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('settings.kindleSavedToast'))
@@ -103,52 +123,79 @@ describe('kindle save', () => {
   });
 });
 
-describe('smtp password save', () => {
-  it('includes a typed SMTP password and clears it after saving', async () => {
+describe('kindle schedule disable', () => {
+  it('omits blank sendTime when disabling scheduled sends', async () => {
     await load();
-    state.setSmtpPasswordDraft('smtp-secret');
+    state.setSendTimeDraft('   ');
     solid.flush();
 
     queueEmpty();
+    queue(makeSettings({ kindle: { kindleEmail: 'kindle@example.com' } }));
     await expect(state.saveKindle()).resolves.toBe(true);
     solid.flush();
 
-    expect((requestBody(2) as Record<string, unknown>).smtpPassword).toBe(
-      'smtp-secret'
+    const body = requestBody(2) as Record<string, unknown>;
+    expect(body).toEqual({ kindleEmail: 'kindle@example.com' });
+    expect('sendTime' in body).toBe(false);
+    expect(state.settings()?.kindle).toEqual({
+      kindleEmail: 'kindle@example.com',
+    });
+    expect(state.settings()?.kindle?.nextSendAt).toBeUndefined();
+    expect(state.isSectionDirty('kindle')).toBe(false);
+  });
+});
+
+describe('kindle save fallback', () => {
+  it('falls back to submitted values and clears nextSendAt when re-read fails', async () => {
+    await load();
+    state.setKindleEmailDraft('fallback@kindle.com');
+    state.setSendTimeDraft('');
+    solid.flush();
+
+    queueEmpty();
+    queue({ error: 'SettingRepositoryError' }, 500);
+    await expect(state.saveKindle()).resolves.toBe(true);
+    solid.flush();
+
+    expect(state.settings()?.kindle).toEqual({
+      kindleEmail: 'fallback@kindle.com',
+    });
+    expect(state.settings()?.kindle?.nextSendAt).toBeUndefined();
+    expect(ui.currentToast()?.message).toBe(
+      String(i18n.t('settings.kindleSavedToast'))
     );
-    expect(state.smtpPasswordDraft()).toBe('');
   });
 });
 
 describe('kindle save failure', () => {
   it('reports invalid Kindle settings', async () => {
     await load();
-    state.setSmtpPortDraft(0);
+    state.setKindleEmailDraft('bad-email');
     solid.flush();
 
     queue({ error: 'InvalidKindleSetting' }, 400);
     await expect(state.saveKindle()).resolves.toBe(false);
     solid.flush();
 
+    expect(state.settings()?.kindle?.kindleEmail).toBe('kindle@example.com');
     expect(ui.currentToast()?.message).toBe(
       i18n.translateErrorCode('InvalidKindleSetting')
     );
     expect(state.isSaving()).toBe(false);
   });
-});
 
-describe('smtp password removal', () => {
-  it('deletes the stored SMTP password', async () => {
-    await load();
-
-    queueEmpty();
-    await expect(state.removeKindlePassword()).resolves.toBe(true);
+  it('reports missing SMTP configuration', async () => {
+    await load(makeSettings({ smtp: undefined, kindle: undefined }));
+    state.setKindleEmailDraft('a@kindle.com');
     solid.flush();
 
-    expect(requestUrl(2)).toBe('/api/settings/kindle/password');
-    expect(state.settings()?.kindle?.smtpPasswordConfigured).toBe(false);
+    queue({ error: 'SMTPNotConfigured' }, 422);
+    await expect(state.saveKindle()).resolves.toBe(false);
+    solid.flush();
+
+    expect(state.settings()?.kindle).toBeUndefined();
     expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.smtpPasswordDeletedToast'))
+      i18n.translateErrorCode('SMTPNotConfigured')
     );
   });
 });

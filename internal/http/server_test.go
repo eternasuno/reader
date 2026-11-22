@@ -736,42 +736,22 @@ func (r *fakeSettingRepo) UpdateRetention(ctx context.Context, retention int) er
 	return nil
 }
 
-func (r *fakeSettingRepo) UpdateFetcherDirect(ctx context.Context) error {
-	r.store.settings.Provider = domain.ProviderDirect
-
-	return nil
-}
-
-func (r *fakeSettingRepo) UpdateFetcherJina(ctx context.Context, key *string) error {
-	r.store.settings.Provider = domain.ProviderJina
-
-	if key != nil && strings.TrimSpace(*key) != "" {
-		trimmed := strings.TrimSpace(*key)
-		r.store.settings.JinaKey = &trimmed
-	}
-
-	return nil
-}
-
-func (r *fakeSettingRepo) UpdateFetcherBrowser(ctx context.Context, endpoint *string) error {
-	if endpoint != nil && strings.TrimSpace(*endpoint) != "" {
-		normalized, err := domain.ValidateBrowserEndpoint(*endpoint)
-		if err != nil {
-			return err
+func (r *fakeSettingRepo) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
+	if provider == domain.ProviderBrowser {
+		stored := r.store.settings.BrowserEndpoint
+		if stored == nil || strings.TrimSpace(*stored) == "" {
+			return domain.NewError(domain.ErrBrowserEndpointRequired, nil)
 		}
-
-		r.store.settings.BrowserEndpoint = &normalized
-		r.store.settings.Provider = domain.ProviderBrowser
-
-		return nil
 	}
 
-	stored := r.store.settings.BrowserEndpoint
-	if stored == nil || strings.TrimSpace(*stored) == "" {
-		return domain.NewError(domain.ErrBrowserEndpointRequired, nil)
-	}
+	r.store.settings.Provider = provider
 
-	r.store.settings.Provider = domain.ProviderBrowser
+	return nil
+}
+
+func (r *fakeSettingRepo) UpdateJinaKey(ctx context.Context, key string) error {
+	trimmed := strings.TrimSpace(key)
+	r.store.settings.JinaKey = &trimmed
 
 	return nil
 }
@@ -782,23 +762,58 @@ func (r *fakeSettingRepo) DeleteJinaKey(ctx context.Context) error {
 	return nil
 }
 
-func (r *fakeSettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
-	stored := kindle
-	if kindle.SMTPPassword == nil || strings.TrimSpace(*kindle.SMTPPassword) == "" {
-		if r.store.settings.Kindle != nil {
-			stored.SMTPPassword = r.store.settings.Kindle.SMTPPassword
-		}
-	}
-
-	r.store.settings.Kindle = &stored
+func (r *fakeSettingRepo) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
+	trimmed := strings.TrimSpace(endpoint)
+	r.store.settings.BrowserEndpoint = &trimmed
 
 	return nil
 }
 
-func (r *fakeSettingRepo) DeleteKindlePassword(ctx context.Context) error {
-	if r.store.settings.Kindle != nil {
-		r.store.settings.Kindle.SMTPPassword = nil
+func (r *fakeSettingRepo) DeleteBrowserEndpoint(ctx context.Context) error {
+	r.store.settings.BrowserEndpoint = nil
+	if r.store.settings.Provider == domain.ProviderBrowser {
+		r.store.settings.Provider = domain.ProviderDirect
 	}
+
+	return nil
+}
+
+func (r *fakeSettingRepo) UpdateSMTP(ctx context.Context, smtp domain.SMTPSettings) error {
+	stored := smtp
+	if smtp.Password == nil || strings.TrimSpace(*smtp.Password) == "" {
+		if r.store.settings.SMTP != nil {
+			stored.Password = r.store.settings.SMTP.Password
+		} else {
+			stored.Password = nil
+		}
+	}
+
+	r.store.settings.SMTP = &stored
+
+	return nil
+}
+
+func (r *fakeSettingRepo) DeleteSMTPPassword(ctx context.Context) error {
+	if r.store.settings.SMTP != nil {
+		r.store.settings.SMTP.Password = nil
+	}
+
+	return nil
+}
+
+func (r *fakeSettingRepo) DeleteSMTP(ctx context.Context) error {
+	r.store.settings.SMTP = nil
+
+	return nil
+}
+
+func (r *fakeSettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
+	if r.store.settings.SMTP == nil {
+		return domain.NewError(domain.ErrSMTPNotConfigured, nil)
+	}
+
+	stored := kindle
+	r.store.settings.Kindle = &stored
 
 	return nil
 }
@@ -1465,6 +1480,16 @@ func TestCSRFGuardsStateChangingAPIRoutes(t *testing.T) {
 	req.Header.Del("Origin")
 	requireAPIError(t, h.do(req), http.StatusForbidden, "Forbidden")
 
+	req = h.newRequest(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "jina"})
+	req.AddCookie(h.sessionCookie())
+	req.Header.Del("Origin")
+	requireAPIError(t, h.do(req), http.StatusForbidden, "Forbidden")
+
+	req = h.newRequest(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "jina"})
+	req.AddCookie(h.sessionCookie())
+	req.Header.Set("Origin", "https://evil.example.com")
+	requireAPIError(t, h.do(req), http.StatusForbidden, "Forbidden")
+
 	// GET requests are not CSRF protected; they fail authentication instead.
 	req = h.newRequest(http.MethodGet, "/api/saved-pages", nil)
 	req.Header.Del("Origin")
@@ -1483,6 +1508,16 @@ func TestMissingSessionRejectsAPIRoutes(t *testing.T) {
 		{method: http.MethodGet, target: "/api/folders"},
 		{method: http.MethodGet, target: "/api/feed-items"},
 		{method: http.MethodGet, target: "/api/settings"},
+		{method: http.MethodPut, target: "/api/settings/retention"},
+		{method: http.MethodPut, target: "/api/settings/provider"},
+		{method: http.MethodPut, target: "/api/settings/services/jina"},
+		{method: http.MethodDelete, target: "/api/settings/services/jina"},
+		{method: http.MethodPut, target: "/api/settings/services/browser"},
+		{method: http.MethodDelete, target: "/api/settings/services/browser"},
+		{method: http.MethodPut, target: "/api/settings/services/smtp"},
+		{method: http.MethodDelete, target: "/api/settings/services/smtp"},
+		{method: http.MethodDelete, target: "/api/settings/services/smtp/password"},
+		{method: http.MethodPut, target: "/api/settings/kindle"},
 		{method: http.MethodGet, target: "/api/opml"},
 		{method: http.MethodPost, target: "/api/kindle/send"},
 		{method: http.MethodPost, target: "/api/saved-pages/read-all"},
@@ -2642,16 +2677,18 @@ func TestSettingsRedaction(t *testing.T) {
 		Provider:        domain.ProviderBrowser,
 		JinaKey:         &jinaKey,
 		BrowserEndpoint: &browserEndpoint,
+		SMTP: &domain.SMTPSettings{
+			SenderEmail: "reader@example.com",
+			Host:        "smtp.example.com",
+			Port:        465,
+			Security:    domain.SMTPSecurityTLS,
+			User:        &smtpUser,
+			Password:    &smtpPassword,
+		},
 		Kindle: &domain.KindleSettings{
-			KindleEmail:  "reader@kindle.com",
-			SenderEmail:  "reader@example.com",
-			SMTPHost:     "smtp.example.com",
-			SMTPPort:     465,
-			SMTPSecurity: domain.SMTPSecurityTLS,
-			SMTPUser:     &smtpUser,
-			SMTPPassword: &smtpPassword,
-			SendTime:     &sendTime,
-			NextSendAt:   &nextSendAt,
+			KindleEmail: "reader@kindle.com",
+			SendTime:    &sendTime,
+			NextSendAt:  &nextSendAt,
 		},
 	}
 
@@ -2671,16 +2708,18 @@ func TestSettingsRedaction(t *testing.T) {
 		Provider                  string `json:"provider"`
 		JinaKeyConfigured         bool   `json:"jinaKeyConfigured"`
 		BrowserEndpointConfigured bool   `json:"browserEndpointConfigured"`
-		Kindle                    struct {
-			KindleEmail            string `json:"kindleEmail"`
-			SenderEmail            string `json:"senderEmail"`
-			SMTPHost               string `json:"smtpHost"`
-			SMTPPort               int    `json:"smtpPort"`
-			SMTPSecurity           string `json:"smtpSecurity"`
-			SMTPUser               string `json:"smtpUser"`
-			SMTPPasswordConfigured bool   `json:"smtpPasswordConfigured"`
-			SendTime               string `json:"sendTime"`
-			NextSendAt             string `json:"nextSendAt"`
+		SMTP                      struct {
+			SenderEmail        string `json:"senderEmail"`
+			Host               string `json:"host"`
+			Port               int    `json:"port"`
+			Security           string `json:"security"`
+			User               string `json:"user"`
+			PasswordConfigured bool   `json:"passwordConfigured"`
+		} `json:"smtp"`
+		Kindle struct {
+			KindleEmail string `json:"kindleEmail"`
+			SendTime    string `json:"sendTime"`
+			NextSendAt  string `json:"nextSendAt"`
 		} `json:"kindle"`
 	}
 	decodeBody(t, recorder, &payload)
@@ -2693,26 +2732,52 @@ func TestSettingsRedaction(t *testing.T) {
 		t.Fatalf("secret flags = %+v", payload)
 	}
 
-	if payload.Kindle.KindleEmail != "reader@kindle.com" || payload.Kindle.SenderEmail != "reader@example.com" {
-		t.Fatalf("kindle emails = %+v", payload.Kindle)
+	if payload.SMTP.SenderEmail != "reader@example.com" || payload.SMTP.Host != "smtp.example.com" || payload.SMTP.Port != 465 || payload.SMTP.Security != "tls" {
+		t.Fatalf("smtp = %+v", payload.SMTP)
 	}
 
-	if payload.Kindle.SMTPHost != "smtp.example.com" || payload.Kindle.SMTPPort != 465 || payload.Kindle.SMTPSecurity != "tls" {
-		t.Fatalf("kindle smtp = %+v", payload.Kindle)
+	if payload.SMTP.User != "smtp-user" || !payload.SMTP.PasswordConfigured {
+		t.Fatalf("smtp auth = %+v", payload.SMTP)
 	}
 
-	if payload.Kindle.SMTPUser != "smtp-user" {
-		t.Fatalf("smtp user = %q", payload.Kindle.SMTPUser)
+	if payload.Kindle.KindleEmail != "reader@kindle.com" || payload.Kindle.SendTime != "08:00" || payload.Kindle.NextSendAt != "2026-03-01T08:30:00Z" {
+		t.Fatalf("kindle = %+v", payload.Kindle)
 	}
 
-	if !payload.Kindle.SMTPPasswordConfigured {
-		t.Fatal("smtpPasswordConfigured must be true")
+	h.store.settings.SMTP = &domain.SMTPSettings{
+		SenderEmail: "reader@example.com",
+		Host:        "smtp.example.com",
+		Port:        587,
+		Security:    domain.SMTPSecuritySTARTTLS,
+	}
+	h.store.settings.Kindle = &domain.KindleSettings{
+		KindleEmail: "reader@kindle.com",
 	}
 
-	if payload.Kindle.SendTime != "08:00" || payload.Kindle.NextSendAt != "2026-03-01T08:30:00Z" {
-		t.Fatalf("kindle schedule = %q / %q", payload.Kindle.SendTime, payload.Kindle.NextSendAt)
+	recorder = h.authed(http.MethodGet, "/api/settings", nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	var partial map[string]any
+	decodeBody(t, recorder, &partial)
+	smtpObj := partial["smtp"].(map[string]any)
+	if _, hasUser := smtpObj["user"]; hasUser {
+		t.Fatalf("smtp.user must be omitted when nil: %s", recorder.Body.String())
 	}
 
+	if smtpObj["passwordConfigured"] != false {
+		t.Fatalf("passwordConfigured = %v", smtpObj["passwordConfigured"])
+	}
+
+	kindleObj := partial["kindle"].(map[string]any)
+	if _, hasSendTime := kindleObj["sendTime"]; hasSendTime {
+		t.Fatalf("kindle.sendTime must be omitted when nil: %s", recorder.Body.String())
+	}
+
+	if _, hasNextSendAt := kindleObj["nextSendAt"]; hasNextSendAt {
+		t.Fatalf("kindle.nextSendAt must be omitted when nil: %s", recorder.Body.String())
+	}
+
+	h.store.settings.SMTP = nil
 	h.store.settings.Kindle = nil
 	h.store.settings.JinaKey = nil
 	h.store.settings.BrowserEndpoint = nil
@@ -2722,6 +2787,10 @@ func TestSettingsRedaction(t *testing.T) {
 
 	var generic map[string]any
 	decodeBody(t, recorder, &generic)
+	if _, present := generic["smtp"]; present {
+		t.Fatalf("smtp must be omitted when unconfigured: %s", recorder.Body.String())
+	}
+
 	if _, present := generic["kindle"]; present {
 		t.Fatalf("kindle must be omitted when unconfigured: %s", recorder.Body.String())
 	}
@@ -2742,41 +2811,125 @@ func TestSettingsUpdates(t *testing.T) {
 		t.Fatalf("retention = %d", h.store.settings.Retention)
 	}
 
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/fetcher/direct", nil), http.StatusNoContent)
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "unknown"}), http.StatusBadRequest, "InvalidProvider")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": ""}), http.StatusBadRequest, "InvalidProvider")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "browser"}), http.StatusUnprocessableEntity, "BrowserEndpointRequired")
+
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "jina"}), http.StatusNoContent)
+	if h.store.settings.Provider != domain.ProviderJina {
+		t.Fatalf("provider = %q", h.store.settings.Provider)
+	}
+
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "direct"}), http.StatusNoContent)
 	if h.store.settings.Provider != domain.ProviderDirect {
 		t.Fatalf("provider = %q", h.store.settings.Provider)
 	}
 
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/fetcher/jina", map[string]any{"key": "  jina-key  "}), http.StatusNoContent)
-	if h.store.settings.Provider != domain.ProviderJina || h.store.settings.JinaKey == nil || *h.store.settings.JinaKey != "jina-key" {
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/jina", map[string]any{"key": "   "}), http.StatusBadRequest, "InvalidJinaKey")
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/jina", map[string]any{"key": "  jina-key  "}), http.StatusNoContent)
+	if h.store.settings.Provider != domain.ProviderDirect || h.store.settings.JinaKey == nil || *h.store.settings.JinaKey != "jina-key" {
 		t.Fatalf("jina settings = %+v", h.store.settings)
 	}
 
-	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/fetcher/jina/key", nil), http.StatusNoContent)
+	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/jina", nil), http.StatusNoContent)
 	if h.store.settings.JinaKey != nil {
 		t.Fatal("jina key was not deleted")
 	}
 
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/fetcher/browser", map[string]any{}), http.StatusUnprocessableEntity, "BrowserEndpointRequired")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "   "}), http.StatusBadRequest, "InvalidEndpoint")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "ftp://browser:9222"}), http.StatusBadRequest, "InvalidEndpoint")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "http://"}), http.StatusBadRequest, "InvalidEndpoint")
 
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/fetcher/browser", map[string]any{"endpoint": "http://browser:9222"}), http.StatusNoContent)
-	if h.store.settings.Provider != domain.ProviderBrowser || h.store.settings.BrowserEndpoint == nil {
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "  http://browser:9222  "}), http.StatusNoContent)
+	if h.store.settings.Provider != domain.ProviderDirect || h.store.settings.BrowserEndpoint == nil || *h.store.settings.BrowserEndpoint != "http://browser:9222" {
 		t.Fatalf("browser settings = %+v", h.store.settings)
 	}
 
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/fetcher/browser", map[string]any{}), http.StatusNoContent)
-
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/fetcher/browser", map[string]any{"endpoint": "ftp://browser:9222"}), http.StatusBadRequest, "InvalidEndpoint")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/fetcher/browser", map[string]any{"endpoint": "http://"}), http.StatusBadRequest, "InvalidEndpoint")
-
-	// A whitespace-only endpoint means "keep the stored endpoint", never stored verbatim.
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/fetcher/browser", map[string]any{"endpoint": "   "}), http.StatusNoContent)
-	if h.store.settings.BrowserEndpoint == nil || *h.store.settings.BrowserEndpoint != "http://browser:9222" {
-		t.Fatalf("blank endpoint overwrote the stored endpoint: %v", h.store.settings.BrowserEndpoint)
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "browser"}), http.StatusNoContent)
+	if h.store.settings.Provider != domain.ProviderBrowser {
+		t.Fatalf("provider = %q", h.store.settings.Provider)
 	}
 
-	blank := newHarness(t)
-	requireAPIError(t, blank.authed(http.MethodPut, "/api/settings/fetcher/browser", map[string]any{"endpoint": "   "}), http.StatusUnprocessableEntity, "BrowserEndpointRequired")
+	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/browser", nil), http.StatusNoContent)
+	if h.store.settings.BrowserEndpoint != nil || h.store.settings.Provider != domain.ProviderDirect {
+		t.Fatalf("browser delete did not reset provider: %+v", h.store.settings)
+	}
+}
+
+func TestSMTPSettingsUpdate(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	body := map[string]any{
+		"senderEmail": "reader@example.com",
+		"host":        "smtp.example.com",
+		"port":        465,
+		"security":    "tls",
+		"user":        "  smtp-user  ",
+		"password":    "smtp-secret",
+	}
+
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/smtp", body), http.StatusNoContent)
+
+	stored := h.store.settings.SMTP
+	if stored == nil {
+		t.Fatal("smtp settings were not stored")
+	}
+
+	if stored.SenderEmail != "reader@example.com" || stored.Host != "smtp.example.com" || stored.Port != 465 || stored.Security != domain.SMTPSecurityTLS {
+		t.Fatalf("stored smtp = %+v", stored)
+	}
+
+	if stored.User == nil || *stored.User != "smtp-user" {
+		t.Fatalf("smtp user = %v", stored.User)
+	}
+
+	if stored.Password == nil || *stored.Password != "smtp-secret" {
+		t.Fatal("smtp password was not stored")
+	}
+
+	body["password"] = "   "
+	body["user"] = "   "
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/smtp", body), http.StatusNoContent)
+
+	stored = h.store.settings.SMTP
+	if stored.Password == nil || *stored.Password != "smtp-secret" {
+		t.Fatal("blank smtp password must preserve the stored secret")
+	}
+
+	if stored.User != nil {
+		t.Fatalf("blank user must clear user, got %q", *stored.User)
+	}
+
+	invalid := map[string]any{
+		"senderEmail": "not-an-email",
+		"host":        "smtp.example.com",
+		"port":        465,
+		"security":    "tls",
+	}
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/smtp", invalid), http.StatusBadRequest, "InvalidSMTPSetting")
+
+	invalid["senderEmail"] = "reader@example.com"
+	invalid["host"] = "   "
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/smtp", invalid), http.StatusBadRequest, "InvalidSMTPSetting")
+
+	invalid["host"] = "smtp.example.com"
+	invalid["port"] = 0
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/smtp", invalid), http.StatusBadRequest, "InvalidSMTPSetting")
+
+	invalid["port"] = 465
+	invalid["security"] = "ssl"
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/smtp", invalid), http.StatusBadRequest, "InvalidSMTPSetting")
+
+	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/smtp/password", nil), http.StatusNoContent)
+	if h.store.settings.SMTP == nil || h.store.settings.SMTP.Password != nil {
+		t.Fatalf("smtp password was not deleted: %+v", h.store.settings.SMTP)
+	}
+
+	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/smtp", nil), http.StatusNoContent)
+	if h.store.settings.SMTP != nil {
+		t.Fatalf("smtp settings were not deleted: %+v", h.store.settings.SMTP)
+	}
 }
 
 func TestKindleSettingsUpdate(t *testing.T) {
@@ -2784,15 +2937,19 @@ func TestKindleSettingsUpdate(t *testing.T) {
 
 	h := newHarness(t)
 	body := map[string]any{
-		"kindleEmail":  "reader@kindle.com",
-		"senderEmail":  "reader@example.com",
-		"smtpHost":     "smtp.example.com",
-		"smtpPort":     465,
-		"smtpSecurity": "tls",
-		"smtpUser":     "smtp-user",
-		"smtpPassword": "smtp-secret",
-		"sendTime":     "09:30",
+		"kindleEmail": "reader@kindle.com",
+		"sendTime":    "09:30",
 	}
+
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusUnprocessableEntity, "SMTPNotConfigured")
+
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/smtp", map[string]any{
+		"senderEmail": "reader@example.com",
+		"host":        "smtp.example.com",
+		"port":        465,
+		"security":    "tls",
+		"password":    "smtp-secret",
+	}), http.StatusNoContent)
 
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusNoContent)
 
@@ -2801,16 +2958,8 @@ func TestKindleSettingsUpdate(t *testing.T) {
 		t.Fatal("kindle settings were not stored")
 	}
 
-	if stored.KindleEmail != "reader@kindle.com" || stored.SenderEmail != "reader@example.com" || stored.SMTPHost != "smtp.example.com" {
+	if stored.KindleEmail != "reader@kindle.com" {
 		t.Fatalf("stored kindle = %+v", stored)
-	}
-
-	if stored.SMTPPort != 465 || stored.SMTPSecurity != domain.SMTPSecurityTLS {
-		t.Fatalf("stored smtp = %+v", stored)
-	}
-
-	if stored.SMTPPassword == nil || *stored.SMTPPassword != "smtp-secret" {
-		t.Fatal("smtp password was not stored")
 	}
 
 	if stored.SendTime == nil || *stored.SendTime != "09:30" {
@@ -2821,43 +2970,51 @@ func TestKindleSettingsUpdate(t *testing.T) {
 		t.Fatalf("next send at = %v", stored.NextSendAt)
 	}
 
-	body["smtpPassword"] = ""
 	body["sendTime"] = ""
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusNoContent)
 
 	stored = h.store.settings.Kindle
-	if stored.SMTPPassword == nil || *stored.SMTPPassword != "smtp-secret" {
-		t.Fatal("blank smtp password must preserve the stored secret")
-	}
-
 	if stored.SendTime != nil || stored.NextSendAt != nil {
 		t.Fatalf("disabled schedule = %v / %v", stored.SendTime, stored.NextSendAt)
 	}
 
-	invalid := map[string]any{
-		"kindleEmail":  "not-an-email",
-		"senderEmail":  "reader@example.com",
-		"smtpHost":     "smtp.example.com",
-		"smtpPort":     465,
-		"smtpSecurity": "tls",
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", map[string]any{
+		"kindleEmail": "not-an-email",
+	}), http.StatusBadRequest, "InvalidKindleSetting")
+
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", map[string]any{
+		"kindleEmail": "reader@kindle.com",
+		"sendTime":    "09:15",
+	}), http.StatusBadRequest, "InvalidKindleSetting")
+
+	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/smtp", nil), http.StatusNoContent)
+	if h.store.settings.Kindle == nil || h.store.settings.Kindle.KindleEmail != "reader@kindle.com" {
+		t.Fatalf("clearing smtp must keep kindle address: %+v", h.store.settings.Kindle)
 	}
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", invalid), http.StatusBadRequest, "InvalidKindleSetting")
 
-	invalid["kindleEmail"] = "reader@kindle.com"
-	invalid["smtpPort"] = 0
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", invalid), http.StatusBadRequest, "InvalidKindleSetting")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusUnprocessableEntity, "SMTPNotConfigured")
+}
 
-	invalid["smtpPort"] = 465
-	invalid["smtpSecurity"] = "ssl"
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", invalid), http.StatusBadRequest, "InvalidKindleSetting")
+func TestRemovedSettingsRoutes(t *testing.T) {
+	t.Parallel()
 
-	invalid["smtpSecurity"] = "tls"
-	invalid["sendTime"] = "09:15"
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", invalid), http.StatusBadRequest, "InvalidKindleSetting")
+	h := newHarness(t)
+	removed := []struct {
+		method string
+		target string
+	}{
+		{method: http.MethodPut, target: "/api/settings/fetcher/direct"},
+		{method: http.MethodPut, target: "/api/settings/fetcher/jina"},
+		{method: http.MethodPut, target: "/api/settings/fetcher/browser"},
+		{method: http.MethodDelete, target: "/api/settings/fetcher/jina/key"},
+		{method: http.MethodDelete, target: "/api/settings/kindle/password"},
+	}
 
-	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/kindle/password", nil), http.StatusNoContent)
-	if h.store.settings.Kindle.SMTPPassword != nil {
-		t.Fatal("smtp password was not deleted")
+	for _, route := range removed {
+		recorder := h.authed(route.method, route.target, nil)
+		if recorder.Code != http.StatusNotFound && recorder.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s %s status = %d, want 404 or 405: %s", route.method, route.target, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 

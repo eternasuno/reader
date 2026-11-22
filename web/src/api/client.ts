@@ -1,5 +1,6 @@
 import { feedItemParams, item, pageParams, request } from './request';
 import type {
+  ExtractorProvider,
   Feed,
   FeedCreateInput,
   FeedItem,
@@ -9,13 +10,14 @@ import type {
   Folder,
   KindleSendRecord,
   KindleSends,
-  KindleSettingsInput,
+  KindleSettings,
   ListParams,
   OPMLImportResult,
   Page,
   SavedPage,
   Session,
   Settings,
+  SmtpSettingsInput,
   SortOrder,
 } from './types';
 
@@ -190,24 +192,38 @@ export const settingsApi = {
       method: 'PUT',
       body: { retention },
     }),
-  setFetcherDirect: (): Promise<void> =>
-    request<void>('/api/settings/fetcher/direct', { method: 'PUT' }),
-  setFetcherJina: (key?: string): Promise<void> =>
-    request<void>('/api/settings/fetcher/jina', {
+  updateProvider: (provider: ExtractorProvider): Promise<void> =>
+    request<void>('/api/settings/provider', {
       method: 'PUT',
-      body: key === undefined ? {} : { key },
+      body: { provider },
     }),
-  setFetcherBrowser: (endpoint?: string): Promise<void> =>
-    request<void>('/api/settings/fetcher/browser', {
+  saveJinaKey: (key: string): Promise<void> =>
+    request<void>('/api/settings/services/jina', {
       method: 'PUT',
-      body: endpoint === undefined ? {} : { endpoint },
+      body: { key },
     }),
   deleteJinaKey: (): Promise<void> =>
-    request<void>('/api/settings/fetcher/jina/key', { method: 'DELETE' }),
-  updateKindle: (input: KindleSettingsInput): Promise<void> =>
+    request<void>('/api/settings/services/jina', { method: 'DELETE' }),
+  saveBrowserEndpoint: (endpoint: string): Promise<void> =>
+    request<void>('/api/settings/services/browser', {
+      method: 'PUT',
+      body: { endpoint },
+    }),
+  deleteBrowserEndpoint: (): Promise<void> =>
+    request<void>('/api/settings/services/browser', { method: 'DELETE' }),
+  saveSmtp: (input: SmtpSettingsInput): Promise<void> =>
+    request<void>('/api/settings/services/smtp', {
+      method: 'PUT',
+      body: input,
+    }),
+  deleteSmtp: (): Promise<void> =>
+    request<void>('/api/settings/services/smtp', { method: 'DELETE' }),
+  deleteSmtpPassword: (): Promise<void> =>
+    request<void>('/api/settings/services/smtp/password', {
+      method: 'DELETE',
+    }),
+  updateKindle: (input: KindleSettings): Promise<void> =>
     request<void>('/api/settings/kindle', { method: 'PUT', body: input }),
-  deleteKindlePassword: (): Promise<void> =>
-    request<void>('/api/settings/kindle/password', { method: 'DELETE' }),
 };
 
 export const kindleApi = {

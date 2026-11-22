@@ -194,12 +194,15 @@ func (s *server) registerFolderAndSettingRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings/retention", s.handleRetentionUpdate)
-	mux.HandleFunc("PUT /api/settings/fetcher/direct", s.handleFetcherDirect)
-	mux.HandleFunc("PUT /api/settings/fetcher/jina", s.handleFetcherJina)
-	mux.HandleFunc("PUT /api/settings/fetcher/browser", s.handleFetcherBrowser)
-	mux.HandleFunc("DELETE /api/settings/fetcher/jina/key", s.handleJinaKeyDelete)
+	mux.HandleFunc("PUT /api/settings/provider", s.handleProviderUpdate)
+	mux.HandleFunc("PUT /api/settings/services/jina", s.handleJinaKeySave)
+	mux.HandleFunc("DELETE /api/settings/services/jina", s.handleJinaKeyDelete)
+	mux.HandleFunc("PUT /api/settings/services/browser", s.handleBrowserEndpointSave)
+	mux.HandleFunc("DELETE /api/settings/services/browser", s.handleBrowserEndpointDelete)
+	mux.HandleFunc("PUT /api/settings/services/smtp", s.handleSMTPSave)
+	mux.HandleFunc("DELETE /api/settings/services/smtp", s.handleSMTPDelete)
+	mux.HandleFunc("DELETE /api/settings/services/smtp/password", s.handleSMTPPasswordDelete)
 	mux.HandleFunc("PUT /api/settings/kindle", s.handleKindleSettingsUpdate)
-	mux.HandleFunc("DELETE /api/settings/kindle/password", s.handleKindlePasswordDelete)
 
 	mux.HandleFunc("POST /api/kindle/send", s.handleKindleSend)
 	mux.HandleFunc("GET /api/kindle/sends", s.handleKindleSends)
@@ -407,7 +410,10 @@ func statusForCode(code domain.ErrorCode) int {
 		domain.ErrInvalidOpml,
 		domain.ErrInvalidFolderName,
 		domain.ErrInvalidRetention,
+		domain.ErrInvalidProvider,
+		domain.ErrInvalidJinaKey,
 		domain.ErrInvalidEndpoint,
+		domain.ErrInvalidSMTPSetting,
 		domain.ErrInvalidKindleSetting,
 		domain.ErrRequestFailed:
 		return http.StatusBadRequest
@@ -428,6 +434,7 @@ func statusForCode(code domain.ErrorCode) int {
 		domain.ErrFetchFeedError,
 		domain.ErrFeedParserError,
 		domain.ErrBrowserEndpointRequired,
+		domain.ErrSMTPNotConfigured,
 		domain.ErrKindleNotConfigured:
 		return http.StatusUnprocessableEntity
 	case domain.ErrTooManyRequests:
@@ -450,16 +457,6 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	var trailing any
 	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return domain.NewError(domain.ErrRequestFailed, nil)
-	}
-
-	return nil
-}
-
-func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil && !errors.Is(err, io.EOF) {
-		return domain.NewError(domain.ErrRequestFailed, err)
 	}
 
 	return nil

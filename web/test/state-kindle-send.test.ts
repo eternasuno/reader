@@ -60,16 +60,18 @@ const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   provider: 'direct',
   jinaKeyConfigured: false,
   browserEndpointConfigured: false,
+  smtp: {
+    senderEmail: 'sender@example.com',
+    host: 'smtp.example.com',
+    port: 587,
+    security: 'starttls',
+    user: 'smtp-user',
+    passwordConfigured: true,
+  },
   kindle: {
     kindleEmail: 'kindle@example.com',
-    senderEmail: 'sender@example.com',
-    smtpHost: 'smtp.example.com',
-    smtpPort: 587,
-    smtpSecurity: 'starttls',
-    smtpUser: 'smtp-user',
     sendTime: '08:00',
     nextSendAt: '2026-11-20T08:00:00Z',
-    smtpPasswordConfigured: true,
   },
   ...overrides,
 });
@@ -159,5 +161,32 @@ describe('send guard', () => {
     await sending;
     solid.flush();
     expect(state.kindleSending()).toBe(false);
+  });
+});
+
+describe('refreshKindleSends', () => {
+  it('re-reads send history and running state, keeping snapshot on failure', async () => {
+    await load();
+    const done = {
+      id: 's2',
+      trigger: 'scheduled' as const,
+      status: 'succeeded' as const,
+      articleCount: 2,
+      bookCount: 1,
+      startedAt: '2026-11-20T08:00:00Z',
+    };
+    queue({ running: false, items: [done] });
+
+    await state.refreshKindleSends();
+    solid.flush();
+
+    expect(requestUrl(2)).toBe('/api/kindle/sends');
+    expect(state.kindleRunning()).toBe(false);
+    expect(state.kindleSends().map((send) => send.id)).toEqual(['s2']);
+
+    queue({ error: 'SettingRepositoryError' }, 500);
+    await state.refreshKindleSends();
+    solid.flush();
+    expect(state.kindleSends().map((send) => send.id)).toEqual(['s2']);
   });
 });

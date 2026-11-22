@@ -378,6 +378,136 @@ func TestNextSendAt(t *testing.T) {
 	requireDomainError(t, err, ErrInvalidKindleSetting)
 }
 
+func TestValueProvider(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range []ExtractorProvider{ProviderDirect, ProviderJina, ProviderBrowser} {
+		if err := ValidateProvider(provider); err != nil {
+			t.Fatalf("provider %q should be valid: %v", provider, err)
+		}
+	}
+
+	for _, invalid := range []ExtractorProvider{"", ExtractorProvider("other"), ExtractorProvider("DIRECT")} {
+		requireDomainError(t, ValidateProvider(invalid), ErrInvalidProvider)
+	}
+}
+
+func TestValueJinaKey(t *testing.T) {
+	t.Parallel()
+
+	valid := []struct {
+		in   string
+		want string
+	}{
+		{in: "jina-key", want: "jina-key"},
+		{in: "  jina_secret_123 \n", want: "jina_secret_123"},
+	}
+
+	for _, tc := range valid {
+		got, err := ValidateJinaKey(tc.in)
+		if err != nil {
+			t.Fatalf("jina key %q should be valid: %v", tc.in, err)
+		}
+
+		if got != tc.want {
+			t.Fatalf("jina key = %q, want %q", got, tc.want)
+		}
+	}
+
+	for _, raw := range []string{"", "   ", "\t\n"} {
+		_, err := ValidateJinaKey(raw)
+		requireDomainError(t, err, ErrInvalidJinaKey)
+	}
+}
+
+func TestValueSMTPSettings(t *testing.T) {
+	t.Parallel()
+
+	base := func() SMTPSettings {
+		return SMTPSettings{
+			SenderEmail: " sender@example.com ",
+			Host:        " smtp.example.com ",
+			Port:        465,
+			Security:    SMTPSecurityTLS,
+			User:        strPtr("  smtp-user  "),
+			Password:    strPtr("secret"),
+		}
+	}
+
+	settings, err := ValidateSMTPSettings(base())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if settings.SenderEmail != "sender@example.com" {
+		t.Fatalf("sender email = %q", settings.SenderEmail)
+	}
+
+	if settings.Host != "smtp.example.com" {
+		t.Fatalf("host = %q", settings.Host)
+	}
+
+	if settings.User == nil || *settings.User != "smtp-user" {
+		t.Fatalf("user = %v, want smtp-user", settings.User)
+	}
+
+	if settings.Password == nil || *settings.Password != "secret" {
+		t.Fatalf("password = %v, want secret", settings.Password)
+	}
+
+	blankUser := base()
+	blankUser.User = strPtr("   ")
+	blankUser.Security = SMTPSecuritySTARTTLS
+	blankUser.Port = 587
+	settings, err = ValidateSMTPSettings(blankUser)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if settings.User != nil {
+		t.Fatalf("blank user = %v, want nil", *settings.User)
+	}
+
+	nilUser := base()
+	nilUser.User = nil
+	settings, err = ValidateSMTPSettings(nilUser)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if settings.User != nil {
+		t.Fatalf("nil user = %v, want nil", *settings.User)
+	}
+
+	invalidCases := map[string]func(*SMTPSettings){
+		"empty sender email":   func(s *SMTPSettings) { s.SenderEmail = "  " },
+		"invalid sender email": func(s *SMTPSettings) { s.SenderEmail = "sender" },
+		"sender email bad host": func(s *SMTPSettings) {
+			s.SenderEmail = "reader@bad-.example"
+		},
+		"sender email display": func(s *SMTPSettings) { s.SenderEmail = "Display <a@b.com>" },
+		"empty local part":     func(s *SMTPSettings) { s.SenderEmail = "@example.com" },
+		"empty domain":         func(s *SMTPSettings) { s.SenderEmail = "sender@" },
+		"empty host":           func(s *SMTPSettings) { s.Host = "  " },
+		"port zero":            func(s *SMTPSettings) { s.Port = 0 },
+		"port too large":       func(s *SMTPSettings) { s.Port = 65536 },
+		"port negative":        func(s *SMTPSettings) { s.Port = -1 },
+		"unknown security":     func(s *SMTPSettings) { s.Security = SMTPSecurity("ssl") },
+		"empty security":       func(s *SMTPSettings) { s.Security = "" },
+	}
+
+	for name, mutate := range invalidCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			input := base()
+			mutate(&input)
+			_, err := ValidateSMTPSettings(input)
+			requireDomainError(t, err, ErrInvalidSMTPSetting)
+		})
+	}
+}
+
 func TestValueKindleSettings(t *testing.T) {
 	t.Parallel()
 
@@ -387,12 +517,8 @@ func TestValueKindleSettings(t *testing.T) {
 	base := func() KindleSettings {
 		sendTime := " 08:00 "
 		return KindleSettings{
-			KindleEmail:  "  kindle@example.com ",
-			SenderEmail:  " sender@example.com ",
-			SMTPHost:     " smtp.example.com ",
-			SMTPPort:     465,
-			SMTPSecurity: SMTPSecurityTLS,
-			SendTime:     &sendTime,
+			KindleEmail: "  kindle@example.com ",
+			SendTime:    &sendTime,
 		}
 	}
 
@@ -403,14 +529,6 @@ func TestValueKindleSettings(t *testing.T) {
 
 	if settings.KindleEmail != "kindle@example.com" {
 		t.Fatalf("kindle email = %q", settings.KindleEmail)
-	}
-
-	if settings.SenderEmail != "sender@example.com" {
-		t.Fatalf("sender email = %q", settings.SenderEmail)
-	}
-
-	if settings.SMTPHost != "smtp.example.com" {
-		t.Fatalf("smtp host = %q", settings.SMTPHost)
 	}
 
 	if settings.SendTime == nil || *settings.SendTime != "08:00" {
@@ -436,7 +554,6 @@ func TestValueKindleSettings(t *testing.T) {
 	blankTime := base()
 	empty := "   "
 	blankTime.SendTime = &empty
-	blankTime.SMTPSecurity = SMTPSecuritySTARTTLS
 	settings, err = ValidateKindleSettings(blankTime, now, loc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -451,19 +568,9 @@ func TestValueKindleSettings(t *testing.T) {
 		"kindle email without at": func(k *KindleSettings) { k.KindleEmail = "kindle.example.com" },
 		"kindle email double at":  func(k *KindleSettings) { k.KindleEmail = "a@@b" },
 		"kindle email bad host":   func(k *KindleSettings) { k.KindleEmail = "reader@-bad.example" },
-		"sender email bad host":   func(k *KindleSettings) { k.SenderEmail = "reader@bad-.example" },
 		"kindle email display":    func(k *KindleSettings) { k.KindleEmail = "Display <a@b.com>" },
-		"sender email display":    func(k *KindleSettings) { k.SenderEmail = "Display <a@b.com>" },
 		"empty local part":        func(k *KindleSettings) { k.KindleEmail = "@example.com" },
 		"empty domain":            func(k *KindleSettings) { k.KindleEmail = "kindle@" },
-		"empty sender email":      func(k *KindleSettings) { k.SenderEmail = "  " },
-		"invalid sender email":    func(k *KindleSettings) { k.SenderEmail = "sender" },
-		"empty smtp host":         func(k *KindleSettings) { k.SMTPHost = "  " },
-		"port zero":               func(k *KindleSettings) { k.SMTPPort = 0 },
-		"port too large":          func(k *KindleSettings) { k.SMTPPort = 65536 },
-		"port negative":           func(k *KindleSettings) { k.SMTPPort = -1 },
-		"unknown security":        func(k *KindleSettings) { k.SMTPSecurity = SMTPSecurity("ssl") },
-		"empty security":          func(k *KindleSettings) { k.SMTPSecurity = "" },
 		"invalid send time": func(k *KindleSettings) {
 			bad := "25:00"
 			k.SendTime = &bad

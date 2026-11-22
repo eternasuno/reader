@@ -1,13 +1,25 @@
 import type { JSX } from '@solidjs/web';
-import { createEffect, createSignal, onSettled, Show } from 'solid-js';
+import {
+  createEffect,
+  createSignal,
+  createUniqueId,
+  onSettled,
+  Show,
+} from 'solid-js';
 import type { IconName } from './Icon';
 import { Icon } from './Icon';
 
 const ITEM_CLASSES =
   'flex w-full items-center gap-2 rounded-field px-3 py-2 text-left text-sm text-base-content transition-colors hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50';
 
+/** A top-layer popover anchored to its trigger, so scroll containers never clip it. */
 const PANEL_CLASSES =
-  'absolute top-full z-40 mt-1 min-w-44 rounded-box border border-base-300 bg-base-100 p-1 text-base-content shadow-xl';
+  'inset-auto m-0 my-1 min-w-44 rounded-box border border-base-300 bg-base-100 p-1 text-base-content shadow-xl [position-try-fallbacks:flip-block,flip-inline]';
+
+const PANEL_AREA = {
+  start: '[position-area:bottom_span-right]',
+  end: '[position-area:bottom_span-left]',
+} as const;
 
 const TRIGGER_CLASSES = 'btn btn-ghost btn-sm btn-square';
 
@@ -126,7 +138,10 @@ const useMenuDismiss = (options: DismissOptions): void => {
 const useMenuFocus = (open: () => boolean, refs: MenuRefs): void => {
   createEffect(open, (isOpen) => {
     if (!isOpen) return;
-    queueMicrotask(() => menuItems(refs.panel)[0]?.focus());
+    queueMicrotask(() => {
+      refs.panel?.showPopover();
+      menuItems(refs.panel)[0]?.focus();
+    });
   });
 };
 
@@ -159,6 +174,7 @@ const useMenuState = (props: MenuProps, refs: MenuRefs) => {
 interface MenuPanelProps {
   label?: string;
   align?: 'start' | 'end';
+  anchor: string;
   children?: JSX.Element;
   onKeyDown: (event: KeyboardEvent) => void;
   onClick: (event: MouseEvent) => void;
@@ -169,8 +185,10 @@ const MenuPanel = (props: MenuPanelProps): JSX.Element => (
   <div
     ref={props.panelRef}
     role="menu"
+    popover="manual"
     aria-label={props.label}
-    class={[PANEL_CLASSES, props.align === 'start' ? 'left-0' : 'right-0']}
+    class={[PANEL_CLASSES, PANEL_AREA[props.align ?? 'end']]}
+    style={{ 'position-anchor': props.anchor }}
     onKeyDown={props.onKeyDown}
     onClick={props.onClick}
   >
@@ -181,6 +199,7 @@ const MenuPanel = (props: MenuPanelProps): JSX.Element => (
 export function Menu(props: MenuProps): JSX.Element {
   const refs: MenuRefs = {};
   const menu = useMenuState(props, refs);
+  const anchor = `--menu-${createUniqueId()}`;
 
   return (
     <div
@@ -195,6 +214,7 @@ export function Menu(props: MenuProps): JSX.Element {
         }}
         type="button"
         class={[TRIGGER_CLASSES, props.triggerClass]}
+        style={{ 'anchor-name': anchor }}
         aria-haspopup="menu"
         aria-expanded={menu.open() ? 'true' : 'false'}
         aria-label={props.label ?? '菜单'}
@@ -212,6 +232,7 @@ export function Menu(props: MenuProps): JSX.Element {
         <MenuPanel
           label={props.label}
           align={props.align}
+          anchor={anchor}
           onKeyDown={(event) => handleMenuKeyDown(event, refs, menu.dismiss)}
           onClick={(event) => handleMenuClick(event, menu.dismiss)}
           panelRef={(el) => {
@@ -250,9 +271,14 @@ export function MenuItem(props: MenuItemProps): JSX.Element {
         if (!props.disabled) props.onSelect?.();
       }}
     >
-      <Show when={props.icon}>
-        {(name) => <Icon name={name()} size={16} />}
-      </Show>
+      <span
+        class="flex size-4 shrink-0 items-center justify-center"
+        aria-hidden="true"
+      >
+        <Show when={props.icon}>
+          {(name) => <Icon name={name()} size={16} />}
+        </Show>
+      </span>
       <span class="flex-1 truncate">{props.children}</span>
     </button>
   );

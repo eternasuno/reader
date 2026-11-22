@@ -14,7 +14,7 @@ export type { SidebarProps } from './sidebarProps';
 export function Sidebar(props: SidebarProps): JSX.Element {
   return (
     <aside
-      class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain bg-base-100 px-2 py-3"
+      class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain border-r border-base-300 bg-base-100 px-2 py-3"
       aria-label={String(t('common.brand'))}
     >
       <SidebarBrand onNavigate={props.onNavigate} />

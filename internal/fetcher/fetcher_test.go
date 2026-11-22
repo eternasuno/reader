@@ -30,15 +30,11 @@ func (s stubSettings) UpdateRetention(ctx context.Context, retention int) error 
 	return nil
 }
 
-func (s stubSettings) UpdateFetcherDirect(ctx context.Context) error {
+func (s stubSettings) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
 	return nil
 }
 
-func (s stubSettings) UpdateFetcherJina(ctx context.Context, key *string) error {
-	return nil
-}
-
-func (s stubSettings) UpdateFetcherBrowser(ctx context.Context, endpoint *string) error {
+func (s stubSettings) UpdateJinaKey(ctx context.Context, key string) error {
 	return nil
 }
 
@@ -46,11 +42,27 @@ func (s stubSettings) DeleteJinaKey(ctx context.Context) error {
 	return nil
 }
 
-func (s stubSettings) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
+func (s stubSettings) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
 	return nil
 }
 
-func (s stubSettings) DeleteKindlePassword(ctx context.Context) error {
+func (s stubSettings) DeleteBrowserEndpoint(ctx context.Context) error {
+	return nil
+}
+
+func (s stubSettings) UpdateSMTP(ctx context.Context, smtp domain.SMTPSettings) error {
+	return nil
+}
+
+func (s stubSettings) DeleteSMTPPassword(ctx context.Context) error {
+	return nil
+}
+
+func (s stubSettings) DeleteSMTP(ctx context.Context) error {
+	return nil
+}
+
+func (s stubSettings) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
 	return nil
 }
 

@@ -7,6 +7,7 @@ Feed subscriptions, feed-item scopes, OPML import/export, per-feed reading prefe
 - `FD-ID-1`: Feeds are unique per normalized URL (`CM-URL`). Items are unique per `(feedId, url)`.
 - `FD-PREVIEW-1`: Preview fetches and parses the source without storing anything, returning `{ url, title, description?, titles }`.
 - `FD-SUB-1`: Subscribe stores `{ url, title, folderId? }` with defaults `readerMode = "default"`, `order = "newest"`, returns `201 { item }` immediately, and enqueues a background refresh (`FD-SCHED-1`). Duplicate URL fails `409 FeedAlreadyExists(url)`; missing `folderId` fails `404 FolderNotFound`.
+- `FD-SUB-2`: After subscribing, the client opens the new feed and, while that feed's list is still shown and empty, polls `GET /api/feeds` every 2 s (at most 15 times) until the feed's first refresh finishes (`updatedAt` present or `failureCount > 0`), then refreshes the sidebar and reloads the list (an exception to `LIB-RELOAD-1`). A failed poll request is retried within that budget. Each check ends the wait once the feed was shown and another scope (or no library page) is shown, or rows arrived; the sidebar refresh and reload also require the feed to still be shown and empty.
 - `FD-OPML-1`: **OPML export** (`GET /api/opml`) outputs an OPML 2.0 XML document containing folders as grouping `<outline text="...">` elements and feeds as `<outline type="rss" text="..." title="..." xmlUrl="..."/>`, ordered by folder name then feed title. Any `user:pass@` URL credentials are stripped from `xmlUrl` (`CM-URL-5`).
 - `FD-OPML-2`: **OPML import** (`POST /api/opml`) parses and validates the XML document completely in memory first; malformed XML returns `400 InvalidOpml` with **zero** DB writes or refresh enqueues. Nested folder outlines flatten to the **innermost parent folder** (or top level if none). Inside one DB transaction, missing folders are created by trimmed name, valid `http`/`https` `xmlUrl` feeds are subscribed, and duplicates (`NormalizedUrl` already followed) plus invalid `xmlUrl` outlines are skipped and counted in `skippedFeeds`. Newly created feeds are enqueued for background refresh after commit.
 - `FD-PREF-1`: Each feed stores `readerMode` (`default` | `extracted` | `embedded`) and `order` (`newest` | `oldest`). `order` applies only to the single-feed list; `全部订阅` and folder lists always use `newest` (`id DESC`). Changing `order` on the currently active `/feed/:feedId` list resets its cursor and reloads page 1 in the new order.
@@ -14,7 +15,7 @@ Feed subscriptions, feed-item scopes, OPML import/export, per-feed reading prefe
 - `FD-EXTRACT-1`: `POST /api/feed-items/:id/extract` returns cached `extractedContent` if present, otherwise runs `CM-FETCH-1`, stores `extractedContent`, and returns the updated item. Missing item fails `404 FeedItemNotFound`.
 - `FD-READ-1`: Marking items, feeds, folders, or all read is idempotent; unknown IDs succeed with no change.
 - `FD-COUNT-1`: `unreadCounts` returns `{ feedId, count }` for feeds with unread items > 0 (absent = 0).
-- `FD-UNSUB-1`: Unsubscribing removes the feed and cascades to its items; saved pages copied from those items stay (`SP-ID-1`).
+- `FD-UNSUB-1`: Unsubscribing removes the feed and cascades to its items; saved pages copied from those items stay (`SP-ID-1`). From either delete entry point (sidebar feed menu or single-feed list menu) the client shows `订阅源已删除`, reloads an active `全部订阅` or folder list from page 1 (an exception to `LIB-RELOAD-1`, discarding in-flight pages), and closes an open article from that feed; the reload and navigation are skipped if the user has left the library meanwhile.
 
 ## Interface
 
@@ -54,7 +55,7 @@ Feed subscriptions, feed-item scopes, OPML import/export, per-feed reading prefe
 | `FeedAlreadyExists` / `FeedItemNotFound` | 该订阅已存在 / 文章不存在，可能已被删除 |
 | `FeedRepositoryError` / `FeedItemRepositoryError` | 暂时无法访问订阅，请稍后重试 / 暂时无法访问订阅文章，请稍后重试 |
 | `InvalidOpml` | 无法解析 OPML 文件，请确认格式正确 |
-| subscribe success / OPML imported | 订阅已添加 / 已导入 N 个订阅源，跳过 M 个 |
+| subscribe success / unsubscribed / OPML imported | 订阅已添加 / 订阅源已删除 / 已导入 N 个订阅源，跳过 M 个 |
 | unsubscribe confirm | 取消订阅并删除该源的文章？已保存的稍后阅读不会删除。 |
 | empty `全部订阅` / empty single feed | 从一个订阅源开始 / 这个订阅源还没有文章 |
 

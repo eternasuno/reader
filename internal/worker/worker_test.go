@@ -302,15 +302,11 @@ func (r *fakeSettingRepository) UpdateRetention(ctx context.Context, retention i
 	return nil
 }
 
-func (r *fakeSettingRepository) UpdateFetcherDirect(ctx context.Context) error {
+func (r *fakeSettingRepository) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
 	return nil
 }
 
-func (r *fakeSettingRepository) UpdateFetcherJina(ctx context.Context, key *string) error {
-	return nil
-}
-
-func (r *fakeSettingRepository) UpdateFetcherBrowser(ctx context.Context, endpoint *string) error {
+func (r *fakeSettingRepository) UpdateJinaKey(ctx context.Context, key string) error {
 	return nil
 }
 
@@ -318,11 +314,27 @@ func (r *fakeSettingRepository) DeleteJinaKey(ctx context.Context) error {
 	return nil
 }
 
-func (r *fakeSettingRepository) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
+func (r *fakeSettingRepository) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
 	return nil
 }
 
-func (r *fakeSettingRepository) DeleteKindlePassword(ctx context.Context) error {
+func (r *fakeSettingRepository) DeleteBrowserEndpoint(ctx context.Context) error {
+	return nil
+}
+
+func (r *fakeSettingRepository) UpdateSMTP(ctx context.Context, smtp domain.SMTPSettings) error {
+	return nil
+}
+
+func (r *fakeSettingRepository) DeleteSMTPPassword(ctx context.Context) error {
+	return nil
+}
+
+func (r *fakeSettingRepository) DeleteSMTP(ctx context.Context) error {
+	return nil
+}
+
+func (r *fakeSettingRepository) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
 	return nil
 }
 
@@ -622,19 +634,19 @@ func (b *fakeEPUBBuilder) captured() buildCall {
 }
 
 type sentMail struct {
-	cfg  domain.KindleSettings
-	book domain.EPUBBook
+	delivery domain.KindleDelivery
+	book     domain.EPUBBook
 }
 
 type fakeMailSender struct {
 	mu   sync.Mutex
-	send func(ctx context.Context, cfg domain.KindleSettings, book domain.EPUBBook) error
+	send func(ctx context.Context, delivery domain.KindleDelivery, book domain.EPUBBook) error
 	sent []sentMail
 }
 
-func (m *fakeMailSender) SendEPUB(ctx context.Context, cfg domain.KindleSettings, book domain.EPUBBook) error {
+func (m *fakeMailSender) SendEPUB(ctx context.Context, delivery domain.KindleDelivery, book domain.EPUBBook) error {
 	m.mu.Lock()
-	m.sent = append(m.sent, sentMail{cfg: cfg, book: book})
+	m.sent = append(m.sent, sentMail{delivery: delivery, book: book})
 	hook := m.send
 	m.mu.Unlock()
 
@@ -642,7 +654,7 @@ func (m *fakeMailSender) SendEPUB(ctx context.Context, cfg domain.KindleSettings
 		return nil
 	}
 
-	return hook(ctx, cfg, book)
+	return hook(ctx, delivery, book)
 }
 
 func (m *fakeMailSender) sentList() []sentMail {
@@ -658,15 +670,30 @@ func parsedEntry(t *testing.T, raw string, title string) domain.ParsedFeedEntry 
 	return domain.ParsedFeedEntry{URL: testURL(t, raw), Title: title}
 }
 
+func configuredSMTPSettings() domain.SMTPSettings {
+	return domain.SMTPSettings{
+		SenderEmail: "sender@example.com",
+		Host:        "smtp.example.com",
+		Port:        587,
+		Security:    domain.SMTPSecuritySTARTTLS,
+		User:        ptrTo("smtp-user"),
+		Password:    ptrTo("smtp-password"),
+	}
+}
+
 func configuredKindleSettings() domain.KindleSettings {
 	return domain.KindleSettings{
-		KindleEmail:  "reader@kindle.com",
-		SenderEmail:  "sender@example.com",
-		SMTPHost:     "smtp.example.com",
-		SMTPPort:     587,
-		SMTPSecurity: domain.SMTPSecuritySTARTTLS,
-		SMTPUser:     ptrTo("smtp-user"),
-		SMTPPassword: ptrTo("smtp-password"),
+		KindleEmail: "reader@kindle.com",
+	}
+}
+
+func configuredDeliverySettings() domain.Settings {
+	smtp := configuredSMTPSettings()
+	kindle := configuredKindleSettings()
+
+	return domain.Settings{
+		SMTP:   &smtp,
+		Kindle: &kindle,
 	}
 }
 
@@ -1276,25 +1303,65 @@ func TestEnqueueManualRejectsUnconfiguredKindle(t *testing.T) {
 
 	cases := []struct {
 		name      string
-		configure func(kindle *domain.KindleSettings)
+		configure func(settings *domain.Settings)
 	}{
-		{name: "missing kindle settings", configure: func(kindle *domain.KindleSettings) {}},
-		{name: "blank smtp host", configure: func(kindle *domain.KindleSettings) { kindle.SMTPHost = "   " }},
-		{name: "blank sender email", configure: func(kindle *domain.KindleSettings) { kindle.SenderEmail = "" }},
-		{name: "port out of range", configure: func(kindle *domain.KindleSettings) { kindle.SMTPPort = 70000 }},
-		{name: "zero port", configure: func(kindle *domain.KindleSettings) { kindle.SMTPPort = 0 }},
+		{
+			name: "missing smtp and kindle settings",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP = nil
+				settings.Kindle = nil
+			},
+		},
+		{
+			name: "smtp configured but kindle nil",
+			configure: func(settings *domain.Settings) {
+				settings.Kindle = nil
+			},
+		},
+		{
+			name: "kindle configured but smtp nil",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP = nil
+			},
+		},
+		{
+			name: "blank kindle email",
+			configure: func(settings *domain.Settings) {
+				settings.Kindle.KindleEmail = "   "
+			},
+		},
+		{
+			name: "blank smtp host",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP.Host = "   "
+			},
+		},
+		{
+			name: "blank sender email",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP.SenderEmail = ""
+			},
+		},
+		{
+			name: "port out of range",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP.Port = 70000
+			},
+		},
+		{
+			name: "zero port",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP.Port = 0
+			},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			var settings domain.Settings
-			if tc.name != "missing kindle settings" {
-				kindle := configuredKindleSettings()
-				tc.configure(&kindle)
-				settings.Kindle = &kindle
-			}
+			settings := configuredDeliverySettings()
+			tc.configure(&settings)
 
 			sender := NewKindleSender(KindleConfig{
 				Settings:    &fakeSettingRepository{settings: settings},
@@ -1331,9 +1398,8 @@ func TestEnqueueManualReturnsCreateError(t *testing.T) {
 	t.Parallel()
 
 	want := errors.New("create failed")
-	kindle := configuredKindleSettings()
 	sender := NewKindleSender(KindleConfig{
-		Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+		Settings:    &fakeSettingRepository{settings: configuredDeliverySettings()},
 		KindleSends: &fakeKindleSendRepository{createErr: want},
 	})
 
@@ -1353,8 +1419,9 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 	loc := time.FixedZone("CST", 8*60*60)
 	publishedAt := time.Date(2026, 3, 13, 9, 30, 0, 0, time.UTC)
 
-	kindle := configuredKindleSettings()
-	settings := &fakeSettingRepository{settings: domain.Settings{Retention: 100, Kindle: &kindle}}
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Retention = 100
+	settings := &fakeSettingRepository{settings: deliverySettings}
 
 	page := domain.SavedPage{
 		ID:          "page-1",
@@ -1495,8 +1562,8 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 		t.Fatalf("sent mails = %d, want 1", len(mails))
 	}
 
-	if mails[0].cfg.SMTPHost != "smtp.example.com" {
-		t.Fatalf("mail SMTP host = %q, want smtp.example.com", mails[0].cfg.SMTPHost)
+	if mails[0].delivery.SMTP.Host != "smtp.example.com" {
+		t.Fatalf("mail SMTP host = %q, want smtp.example.com", mails[0].delivery.SMTP.Host)
 	}
 }
 
@@ -1504,7 +1571,6 @@ func TestEnqueueManualRejectsConcurrentSend(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
 
 	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
 	sends := &fakeKindleSendRepository{savedPages: []domain.SavedPage{page}}
@@ -1519,7 +1585,7 @@ func TestEnqueueManualRejectsConcurrentSend(t *testing.T) {
 	}}
 
 	sender := NewKindleSender(KindleConfig{
-		Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+		Settings:    &fakeSettingRepository{settings: configuredDeliverySettings()},
 		KindleSends: sends,
 		FeedItems:   &fakeFeedItemRepository{},
 		EPUBBuilder: builder,
@@ -1555,11 +1621,11 @@ func TestEnqueueManualRejectsConcurrentSend(t *testing.T) {
 	}
 }
 
-func TestEnqueueManualSnapshotsSettings(t *testing.T) {
+func TestEnqueueManualSnapshotsDelivery(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
+	settings := configuredDeliverySettings()
 	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
 
 	started := make(chan struct{}, 1)
@@ -1573,7 +1639,7 @@ func TestEnqueueManualSnapshotsSettings(t *testing.T) {
 	mailer := &fakeMailSender{}
 
 	sender := NewKindleSender(KindleConfig{
-		Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+		Settings:    &fakeSettingRepository{settings: settings},
 		KindleSends: &fakeKindleSendRepository{savedPages: []domain.SavedPage{page}},
 		FeedItems:   &fakeFeedItemRepository{},
 		EPUBBuilder: builder,
@@ -1591,8 +1657,9 @@ func TestEnqueueManualSnapshotsSettings(t *testing.T) {
 		t.Fatal("timed out waiting for job to start")
 	}
 
-	kindle.SMTPHost = "mutated.example.com"
-	*kindle.SMTPPassword = "mutated-password"
+	settings.SMTP.Host = "mutated.example.com"
+	*settings.SMTP.Password = "mutated-password"
+	settings.Kindle.KindleEmail = "mutated@kindle.com"
 
 	close(release)
 	sender.Wait()
@@ -1602,44 +1669,46 @@ func TestEnqueueManualSnapshotsSettings(t *testing.T) {
 		t.Fatalf("sent mails = %d, want 1", len(mails))
 	}
 
-	if mails[0].cfg.SMTPHost != "smtp.example.com" {
-		t.Fatalf("snapshot SMTP host = %q, want smtp.example.com", mails[0].cfg.SMTPHost)
+	if mails[0].delivery.SMTP.Host != "smtp.example.com" {
+		t.Fatalf("snapshot SMTP host = %q, want smtp.example.com", mails[0].delivery.SMTP.Host)
 	}
 
-	if mails[0].cfg.SMTPPassword == nil || *mails[0].cfg.SMTPPassword != "smtp-password" {
-		t.Fatalf("snapshot SMTP password = %v, want smtp-password", mails[0].cfg.SMTPPassword)
+	if mails[0].delivery.SMTP.Password == nil || *mails[0].delivery.SMTP.Password != "smtp-password" {
+		t.Fatalf("snapshot SMTP password = %v, want smtp-password", mails[0].delivery.SMTP.Password)
+	}
+
+	if mails[0].delivery.KindleEmail != "reader@kindle.com" {
+		t.Fatalf("snapshot KindleEmail = %q, want reader@kindle.com", mails[0].delivery.KindleEmail)
 	}
 }
 
-func TestCloneKindleSettingsDeepCopiesPointers(t *testing.T) {
+func TestCloneKindleDeliveryDeepCopiesPointers(t *testing.T) {
 	t.Parallel()
 
-	next := time.Date(2026, 3, 15, 1, 0, 0, 0, time.UTC)
-	wantNext := next
-	original := domain.KindleSettings{
-		SMTPUser:     ptrTo("user"),
-		SMTPPassword: ptrTo("password"),
-		SendTime:     ptrTo("09:00"),
-		NextSendAt:   &next,
+	originalSMTP := domain.SMTPSettings{
+		SenderEmail: "sender@example.com",
+		Host:        "smtp.example.com",
+		Port:        587,
+		Security:    domain.SMTPSecuritySTARTTLS,
+		User:        ptrTo("user"),
+		Password:    ptrTo("password"),
 	}
 
-	cloned := cloneKindleSettings(original)
+	cloned := cloneKindleDelivery(originalSMTP, "reader@kindle.com")
 
-	*original.SMTPUser = "changed-user"
-	*original.SMTPPassword = "changed-password"
-	*original.SendTime = "10:00"
-	*original.NextSendAt = next.Add(time.Hour)
+	*originalSMTP.User = "changed-user"
+	*originalSMTP.Password = "changed-password"
 
-	if *cloned.SMTPUser != "user" || *cloned.SMTPPassword != "password" || *cloned.SendTime != "09:00" {
+	if *cloned.SMTP.User != "user" || *cloned.SMTP.Password != "password" {
 		t.Fatalf("cloned string pointers were mutated: %+v", cloned)
 	}
 
-	if !cloned.NextSendAt.Equal(wantNext) {
-		t.Fatalf("cloned NextSendAt = %v, want %v", cloned.NextSendAt, wantNext)
+	if cloned.KindleEmail != "reader@kindle.com" {
+		t.Fatalf("cloned KindleEmail = %q, want reader@kindle.com", cloned.KindleEmail)
 	}
 
-	empty := cloneKindleSettings(domain.KindleSettings{})
-	if empty.SMTPUser != nil || empty.SMTPPassword != nil || empty.SendTime != nil || empty.NextSendAt != nil {
+	empty := cloneKindleDelivery(domain.SMTPSettings{}, "")
+	if empty.SMTP.User != nil || empty.SMTP.Password != nil {
 		t.Fatalf("nil pointers not preserved: %+v", empty)
 	}
 }
@@ -1648,13 +1717,12 @@ func TestRunJobEmptyUnreadSucceedsWithoutMail(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
 	sends := &fakeKindleSendRepository{}
 	builder := &fakeEPUBBuilder{}
 	mailer := &fakeMailSender{}
 
 	sender := NewKindleSender(KindleConfig{
-		Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+		Settings:    &fakeSettingRepository{settings: configuredDeliverySettings()},
 		KindleSends: sends,
 		EPUBBuilder: builder,
 		MailSender:  mailer,
@@ -1685,11 +1753,10 @@ func TestCompleteSendRetriesTerminalStatusWrite(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
 	sends := &fakeKindleSendRepository{completeFailure: completeSendAttempts - 1}
 
 	sender := NewKindleSender(KindleConfig{
-		Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+		Settings:    &fakeSettingRepository{settings: configuredDeliverySettings()},
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{},
 		MailSender:  &fakeMailSender{},
@@ -1724,7 +1791,6 @@ func TestRunJobCompletesWithoutCanceledContext(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
 	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
 	sends := &fakeKindleSendRepository{savedPages: []domain.SavedPage{page}}
 
@@ -1733,7 +1799,7 @@ func TestRunJobCompletesWithoutCanceledContext(t *testing.T) {
 
 	sender := NewKindleSender(KindleConfig{
 		BaseCtx:     baseCtx,
-		Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+		Settings:    &fakeSettingRepository{settings: configuredDeliverySettings()},
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
 			cancelBase()
@@ -1801,7 +1867,6 @@ func TestRunJobFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			kindle := configuredKindleSettings()
 			sends := &fakeKindleSendRepository{savedPages: []domain.SavedPage{page}}
 			builder := &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
 				return []domain.EPUBBook{book}, nil
@@ -1810,7 +1875,7 @@ func TestRunJobFailures(t *testing.T) {
 			tc.configure(sends, builder, mailer)
 
 			sender := NewKindleSender(KindleConfig{
-				Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+				Settings:    &fakeSettingRepository{settings: configuredDeliverySettings()},
 				KindleSends: sends,
 				EPUBBuilder: builder,
 				MailSender:  mailer,
@@ -1851,7 +1916,6 @@ func TestRunJobStopsAfterMailFailure(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
 	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
 
 	books := []domain.EPUBBook{
@@ -1866,7 +1930,7 @@ func TestRunJobStopsAfterMailFailure(t *testing.T) {
 
 	mailCalls := 0
 	mailer := &fakeMailSender{}
-	mailer.send = func(ctx context.Context, cfg domain.KindleSettings, book domain.EPUBBook) error {
+	mailer.send = func(ctx context.Context, delivery domain.KindleDelivery, book domain.EPUBBook) error {
 		mailCalls++
 		if mailCalls == 2 {
 			return errors.New("smtp rejected book")
@@ -1876,7 +1940,7 @@ func TestRunJobStopsAfterMailFailure(t *testing.T) {
 	}
 
 	sender := NewKindleSender(KindleConfig{
-		Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+		Settings:    &fakeSettingRepository{settings: configuredDeliverySettings()},
 		KindleSends: sends,
 		EPUBBuilder: builder,
 		MailSender:  mailer,
@@ -1912,7 +1976,6 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
 
 	defaultFeed := domain.Feed{ID: "default", Title: "Default Feed", ReaderMode: domain.ReaderModeDefault, Order: domain.SortOrderNewest}
 	extractedFeed := domain.Feed{ID: "extracted", Title: "Extracted Feed", ReaderMode: domain.ReaderModeExtracted, Order: domain.SortOrderNewest}
@@ -1973,7 +2036,7 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 	}}
 
 	sender := NewKindleSender(KindleConfig{
-		Settings:    &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}},
+		Settings:    &fakeSettingRepository{settings: configuredDeliverySettings()},
 		KindleSends: sends,
 		FeedItems:   feedItems,
 		Fetcher:     fetcher,
@@ -2051,11 +2114,11 @@ func TestCheckScheduleStartsDueSend(t *testing.T) {
 	loc := time.FixedZone("CST", 8*60*60)
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
 
-	kindle := configuredKindleSettings()
-	kindle.SendTime = ptrTo("09:00")
-	kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Kindle.SendTime = ptrTo("09:00")
+	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
-	settings := &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}}
+	settings := &fakeSettingRepository{settings: deliverySettings}
 	sends := &fakeKindleSendRepository{}
 
 	sender := NewKindleSender(KindleConfig{
@@ -2106,45 +2169,76 @@ func TestCheckScheduleSkipsWhenNotDueOrUnconfigured(t *testing.T) {
 	future := now.Add(time.Hour)
 	past := now.Add(-time.Hour)
 
-	configured := func() domain.KindleSettings {
-		kindle := configuredKindleSettings()
-		kindle.SendTime = ptrTo("09:00")
-		kindle.NextSendAt = &past
+	configured := func() domain.Settings {
+		settings := configuredDeliverySettings()
+		settings.Kindle.SendTime = ptrTo("09:00")
+		settings.Kindle.NextSendAt = &past
 
-		return kindle
+		return settings
 	}
 
 	cases := []struct {
-		name   string
-		kindle func() *domain.KindleSettings
+		name      string
+		configure func(settings *domain.Settings)
 	}{
-		{name: "missing kindle", kindle: func() *domain.KindleSettings { return nil }},
-		{name: "next send at in the future", kindle: func() *domain.KindleSettings {
-			kindle := configured()
-			kindle.NextSendAt = &future
-
-			return &kindle
-		}},
-		{name: "missing send time", kindle: func() *domain.KindleSettings {
-			kindle := configured()
-			kindle.SendTime = nil
-
-			return &kindle
-		}},
-		{name: "missing next send at", kindle: func() *domain.KindleSettings {
-			kindle := configured()
-			kindle.NextSendAt = nil
-
-			return &kindle
-		}},
+		{
+			name: "missing smtp and kindle",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP = nil
+				settings.Kindle = nil
+			},
+		},
+		{
+			name: "smtp configured but kindle nil",
+			configure: func(settings *domain.Settings) {
+				settings.Kindle = nil
+			},
+		},
+		{
+			name: "kindle configured but smtp nil",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP = nil
+			},
+		},
+		{
+			name: "blank kindle email",
+			configure: func(settings *domain.Settings) {
+				settings.Kindle.KindleEmail = " "
+			},
+		},
+		{
+			name: "blank smtp host",
+			configure: func(settings *domain.Settings) {
+				settings.SMTP.Host = " "
+			},
+		},
+		{
+			name: "next send at in the future",
+			configure: func(settings *domain.Settings) {
+				settings.Kindle.NextSendAt = &future
+			},
+		},
+		{
+			name: "missing send time",
+			configure: func(settings *domain.Settings) {
+				settings.Kindle.SendTime = nil
+			},
+		},
+		{
+			name: "missing next send at",
+			configure: func(settings *domain.Settings) {
+				settings.Kindle.NextSendAt = nil
+			},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			kindle := tc.kindle()
-			settings := &fakeSettingRepository{settings: domain.Settings{Kindle: kindle}}
+			deliverySettings := configured()
+			tc.configure(&deliverySettings)
+			settings := &fakeSettingRepository{settings: deliverySettings}
 			sends := &fakeKindleSendRepository{}
 
 			sender := NewKindleSender(KindleConfig{
@@ -2187,11 +2281,11 @@ func TestCheckScheduleReturnsInvalidSendTimeError(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
-	kindle.SendTime = ptrTo("25:99")
-	kindle.NextSendAt = ptrTo(now.Add(-time.Minute))
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Kindle.SendTime = ptrTo("25:99")
+	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Minute))
 
-	settings := &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}}
+	settings := &fakeSettingRepository{settings: deliverySettings}
 	sends := &fakeKindleSendRepository{}
 
 	sender := NewKindleSender(KindleConfig{
@@ -2216,11 +2310,11 @@ func TestCheckScheduleReturnsAdvanceError(t *testing.T) {
 
 	want := errors.New("advance failed")
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
-	kindle.SendTime = ptrTo("09:00")
-	kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Kindle.SendTime = ptrTo("09:00")
+	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
-	settings := &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}, advanceErr: want}
+	settings := &fakeSettingRepository{settings: deliverySettings, advanceErr: want}
 	sends := &fakeKindleSendRepository{}
 
 	sender := NewKindleSender(KindleConfig{
@@ -2255,11 +2349,11 @@ func TestCheckScheduleReturnsCreateError(t *testing.T) {
 
 	want := errors.New("create failed")
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
-	kindle.SendTime = ptrTo("09:00")
-	kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Kindle.SendTime = ptrTo("09:00")
+	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
-	settings := &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}}
+	settings := &fakeSettingRepository{settings: deliverySettings}
 	sends := &fakeKindleSendRepository{createErr: want}
 
 	sender := NewKindleSender(KindleConfig{
@@ -2281,11 +2375,11 @@ func TestCheckScheduleSkipsWhileRunning(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
-	kindle.SendTime = ptrTo("09:00")
-	kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Kindle.SendTime = ptrTo("09:00")
+	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
-	settings := &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}}
+	settings := &fakeSettingRepository{settings: deliverySettings}
 	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
 	sends := &fakeKindleSendRepository{savedPages: []domain.SavedPage{page}}
 
@@ -2340,11 +2434,11 @@ func TestStartSchedulerChecksImmediately(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
-	kindle.SendTime = ptrTo("09:00")
-	kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Kindle.SendTime = ptrTo("09:00")
+	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
-	settings := &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}}
+	settings := &fakeSettingRepository{settings: deliverySettings}
 	sends := &fakeKindleSendRepository{}
 
 	sender := NewKindleSender(KindleConfig{
@@ -2382,11 +2476,11 @@ func TestStartSchedulerTicks(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	kindle := configuredKindleSettings()
-	kindle.SendTime = ptrTo("09:00")
-	kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Kindle.SendTime = ptrTo("09:00")
+	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
-	settings := &fakeSettingRepository{settings: domain.Settings{Kindle: &kindle}, keepDue: true}
+	settings := &fakeSettingRepository{settings: deliverySettings, keepDue: true}
 	sends := &fakeKindleSendRepository{}
 
 	sender := NewKindleSender(KindleConfig{

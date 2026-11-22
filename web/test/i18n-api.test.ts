@@ -10,44 +10,42 @@ import {
   savedPagesApi,
   settingsApi,
 } from '../src/api';
-import type { KindleSettingsInput } from '../src/api/types';
+import type { KindleSettings, SmtpSettingsInput } from '../src/api/types';
 import { setLocale, translateErrorCode } from '../src/i18n';
 
 const SAVED = '/api/saved-pages';
 const FEEDS = '/api/feeds';
 const ITEMS = '/api/feed-items';
 const FOLDERS = '/api/folders';
-const SETTINGS = '/api/settings';
-const FETCH = `${SETTINGS}/fetcher`;
-const JINA_URL = `${FETCH}/jina`;
+const S = '/api/settings';
+const P = `${S}/services`;
+const api = settingsApi;
 const JINA = { key: 'k' };
-const RETENTION = `${SETTINGS}/retention`;
-const KINDLE = '/api/kindle';
-const KINDLE_PW = `${SETTINGS}/kindle/password`;
+const CDP = 'http://browser:9222';
+const CDP_B = { endpoint: CDP };
+const PROV = { provider: 'jina' };
+const SMTP_IN: SmtpSettingsInput = {
+  senderEmail: 'a@b.c',
+  host: 'h',
+  port: 465,
+  security: 'tls',
+};
+const KD_IN: KindleSettings = { kindleEmail: 'k@example.com' };
 const PAGE = 'https://example.com/a';
 const PARAMS = { limit: 30, unread: true, cursor: 'abc' };
 const LIST_URL = `${SAVED}?limit=30&unread=true&cursor=abc`;
 const LOOKUP = `${SAVED}/lookup?url=${encodeURIComponent(PAGE)}`;
+const PREV_U = `${FEEDS}/preview`;
+const READ_U = `${ITEMS}/read`;
 const URL_BODY = { url: PAGE };
-const PREVIEW_URL = `${FEEDS}/preview`;
-const ITEMS_READ_URL = `${ITEMS}/read`;
 const READ = { read: true };
 const LOGIN = { password: 'pw' };
 const IDS = { ids: ['a'] };
 const KEEP = { retention: 5 };
-const _JINA_KEY = { key: 'k' };
-const OPML = '<o/>';
 const NAME = { name: 't' };
 
 type Call = Array<unknown>;
-
-type Shape = [
-  name: string,
-  run: () => Promise<unknown>,
-  url: string,
-  method: string,
-  body?: unknown,
-];
+type Shape = [string, () => Promise<unknown>, string, string, unknown?];
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -100,7 +98,7 @@ const SHAPES: Array<Shape> = [
   ['all read', () => savedPagesApi.markAllRead(), `${SAVED}/read-all`, 'POST'],
   ['drop', () => savedPagesApi.remove('p'), `${SAVED}/p`, 'DELETE'],
   ['feeds', () => feedsApi.list(), FEEDS, 'GET'],
-  ['preview', () => feedsApi.preview(PAGE), PREVIEW_URL, 'POST', URL_BODY],
+  ['preview', () => feedsApi.preview(PAGE), PREV_U, 'POST', URL_BODY],
   ['add feed', () => feedsApi.create(URL_BODY), FEEDS, 'POST', URL_BODY],
   ['refresh', () => feedsApi.refresh('f'), `${FEEDS}/f/refresh`, 'POST'],
   ['feed read', () => feedsApi.markAllRead('f'), `${FEEDS}/f/read-all`, 'POST'],
@@ -109,27 +107,26 @@ const SHAPES: Array<Shape> = [
   ['items', () => feedItemsApi.listAll(), ITEMS, 'GET'],
   ['extract', () => feedItemsApi.extract('i'), `${ITEMS}/i/extract`, 'POST'],
   ['item', () => feedItemsApi.setRead('i', true), `${ITEMS}/i`, 'PATCH', READ],
-  [
-    'item ids',
-    () => feedItemsApi.markIdsRead(['a']),
-    ITEMS_READ_URL,
-    'POST',
-    IDS,
-  ],
+  ['item ids', () => feedItemsApi.markIdsRead(['a']), READ_U, 'POST', IDS],
   ['item all', () => feedItemsApi.markAllRead(), `${ITEMS}/read-all`, 'POST'],
   ['folders', () => foldersApi.list(), FOLDERS, 'GET'],
   ['new folder', () => foldersApi.create('t'), FOLDERS, 'POST', NAME],
   ['rename', () => foldersApi.rename('f', 't'), `${FOLDERS}/f`, 'PATCH', NAME],
   ['folder drop', () => foldersApi.remove('f'), `${FOLDERS}/f`, 'DELETE'],
-  ['settings', () => settingsApi.get(), SETTINGS, 'GET'],
-  ['keep', () => settingsApi.updateRetention(5), RETENTION, 'PUT', KEEP],
-  ['direct', () => settingsApi.setFetcherDirect(), `${FETCH}/direct`, 'PUT'],
-  ['jina', () => settingsApi.setFetcherJina('k'), `${FETCH}/jina`, 'PUT', JINA],
-  ['jina key', () => settingsApi.deleteJinaKey(), `${JINA_URL}/key`, 'DELETE'],
-  ['kindle pw', () => settingsApi.deleteKindlePassword(), KINDLE_PW, 'DELETE'],
-  ['send', () => kindleApi.sendNow(), `${KINDLE}/send`, 'POST'],
-  ['sends', () => kindleApi.listSends(), `${KINDLE}/sends`, 'GET'],
-  ['opml', () => feedsApi.importOpml('<o/>'), '/api/opml', 'POST', OPML],
+  ['settings', () => api.get(), S, 'GET'],
+  ['keep', () => api.updateRetention(5), `${S}/retention`, 'PUT', KEEP],
+  ['prov', () => api.updateProvider('jina'), `${S}/provider`, 'PUT', PROV],
+  ['save jina', () => api.saveJinaKey('k'), `${P}/jina`, 'PUT', JINA],
+  ['del jina', () => api.deleteJinaKey(), `${P}/jina`, 'DELETE'],
+  ['cdp', () => api.saveBrowserEndpoint(CDP), `${P}/browser`, 'PUT', CDP_B],
+  ['del cdp', () => api.deleteBrowserEndpoint(), `${P}/browser`, 'DELETE'],
+  ['save smtp', () => api.saveSmtp(SMTP_IN), `${P}/smtp`, 'PUT', SMTP_IN],
+  ['del smtp', () => api.deleteSmtp(), `${P}/smtp`, 'DELETE'],
+  ['del pw', () => api.deleteSmtpPassword(), `${P}/smtp/password`, 'DELETE'],
+  ['kindle', () => api.updateKindle(KD_IN), `${S}/kindle`, 'PUT', KD_IN],
+  ['send', () => kindleApi.sendNow(), '/api/kindle/send', 'POST'],
+  ['sends', () => kindleApi.listSends(), '/api/kindle/sends', 'GET'],
+  ['opml', () => feedsApi.importOpml('<o/>'), '/api/opml', 'POST', '<o/>'],
 ];
 
 describe('request shapes', () => {
@@ -235,21 +232,19 @@ describe('feed items and folders', () => {
 });
 
 describe('settings and kindle', () => {
-  it('unwraps settings and sends fetcher bodies', async () => {
+  it('unwraps settings and sends provider, service and kindle bodies', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ retention: 100 }));
     await expect(settingsApi.get()).resolves.toMatchObject({ retention: 100 });
     await settingsApi.updateRetention(5);
-    expect(recorded()[1]?.[2]).toEqual({ retention: 5 });
-    await settingsApi.setFetcherJina('k');
-    expect(recorded()[2]?.[2]).toEqual({ key: 'k' });
-    await settingsApi.setFetcherBrowser('http://browser:9222');
-    expect(recorded()[3]?.[2]).toEqual({ endpoint: 'http://browser:9222' });
-  });
-
-  it('sends the kindle settings body', async () => {
-    const input = { smtpPort: 587 } as KindleSettingsInput;
-    await settingsApi.updateKindle(input);
-    expect(recorded()[0]?.[2]).toEqual(input);
+    await settingsApi.updateProvider('jina');
+    await settingsApi.saveJinaKey('k');
+    await settingsApi.saveBrowserEndpoint(CDP);
+    await settingsApi.saveSmtp(SMTP_IN);
+    await settingsApi.updateKindle(KD_IN);
+    const bodies = recorded()
+      .slice(1)
+      .map((call) => call[2]);
+    expect(bodies).toEqual([KEEP, PROV, JINA, CDP_B, SMTP_IN, KD_IN]);
   });
 
   it('unwraps kindle sends', async () => {

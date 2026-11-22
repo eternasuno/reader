@@ -1,7 +1,7 @@
 /**
- * Shared settings store (`SET-VAL-*`, `KD-SEND-1`): loaded settings, per-section drafts and the
- * save/send guards. `settings.ts` and `settings-kindle.ts` read and write it through these
- * accessors, which keeps both modules free of import cycles.
+ * Shared settings store (`SET-VAL-*`, `SET-SVC-1`, `SET-KINDLE-1`, `KD-SEND-1`): loaded
+ * settings, per-section drafts and the save/send guards. `settings.ts`, `settings-kindle.ts`, and
+ * `settings-services.ts` read and write it through these accessors, keeping modules cycle-free.
  */
 
 import { createSignal, flush } from 'solid-js';
@@ -11,8 +11,11 @@ import type {
   Settings,
   SMTPSecurity,
 } from '../api';
+import { ApiError } from '../api';
+import { translateErrorCode } from '../i18n';
+import { showToast } from '../ui';
 
-export type SettingsSection = 'articles' | 'extraction' | 'kindle';
+export type SettingsSection = 'articles' | 'extraction' | 'kindle' | 'services';
 
 /** `SET-VAL-1`: retention defaults to 100. */
 export const DEFAULT_RETENTION = 100;
@@ -25,14 +28,15 @@ const [providerDraft, setProviderDraft] =
 const [jinaKeyDraft, setJinaKeyDraft] = createSignal('');
 const [browserEndpointDraft, setBrowserEndpointDraft] = createSignal('');
 
-const [kindleEmailDraft, setKindleEmailDraft] = createSignal('');
-const [senderEmailDraft, setSenderEmailDraft] = createSignal('');
+const [smtpSenderEmailDraft, setSmtpSenderEmailDraft] = createSignal('');
 const [smtpHostDraft, setSmtpHostDraft] = createSignal('');
 const [smtpPortDraft, setSmtpPortDraft] = createSignal(0);
 const [smtpSecurityDraft, setSmtpSecurityDraft] =
   createSignal<SMTPSecurity>('tls');
 const [smtpUserDraft, setSmtpUserDraft] = createSignal('');
 const [smtpPasswordDraft, setSmtpPasswordDraft] = createSignal('');
+
+const [kindleEmailDraft, setKindleEmailDraft] = createSignal('');
 const [sendTimeDraft, setSendTimeDraft] = createSignal('');
 
 const [savingAction, setSavingAction] = createSignal<string | null>(null);
@@ -52,7 +56,6 @@ export {
   providerDraft,
   retentionDraft,
   savingAction,
-  senderEmailDraft,
   sendTimeDraft,
   setBrowserEndpointDraft,
   setJinaKeyDraft,
@@ -63,23 +66,35 @@ export {
   setProviderDraft,
   setRetentionDraft,
   setSavingAction,
-  setSenderEmailDraft,
   setSendTimeDraft,
   setSettings,
   setSmtpHostDraft,
   setSmtpPasswordDraft,
   setSmtpPortDraft,
   setSmtpSecurityDraft,
+  setSmtpSenderEmailDraft,
   setSmtpUserDraft,
   settings,
   smtpHostDraft,
   smtpPasswordDraft,
   smtpPortDraft,
   smtpSecurityDraft,
+  smtpSenderEmailDraft,
   smtpUserDraft,
 };
 
-/** `settings.md:20`: only one save runs at a time; the guard never blocks Kindle sends. */
+export const errorCodeOf = (error: unknown): string =>
+  error instanceof ApiError ? error.code : 'RequestFailed';
+
+export const toastSettingsError = (error: unknown): false => {
+  showToast(translateErrorCode(errorCodeOf(error)), 'error');
+  return false;
+};
+
+export const optionalText = (value: string): string | undefined =>
+  value.trim().length > 0 ? value.trim() : undefined;
+
+/** `settings.md:25`: only one save runs at a time; the guard never blocks Kindle sends. */
 export const runSave = async (
   action: string,
   work: () => Promise<boolean>

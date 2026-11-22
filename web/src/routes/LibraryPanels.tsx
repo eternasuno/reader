@@ -70,7 +70,10 @@ function PanelFrame(props: PanelFrameProps): JSX.Element {
       ref={props.panelRef}
       data-panel={props.name}
       tabindex={-1}
-      class={['min-h-0 min-w-0 overflow-hidden outline-none', props.visible]}
+      class={[
+        'min-h-0 min-w-0 overflow-hidden outline-none *:min-w-0 *:flex-1',
+        props.visible,
+      ]}
     >
       {props.children}
     </div>
@@ -105,7 +108,7 @@ function SidebarColumn(props: LibraryViewProps): JSX.Element {
       <Show when={props.ctl.drawerOpen()}>
         <button
           type="button"
-          class="fixed inset-0 z-30 bg-base-100/70 md:hidden"
+          class="fixed inset-0 z-30 bg-black/60 md:hidden"
           aria-label={String(t('common.close'))}
           onClick={props.ctl.closeDrawer}
         />
@@ -172,7 +175,7 @@ function AddDialogs(props: LibraryViewProps): JSX.Element {
         folders={sidebarFolders()}
         existingFeeds={sidebarFeeds()}
         onClose={props.ctl.closeAddFeed}
-        onSubscribed={props.ctl.openFeed}
+        onSubscribed={props.ctl.openSubscribedFeed}
         onDuplicateFound={props.ctl.openFeed}
       />
     </>
