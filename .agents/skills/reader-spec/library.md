@@ -11,14 +11,14 @@ The single authenticated workspace: sidebar of scopes, virtualized article list,
 - `LIB-READ-1`: Toggling read state, opening an unread article, `将已加载文章标为已读`, and `全部标记为已读` apply optimistically and roll back (restoring rows and reloading counts) with an error toast on failure.
 - `LIB-READ-2`: `将已加载文章标为已读` sends the IDs of currently loaded unread rows matching the active scope; `全部标记为已读` calls the scope's own mark-all endpoint (`later.md`, `feeds.md`, `folders.md`). Neither button is ever disabled.
 - `LIB-COUNT-1`: Sidebar hides zero unread counts; list heading always shows the count. Folder count = sum of its feeds' counts; `全部订阅` count = sum of all feeds' counts.
-- `LIB-ROW-1`: Each row shows source (feed title for feed items; URL hostname for saved pages), relative publish time (when present), title (max 3 lines), summary plain text (max 2 lines), and an independent read-toggle control (`aria-pressed`). Left-click opens the article in the reader; modified/middle click opens the original URL in a new tab.
+- `LIB-ROW-1`: Each row is a rounded card showing, left to right: an independent leading read-toggle control (`aria-pressed`; solid dot when unread, hollow circle on hover/focus when read), then source line (site icon + feed title for feed items / URL hostname for saved pages, relative publish time right-aligned when present), title (max 3 lines; bold when unread, dimmed when read), summary plain text (max 2 lines), and an optional right-side thumbnail (first absolute `http(s)` `<img src>` of `description`, else `content`; hidden when absent or failing to load). Site icons are the source origin's `/favicon.ico` (feed URL for feed items, page URL for saved pages) loaded directly by the browser with `referrerpolicy="no-referrer"`, falling back to a generic icon. Left-click opens the article in the reader; modified/middle click opens the original URL in a new tab.
 - `LIB-VIEW-1`: CSS responsive layout: wide = 3 columns (sidebar, list, reader); medium = sidebar + (list or reader); narrow = single column + mobile header bar (`切换导航`, breadcrumb `留白 / <scope>`). Focus moves safely when a panel hides.
 - `LIB-TOAST-1`: At most one toast at a time (bottom-end), auto-dismissed after 6 s or on clicking `关闭`.
 
 ## Interface & Messages
 
-- **Sidebar**: brand `留白` + menu (`设置`, `语言：中文 / English`, `退出登录`), `稍后阅读`, `全部订阅`, and `订阅源` section (plus `+` menu: `新增 RSS 订阅`, `新建目录`, `导入 OPML`). Every scope row swaps its unread count for a `⋯` menu (`只显示未读`, `全部标记为已读`, plus scope-specific actions) on hover/focus (always visible on touch).
-- **List heading**: scope title + unread count on left; `将已加载文章标为已读` + `⋯` menu (`只显示未读`, `全部标记为已读`, plus scope-specific items) on right.
+- **Sidebar**: brand icon + `留白` + menu (`设置`, `语言：中文 / English`, `退出登录`), `稍后阅读`, `全部订阅`, and `订阅源` section (plus `+` menu: `新增 RSS 订阅`, `新建目录`, `导入 OPML`); feed rows show the feed's site icon. The selected scope row is filled with the accent surface; unread counts are plain muted numbers. Every scope row swaps its unread count for a `⋯` menu (`只显示未读`, `全部标记为已读`, plus scope-specific actions) on hover/focus (always visible on touch).
+- **List heading**: scope title + plain muted unread count on left; `将已加载文章标为已读` + `⋯` menu (`只显示未读`, `全部标记为已读`, plus scope-specific items) on right.
 
 | Situation | Text |
 | --- | --- |

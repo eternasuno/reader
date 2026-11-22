@@ -15,6 +15,9 @@ export type IconName =
   | 'chevron-left'
   | 'chevron-right'
   | 'chevron-down'
+  | 'chevron-up'
+  | 'circle'
+  | 'circle-filled'
   | 'arrow-left'
   | 'external-link'
   | 'trash'
@@ -23,7 +26,8 @@ export type IconName =
   | 'menu'
   | 'close'
   | 'mail'
-  | 'refresh';
+  | 'refresh'
+  | 'user';
 
 export interface IconProps {
   name: IconName;
@@ -111,6 +115,9 @@ const SHAPES: Record<IconName, Array<IconShape>> = {
   'chevron-left': [p('m15 18-6-6 6-6')],
   'chevron-right': [p('m9 18 6-6-6-6')],
   'chevron-down': [p('m6 9 6 6 6-6')],
+  'chevron-up': [p('m18 15-6-6-6 6')],
+  circle: [c(12, 12, 7)],
+  'circle-filled': [c(12, 12, 7, true)],
   'arrow-left': [p('m12 19-7-7 7-7'), p('M19 12H5')],
   'external-link': [
     p('M15 3h6v6'),
@@ -144,6 +151,11 @@ const SHAPES: Record<IconName, Array<IconShape>> = {
     p('M21 3v5h-5'),
     p('M21 12a9 9 0 0 1-15 6.7L3 16'),
     p('M3 21v-5h5'),
+  ],
+  user: [
+    c(12, 12, 10),
+    c(12, 10, 3),
+    p('M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662'),
   ],
 };
 

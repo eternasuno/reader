@@ -19,6 +19,7 @@ export {
   MenuItem,
   MenuRadio,
 } from './Menu';
+export { SettingsGroup, SettingsRow, StatusBadge } from './SettingsGroup';
 export type { ToastMessage, ToastVariant, ToastViewportProps } from './Toast';
 export {
   currentToast,

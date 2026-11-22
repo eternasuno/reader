@@ -11,6 +11,8 @@ import {
 import { Icon, Menu, MenuCheckbox, MenuDivider, MenuItem } from '../ui';
 import { FeedDisplayRadios } from './FeedDisplayRadios';
 import { hasRefreshFailures, retryRefresh } from './feedFailure';
+import { SidebarRowEnd } from './SidebarRowEnd';
+import { SiteIcon } from './SiteIcon';
 import {
   deleteFeed,
   isActiveScope,
@@ -18,7 +20,6 @@ import {
   toggleUnread,
 } from './sidebarActions';
 import {
-  COUNT_CLASSES,
   ROW_BUTTON_CLASSES,
   ROW_CLASSES,
   rowClasses,
@@ -53,11 +54,16 @@ export function FeedRow(props: {
         indent={props.indent ?? false}
         state={props.state}
       />
-      <FeedRowMenu
-        feed={props.feed}
-        showMove={props.showMove}
-        state={props.state}
-      />
+      <Show when={hasRefreshFailures(props.feed)}>
+        <FeedFailureMenu feed={props.feed} state={props.state} />
+      </Show>
+      <SidebarRowEnd count={feedUnreadCount(props.feed.id)}>
+        <FeedRowMenu
+          feed={props.feed}
+          showMove={props.showMove}
+          state={props.state}
+        />
+      </SidebarRowEnd>
     </div>
   );
 }
@@ -69,7 +75,6 @@ function FeedRowButton(props: {
 }): JSX.Element {
   const active = () =>
     isActiveScope(props.state, { kind: 'feed', feedId: props.feed.id });
-  const count = () => feedUnreadCount(props.feed.id);
 
   return (
     <button
@@ -82,14 +87,8 @@ function FeedRowButton(props: {
       aria-current={active() ? 'page' : undefined}
       onClick={() => selectFeed(props.state, props.feed)}
     >
-      <Icon name="rss" size={14} class="text-base-content/50" />
+      <SiteIcon url={props.feed.url} fallback="rss" size={16} />
       <span class="flex-1 truncate">{props.feed.title}</span>
-      <Show when={hasRefreshFailures(props.feed)}>
-        <FeedFailureMenu feed={props.feed} state={props.state} />
-      </Show>
-      <Show when={count() > 0}>
-        <span class={COUNT_CLASSES}>{count()}</span>
-      </Show>
     </button>
   );
 }

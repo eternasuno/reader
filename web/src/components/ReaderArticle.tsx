@@ -1,26 +1,33 @@
 import type { JSX } from '@solidjs/web';
 import { Show } from 'solid-js';
-import { formatRelativeTime, locale, t } from '../i18n';
+import { formatDateTime, locale, t } from '../i18n';
 import {
+  articleSource,
   displayMode,
   extracting,
   hostnameOf,
   type LibraryArticle,
 } from '../state';
-import { Icon } from '../ui';
 import { ArticleFrame } from './ArticleFrame';
 import { EmbeddedWebpageFrame } from './EmbeddedWebpageFrame';
 import { bodyHtml } from './readerBody';
+import { SiteIcon } from './SiteIcon';
 
-/** `RD-CONTENT-1`: title, source link, and published time. */
+/** `RD-CONTENT-1`: source line, title, then hostname link and published date. */
 export function ReaderArticleHeader(props: {
   article: LibraryArticle;
 }): JSX.Element {
   const article = () => props.article;
+  const source = () => articleSource(article());
+  const hostname = () => hostnameOf(article().url);
 
   return (
-    <header class="flex flex-col gap-2">
-      <h1 class="text-xl leading-snug font-semibold break-words">
+    <header class="flex flex-col gap-3">
+      <p class="flex items-center gap-2 text-sm text-base-content/70">
+        <SiteIcon url={source().url} fallback="globe" size={16} />
+        <span class="truncate">{source().title}</span>
+      </p>
+      <h1 class="text-2xl leading-tight font-bold break-words sm:text-3xl">
         <a
           href={article().url}
           target="_blank"
@@ -30,24 +37,22 @@ export function ReaderArticleHeader(props: {
           {article().title}
         </a>
       </h1>
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-base-content/60">
-        <a
-          href={article().url}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="inline-flex items-center gap-1 transition-colors hover:text-primary"
-        >
-          <Icon name="globe" size={13} />
-          <span class="truncate">{hostnameOf(article().url)}</span>
-        </a>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60">
+        <Show when={hostname() !== source().title}>
+          <a
+            href={article().url}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="truncate transition-colors hover:text-primary"
+          >
+            {hostname()}
+          </a>
+        </Show>
         <Show when={article().publishedAt}>
           {(publishedAt) => (
-            <>
-              <span aria-hidden="true">·</span>
-              <time datetime={publishedAt()}>
-                {formatRelativeTime(publishedAt(), locale())}
-              </time>
-            </>
+            <time datetime={publishedAt()}>
+              {formatDateTime(publishedAt(), locale())}
+            </time>
           )}
         </Show>
       </div>

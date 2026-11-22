@@ -3,6 +3,11 @@
 
 @theme {
   --color-brand: #d5a15c;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    "Noto Sans", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Noto Sans SC", "Source Han Sans SC", sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Noto Color Emoji";
 }
 
 @plugin "daisyui/theme" {
@@ -16,8 +21,8 @@
   --color-base-content: #dddddf;
   --color-primary: #c9afe9;
   --color-primary-content: #20172b;
-  --color-secondary: #c9afe9;
-  --color-secondary-content: #20172b;
+  --color-secondary: #3a3a3c;
+  --color-secondary-content: #e5e5e7;
   --color-accent: #d5a15c;
   --color-accent-content: #20172b;
   --color-neutral: #5e4774;

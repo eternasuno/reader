@@ -18,12 +18,19 @@ export interface DialogActionsProps {
 export function DialogActions(props: DialogActionsProps): JSX.Element {
   return (
     <div class="flex justify-end gap-2">
-      <Button variant="ghost" onClick={props.onCancel} disabled={props.busy}>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={props.onCancel}
+        disabled={props.busy}
+      >
         {props.cancelLabel}
       </Button>
       <Button
         type="submit"
         variant="primary"
+        size="sm"
+        class="min-w-20"
         loading={props.submitLoading ?? props.busy}
         disabled={props.busy}
       >

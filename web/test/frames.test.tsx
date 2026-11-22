@@ -125,9 +125,9 @@ describe('buildArticleSrcdoc policy', () => {
     expect(SRCDOC).toContain(
       '<link rel="stylesheet" href="https://app.example/assets/app.css">'
     );
-    expect(SRCDOC).toContain('font-family: ui-sans-serif');
+    expect(SRCDOC).toContain('font-family: -apple-system');
     expect(SRCDOC).toContain('"PingFang SC"');
-    expect(SRCDOC).toContain('"Noto Sans CJK SC"');
+    expect(SRCDOC).toMatch(/Arial[^;]*"Noto Sans CJK SC"/);
     expect(SRCDOC).not.toMatch(/font-family:\s*system-ui/);
     expect(SRCDOC).toContain('#1e1e1e');
     expect(SRCDOC).toContain('max-width: 100%');

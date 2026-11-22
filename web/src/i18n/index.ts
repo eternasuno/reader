@@ -75,6 +75,20 @@ export const translateErrorCode = (code: string): string => {
   return String(t('errors.RequestFailed'));
 };
 
+/** `RD-CONTENT-1`: localized absolute date and time, e.g. `2026年11月22日 14:01`. */
+export const formatDateTime = (
+  isoString: string,
+  currentLocale: Locale = locale()
+): string => {
+  const timestamp = Date.parse(isoString);
+  if (Number.isNaN(timestamp)) return '';
+
+  return new Intl.DateTimeFormat(currentLocale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(timestamp);
+};
+
 export const formatRelativeTime = (
   isoString: string,
   currentLocale: Locale = locale()

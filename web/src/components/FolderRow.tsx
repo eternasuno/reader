@@ -12,6 +12,7 @@ import {
 } from '../state';
 import { Icon, Menu, MenuCheckbox, MenuDivider, MenuItem } from '../ui';
 import { FeedRow } from './FeedRow';
+import { SidebarRowEnd } from './SidebarRowEnd';
 import {
   deleteFolder,
   isActiveScope,
@@ -19,7 +20,6 @@ import {
   toggleUnread,
 } from './sidebarActions';
 import {
-  COUNT_CLASSES,
   ROW_BUTTON_CLASSES,
   ROW_CLASSES,
   rowClasses,
@@ -48,7 +48,9 @@ export function FolderRow(props: {
           active={active()}
           state={props.state}
         />
-        <FolderMenu folder={props.folder} state={props.state} />
+        <SidebarRowEnd count={folderUnreadCount(props.folder.id)}>
+          <FolderMenu folder={props.folder} state={props.state} />
+        </SidebarRowEnd>
       </div>
       <Show when={!collapsed()}>
         <div class="ml-4 flex flex-col gap-0.5 border-l border-base-300 pl-1">
@@ -110,11 +112,8 @@ function FolderNameButton(props: {
         })
       }
     >
-      <Icon name="folder" size={16} class="text-base-content/60" />
+      <Icon name="folder" size={16} class="opacity-70" />
       <span class="flex-1 truncate">{props.folder.name}</span>
-      <Show when={folderUnreadCount(props.folder.id) > 0}>
-        <span class={COUNT_CLASSES}>{folderUnreadCount(props.folder.id)}</span>
-      </Show>
     </button>
   );
 }

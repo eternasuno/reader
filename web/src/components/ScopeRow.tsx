@@ -1,9 +1,8 @@
 import type { JSX } from '@solidjs/web';
-import { Show } from 'solid-js';
 import { t } from '../i18n';
 import { Icon, type IconName, Menu } from '../ui';
+import { SidebarRowEnd } from './SidebarRowEnd';
 import {
-  COUNT_CLASSES,
   ROW_BUTTON_CLASSES,
   ROW_CLASSES,
   rowClasses,
@@ -19,7 +18,7 @@ export interface ScopeRowProps {
   children?: JSX.Element;
 }
 
-/** `LIB-COUNT-1`: sidebar rows hide zero unread counts; the row keeps its `⋯` menu. */
+/** `LIB-COUNT-1`: sidebar rows hide zero unread counts; the count swaps with the `⋯` menu. */
 export function ScopeRow(props: ScopeRowProps): JSX.Element {
   return (
     <div class={[ROW_CLASSES, rowClasses(props.active)]}>
@@ -29,19 +28,18 @@ export function ScopeRow(props: ScopeRowProps): JSX.Element {
         aria-current={props.active ? 'page' : undefined}
         onClick={props.onSelect}
       >
-        <Icon name={props.icon} size={16} class="text-base-content/60" />
+        <Icon name={props.icon} size={16} class="opacity-70" />
         <span class="flex-1 truncate">{props.label}</span>
-        <Show when={props.count > 0}>
-          <span class={COUNT_CLASSES}>{props.count}</span>
-        </Show>
       </button>
-      <Menu
-        label={String(t('library.moreActions'))}
-        align="end"
-        triggerClass="btn-xs"
-      >
-        {props.children}
-      </Menu>
+      <SidebarRowEnd count={props.count}>
+        <Menu
+          label={String(t('library.moreActions'))}
+          align="end"
+          triggerClass="btn-xs"
+        >
+          {props.children}
+        </Menu>
+      </SidebarRowEnd>
     </div>
   );
 }

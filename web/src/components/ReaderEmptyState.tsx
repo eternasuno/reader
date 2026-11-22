@@ -22,11 +22,9 @@ export function ReaderEmptyState(): JSX.Element {
 function NoArticleOpen(): JSX.Element {
   return (
     <div class="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
-      <Icon name="bookmark" size={28} class="text-base-content/30" />
-      <p class="text-sm font-medium text-base-content/70">
-        {String(t('reader.emptyTitle'))}
-      </p>
-      <p class="text-xs text-base-content/50">
+      <Icon name="bookmark" size={40} class="opacity-30" />
+      <p class="text-base font-medium">{String(t('reader.emptyTitle'))}</p>
+      <p class="text-sm text-base-content/60">
         {String(t('reader.emptyHint'))}
       </p>
     </div>

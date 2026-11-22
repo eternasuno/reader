@@ -22,13 +22,13 @@ export interface ReaderToolbarProps {
 const readLabel = (article: LibraryArticle): string =>
   String(t(article.read ? 'reader.markUnread' : 'reader.markRead'));
 
-/** `RD-READ-1`, `RD-EXTRACT-1`, `RD-NAV-1`: the article action bar. */
+/** `RD-READ-1`, `RD-EXTRACT-1`, `RD-NAV-1`: the icon-only article action bar. */
 export function ReaderToolbar(props: ReaderToolbarProps): JSX.Element {
   return (
     <div
       role="toolbar"
       aria-label={String(t('reader.articleActions'))}
-      class="flex flex-wrap items-center gap-1 border-b border-base-300 px-2 py-2"
+      class="flex min-h-13 flex-wrap items-center gap-1 border-b border-base-300 px-2 py-1.5"
     >
       <ReaderNavButtons nav={props.nav} />
       <span class="flex-1" />
@@ -50,39 +50,51 @@ const goAdjacent = (nav: ReaderNav, direction: 'prevId' | 'nextId'): void => {
   if (target !== null) nav.onNavigate(nav.articleUrl(target));
 };
 
+function ToolbarButton(props: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: JSX.Element;
+}): JSX.Element {
+  return (
+    <Button
+      variant="icon"
+      size="sm"
+      aria-label={props.label}
+      title={props.label}
+      disabled={props.disabled}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </Button>
+  );
+}
+
+/** The list stays visible beside the reader on wide screens, so "back" reads as close there. */
 function ReaderNavButtons(props: { nav: ReaderNav }): JSX.Element {
   return (
     <>
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-label={String(t('reader.backToList'))}
-        title={String(t('reader.backToList'))}
+      <ToolbarButton
+        label={String(t('reader.backToList'))}
         onClick={() => props.nav.onNavigate(props.nav.listUrl())}
       >
-        <Icon name="arrow-left" size={16} />
-        <span class="hidden sm:inline">{String(t('reader.backToList'))}</span>
-      </Button>
-      <Button
-        variant="icon"
-        size="sm"
-        aria-label={String(t('reader.prevArticle'))}
-        title={String(t('reader.prevArticle'))}
+        <Icon name="arrow-left" size={18} class="xl:hidden" />
+        <Icon name="close" size={18} class="hidden xl:inline-block" />
+      </ToolbarButton>
+      <ToolbarButton
+        label={String(t('reader.prevArticle'))}
         disabled={adjacentArticleIds().prevId === null}
         onClick={() => goAdjacent(props.nav, 'prevId')}
       >
-        <Icon name="chevron-left" size={18} />
-      </Button>
-      <Button
-        variant="icon"
-        size="sm"
-        aria-label={String(t('reader.nextArticle'))}
-        title={String(t('reader.nextArticle'))}
+        <Icon name="chevron-up" size={18} />
+      </ToolbarButton>
+      <ToolbarButton
+        label={String(t('reader.nextArticle'))}
         disabled={adjacentArticleIds().nextId === null}
         onClick={() => goAdjacent(props.nav, 'nextId')}
       >
-        <Icon name="chevron-right" size={18} />
-      </Button>
+        <Icon name="chevron-down" size={18} />
+      </ToolbarButton>
     </>
   );
 }
@@ -94,39 +106,29 @@ function ReaderActionButtons(props: {
   return (
     <>
       <Show when={props.article.kind === 'feed'}>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={String(t('reader.saveToLater'))}
-          title={String(t('reader.saveToLater'))}
-          onClick={props.onSave}
-        >
-          <Icon name="bookmark" size={16} />
-          <span class="hidden sm:inline">
-            {String(t('reader.saveToLater'))}
-          </span>
-        </Button>
-      </Show>
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-pressed={props.article.read ? 'true' : 'false'}
-        aria-label={readLabel(props.article)}
-        onClick={() => void toggleRead(props.article)}
-      >
-        {readLabel(props.article)}
-      </Button>
-      <Show when={props.article.kind === 'feed'}>
-        <Button
-          variant="icon"
-          size="sm"
-          aria-label={extractLabel()}
-          title={extractLabel()}
+        <ToolbarButton
+          label={extractLabel()}
           onClick={() => void toggleExtractedMode()}
         >
           <Icon name="extract" size={18} />
-        </Button>
+        </ToolbarButton>
+        <ToolbarButton
+          label={String(t('reader.saveToLater'))}
+          onClick={props.onSave}
+        >
+          <Icon name="bookmark" size={18} />
+        </ToolbarButton>
       </Show>
+      <ToolbarButton
+        label={readLabel(props.article)}
+        onClick={() => void toggleRead(props.article)}
+      >
+        <Icon
+          name={props.article.read ? 'circle' : 'circle-filled'}
+          size={18}
+          class={props.article.read ? '' : 'text-primary'}
+        />
+      </ToolbarButton>
     </>
   );
 }

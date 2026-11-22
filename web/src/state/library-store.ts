@@ -13,8 +13,8 @@ import type { LibraryScope } from './scope';
 export const PAGE_SIZE = 30;
 
 export type LibraryArticle =
-  | ({ kind: 'later'; sourceTitle: string } & SavedPage)
-  | ({ kind: 'feed'; sourceTitle: string } & FeedItem);
+  | ({ kind: 'later' } & SavedPage)
+  | ({ kind: 'feed' } & FeedItem);
 
 export interface LibraryArticlePatch {
   read?: boolean;
@@ -68,6 +68,23 @@ export {
  * `pageInFlight` keeps at most one next-page request alive (`LIB-LIST-1`).
  */
 export const requestState = { generation: 0, pageInFlight: false };
+
+/**
+ * `activeScope()` outlives the library page, so background work checks whether a library page is
+ * still mounted. Pages remount when the scope kind changes, so mounts are counted.
+ */
+let libraryMounts = 0;
+
+/** Called by the library page on mount; the returned release runs on unmount. */
+export const trackLibraryMount = (): (() => void) => {
+  libraryMounts += 1;
+
+  return () => {
+    libraryMounts -= 1;
+  };
+};
+
+export const isLibraryMounted = (): boolean => libraryMounts > 0;
 
 /**
  * The reader registers a listener so optimistic row patches also reach `openArticle()`. A callback

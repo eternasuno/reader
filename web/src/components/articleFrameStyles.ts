@@ -1,9 +1,11 @@
 /**
  * `RD-FRAME-1`: fixed reader typography, explicit sans stack (no bare
- * `system-ui` on Linux), dark surface and readable text.
+ * `system-ui` on Linux), dark surface and readable text. Latin fonts come
+ * before CJK fonts so Western punctuation such as `’` keeps its proportional
+ * glyph instead of a full-width CJK one.
  */
 const READER_FONT_STACK =
-  'ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif';
 
 export const READER_STYLES = `
 :root {
@@ -16,7 +18,7 @@ body {
 }
 body {
   margin: 0;
-  padding: 1rem 1.25rem 2rem;
+  padding: 1.5rem 0 2rem;
   font-family: ${READER_FONT_STACK};
   font-size: 1rem;
   line-height: 1.75;

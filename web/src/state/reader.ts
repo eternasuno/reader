@@ -11,7 +11,6 @@ import { showToast } from '../ui';
 import type { LibraryArticle } from './library';
 import * as library from './library';
 import type { LibraryScope } from './scope';
-import { hostnameOf } from './scope';
 import * as sidebar from './sidebar';
 
 const [openArticleId, setOpenArticleId] = createSignal<string | null>(null);
@@ -45,18 +44,8 @@ const toLibraryArticle = (
   item: SavedPage | FeedItem
 ): LibraryArticle =>
   scope.kind === 'later'
-    ? {
-        ...(item as SavedPage),
-        kind: 'later',
-        sourceTitle: hostnameOf(item.url),
-      }
-    : {
-        ...(item as FeedItem),
-        kind: 'feed',
-        sourceTitle:
-          sidebar.feeds().find((feed) => feed.id === (item as FeedItem).feedId)
-            ?.title ?? '',
-      };
+    ? { ...(item as SavedPage), kind: 'later' }
+    : { ...(item as FeedItem), kind: 'feed' };
 
 /**
  * `RD-MODE-1`: saved pages start in `default`; feed items start in their feed's stored mode.

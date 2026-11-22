@@ -19,8 +19,7 @@ import {
 import { FeedDisplayRadios } from './FeedDisplayRadios';
 import { retryRefresh } from './feedFailure';
 
-const COUNT_CLASSES =
-  'badge badge-sm border-0 bg-base-300 font-normal text-base-content/70 tabular-nums';
+const COUNT_CLASSES = 'text-sm font-normal tabular-nums text-base-content/50';
 
 export interface ArticleListHeaderProps {
   scope: LibraryScope;
@@ -34,8 +33,8 @@ export interface ArticleListHeaderProps {
 /** `LIB-COUNT-1`: scope title, unread count, and the list-level tools. */
 export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
   return (
-    <header class="flex items-center gap-1 border-b border-base-300 px-2 py-2">
-      <h2 class="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium">
+    <header class="flex min-h-13 items-center gap-1 border-b border-base-300 px-2 py-1.5">
+      <h2 class="flex min-w-0 flex-1 items-center gap-2 pl-2 text-base font-semibold">
         <span class="truncate">{scopeTitle(props.scope)}</span>
         <span class={COUNT_CLASSES}>{scopeUnreadCount(props.scope)}</span>
         <Show when={failingFeed(props.scope)}>

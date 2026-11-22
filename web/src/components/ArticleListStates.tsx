@@ -10,7 +10,7 @@ export function ArticleListError(): JSX.Element {
   return (
     <div
       role="alert"
-      class="flex items-start gap-2 border-b border-error/30 bg-error/10 px-3 py-2"
+      class="mx-2 my-2 flex items-start gap-2 rounded-box border border-error/30 bg-error/10 px-3 py-2.5"
     >
       <Icon name="warning" size={16} class="mt-0.5 text-error" />
       <div class="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -28,7 +28,11 @@ export function ArticleListError(): JSX.Element {
 
 export function ArticleListLoading(): JSX.Element {
   return (
-    <p class="px-3 py-4 text-sm text-base-content/60" role="status">
+    <p
+      class="flex items-center justify-center gap-2 px-3 py-8 text-sm text-base-content/60"
+      role="status"
+    >
+      <span class="loading loading-spinner loading-sm" aria-hidden="true" />
       {String(t('library.loading'))}
     </p>
   );
@@ -45,6 +49,7 @@ export interface ArticleListEmptyProps {
 export function ArticleListEmpty(props: ArticleListEmptyProps): JSX.Element {
   return (
     <div class="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+      <Icon name="inbox" size={40} class="mb-1 opacity-30" />
       <Show
         when={props.unreadOnly}
         fallback={<ScopeEmptyCopy copy={props.copy} />}
@@ -61,13 +66,16 @@ function UnreadEmptyCopy(props: {
 }): JSX.Element {
   return (
     <>
-      <p class="text-sm font-medium">{String(t('library.unreadEmptyTitle'))}</p>
-      <p class="text-xs text-base-content/60">
+      <p class="text-base font-medium">
+        {String(t('library.unreadEmptyTitle'))}
+      </p>
+      <p class="text-sm text-base-content/60">
         {String(t('library.unreadEmptyHint'))}
       </p>
       <Button
         variant="secondary"
         size="sm"
+        class="mt-2"
         onClick={() =>
           props.onNavigate(buildLibraryUrl(props.scope, { unreadOnly: false }))
         }
@@ -81,11 +89,16 @@ function UnreadEmptyCopy(props: {
 function ScopeEmptyCopy(props: { copy: EmptyCopy }): JSX.Element {
   return (
     <>
-      <p class="text-sm font-medium">{props.copy.title}</p>
-      <p class="text-xs text-base-content/60">{props.copy.hint}</p>
+      <p class="text-base font-medium">{props.copy.title}</p>
+      <p class="text-sm text-base-content/60">{props.copy.hint}</p>
       <Show when={props.copy.action}>
         {(action) => (
-          <Button variant="secondary" size="sm" onClick={action().run}>
+          <Button
+            variant="secondary"
+            size="sm"
+            class="mt-2"
+            onClick={action().run}
+          >
             {action().label}
           </Button>
         )}

@@ -30,11 +30,15 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+/** Opening a form dialog focuses its first field; other dialogs focus the panel. */
+const FIELD_SELECTOR =
+  'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])';
+
 const PANEL_CLASSES =
   'relative z-10 flex max-h-[85dvh] w-full max-w-md flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 text-base-content shadow-2xl focus:outline-none';
 
 const CLOSE_CLASSES =
-  'ml-auto btn btn-ghost btn-sm btn-square focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
+  'ml-auto -mr-2 btn btn-ghost btn-sm btn-square focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
 
 const focusableIn = (panel: HTMLDivElement): Array<HTMLElement> =>
   Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
@@ -66,7 +70,7 @@ interface FocusOptions {
   onClose: () => void;
 }
 
-/** Focuses the panel on open, traps Tab, and restores focus on close. */
+/** Focuses the first field (or the panel) on open, traps Tab, and restores focus on close. */
 const useDialogFocus = (options: FocusOptions): void => {
   createEffect(options.open, (open) => {
     if (!open) return;
@@ -88,7 +92,11 @@ const useDialogFocus = (options: FocusOptions): void => {
     };
 
     document.addEventListener('keydown', onKeyDown);
-    queueMicrotask(() => options.panel()?.focus());
+    queueMicrotask(() => {
+      const panel = options.panel();
+      const field = panel?.querySelector<HTMLElement>(FIELD_SELECTOR);
+      (field ?? panel)?.focus();
+    });
 
     return () => {
       document.removeEventListener('keydown', onKeyDown);
@@ -107,10 +115,10 @@ interface DialogHeaderProps {
 
 const DialogHeader = (props: DialogHeaderProps): JSX.Element => (
   <Show when={props.title || props.showClose !== false}>
-    <div class="flex items-start justify-between gap-3 border-b border-base-300 px-5 py-4">
+    <div class="flex items-center justify-between gap-3 px-5 pt-5 pb-1">
       <Show when={props.title}>
         {(title) => (
-          <h2 id={props.titleId} class="text-base font-semibold">
+          <h2 id={props.titleId} class="text-lg font-semibold">
             {title()}
           </h2>
         )}
@@ -149,7 +157,7 @@ export function Dialog(props: DialogProps): JSX.Element {
       <Portal>
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
-            class="absolute inset-0 bg-black/60"
+            class="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
             aria-hidden="true"
             onClick={requestClose}
           />
@@ -175,9 +183,7 @@ export function Dialog(props: DialogProps): JSX.Element {
               {props.children}
             </div>
             <Show when={props.footer}>
-              <div class="border-t border-base-300 px-5 py-3">
-                {props.footer}
-              </div>
+              <div class="px-5 pt-1 pb-5">{props.footer}</div>
             </Show>
           </div>
         </div>

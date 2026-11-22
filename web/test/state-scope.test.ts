@@ -100,3 +100,35 @@ describe('hostnames', () => {
     expect(state.hostnameOf('not a url')).toBe('');
   });
 });
+
+describe('row thumbnails', () => {
+  it('returns the first absolute http(s) image source', () => {
+    expect(
+      state.firstImageUrl(
+        '<p>x</p><img alt="a" src="https://cdn.example/a.jpg?w=1&amp;h=2"><img src="https://cdn.example/b.jpg">'
+      )
+    ).toBe('https://cdn.example/a.jpg?w=1&h=2');
+    expect(state.firstImageUrl("<img src='http://example.com/c.png'>")).toBe(
+      'http://example.com/c.png'
+    );
+  });
+
+  it('ignores missing, relative, and non-http sources', () => {
+    expect(state.firstImageUrl(undefined)).toBeNull();
+    expect(state.firstImageUrl('<p>no image</p>')).toBeNull();
+    expect(state.firstImageUrl('<img src="/relative.png">')).toBeNull();
+    expect(
+      state.firstImageUrl('<img src="data:image/png;base64,AA">')
+    ).toBeNull();
+  });
+});
+
+describe('site icons', () => {
+  it('points at the origin favicon for http(s) URLs only', () => {
+    expect(state.siteIconUrl('https://www.example.com:8443/a/b?c')).toBe(
+      'https://www.example.com:8443/favicon.ico'
+    );
+    expect(state.siteIconUrl('ftp://example.com/')).toBeNull();
+    expect(state.siteIconUrl('not a url')).toBeNull();
+  });
+});

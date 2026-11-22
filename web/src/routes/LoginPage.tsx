@@ -9,19 +9,22 @@ import {
   sanitizeNextPath,
   sessionStatus,
 } from '../state';
-import { Button, Input } from '../ui';
+import { Button, Icon, Input } from '../ui';
 import { errorCodeOf } from './viewHelpers';
 
 function LoginBrand(): JSX.Element {
   return (
-    <div class="flex items-start justify-between gap-2">
-      <div class="flex flex-col">
-        <p class="text-xs tracking-wide text-base-content/60 uppercase">
-          {String(t('auth.productLabel'))}
-        </p>
-        <p class="text-2xl font-semibold text-brand">
-          {String(t('common.brand'))}
-        </p>
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-3">
+        <Icon name="rss" size={30} strokeWidth={2.25} class="text-brand" />
+        <div class="flex flex-col">
+          <p class="text-xl font-semibold text-base-content">
+            {String(t('common.brand'))}
+          </p>
+          <p class="text-xs text-base-content/60">
+            {String(t('auth.productLabel'))}
+          </p>
+        </div>
       </div>
       <Button
         size="sm"
@@ -161,10 +164,12 @@ export function LoginPage(): JSX.Element {
 
   return (
     <div class="flex min-h-dvh items-center justify-center bg-base-100 p-4">
-      <div class="card w-full max-w-sm border border-base-300 bg-base-200 shadow-xl">
-        <div class="card-body gap-5">
+      <div class="card w-full max-w-sm rounded-box border border-base-300 bg-base-200/50 shadow-2xl">
+        <div class="card-body gap-6 p-7">
           <LoginBrand />
-          <h1 class="text-lg font-medium">{String(t('auth.title'))}</h1>
+          <h1 class="text-base font-medium text-base-content/80">
+            {String(t('auth.title'))}
+          </h1>
           <Show when={login.errorCode()}>
             {(code) => <LoginError code={code()} />}
           </Show>

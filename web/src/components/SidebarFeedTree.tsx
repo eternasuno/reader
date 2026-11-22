@@ -42,7 +42,7 @@ function TopLevelFeedRow(props: {
 function FeedTreeHeader(props: { state: SidebarProps }): JSX.Element {
   return (
     <div class="mt-3 flex items-center justify-between gap-2 px-2">
-      <h2 class="text-xs font-medium tracking-wide text-base-content/50">
+      <h2 class="text-xs font-semibold tracking-wider text-base-content/50 uppercase">
         {String(t('library.feedsSection'))}
       </h2>
       <Menu

@@ -15,6 +15,10 @@ import {
 } from '../api';
 import { translateErrorCode } from '../i18n';
 import { showToast } from '../ui';
+import {
+  isShowingEmptyFeed,
+  waitForFirstRefresh,
+} from './library-first-refresh';
 import type { LibraryArticle, LibraryArticlePatch } from './library-store';
 import {
   activeScope,
@@ -52,35 +56,43 @@ export {
   activeScope,
   activeUnreadOnly,
   cursor,
+  isLibraryMounted,
   loadError,
   loadingInitial,
   loadingMore,
   PAGE_SIZE,
   rows,
   setOnArticlePatched,
+  trackLibraryMount,
 } from './library-store';
 
 const codeOf = (error: unknown): string =>
   error instanceof ApiError ? error.code : 'RequestFailed';
 
-const feedTitle = (feedId: string): string =>
-  sidebar.feeds().find((feed) => feed.id === feedId)?.title ?? '';
+export interface ArticleSource {
+  title: string;
+  url: string;
+}
+
+/**
+ * `LIB-ROW-1`: saved pages are labelled by hostname, feed items by their feed. Read
+ * reactively so rows loaded before the sidebar feeds still resolve.
+ */
+export const articleSource = (article: LibraryArticle): ArticleSource => {
+  if (article.kind === 'later')
+    return { title: hostnameOf(article.url), url: article.url };
+
+  const feed = sidebar.feeds().find((entry) => entry.id === article.feedId);
+  return { title: feed?.title ?? '', url: feed?.url ?? article.url };
+};
 
 const toLibraryArticle = (
   scope: LibraryScope,
   item: SavedPage | FeedItem
 ): LibraryArticle =>
   scope.kind === 'later'
-    ? {
-        ...(item as SavedPage),
-        kind: 'later',
-        sourceTitle: hostnameOf(item.url),
-      }
-    : {
-        ...(item as FeedItem),
-        kind: 'feed',
-        sourceTitle: feedTitle((item as FeedItem).feedId),
-      };
+    ? { ...(item as SavedPage), kind: 'later' }
+    : { ...(item as FeedItem), kind: 'feed' };
 
 const toRows = (
   scope: LibraryScope,
@@ -185,6 +197,32 @@ export const loadScopeFirstPage = async (
   } finally {
     finishInitialLoad(requestGeneration);
   }
+};
+
+/**
+ * `FD-SUB-2`: a new subscription is refreshed in the background, so while its still-empty list is
+ * shown the client waits for that first refresh, then reloads the list and sidebar.
+ */
+export const reloadAfterFirstRefresh = async (
+  feedId: string,
+  signal: AbortSignal
+): Promise<void> => {
+  if (!(await waitForFirstRefresh(feedId, signal))) return;
+  if (signal.aborted || !isShowingEmptyFeed(feedId)) return;
+
+  await sidebar.refreshSidebar();
+  if (!signal.aborted && isShowingEmptyFeed(feedId))
+    await loadScopeFirstPage(activeScope(), activeUnreadOnly());
+};
+
+let firstRefreshWait: AbortController | null = null;
+
+/** `FD-SUB-2`: starts waiting for a just-subscribed feed, replacing any earlier wait. */
+export const startFirstRefreshWait = (feedId: string): void => {
+  firstRefreshWait?.abort();
+  const controller = new AbortController();
+  firstRefreshWait = controller;
+  void reloadAfterFirstRefresh(feedId, controller.signal);
 };
 
 const canLoadNextPage = (nextCursor: string | null): boolean =>

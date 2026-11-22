@@ -89,7 +89,7 @@ export function ToastViewport(props: ToastViewportProps): JSX.Element {
             aria-live="polite"
             aria-atomic="true"
             class={[
-              'alert max-w-sm shadow-lg',
+              'alert alert-soft max-w-sm rounded-box border border-current/20 text-sm shadow-xl',
               VARIANT_CLASSES[toast().variant],
             ]}
           >
@@ -97,7 +97,7 @@ export function ToastViewport(props: ToastViewportProps): JSX.Element {
             <span class="flex-1 break-words">{toast().message}</span>
             <button
               type="button"
-              class="btn btn-ghost btn-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              class="btn btn-ghost btn-xs text-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               onClick={dismissToast}
             >
               {props.closeLabel ?? '关闭'}

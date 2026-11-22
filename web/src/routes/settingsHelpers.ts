@@ -23,9 +23,9 @@ export const SEND_STATUS_KEYS = {
 } as const;
 
 export const SEND_STATUS_CLASSES = {
-  running: 'text-base-content/70',
-  succeeded: 'text-success',
-  failed: 'text-error',
+  running: 'border-0 bg-info/15 text-info',
+  succeeded: 'border-0 bg-success/15 text-success',
+  failed: 'border-0 bg-error/15 text-error',
 } as const;
 
 /** `settings.md:16-17`: `sendTime` accepts every half-hour slot of the day. */

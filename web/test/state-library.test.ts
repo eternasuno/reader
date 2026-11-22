@@ -132,7 +132,10 @@ describe('first page load', () => {
     expect(requestUrl()).toContain('/api/saved-pages?limit=30');
     expect(state.rows()).toHaveLength(2);
     expect(state.rows()[0].kind).toBe('later');
-    expect(state.rows()[0].sourceTitle).toBe('example.com');
+    expect(state.articleSource(state.rows()[0])).toEqual({
+      title: 'example.com',
+      url: state.rows()[0].url,
+    });
     expect(state.cursor()).toBe('p2');
     expect(state.activeScope()).toEqual({ kind: 'later' });
     expect(state.loadingInitial()).toBe(false);
@@ -184,6 +187,6 @@ describe('row labels', () => {
     });
 
     expect(state.rows()[0].kind).toBe('feed');
-    expect(state.rows()[0].sourceTitle).toBe('Go Blog');
+    expect(state.articleSource(state.rows()[0]).title).toBe('Go Blog');
   });
 });
