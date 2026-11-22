@@ -24,6 +24,9 @@ const COUNT_CLASSES = 'text-sm font-normal tabular-nums text-base-content/50';
 export interface ArticleListHeaderProps {
   scope: LibraryScope;
   unreadOnly: boolean;
+  drawerOpen: boolean;
+  onToggleNav: () => void;
+  navToggleRef: (element: HTMLButtonElement) => void;
   onToggleUnread: () => void;
   onRequestAddLink: () => void;
   onRequestMoveFeed: (feed: Feed) => void;
@@ -34,7 +37,18 @@ export interface ArticleListHeaderProps {
 export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
   return (
     <header class="flex min-h-13 items-center gap-1 border-b border-base-300 px-2 py-1.5">
-      <h2 class="flex min-w-0 flex-1 items-center gap-2 pl-2 text-base font-semibold">
+      <Button
+        ref={props.navToggleRef}
+        variant="icon"
+        size="sm"
+        class="max-md:size-10 md:hidden"
+        aria-label={String(t('library.toggleNav'))}
+        aria-expanded={props.drawerOpen ? 'true' : 'false'}
+        onClick={props.onToggleNav}
+      >
+        <Icon name="menu" size={20} />
+      </Button>
+      <h2 class="flex min-w-0 flex-1 items-center gap-2 pl-2 max-md:pl-0 text-base font-semibold">
         <span class="truncate">{scopeTitle(props.scope)}</span>
         <span class={COUNT_CLASSES}>{scopeUnreadCount(props.scope)}</span>
         <Show when={failingFeed(props.scope)}>
@@ -44,6 +58,7 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
       <Button
         variant="icon"
         size="sm"
+        class="max-md:size-10"
         aria-label={String(t('library.markLoadedRead'))}
         title={String(t('library.markLoadedRead'))}
         onClick={() => void markLoadedRead()}
@@ -53,6 +68,9 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
       <ArticleHeaderMenu
         scope={props.scope}
         unreadOnly={props.unreadOnly}
+        drawerOpen={props.drawerOpen}
+        onToggleNav={props.onToggleNav}
+        navToggleRef={props.navToggleRef}
         onToggleUnread={props.onToggleUnread}
         onRequestAddLink={props.onRequestAddLink}
         onRequestMoveFeed={props.onRequestMoveFeed}
@@ -67,7 +85,7 @@ function ArticleHeaderMenu(props: ArticleListHeaderProps): JSX.Element {
     <Menu
       label={String(t('library.moreActions'))}
       align="end"
-      triggerClass="btn-sm"
+      triggerClass="btn-sm max-md:size-10"
     >
       <MenuCheckbox checked={props.unreadOnly} onSelect={props.onToggleUnread}>
         {String(t('library.unreadOnly'))}

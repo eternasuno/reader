@@ -35,7 +35,7 @@ const FIELD_SELECTOR =
   'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])';
 
 const PANEL_CLASSES =
-  'relative z-10 flex max-h-[85dvh] w-full max-w-md flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 text-base-content shadow-2xl focus:outline-none';
+  'relative z-10 flex max-h-[85dvh] w-full max-w-md flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 text-base-content shadow-2xl focus:outline-none max-sm:max-w-none max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)]';
 
 const CLOSE_CLASSES =
   'ml-auto -mr-2 btn btn-ghost btn-sm btn-square focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
@@ -155,7 +155,7 @@ export function Dialog(props: DialogProps): JSX.Element {
   return (
     <Show when={props.open}>
       <Portal>
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
           <div
             class="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
             aria-hidden="true"
@@ -172,6 +172,10 @@ export function Dialog(props: DialogProps): JSX.Element {
             tabindex="-1"
             class={[PANEL_CLASSES, props.class]}
           >
+            <div
+              class="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-base-content/20 sm:hidden"
+              aria-hidden="true"
+            />
             <DialogHeader
               title={props.title}
               titleId={titleId}

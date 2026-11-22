@@ -273,8 +273,10 @@ describe('library layout', () => {
     for (const panel of ['sidebar', 'list', 'reader']) {
       expect(container.querySelector(`[data-panel="${panel}"]`)).not.toBeNull();
     }
-    expect(container.querySelector('[aria-label="切换导航"]')).not.toBeNull();
-    expect(container.textContent).toContain('留白 / 全部订阅');
+    const navToggle = must(container, '[aria-label="切换导航"]');
+    expect(navToggle.closest('[data-panel="list"]')).not.toBeNull();
+    expect(navToggle.className).toContain('md:hidden');
+    expect(container.textContent).not.toContain('留白 / 全部订阅');
 
     const urls = requestUrls();
     expect(listPages()).toHaveLength(1);

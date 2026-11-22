@@ -162,7 +162,7 @@ function ReadToggle(props: {
   return (
     <button
       type="button"
-      class="group/toggle mt-6 flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-base-content/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      class="group/toggle mt-6 flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-base-content/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:mt-4.5 pointer-coarse:size-8"
       aria-pressed={props.row.read ? 'true' : 'false'}
       aria-label={props.label}
       title={props.label}
@@ -176,7 +176,7 @@ function ReadToggle(props: {
         class={[
           'size-2 rounded-full border border-current',
           props.row.read
-            ? 'opacity-0 group-hover:opacity-50 group-focus-visible/toggle:opacity-50'
+            ? 'opacity-0 group-hover:opacity-50 group-focus-visible/toggle:opacity-50 pointer-coarse:opacity-50'
             : ['bg-current', props.active ? '' : 'text-primary'],
         ]}
         aria-hidden="true"

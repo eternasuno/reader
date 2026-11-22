@@ -18,7 +18,7 @@ export function ReaderMoreMenu(props: ReaderMoreMenuProps): JSX.Element {
     <Menu
       label={String(t('reader.moreActions'))}
       align="end"
-      triggerClass="btn-sm"
+      triggerClass="btn-sm max-md:size-10"
     >
       <MenuCheckbox
         checked={displayMode() === 'embedded'}

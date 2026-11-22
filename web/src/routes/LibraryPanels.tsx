@@ -11,7 +11,6 @@ import {
 } from '../components';
 import { t } from '../i18n';
 import { feeds as sidebarFeeds, folders as sidebarFolders } from '../state';
-import { Button, Icon } from '../ui';
 import type { LibraryController } from './libraryController';
 
 export type PanelName = 'sidebar' | 'list' | 'reader';
@@ -25,36 +24,7 @@ const GRID_CLASSES =
   'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_24rem_minmax(0,1fr)]';
 
 const DRAWER_CLASSES =
-  'fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] bg-base-100 shadow-xl md:relative md:inset-auto md:z-auto md:w-auto md:max-w-none md:shadow-none';
-
-interface MobileHeaderProps {
-  title: string;
-  drawerOpen: boolean;
-  onToggle: () => void;
-  headerRef: (element: HTMLElement) => void;
-}
-
-function MobileHeader(props: MobileHeaderProps): JSX.Element {
-  return (
-    <header
-      ref={props.headerRef}
-      class="flex items-center gap-2 border-b border-base-300 px-2 py-2 md:hidden"
-    >
-      <Button
-        variant="icon"
-        size="sm"
-        aria-label={String(t('library.toggleNav'))}
-        aria-expanded={props.drawerOpen ? 'true' : 'false'}
-        onClick={props.onToggle}
-      >
-        <Icon name="menu" size={18} />
-      </Button>
-      <p class="min-w-0 flex-1 truncate text-sm font-medium">
-        {String(t('common.brand'))} / {props.title}
-      </p>
-    </header>
-  );
-}
+  'fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] bg-base-100 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-xl md:relative md:inset-auto md:z-auto md:w-auto md:max-w-none md:pt-0 md:pb-0 md:shadow-none';
 
 interface PanelFrameProps {
   name: PanelName;
@@ -132,6 +102,9 @@ function ListPanel(props: LibraryViewProps): JSX.Element {
         scope={props.ctl.scope()}
         openArticleId={props.ctl.articleId()}
         unreadOnly={props.ctl.unreadOnly()}
+        drawerOpen={props.ctl.drawerOpen()}
+        onToggleNav={props.ctl.toggleDrawer}
+        navToggleRef={props.ctl.navToggle}
         onNavigate={props.ctl.onNavigate}
         onRequestAddLink={props.ctl.requestAddLink}
         onRequestAddFeed={props.ctl.requestAddFeed}
@@ -222,13 +195,7 @@ function OpmlInput(props: LibraryViewProps): JSX.Element {
 
 export function LibraryLayout(props: LibraryViewProps): JSX.Element {
   return (
-    <div class="flex h-dvh min-h-dvh flex-col overflow-hidden bg-base-100">
-      <MobileHeader
-        headerRef={props.ctl.mobileHeader}
-        title={props.ctl.title()}
-        drawerOpen={props.ctl.drawerOpen()}
-        onToggle={props.ctl.toggleDrawer}
-      />
+    <div class="flex h-dvh min-h-dvh flex-col overflow-hidden bg-base-100 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <div class={GRID_CLASSES}>
         <SidebarColumn ctl={props.ctl} panelRef={props.panelRef} />
         <ListPanel ctl={props.ctl} panelRef={props.panelRef} />

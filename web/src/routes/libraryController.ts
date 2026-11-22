@@ -58,7 +58,7 @@ export interface LibraryController {
   openFeed: (feed: Feed) => void;
   openSubscribedFeed: (feed: Feed) => void;
   handleMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
-  mobileHeader: (element: HTMLElement) => void;
+  navToggle: (element: HTMLButtonElement) => void;
   opmlInput: (element: HTMLInputElement) => void;
   handleOpmlChange: (event: Event) => void;
   refreshSidebar: () => void;
@@ -117,7 +117,7 @@ const useRouteScope = () => {
 /** `LIB-VIEW-1`: the narrow-screen drawer closes on navigation and restores focus on dismiss. */
 const useDrawer = () => {
   const [drawerOpen, setOpen] = createSignal(false);
-  let header: HTMLElement | undefined;
+  let toggle: HTMLButtonElement | undefined;
 
   const dismissDrawer = (): void => {
     setOpen(false);
@@ -125,18 +125,18 @@ const useDrawer = () => {
 
   const closeDrawer = (): void => {
     dismissDrawer();
-    header?.querySelector<HTMLButtonElement>('button')?.focus();
+    toggle?.focus();
   };
 
-  const mobileHeader = (element: HTMLElement): void => {
-    header = element;
+  const navToggle = (element: HTMLButtonElement): void => {
+    toggle = element;
   };
 
   const toggleDrawer = (): void => {
     setOpen((value) => !value);
   };
 
-  return { drawerOpen, dismissDrawer, closeDrawer, mobileHeader, toggleDrawer };
+  return { drawerOpen, dismissDrawer, closeDrawer, navToggle, toggleDrawer };
 };
 
 /** `LIB-ADD-*`, `FD-MOVE-1`: the four library dialogs and their open flags. */

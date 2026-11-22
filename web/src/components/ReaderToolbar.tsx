@@ -60,6 +60,7 @@ function ToolbarButton(props: {
     <Button
       variant="icon"
       size="sm"
+      class="max-md:size-10"
       aria-label={props.label}
       title={props.label}
       disabled={props.disabled}
@@ -78,8 +79,12 @@ function ReaderNavButtons(props: { nav: ReaderNav }): JSX.Element {
         label={String(t('reader.backToList'))}
         onClick={() => props.nav.onNavigate(props.nav.listUrl())}
       >
-        <Icon name="arrow-left" size={18} class="xl:hidden" />
-        <Icon name="close" size={18} class="hidden xl:inline-block" />
+        <span class="inline-flex xl:hidden">
+          <Icon name="arrow-left" size={18} />
+        </span>
+        <span class="hidden xl:inline-flex">
+          <Icon name="close" size={18} />
+        </span>
       </ToolbarButton>
       <ToolbarButton
         label={String(t('reader.prevArticle'))}

@@ -83,13 +83,13 @@ export function ToastViewport(props: ToastViewportProps): JSX.Element {
   return (
     <Show when={currentToast()}>
       {(toast) => (
-        <div class="toast toast-end toast-bottom z-50">
+        <div class="toast toast-end toast-bottom z-50 max-sm:toast-center max-sm:w-full max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
           <div
             role="status"
             aria-live="polite"
             aria-atomic="true"
             class={[
-              'alert alert-soft max-w-sm rounded-box border border-current/20 text-sm shadow-xl',
+              'alert alert-soft w-full sm:max-w-sm rounded-box border border-current/20 text-sm shadow-xl',
               VARIANT_CLASSES[toast().variant],
             ]}
           >

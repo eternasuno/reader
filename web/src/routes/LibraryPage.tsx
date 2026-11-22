@@ -29,11 +29,11 @@ export function LibraryPage(): JSX.Element {
   // `FD-SUB-2`: a first-refresh wait stops once no library page is mounted (e.g. on /settings).
   onSettled(() => trackLibraryMount());
 
-  // `LIB-VIEW-1`: opening the narrow-screen drawer moves focus into it.
+  // `LIB-VIEW-1`: opening the narrow-screen drawer moves focus to the drawer panel itself.
   createEffect(
     () => ctl.drawerOpen(),
     (open) => {
-      if (open) panels.sidebar?.querySelector<HTMLElement>('button')?.focus();
+      if (open) panels.sidebar?.focus();
     }
   );
 
