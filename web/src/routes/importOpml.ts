@@ -1,6 +1,6 @@
 import { feedsApi } from '../api';
 import { t, translateErrorCode } from '../i18n';
-import { refreshSidebar } from '../state';
+import { invalidateSidebar } from '../state';
 import { showToast } from '../ui';
 import { errorCodeOf } from './viewHelpers';
 
@@ -27,7 +27,7 @@ export const useOpmlImport = (): OpmlImport => {
         ),
         'success'
       );
-      await refreshSidebar();
+      await invalidateSidebar();
     } catch (error) {
       showToast(translateErrorCode(errorCodeOf(error)), 'error');
     }

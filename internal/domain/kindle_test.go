@@ -39,12 +39,14 @@ const kindleTestMB = 1024 * 1024
 
 type kindleTestBook struct {
 	IDs      []string
+	Title    string
+	Filename string
 	TextOnly bool
 }
 
-func kindleTestBuilder(sizes map[string]int, textOnlyDivisor int) func([]KindleArticle, bool) (kindleTestBook, int, error) {
-	return func(chunk []KindleArticle, textOnly bool) (kindleTestBook, int, error) {
-		book := kindleTestBook{TextOnly: textOnly}
+func kindleTestRender(sizes map[string]int, textOnlyDivisor int) func([]KindleArticle, string, string, bool) (kindleTestBook, int, error) {
+	return func(chunk []KindleArticle, title string, filename string, textOnly bool) (kindleTestBook, int, error) {
+		book := kindleTestBook{Title: title, Filename: filename, TextOnly: textOnly}
 		total := 0
 		for _, article := range chunk {
 			book.IDs = append(book.IDs, article.ID)
@@ -69,15 +71,19 @@ func kindleTestArticles(ids ...string) []KindleArticle {
 	return articles
 }
 
-func TestSplitKindleChunksRecursesInBookOrder(t *testing.T) {
+func articleID(article KindleArticle) string {
+	return article.ID
+}
+
+func TestSplitKindleBooksRecursesInBookOrder(t *testing.T) {
 	t.Parallel()
 
 	articles := kindleTestArticles("a1", "a2", "a3", "a4", "a5")
 	sizes := map[string]int{"a1": 15 * kindleTestMB, "a2": 15 * kindleTestMB, "a3": 5 * kindleTestMB, "a4": 5 * kindleTestMB, "a5": 5 * kindleTestMB}
 
-	books, err := SplitKindleChunks(articles, MaxKindleEPUBBytes, kindleTestBuilder(sizes, 0))
+	books, err := SplitKindleBooks(articles, "2026-11-18", MaxKindleEPUBBytes, articleID, kindleTestRender(sizes, 0))
 	if err != nil {
-		t.Fatalf("SplitKindleChunks returned %v", err)
+		t.Fatalf("SplitKindleBooks returned %v", err)
 	}
 
 	if len(books) != 3 {
@@ -94,17 +100,21 @@ func TestSplitKindleChunksRecursesInBookOrder(t *testing.T) {
 			t.Fatalf("book %d should not be text only", i)
 		}
 	}
+
+	if books[0].Title != "拾叶 2026-11-18 (1/3)" || books[2].Filename != "leaf-2026-11-18-3.epub" {
+		t.Fatalf("unexpected book metadata: %+v", books)
+	}
 }
 
-func TestSplitKindleChunksRetriesTextOnly(t *testing.T) {
+func TestSplitKindleBooksRetriesTextOnly(t *testing.T) {
 	t.Parallel()
 
 	articles := kindleTestArticles("a1")
 	sizes := map[string]int{"a1": 30 * kindleTestMB}
 
-	books, err := SplitKindleChunks(articles, MaxKindleEPUBBytes, kindleTestBuilder(sizes, 3))
+	books, err := SplitKindleBooks(articles, "2026-11-18", MaxKindleEPUBBytes, articleID, kindleTestRender(sizes, 3))
 	if err != nil {
-		t.Fatalf("SplitKindleChunks returned %v", err)
+		t.Fatalf("SplitKindleBooks returned %v", err)
 	}
 
 	if len(books) != 1 {
@@ -120,13 +130,42 @@ func TestSplitKindleChunksRetriesTextOnly(t *testing.T) {
 	}
 }
 
-func TestSplitKindleChunksFailsOversizeTextOnly(t *testing.T) {
+func TestSplitKindleBooksVerifiesFinalTitleBudget(t *testing.T) {
+	t.Parallel()
+
+	const maxBytes = 100
+	articles := kindleTestArticles("a1", "a2", "a3")
+
+	books, err := SplitKindleBooks(articles, "2026-11-18", maxBytes, articleID, func(chunk []KindleArticle, title string, filename string, textOnly bool) (kindleTestBook, int, error) {
+		// Simulate a final numbered title pushing the first 2-article chunk over maxBytes.
+		size := len(chunk)*40 + len(title)
+		if title == "拾叶 2026-11-18 (1/2)" {
+			size = maxBytes + 1
+		}
+
+		ids := make([]string, len(chunk))
+		for i, a := range chunk {
+			ids[i] = a.ID
+		}
+
+		return kindleTestBook{IDs: ids, Title: title, Filename: filename, TextOnly: textOnly}, size, nil
+	})
+	if err != nil {
+		t.Fatalf("SplitKindleBooks returned %v", err)
+	}
+
+	if len(books) != 3 {
+		t.Fatalf("got %d books, want 3 after final-title split", len(books))
+	}
+}
+
+func TestSplitKindleBooksFailsOversizeTextOnly(t *testing.T) {
 	t.Parallel()
 
 	articles := kindleTestArticles("a1")
 	sizes := map[string]int{"a1": MaxKindleEPUBBytes + 1}
 
-	books, err := SplitKindleChunks(articles, MaxKindleEPUBBytes, kindleTestBuilder(sizes, 0))
+	books, err := SplitKindleBooks(articles, "2026-11-18", MaxKindleEPUBBytes, articleID, kindleTestRender(sizes, 0))
 	if err == nil {
 		t.Fatalf("expected an error, got books %v", books)
 	}
@@ -136,12 +175,12 @@ func TestSplitKindleChunksFailsOversizeTextOnly(t *testing.T) {
 	}
 }
 
-func TestSplitKindleChunksEmpty(t *testing.T) {
+func TestSplitKindleBooksEmpty(t *testing.T) {
 	t.Parallel()
 
-	books, err := SplitKindleChunks(nil, MaxKindleEPUBBytes, kindleTestBuilder(map[string]int{}, 0))
+	books, err := SplitKindleBooks(nil, "2026-11-18", MaxKindleEPUBBytes, articleID, kindleTestRender(map[string]int{}, 0))
 	if err != nil {
-		t.Fatalf("SplitKindleChunks returned %v", err)
+		t.Fatalf("SplitKindleBooks returned %v", err)
 	}
 
 	if len(books) != 0 {
@@ -149,7 +188,9 @@ func TestSplitKindleChunksEmpty(t *testing.T) {
 	}
 }
 
-func TestHalveKindleArticlesAndFormatMeta(t *testing.T) {
+func TestHalveSliceAndFormatMeta(t *testing.T) {
+	t.Parallel()
+
 	articles := []KindleArticle{
 		{ID: "1", Title: "A1"},
 		{ID: "2", Title: "A2"},
@@ -158,7 +199,7 @@ func TestHalveKindleArticlesAndFormatMeta(t *testing.T) {
 		{ID: "5", Title: "A5"},
 	}
 
-	left, right := HalveKindleArticles(articles)
+	left, right := HalveSlice(articles)
 	if len(left) != 2 || len(right) != 3 {
 		t.Fatalf("expected 2 and 3, got %d and %d", len(left), len(right))
 	}
@@ -167,18 +208,53 @@ func TestHalveKindleArticlesAndFormatMeta(t *testing.T) {
 		t.Fatalf("unexpected article order after halving")
 	}
 
-	singleLeft, singleRight := HalveKindleArticles(articles[:1])
+	singleLeft, singleRight := HalveSlice(articles[:1])
 	if len(singleLeft) != 1 || singleRight != nil {
 		t.Fatalf("expected single article not to split further")
 	}
 
 	title1, file1 := FormatKindleBookMeta("2026-11-18", 1, 1)
-	if title1 != "留白 2026-11-18" || file1 != "liubai-2026-11-18.epub" {
+	if title1 != "拾叶 2026-11-18" || file1 != "leaf-2026-11-18.epub" {
 		t.Fatalf("unexpected single book meta: %q, %q", title1, file1)
 	}
 
 	titleN, fileN := FormatKindleBookMeta("2026-11-18", 2, 3)
-	if titleN != "留白 2026-11-18 (2/3)" || fileN != "liubai-2026-11-18-2.epub" {
+	if titleN != "拾叶 2026-11-18 (2/3)" || fileN != "leaf-2026-11-18-2.epub" {
 		t.Fatalf("unexpected multi book meta: %q, %q", titleN, fileN)
+	}
+}
+
+func TestIsKindleDeliveryUsableAndClone(t *testing.T) {
+	t.Parallel()
+
+	user := "user"
+	pass := "pass"
+	settings := Settings{
+		SMTP: &SMTPSettings{
+			SenderEmail: "sender@example.com",
+			Host:        "smtp.example.com",
+			Port:        587,
+			Security:    SMTPSecuritySTARTTLS,
+			User:        &user,
+			Password:    &pass,
+		},
+		Kindle: &KindleSettings{KindleEmail: "reader@kindle.com"},
+	}
+
+	if !IsKindleDeliveryUsable(settings) {
+		t.Fatal("expected valid settings to be usable")
+	}
+
+	cloned := CloneKindleDelivery(*settings.SMTP, settings.Kindle.KindleEmail)
+	*settings.SMTP.User = "mutated"
+	*settings.SMTP.Password = "mutated"
+
+	if *cloned.SMTP.User != "user" || *cloned.SMTP.Password != "pass" {
+		t.Fatalf("cloned pointers mutated: %+v", cloned)
+	}
+
+	settings.Kindle.KindleEmail = "  "
+	if IsKindleDeliveryUsable(settings) {
+		t.Fatal("expected blank kindle email to be unusable")
 	}
 }

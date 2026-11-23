@@ -183,21 +183,23 @@ describe('AddLinkDialog', () => {
     expect(out.onSaved).toHaveBeenCalledWith(created);
 
     reset();
+    dismissToast();
     const existing = savedPage({ id: 'existing' });
     const found = await addLink(POST_URL, [
-      jsonResponse({ error: 'SavedPageAlreadyExists' }, 409),
+      jsonResponse({ error: 'SavedPageAlreadyExists', id: 'existing' }, 409),
       jsonResponse({ item: existing }),
     ]);
 
-    expect(urlOf(1)).toContain('/api/saved-pages/lookup');
+    expect(urlOf(1)).toBe('/api/saved-pages/existing');
     expect(found.onDuplicateFound).toHaveBeenCalledWith(existing);
+    expect(currentToast()).toBeNull();
 
     reset();
     await addLink(POST_URL, [
       jsonResponse({ error: 'SavedPageAlreadyExists' }, 409),
-      jsonResponse({ item: null }),
     ]);
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(text()).toContain('该文章已在稍后阅读中');
   });
 });

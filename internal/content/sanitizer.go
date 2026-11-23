@@ -2,6 +2,7 @@ package content
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -14,7 +15,14 @@ import (
 	"reader/internal/domain"
 )
 
-var loadingAttribute = regexp.MustCompile(`(?i)^(auto|eager|lazy)$`)
+// maxSanitizedHTMLBytes caps serialized/sanitized HTML at 4x the 10 MiB fetch
+// limit so relative-URL expansion cannot balloon memory per entry.
+const maxSanitizedHTMLBytes = 40 << 20
+
+var (
+	loadingAttribute      = regexp.MustCompile(`(?i)^(auto|eager|lazy)$`)
+	errHTMLBudgetExceeded = errors.New("sanitized html exceeds byte budget")
+)
 
 type Sanitizer struct {
 	policy *bluemonday.Policy
@@ -37,8 +45,16 @@ func NewSanitizer() *Sanitizer {
 }
 
 func (s *Sanitizer) SanitizeHTML(rawHTML string, baseURL string) (string, error) {
+	return s.sanitizeHTMLWithBudget(rawHTML, baseURL, maxSanitizedHTMLBytes)
+}
+
+func (s *Sanitizer) sanitizeHTMLWithBudget(rawHTML string, baseURL string, maxBytes int) (string, error) {
 	if strings.TrimSpace(rawHTML) == "" {
 		return "", nil
+	}
+
+	if len(rawHTML) > maxBytes {
+		return "", sanitizerError(errHTMLBudgetExceeded)
 	}
 
 	nodes, err := html.ParseFragment(strings.NewReader(rawHTML), fragmentContainer())
@@ -46,81 +62,132 @@ func (s *Sanitizer) SanitizeHTML(rawHTML string, baseURL string) (string, error)
 		return "", sanitizerError(err)
 	}
 
-	redactedBaseURL := publicBaseURL(baseURL)
+	base := parsePublicBaseURL(baseURL)
+	budget := rewriteBudget{remaining: maxBytes - len(rawHTML)}
 
 	for _, node := range nodes {
-		rewriteURLs(node, redactedBaseURL)
+		if !rewriteURLs(node, base, &budget) {
+			return "", sanitizerError(errHTMLBudgetExceeded)
+		}
 	}
 
-	var rendered bytes.Buffer
-
+	rendered := boundedBuffer{limit: maxBytes}
 	for _, node := range nodes {
 		if err := html.Render(&rendered, node); err != nil {
 			return "", sanitizerError(err)
 		}
 	}
 
-	return strings.TrimSpace(s.policy.Sanitize(rendered.String())), nil
+	// Only bluemonday enforces the element/attribute allowlist, so keep this
+	// single strict sanitization pass on the bounded tree output.
+	sanitized := boundedBuffer{limit: maxBytes}
+	if err := s.policy.SanitizeReaderToWriter(bytes.NewReader(rendered.buf.Bytes()), &sanitized); err != nil {
+		return "", sanitizerError(err)
+	}
+
+	return strings.TrimSpace(sanitized.buf.String()), nil
+}
+
+type boundedBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if len(p) > b.limit-b.buf.Len() {
+		return 0, errHTMLBudgetExceeded
+	}
+
+	return b.buf.Write(p)
+}
+
+type rewriteBudget struct {
+	remaining int
+}
+
+func (b *rewriteBudget) consume(delta int) bool {
+	if delta <= 0 {
+		return true
+	}
+
+	if delta > b.remaining {
+		b.remaining = -1
+
+		return false
+	}
+
+	b.remaining -= delta
+
+	return true
 }
 
 func fragmentContainer() *html.Node {
 	return &html.Node{Type: html.ElementNode, Data: "div", DataAtom: atom.Div}
 }
 
-func rewriteURLs(node *html.Node, baseURL string) {
-	if node.Type == html.ElementNode {
-		switch node.Data {
-		case "a":
-			rewriteLink(node, baseURL)
-		case "img":
-			rewriteMediaSource(node, baseURL, true)
-		case "source", "video", "audio":
-			rewriteMediaSource(node, baseURL, false)
-		}
+func rewriteURLs(node *html.Node, base *url.URL, budget *rewriteBudget) bool {
+	if node.Type == html.ElementNode && !rewriteElementURL(node, base, budget) {
+		return false
 	}
 
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		rewriteURLs(child, baseURL)
+		if !rewriteURLs(child, base, budget) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func rewriteElementURL(node *html.Node, base *url.URL, budget *rewriteBudget) bool {
+	switch node.Data {
+	case "a":
+		return rewriteLink(node, base, budget)
+	case "img":
+		return rewriteMediaSource(node, base, true, budget)
+	case "source", "video", "audio":
+		return rewriteMediaSource(node, base, false, budget)
+	default:
+		return true
 	}
 }
 
-func rewriteLink(node *html.Node, baseURL string) {
+func rewriteLink(node *html.Node, base *url.URL, budget *rewriteBudget) bool {
 	href, ok := attributeValue(node, "href")
 	if !ok {
-		return
+		return true
 	}
 
-	resolved := resolvePublicURL(baseURL, href)
-	if !isAllowedLinkURL(resolved) {
+	resolved, ok := resolvePublicURL(base, href)
+	if !ok || !isAllowedLinkURL(resolved) {
 		removeAttribute(node, "href")
 
-		return
+		return true
 	}
 
-	setAttribute(node, "href", resolved)
-	setAttribute(node, "target", "_blank")
-	setAttribute(node, "rel", "noopener noreferrer")
+	return setAttributeBudgeted(node, "href", resolved.String(), budget) &&
+		setAttributeBudgeted(node, "target", "_blank", budget) &&
+		setAttributeBudgeted(node, "rel", "noopener noreferrer", budget)
 }
 
-func rewriteMediaSource(node *html.Node, baseURL string, allowDataImage bool) {
+func rewriteMediaSource(node *html.Node, base *url.URL, allowDataImage bool, budget *rewriteBudget) bool {
 	src, ok := attributeValue(node, "src")
 	if !ok {
-		return
+		return true
 	}
 
-	resolved := resolvePublicURL(baseURL, src)
-	if !isAllowedMediaURL(resolved, allowDataImage) {
+	resolved, ok := resolvePublicURL(base, src)
+	if !ok || !isAllowedMediaURL(resolved, allowDataImage) {
 		removeAttribute(node, "src")
 
-		return
+		return true
 	}
 
-	setAttribute(node, "src", resolved)
+	return setAttributeBudgeted(node, "src", resolved.String(), budget)
 }
 
-func isAllowedLinkURL(rawURL string) bool {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
+func isAllowedLinkURL(parsed *url.URL) bool {
+	if parsed == nil {
 		return false
 	}
 
@@ -132,9 +199,8 @@ func isAllowedLinkURL(rawURL string) bool {
 	return false
 }
 
-func isAllowedMediaURL(rawURL string, allowDataImage bool) bool {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
+func isAllowedMediaURL(parsed *url.URL, allowDataImage bool) bool {
+	if parsed == nil {
 		return false
 	}
 
@@ -156,7 +222,32 @@ func isImageDataURL(parsed *url.URL) bool {
 	return strings.HasPrefix(strings.ToLower(parsed.Opaque), "image/")
 }
 
-func resolveURL(baseURL string, rawURL string) (*url.URL, bool) {
+func parseBaseURL(baseURL string) *url.URL {
+	trimmed := strings.TrimSpace(baseURL)
+	if trimmed == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return nil
+	}
+
+	return parsed
+}
+
+func parsePublicBaseURL(baseURL string) *url.URL {
+	parsed := parseBaseURL(baseURL)
+	if parsed == nil {
+		return nil
+	}
+
+	redactURLCredentials(parsed)
+
+	return parsed
+}
+
+func resolveWithBase(base *url.URL, rawURL string) (*url.URL, bool) {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
 		return nil, false
@@ -167,40 +258,22 @@ func resolveURL(baseURL string, rawURL string) (*url.URL, bool) {
 		return nil, false
 	}
 
-	base, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
+	if base == nil {
 		return reference, true
 	}
 
 	return base.ResolveReference(reference), true
 }
 
-func resolvePublicURL(baseURL string, rawURL string) string {
-	resolved, ok := resolveURL(baseURL, rawURL)
+func resolvePublicURL(base *url.URL, rawURL string) (*url.URL, bool) {
+	resolved, ok := resolveWithBase(base, rawURL)
 	if !ok {
-		return ""
+		return nil, false
 	}
 
-	return publicURLString(resolved)
-}
+	redactURLCredentials(resolved)
 
-func publicBaseURL(baseURL string) string {
-	parsed, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
-		return baseURL
-	}
-
-	return publicURLString(parsed)
-}
-
-func publicURLString(parsed *url.URL) string {
-	if parsed == nil {
-		return ""
-	}
-
-	redactURLCredentials(parsed)
-
-	return parsed.String()
+	return resolved, true
 }
 
 func redactURLCredentials(parsed *url.URL) {
@@ -220,16 +293,27 @@ func attributeValue(node *html.Node, key string) (string, bool) {
 	return "", false
 }
 
-func setAttribute(node *html.Node, key string, value string) {
+func setAttributeBudgeted(node *html.Node, key string, value string, budget *rewriteBudget) bool {
 	for index := range node.Attr {
 		if node.Attr[index].Key == key {
+			if !budget.consume(len(value) - len(node.Attr[index].Val)) {
+				return false
+			}
+
 			node.Attr[index].Val = value
 
-			return
+			return true
 		}
 	}
 
+	// Count ` key="value"` syntax overhead for newly added attributes.
+	if !budget.consume(len(key) + len(value) + 4) {
+		return false
+	}
+
 	node.Attr = append(node.Attr, html.Attribute{Key: key, Val: value})
+
+	return true
 }
 
 func removeAttribute(node *html.Node, key string) {

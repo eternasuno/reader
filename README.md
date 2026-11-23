@@ -1,12 +1,13 @@
-# 留白
+# 拾叶
 
 > **Target Architecture Notice**: This README and `.agents/skills/` define the **target Go + SQLite + SolidJS 2 single-binary architecture** for the upcoming rewrite. Until that migration lands, the repository tree still holds the previous Node/TypeScript workspace (`apps/reader`, `packages/*`).
 
-留白 is a lightweight, single-user self-hosted RSS reader and read-later app with scheduled Send-to-Kindle support.
+拾叶 (Leaf) is a lightweight, single-user self-hosted RSS reader and read-later app with scheduled Send-to-Kindle support.
 
 - **Read later**: save web URLs (or browser bookmarklet quick-save) with automatic article extraction and clean reading typography.
 - **RSS / Atom / RDF / JSON Feed**: organize feeds into single-level folders, import/export OPML, read with per-feed sort order and default display mode, and auto-prune to the latest N articles per feed.
 - **Send to Kindle**: bundle unread articles into EPUB 3 (auto-split at 20 MiB) and mail via SMTP on a daily schedule or on demand.
+- **Installable PWA**: add to home screen / desktop; app shell works offline-tolerant, API data is never cached.
 - **Single-container, low footprint**: compiled into one static Go binary with the SPA embedded via `go:embed` and SQLite storage (~25–40 MB Docker image, ~20–50 MB RAM).
 
 ## Target Architecture Overview

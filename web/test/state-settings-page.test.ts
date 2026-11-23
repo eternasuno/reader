@@ -171,4 +171,100 @@ describe('settings leave guards', () => {
     window.dispatchEvent(afterLeaveEvent);
     expect(afterLeaveEvent.defaultPrevented).toBe(false);
   });
+
+  it('disposes secret drafts on exit so secrets never persist across visits', async () => {
+    const { container, history } = await mountSettings();
+    navBtn(container, 3).click();
+    h.solid.flush();
+
+    h.state.setJinaKeyDraft('jina-secret');
+    h.state.setBrowserEndpointDraft('http://browser:9222');
+    h.state.setSmtpPasswordDraft('smtp-secret');
+    h.solid.flush();
+    expect(h.state.hasAnyUnsavedChanges()).toBe(true);
+
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
+    container
+      .querySelector<HTMLButtonElement>('button[aria-label="返回阅读器"]')
+      ?.click();
+    await settle(4);
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(history.get()).toBe('/later');
+    expect(h.state.jinaKeyDraft()).toBe('');
+    expect(h.state.browserEndpointDraft()).toBe('');
+    expect(h.state.smtpPasswordDraft()).toBe('');
+    expect(h.state.hasAnyUnsavedChanges()).toBe(false);
+  });
+});
+
+const mountPendingSettings = async (res: Promise<Response>) => {
+  fetchMock.mockImplementation((input: unknown) => {
+    const url = String(input);
+    if (url.includes('/api/auth/session'))
+      return Promise.resolve(json({ authenticated: true }));
+    if (url === '/api/settings') return res;
+    return Promise.resolve(json(sendsState));
+  });
+  const history = h.router.memoryHistory('/settings');
+  const router = h.routes.createAppRouter(history);
+  const container = document.createElement('div');
+  document.body.append(container);
+  disposers.push(
+    h.web.render(
+      () => h.solid.createComponent(h.app.App, { router }),
+      container
+    )
+  );
+  h.solid.flush();
+  await settle(3);
+  return container;
+};
+
+describe('cold-visit editing gate', () => {
+  it('disables settings controls until initial GET completes', async () => {
+    let resolveSettings: (r: Response) => void = () => {};
+    const container = await mountPendingSettings(
+      new Promise<Response>((resolve) => {
+        resolveSettings = resolve;
+      })
+    );
+
+    const retentionInput = container.querySelector<HTMLInputElement>(
+      'input[type="number"]'
+    );
+    const jinaInput = container.querySelector<HTMLInputElement>(
+      'section[aria-label="外部服务"] input[type="password"]'
+    );
+    const radio = container.querySelector<HTMLInputElement>(
+      'input[name="extractor-provider"][value="jina"]'
+    );
+    expect(retentionInput?.disabled).toBe(true);
+    expect(findButton(container, '保存文章设置').disabled).toBe(true);
+    expect(radio?.disabled).toBe(true);
+    expect(findButton(container, '保存提取设置').disabled).toBe(true);
+    expect(jinaInput?.disabled).toBe(true);
+
+    resolveSettings(json({ ...SETTINGS, retention: 75 }));
+    await settle(3);
+
+    expect(retentionInput?.disabled).toBe(false);
+    expect(retentionInput?.value).toBe('75');
+    expect(findButton(container, '保存文章设置').disabled).toBe(false);
+    expect(radio?.disabled).toBe(false);
+    expect(jinaInput?.disabled).toBe(false);
+  });
+
+  it('keeps controls disabled when initial GET fails', async () => {
+    const container = await mountPendingSettings(
+      Promise.resolve(json({ error: 'SettingRepositoryError' }, 500))
+    );
+
+    const retentionInput = container.querySelector<HTMLInputElement>(
+      'input[type="number"]'
+    );
+    expect(retentionInput?.disabled).toBe(true);
+    expect(findButton(container, '保存文章设置').disabled).toBe(true);
+    expect(h.state.settings()).toBeNull();
+  });
 });

@@ -1,8 +1,12 @@
 .git
+.github
 .agents
 .maki
 .devenv
 .direnv
+.data
+.slim
+/reader
 node_modules
 **/node_modules
 **/dist

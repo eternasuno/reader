@@ -42,6 +42,7 @@ type Parser struct {
 type payloadScan struct {
 	root         string
 	summaryTypes []string
+	contentTypes []string
 }
 
 func NewFeedParser(sanitizer domain.HTMLSanitizer) *Parser {
@@ -54,48 +55,72 @@ func (p *Parser) ParseFeed(body []byte, baseURL string) (domain.ParsedFeed, erro
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, nil)
 	}
 
-	parser := gofeed.NewParser()
-	parser.KeepOriginalFeed = true
+	base := parseBaseURL(baseURL)
 
-	parsed, err := parser.Parse(bytes.NewReader(payload))
+	switch payload[0] {
+	case '{':
+		return p.parseJSONFeed(payload, base)
+	case '<':
+		return p.parseXMLFeed(payload, base)
+	default:
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, errors.New("unsupported feed payload"))
+	}
+}
+
+func (p *Parser) parseJSONFeed(payload []byte, base *url.URL) (domain.ParsedFeed, error) {
+	feed, err := decodeJSONFeed(payload)
 	if err != nil {
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
-	}
-
-	scan, err := validatePayload(payload)
-	if err != nil {
-		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
-	}
-
-	entries, description, err := p.extractParsedFeed(parsed, scan, baseURL)
-	if err != nil {
-		return domain.ParsedFeed{}, err
 	}
 
 	return domain.ParsedFeed{
-		Title:       feedTitle(parsed.Title, baseURL),
-		Description: description,
-		Entries:     entries,
+		Title:       feedTitle(feed.Title, base),
+		Description: optionalText(feed.Description),
+		Entries:     p.parseJSONItems(feed.Items, base),
 	}, nil
 }
 
-func (p *Parser) extractParsedFeed(parsed *gofeed.Feed, scan payloadScan, baseURL string) ([]domain.ParsedFeedEntry, *string, error) {
-	switch feed := parsed.OriginalFeed().(type) {
-	case *rss.Feed:
-		isRDF := strings.EqualFold(scan.root, "RDF") || feed.Version == "1.0"
-		return p.parseRSSItems(feed.Items, baseURL, isRDF), optionalText(feed.Description), nil
-	case *atom.Feed:
-		return p.parseAtomEntries(feed.Entries, scan.summaryTypes, baseURL), optionalText(feed.Subtitle), nil
-	case *gofeedjson.Feed:
-		return p.parseJSONItems(feed.Items, baseURL), optionalText(feed.Description), nil
-	default:
-		return nil, nil, domain.NewError(domain.ErrFeedParserError, errors.New("unsupported feed format"))
+func (p *Parser) parseXMLFeed(payload []byte, base *url.URL) (domain.ParsedFeed, error) {
+	feedType := gofeed.DetectFeedType(bytes.NewReader(payload))
+	if feedType != gofeed.FeedTypeRSS && feedType != gofeed.FeedTypeAtom {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, errors.New("unsupported feed format"))
 	}
+
+	scan, err := validateXMLPayload(payload)
+	if err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	if feedType == gofeed.FeedTypeRSS {
+		feed, err := (&rss.Parser{}).Parse(bytes.NewReader(payload))
+		if err != nil {
+			return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+		}
+
+		isRDF := strings.EqualFold(scan.root, "RDF") || feed.Version == "1.0"
+
+		return domain.ParsedFeed{
+			Title:       feedTitle(rssFeedTitle(feed), base),
+			Description: optionalText(feed.Description),
+			Entries:     p.parseRSSItems(feed.Items, base, isRDF),
+		}, nil
+	}
+
+	feed, err := (&atom.Parser{}).Parse(bytes.NewReader(payload))
+	if err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	return domain.ParsedFeed{
+		Title:       feedTitle(feed.Title, base),
+		Description: optionalText(feed.Subtitle),
+		Entries:     p.parseAtomEntries(feed.Entries, scan, base),
+	}, nil
 }
 
 func (p *Parser) parseRSSItems(
 	items []*rss.Item,
-	baseURL string,
+	base *url.URL,
 	isRDF bool,
 ) []domain.ParsedFeedEntry {
 	entries := make([]domain.ParsedFeedEntry, 0, len(items))
@@ -105,7 +130,7 @@ func (p *Parser) parseRSSItems(
 			continue
 		}
 
-		entryURL, ok := normalizedEntryURL(baseURL, item.Link)
+		entryURL, ok := normalizedEntryURL(base, item.Link)
 		if !ok {
 			continue
 		}
@@ -126,7 +151,7 @@ func (p *Parser) parseRSSItems(
 
 		publishedAt := rssPublishedAt(item, isRDF)
 
-		entries = append(entries, buildEntry(item.Title, description, content, entryURL, publishedAt))
+		entries = append(entries, buildEntry(rssItemTitle(item), description, content, entryURL, publishedAt))
 	}
 
 	return entries
@@ -134,8 +159,8 @@ func (p *Parser) parseRSSItems(
 
 func (p *Parser) parseAtomEntries(
 	entries []*atom.Entry,
-	summaryTypes []string,
-	baseURL string,
+	scan payloadScan,
+	base *url.URL,
 ) []domain.ParsedFeedEntry {
 	parsed := make([]domain.ParsedFeedEntry, 0, len(entries))
 
@@ -144,19 +169,19 @@ func (p *Parser) parseAtomEntries(
 			continue
 		}
 
-		entryURL, ok := normalizedEntryURL(baseURL, atomEntryHref(entry.Links))
+		entryURL, ok := normalizedEntryURL(base, atomEntryHref(entry.Links))
 		if !ok {
 			continue
 		}
 
-		description, err := p.atomSummary(entry.Summary, summaryTypeAt(summaryTypes, index), entryURL.RedactedString())
+		description, err := p.atomSummary(entry.Summary, attrTypeAt(scan.summaryTypes, index), entryURL.RedactedString())
 		if err != nil {
 			logSkippedEntry(entryURL, err)
 
 			continue
 		}
 
-		content, err := p.atomContent(entry.Content, entryURL.RedactedString())
+		content, err := p.atomContent(entry.Content, attrTypeAt(scan.contentTypes, index), entryURL.RedactedString())
 		if err != nil {
 			logSkippedEntry(entryURL, err)
 
@@ -173,7 +198,7 @@ func (p *Parser) parseAtomEntries(
 
 func (p *Parser) parseJSONItems(
 	items []*gofeedjson.Item,
-	baseURL string,
+	base *url.URL,
 ) []domain.ParsedFeedEntry {
 	entries := make([]domain.ParsedFeedEntry, 0, len(items))
 
@@ -182,7 +207,7 @@ func (p *Parser) parseJSONItems(
 			continue
 		}
 
-		entryURL, ok := normalizedEntryURL(baseURL, item.URL)
+		entryURL, ok := normalizedEntryURL(base, item.URL)
 		if !ok {
 			continue
 		}
@@ -223,7 +248,7 @@ func (p *Parser) atomSummary(summary string, summaryType string, baseURL string)
 	return p.sanitizeOptional(value, baseURL)
 }
 
-func (p *Parser) atomContent(content *atom.Content, baseURL string) (*string, error) {
+func (p *Parser) atomContent(content *atom.Content, contentType string, baseURL string) (*string, error) {
 	if content == nil || strings.TrimSpace(content.Src) != "" {
 		return nil, nil
 	}
@@ -233,7 +258,7 @@ func (p *Parser) atomContent(content *atom.Content, baseURL string) (*string, er
 	}
 
 	value := content.Value
-	switch strings.ToLower(strings.TrimSpace(content.Type)) {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
 	case "", "text", "text/plain":
 		value = html.EscapeString(value)
 	}
@@ -296,8 +321,8 @@ func buildEntry(
 	}
 }
 
-func normalizedEntryURL(baseURL string, rawURL string) (domain.NormalizedURL, bool) {
-	resolved, ok := resolveURL(baseURL, rawURL)
+func normalizedEntryURL(base *url.URL, rawURL string) (domain.NormalizedURL, bool) {
+	resolved, ok := resolveWithBase(base, rawURL)
 	if !ok {
 		return domain.NormalizedURL{}, false
 	}
@@ -370,22 +395,46 @@ func isAlternateLink(link *atom.Link) bool {
 	return rel == "" || strings.EqualFold(rel, "alternate")
 }
 
-func summaryTypeAt(summaryTypes []string, index int) string {
-	if index < 0 || index >= len(summaryTypes) {
+func attrTypeAt(types []string, index int) string {
+	if index < 0 || index >= len(types) {
 		return ""
 	}
 
-	return summaryTypes[index]
+	return types[index]
 }
 
-func feedTitle(rawTitle string, baseURL string) string {
+func rssFeedTitle(feed *rss.Feed) string {
+	if strings.TrimSpace(feed.Title) != "" {
+		return feed.Title
+	}
+
+	if feed.DublinCoreExt != nil && len(feed.DublinCoreExt.Title) > 0 {
+		return feed.DublinCoreExt.Title[0]
+	}
+
+	return ""
+}
+
+func rssItemTitle(item *rss.Item) string {
+	if strings.TrimSpace(item.Title) != "" {
+		return item.Title
+	}
+
+	if item.DublinCoreExt != nil && len(item.DublinCoreExt.Title) > 0 {
+		return item.DublinCoreExt.Title[0]
+	}
+
+	return ""
+}
+
+func feedTitle(rawTitle string, base *url.URL) string {
 	title := strings.TrimSpace(rawTitle)
 	if title != "" {
 		return title
 	}
 
-	if parsed, err := url.Parse(strings.TrimSpace(baseURL)); err == nil {
-		if host := strings.ToLower(parsed.Host); host != "" {
+	if base != nil {
+		if host := strings.ToLower(base.Host); host != "" {
 			return host
 		}
 	}
@@ -432,34 +481,23 @@ func parseDate(raw string) *time.Time {
 	return nil
 }
 
-func validatePayload(payload []byte) (payloadScan, error) {
-	switch payload[0] {
-	case '{':
-		return validateJSONPayload(payload)
-	case '<':
-		return validateXMLPayload(payload)
-	default:
-		return payloadScan{}, errors.New("unsupported feed payload")
-	}
-}
-
-func validateJSONPayload(payload []byte) (payloadScan, error) {
+func decodeJSONFeed(payload []byte) (gofeedjson.Feed, error) {
 	feed := gofeedjson.Feed{}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 
 	if err := decoder.Decode(&feed); err != nil {
-		return payloadScan{}, err
+		return gofeedjson.Feed{}, err
 	}
 
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return payloadScan{}, errors.New("trailing data after json feed")
+		return gofeedjson.Feed{}, errors.New("trailing data after json feed")
 	}
 
 	if !strings.Contains(strings.ToLower(feed.Version), "jsonfeed.org/version/") {
-		return payloadScan{}, errors.New("unsupported json feed version")
+		return gofeedjson.Feed{}, errors.New("unsupported json feed version")
 	}
 
-	return payloadScan{}, nil
+	return feed, nil
 }
 
 type xmlPayloadValidator struct {
@@ -467,6 +505,7 @@ type xmlPayloadValidator struct {
 	depth        int
 	entryDepth   int
 	summaryFound bool
+	contentFound bool
 }
 
 func validateXMLPayload(payload []byte) (payloadScan, error) {
@@ -546,7 +585,9 @@ func (v *xmlPayloadValidator) trackAtomEntry(element xml.StartElement) {
 	if v.isNewAtomEntry(element) {
 		v.entryDepth = v.depth
 		v.summaryFound = false
+		v.contentFound = false
 		v.scan.summaryTypes = append(v.scan.summaryTypes, "")
+		v.scan.contentTypes = append(v.scan.contentTypes, "")
 
 		return
 	}
@@ -554,6 +595,13 @@ func (v *xmlPayloadValidator) trackAtomEntry(element xml.StartElement) {
 	if v.isEntrySummary(element) {
 		v.scan.summaryTypes[len(v.scan.summaryTypes)-1] = xmlAttributeValue(element, "type")
 		v.summaryFound = true
+
+		return
+	}
+
+	if v.isEntryContent(element) {
+		v.scan.contentTypes[len(v.scan.contentTypes)-1] = xmlAttributeValue(element, "type")
+		v.contentFound = true
 	}
 }
 
@@ -563,6 +611,10 @@ func (v *xmlPayloadValidator) isNewAtomEntry(element xml.StartElement) bool {
 
 func (v *xmlPayloadValidator) isEntrySummary(element xml.StartElement) bool {
 	return v.entryDepth == 2 && v.depth == 3 && !v.summaryFound && isAtomElement(element.Name, "summary")
+}
+
+func (v *xmlPayloadValidator) isEntryContent(element xml.StartElement) bool {
+	return v.entryDepth == 2 && v.depth == 3 && !v.contentFound && isAtomElement(element.Name, "content")
 }
 
 func (v *xmlPayloadValidator) handleEnd() error {
@@ -600,7 +652,7 @@ func validateRootElement(name string) error {
 
 func xmlAttributeValue(element xml.StartElement, key string) string {
 	for _, attr := range element.Attr {
-		if attr.Name.Local == key {
+		if attr.Name.Space == "" && attr.Name.Local == key {
 			return attr.Value
 		}
 	}

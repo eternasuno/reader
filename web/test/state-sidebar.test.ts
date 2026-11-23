@@ -1,63 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Feed, FeedUnreadCount, Folder } from '../src/api';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  createStateTestContext,
+  makeFeed,
+  makeFolder,
+} from './support/state-fixture';
 
-type StateModule = typeof import('../src/state');
-
-let state: StateModule;
-let solid: typeof import('solid-js');
-let fetchMock: ReturnType<typeof vi.fn>;
-
-const fresh = async (): Promise<void> => {
-  vi.resetModules();
-  solid = await import('solid-js');
-  state = await import('../src/state');
-};
+const ctx = createStateTestContext();
 
 beforeEach(async () => {
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
-  localStorage.clear();
-  await fresh();
+  await ctx.reset();
 });
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-const queue = (body: unknown, status = 200): void => {
-  fetchMock.mockResolvedValueOnce(json(body, status));
-};
-const makeFeed = (overrides: Partial<Feed> & { id: string }): Feed => ({
-  url: `https://example.com/${overrides.id}/feed.xml`,
-  title: `Feed ${overrides.id}`,
-  folderId: null,
-  failureCount: 0,
-  readerMode: 'default',
-  order: 'newest',
-  ...overrides,
-});
-const makeFolder = (id: string, name = `Folder ${id}`): Folder => ({
-  id,
-  name,
-});
-const queueSidebar = (
-  options: {
-    feeds?: Array<Feed>;
-    folders?: Array<Folder>;
-    counts?: Array<FeedUnreadCount>;
-    saved?: number;
-  } = {}
-): void => {
-  queue({ items: options.feeds ?? [] });
-  queue({ items: options.folders ?? [] });
-  queue({ items: options.counts ?? [] });
-  queue({ count: options.saved ?? 0 });
-};
 
 describe('sidebar loading', () => {
   it('loads feeds, folders and unread counts in parallel', async () => {
-    queueSidebar({
+    const { state, solid } = ctx;
+    ctx.queueSidebar({
       feeds: [
         makeFeed({ id: 'f1', title: 'Go Blog', folderId: 'd1' }),
         makeFeed({ id: 'f2', title: 'Rust Blog', folderId: 'd1' }),
@@ -91,8 +48,13 @@ describe('sidebar loading', () => {
 });
 
 describe('sidebar failures', () => {
-  it('keeps previous data when a sidebar request fails', async () => {
-    queueSidebar({ feeds: [makeFeed({ id: 'f1' })], saved: 2 });
+  it('keeps previous data when a sidebar request fails and applies partial successes', async () => {
+    const { state, solid, fetchMock } = ctx;
+    ctx.queueSidebar({
+      feeds: [makeFeed({ id: 'f1' })],
+      folders: [makeFolder('d1')],
+      saved: 2,
+    });
     await state.refreshSidebar();
     solid.flush();
 
@@ -104,11 +66,25 @@ describe('sidebar failures', () => {
 
     expect(state.feeds()).toHaveLength(1);
     expect(state.savedUnreadCount()).toBe(2);
+
+    // Partial success: feeds + saved succeed, folders + counts fail.
+    fetchMock.mockReset();
+    ctx.queue({ items: [makeFeed({ id: 'f1' }), makeFeed({ id: 'f2' })] });
+    fetchMock.mockRejectedValueOnce(new TypeError('folders failed'));
+    fetchMock.mockRejectedValueOnce(new TypeError('counts failed'));
+    ctx.queue({ count: 7 });
+    await state.refreshSidebar();
+    solid.flush();
+
+    expect(state.feeds()).toHaveLength(2);
+    expect(state.folders().map((folder) => folder.id)).toEqual(['d1']);
+    expect(state.savedUnreadCount()).toBe(7);
   });
 });
 
 describe('folder collapse persistence', () => {
   it('persists folder collapse state', async () => {
+    const { state, solid } = ctx;
     await state.refreshSidebar();
     solid.flush();
 
@@ -137,11 +113,11 @@ describe('folder collapse persistence', () => {
 describe('folder collapse restore', () => {
   it('restores collapsed folders from localStorage on startup', async () => {
     localStorage.setItem(
-      state.COLLAPSED_FOLDERS_STORAGE_KEY,
+      ctx.state.COLLAPSED_FOLDERS_STORAGE_KEY,
       JSON.stringify(['d1', 7])
     );
-    await fresh();
+    await ctx.fresh();
 
-    expect([...state.collapsedFolders()]).toEqual(['d1']);
+    expect([...ctx.state.collapsedFolders()]).toEqual(['d1']);
   });
 });

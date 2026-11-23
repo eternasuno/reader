@@ -45,6 +45,7 @@ export type KindleStatus = 'running' | 'succeeded' | 'failed';
 export interface ErrorResponse {
   error: string;
   url?: string;
+  id?: string;
 }
 
 export interface Session {
@@ -180,12 +181,17 @@ export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
   readonly url?: string;
+  readonly id?: string;
 
-  constructor(code: string, status: number, url?: string) {
+  constructor(code: string, status: number, url?: string, id?: string) {
     super(code);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
     this.url = url;
+    this.id = id;
   }
 }
+
+export const errorCodeOf = (error: unknown): string =>
+  error instanceof ApiError ? error.code : 'RequestFailed';

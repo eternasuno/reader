@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"strings"
-	"time"
 
 	"reader/internal/domain"
 )
@@ -38,6 +37,10 @@ func (r *SettingRepo) Get(ctx context.Context) (domain.Settings, error) {
 		return domain.Settings{}, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
+	return settingsFromRow(row), nil
+}
+
+func settingsFromRow(row settingsRow) domain.Settings {
 	return domain.Settings{
 		Retention:       int(row.retention),
 		Provider:        domain.ExtractorProvider(row.provider),
@@ -45,7 +48,7 @@ func (r *SettingRepo) Get(ctx context.Context) (domain.Settings, error) {
 		BrowserEndpoint: optionalText(row.browserEndpoint),
 		SMTP:            buildSMTPSettings(row),
 		Kindle:          buildKindleSettings(row),
-	}, nil
+	}
 }
 
 func scanSettingsRow(row *sql.Row) (settingsRow, error) {
@@ -238,14 +241,6 @@ func (r *SettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSett
 	})
 	if err != nil {
 		return wrapRepositoryError(err, domain.ErrSettingRepositoryError)
-	}
-
-	return nil
-}
-
-func (r *SettingRepo) AdvanceNextSendAt(ctx context.Context, nextSendAt time.Time) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET next_send_at = ? WHERE id = 1`, timeToMillis(nextSendAt)); err != nil {
-		return domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
 	return nil

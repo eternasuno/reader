@@ -6,12 +6,13 @@ import { t } from '../i18n';
 import type { LibraryScope, RouteState } from '../state';
 import {
   buildLibraryUrl,
+  insertSavedPageLocal,
+  invalidateSidebar,
   loadScopeFirstPage,
   moveFeedToFolder,
   openArticle,
   openArticleByRoute,
   parseLibraryLocation,
-  prependSavedPageLocal,
   refreshSidebar,
   feeds as sidebarFeeds,
   folders as sidebarFolders,
@@ -258,7 +259,6 @@ const useArticleActions = (
   navigate: (url: string) => void
 ) => {
   const openScope = (target: LibraryScope, articleId?: string): void => {
-    void refreshSidebar();
     navigate(buildLibraryUrl(target, { articleId }));
   };
 
@@ -275,7 +275,7 @@ const useArticleActions = (
   };
 
   const handleSavedPage = (page: SavedPage): void => {
-    prependSavedPageLocal(page);
+    insertSavedPageLocal(page);
     openExistingPage(page);
   };
 
@@ -329,6 +329,6 @@ export const createLibraryController = (): LibraryController => {
     requestImportOpml: opml.openPicker,
     opmlInput: opml.inputRef,
     handleOpmlChange: opml.onChange,
-    refreshSidebar: () => void refreshSidebar(),
+    refreshSidebar: () => void invalidateSidebar(),
   };
 };

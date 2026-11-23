@@ -21,6 +21,18 @@ func selectionTestID(value int) string {
 	return fmt.Sprintf("id-%03d", value)
 }
 
+func selectionStoredRefs(letters []string) []StoredRef {
+	refs := make([]StoredRef, len(letters))
+	for i, letter := range letters {
+		refs[i] = StoredRef{
+			ID:  selectionTestID(len(letters) - i),
+			URL: selectionTestURL("https://example.com/" + letter),
+		}
+	}
+
+	return refs
+}
+
 func selectionStoredItems(letters []string) []FeedItem {
 	items := make([]FeedItem, len(letters))
 	for i, letter := range letters {
@@ -118,8 +130,9 @@ func TestPlanFeedSyncSelectionKeepsPositionsAndPrunesOldest(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			stored := selectionStoredItems(strings.Fields(testCase.stored))
+			refs := selectionStoredRefs(strings.Fields(testCase.stored))
 			entries := selectionEntries(strings.Fields(testCase.source))
-			newItems, deleteIDs := PlanFeedSync("feed-1", entries, stored, 3, selectionCounter(100))
+			newItems, deleteIDs := PlanFeedSync("feed-1", entries, refs, 3, selectionCounter(100))
 
 			retained := selectionRetainedIDs(t, stored, deleteIDs)
 			remaining := make([]FeedItem, 0, len(stored)+len(newItems))
@@ -239,9 +252,9 @@ func TestPlanFeedSyncKeepsFirstDuplicateSourceEntry(t *testing.T) {
 }
 
 func TestPlanFeedSyncIgnoresStoredItemsWhenListed(t *testing.T) {
-	stored := []FeedItem{
-		{ID: selectionTestID(3), FeedID: "feed-1", URL: selectionTestURL("https://example.com/e"), Title: "stored e", Read: true},
-		{ID: selectionTestID(2), FeedID: "feed-1", URL: selectionTestURL("https://example.com/d"), Title: "stored d"},
+	stored := []StoredRef{
+		{ID: selectionTestID(3), URL: selectionTestURL("https://example.com/e")},
+		{ID: selectionTestID(2), URL: selectionTestURL("https://example.com/d")},
 	}
 	entries := []ParsedFeedEntry{
 		{URL: selectionTestURL("https://example.com/e"), Title: "source e"},
@@ -285,13 +298,11 @@ func TestPlanFeedSyncFallsBackToDefaultRetention(t *testing.T) {
 }
 
 func TestPlanFeedSyncDefaultRetentionPrunesStoredItems(t *testing.T) {
-	stored := make([]FeedItem, 120)
+	stored := make([]StoredRef, 120)
 	for i := range stored {
-		stored[i] = FeedItem{
-			ID:     selectionTestID(len(stored) - i),
-			FeedID: "feed-1",
-			URL:    selectionTestURL(fmt.Sprintf("https://example.com/s%03d", i)),
-			Title:  fmt.Sprintf("stored %d", i),
+		stored[i] = StoredRef{
+			ID:  selectionTestID(len(stored) - i),
+			URL: selectionTestURL(fmt.Sprintf("https://example.com/s%03d", i)),
 		}
 	}
 
@@ -304,7 +315,17 @@ func TestPlanFeedSyncDefaultRetentionPrunesStoredItems(t *testing.T) {
 		t.Fatalf("got %d delete ids, want 20", len(deleteIDs))
 	}
 
-	retained := selectionRetainedIDs(t, stored, deleteIDs)
+	deleted := make(map[string]struct{}, len(deleteIDs))
+	for _, id := range deleteIDs {
+		deleted[id] = struct{}{}
+	}
+
+	retained := make(map[string]struct{}, len(stored))
+	for _, ref := range stored {
+		if _, ok := deleted[ref.ID]; !ok {
+			retained[ref.ID] = struct{}{}
+		}
+	}
 	if len(retained) != 100 {
 		t.Fatalf("retained %d items, want 100", len(retained))
 	}
@@ -327,9 +348,14 @@ func TestPlanFeedSyncRetentionIgnoresReadState(t *testing.T) {
 		{ID: selectionTestID(2), FeedID: "feed-1", URL: selectionTestURL("https://example.com/d"), Title: "d", Read: true},
 		{ID: selectionTestID(1), FeedID: "feed-1", URL: selectionTestURL("https://example.com/c"), Title: "c"},
 	}
+	refs := []StoredRef{
+		{ID: selectionTestID(3), URL: selectionTestURL("https://example.com/e")},
+		{ID: selectionTestID(2), URL: selectionTestURL("https://example.com/d")},
+		{ID: selectionTestID(1), URL: selectionTestURL("https://example.com/c")},
+	}
 	entries := []ParsedFeedEntry{{URL: selectionTestURL("https://example.com/f"), Title: "f"}}
 
-	newItems, deleteIDs := PlanFeedSync("feed-1", entries, stored, 3, selectionCounter(100))
+	newItems, deleteIDs := PlanFeedSync("feed-1", entries, refs, 3, selectionCounter(100))
 	if len(newItems) != 1 {
 		t.Fatalf("got %d new items, want 1", len(newItems))
 	}
@@ -353,7 +379,7 @@ func TestPlanFeedSyncRetentionIgnoresReadState(t *testing.T) {
 }
 
 func TestPlanFeedSyncPrunesUnlistedStoredItems(t *testing.T) {
-	stored := selectionStoredItems([]string{"e", "d", "c", "b", "a"})
+	stored := selectionStoredRefs([]string{"e", "d", "c", "b", "a"})
 	entries := selectionEntries([]string{"e", "d"})
 
 	newItems, deleteIDs := PlanFeedSync("feed-1", entries, stored, 2, selectionCounter(100))

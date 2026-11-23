@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -30,12 +32,15 @@ import (
 )
 
 const (
-	defaultAppURL         = "http://localhost:8080"
-	defaultPort           = "8080"
-	defaultDataDir        = ".data"
-	sessionSecretBytes    = 32
-	readHeaderTimeout     = 10 * time.Second
-	readTimeout           = 30 * time.Second
+	defaultAppURL      = "http://localhost:8080"
+	defaultPort        = "8080"
+	defaultDataDir     = ".data"
+	sessionSecretBytes = 32
+	readHeaderTimeout  = 10 * time.Second
+	readTimeout        = 30 * time.Second
+	// writeTimeout bounds full handler execution and response writing; 60s stays
+	// well above the 20s webpage fetch/extract timeout.
+	writeTimeout          = 60 * time.Second
 	shutdownTimeout       = 15 * time.Second
 	databaseFileName      = "reader.db"
 	staticAssetsDirectory = "dist"
@@ -52,6 +57,14 @@ type envConfig struct {
 	SessionSecret       []byte
 	Location            *time.Location
 	AllowPrivateNetwork bool
+}
+
+type appDependencies struct {
+	fetchClient      *fetcher.Client
+	feedParser       *content.Parser
+	articleExtractor *content.Extractor
+	refreshQueue     *worker.RefreshQueue
+	kindleSender     *worker.KindleSender
 }
 
 func main() {
@@ -87,53 +100,94 @@ func run() (err error) {
 		return fmt.Errorf("recover kindle sends: %w", err)
 	}
 
-	sanitizer := content.NewSanitizer()
-	feedParser := content.NewFeedParser(sanitizer)
-	articleExtractor := content.NewArticleExtractor(sanitizer)
-	fetchClient := fetcher.New(fetcher.Config{AllowPrivateNetwork: cfg.AllowPrivateNetwork, Settings: store.Settings()})
-
 	// Workers use an application-owned context so a canceled HTTP request can
 	// never abort a background job.
 	appCtx, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
 
-	refreshQueue, kindleSender := startWorkers(appCtx, cfg.Location, store, fetchClient, feedParser, articleExtractor)
-	handler, err := buildAppHandler(cfg, store, fetchClient, feedParser, articleExtractor, refreshQueue, kindleSender)
+	deps := buildAppDependencies(appCtx, cfg, store)
+	handler, err := buildAppHandler(cfg, store, deps)
 	if err != nil {
 		return err
 	}
 
-	return serveUntilSignal(ctx, ":"+cfg.Port, handler, cancelApp, kindleSender)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", ":"+cfg.Port)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", ":"+cfg.Port, err)
+	}
+
+	stopWorkers := startWorkers(appCtx, cancelApp, deps)
+
+	return serveUntilExit(ctx, listener, handler, stopWorkers)
 }
 
-func startWorkers(appCtx context.Context, loc *time.Location, store *sqlite.Store, fetchClient *fetcher.Client, feedParser *content.Parser, articleExtractor *content.Extractor) (*worker.RefreshQueue, *worker.KindleSender) {
-	refreshQueue := worker.NewRefreshQueue(worker.RefreshConfig{
-		Feeds:     store.Feeds(),
-		FeedItems: store.FeedItems(),
-		Settings:  store.Settings(),
-		Fetcher:   fetchClient,
-		Parser:    feedParser,
-	})
+func startWorkers(appCtx context.Context, cancelApp context.CancelFunc, deps appDependencies) func() {
+	var schedulerWG sync.WaitGroup
+	deps.refreshQueue.Start(appCtx)
+	schedulerWG.Add(1)
+	go func() {
+		defer schedulerWG.Done()
+		deps.kindleSender.StartScheduler(appCtx)
+	}()
 
-	kindleSender := worker.NewKindleSender(worker.KindleConfig{
-		BaseCtx:     appCtx,
-		Settings:    store.Settings(),
-		KindleSends: store.KindleSends(),
-		FeedItems:   store.FeedItems(),
-		Fetcher:     fetchClient,
-		Extractor:   articleExtractor,
-		EPUBBuilder: epub.NewBuilder(epub.Config{ImageFetcher: fetchClient}),
-		MailSender:  mail.NewSender(mail.Config{}),
-		Location:    loc,
-	})
-
-	refreshQueue.Start(appCtx)
-	go kindleSender.StartScheduler(appCtx)
-
-	return refreshQueue, kindleSender
+	return func() {
+		cancelApp()
+		deps.refreshQueue.Wait()
+		schedulerWG.Wait()
+		deps.kindleSender.Wait()
+	}
 }
 
-func buildAppHandler(cfg envConfig, store *sqlite.Store, fetchClient *fetcher.Client, feedParser *content.Parser, articleExtractor *content.Extractor, refreshQueue *worker.RefreshQueue, kindleSender *worker.KindleSender) (http.Handler, error) {
+func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.Store) appDependencies {
+	sanitizer := content.NewSanitizer()
+	feedParser := content.NewFeedParser(sanitizer)
+	articleExtractor := content.NewArticleExtractor(sanitizer)
+	settings := store.Settings()
+	fetchClient := newFetchClient(cfg.AllowPrivateNetwork, settings)
+
+	return appDependencies{
+		fetchClient:      fetchClient,
+		feedParser:       feedParser,
+		articleExtractor: articleExtractor,
+		refreshQueue: worker.NewRefreshQueue(worker.RefreshConfig{
+			Feeds:     store.Feeds(),
+			FeedItems: store.FeedItems(),
+			Settings:  settings,
+			Fetcher:   fetchClient,
+			Parser:    feedParser,
+		}),
+		kindleSender: worker.NewKindleSender(worker.KindleConfig{
+			BaseCtx:     appCtx,
+			KindleSends: store.KindleSends(),
+			FeedItems:   store.FeedItems(),
+			Fetcher:     fetchClient,
+			Extractor:   articleExtractor,
+			EPUBBuilder: epub.NewBuilder(epub.Config{ImageFetcher: fetchClient}),
+			MailSender:  mail.NewSender(mail.Config{}),
+			Location:    cfg.Location,
+		}),
+	}
+}
+
+func newFetchClient(allowPrivateNetwork bool, settings *sqlite.SettingRepo) *fetcher.Client {
+	return fetcher.New(fetcher.Config{
+		AllowPrivateNetwork: allowPrivateNetwork,
+		Settings: func(ctx context.Context) (fetcher.ExtractorSettings, error) {
+			loaded, err := settings.Get(ctx)
+			if err != nil {
+				return fetcher.ExtractorSettings{}, err
+			}
+
+			return fetcher.ExtractorSettings{
+				Provider:        loaded.Provider,
+				JinaKey:         loaded.JinaKey,
+				BrowserEndpoint: loaded.BrowserEndpoint,
+			}, nil
+		},
+	})
+}
+
+func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (http.Handler, error) {
 	staticFS, err := fs.Sub(web.DistFS, staticAssetsDirectory)
 	if err != nil {
 		return nil, fmt.Errorf("prepare static assets: %w", err)
@@ -153,12 +207,12 @@ func buildAppHandler(cfg envConfig, store *sqlite.Store, fetchClient *fetcher.Cl
 		SavedPages:       store.SavedPages(),
 		Settings:         store.Settings(),
 		KindleSends:      store.KindleSends(),
-		FeedFetcher:      fetchClient,
-		FeedParser:       feedParser,
-		WebpageFetcher:   fetchClient,
-		ArticleExtractor: articleExtractor,
-		Refresher:        refreshQueue,
-		Kindle:           kindleSender,
+		FeedFetcher:      deps.fetchClient,
+		FeedParser:       deps.feedParser,
+		WebpageFetcher:   deps.fetchClient,
+		ArticleExtractor: deps.articleExtractor,
+		Refresher:        deps.refreshQueue,
+		Kindle:           deps.kindleSender,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build http server: %w", err)
@@ -167,38 +221,90 @@ func buildAppHandler(cfg envConfig, store *sqlite.Store, fetchClient *fetcher.Cl
 	return handler, nil
 }
 
-func serveUntilSignal(ctx context.Context, addr string, handler http.Handler, cancelApp context.CancelFunc, kindleSender *worker.KindleSender) error {
-	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: readHeaderTimeout, ReadTimeout: readTimeout}
+type handlerTracker struct {
+	mu      sync.Mutex
+	closed  bool
+	active  sync.WaitGroup
+	handler http.Handler
+}
+
+func (tracker *handlerTracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	tracker.mu.Lock()
+	if tracker.closed {
+		tracker.mu.Unlock()
+		http.Error(w, "server shutting down", http.StatusServiceUnavailable)
+
+		return
+	}
+
+	tracker.active.Add(1)
+	tracker.mu.Unlock()
+	defer tracker.active.Done()
+	tracker.handler.ServeHTTP(w, r)
+}
+
+func (tracker *handlerTracker) closeAdmission() {
+	tracker.mu.Lock()
+	tracker.closed = true
+	tracker.mu.Unlock()
+}
+
+func serveUntilExit(ctx context.Context, listener net.Listener, handler http.Handler, stopWorkers func()) error {
+	return serveUntilExitWithTimeout(ctx, listener, handler, stopWorkers, shutdownTimeout)
+}
+
+func serveUntilExitWithTimeout(ctx context.Context, listener net.Listener, handler http.Handler, stopWorkers func(), timeout time.Duration) error {
+	trackedHandler := &handlerTracker{handler: handler}
+	server := &http.Server{
+		Addr:              listener.Addr().String(),
+		Handler:           trackedHandler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+	}
 	serveErrs := make(chan error, 1)
 
 	go func() {
 		slog.Info("reader listening", "addr", server.Addr)
-		serveErrs <- server.ListenAndServe()
+		serveErrs <- server.Serve(listener)
 	}()
 
+	var serveErr error
 	select {
 	case <-ctx.Done():
 		slog.Info("reader shutting down")
-
-		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancelShutdown()
-
-		shutdownErr := server.Shutdown(shutdownCtx)
-		cancelApp()
-		kindleSender.Wait()
-
-		if shutdownErr != nil {
-			return fmt.Errorf("shutdown http server: %w", shutdownErr)
+	case serveErr = <-serveErrs:
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
 		}
+	}
 
-		return nil
-	case serveErr := <-serveErrs:
-		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			return fmt.Errorf("serve http: %w", serveErr)
-		}
+	shutdownErr := drainHTTPServer(server, timeout, trackedHandler.closeAdmission)
+	trackedHandler.active.Wait()
+	stopWorkers()
 
+	if serveErr != nil {
+		return fmt.Errorf("serve http: %w", serveErr)
+	}
+
+	return shutdownErr
+}
+
+func drainHTTPServer(server *http.Server, timeout time.Duration, closeAdmission func()) error {
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), timeout)
+	defer cancelShutdown()
+
+	shutdownErr := server.Shutdown(shutdownCtx)
+	closeAdmission()
+	if shutdownErr == nil {
 		return nil
 	}
+
+	if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+		return fmt.Errorf("shutdown http server: %w", errors.Join(shutdownErr, closeErr))
+	}
+
+	return fmt.Errorf("shutdown http server: %w", shutdownErr)
 }
 
 // loadConfig reads the bootstrap environment variables, applying the defaults
@@ -210,14 +316,19 @@ func loadConfig(getenv func(string) string) (envConfig, error) {
 		return envConfig{}, errors.New("APP_PASSWORD is required")
 	}
 
+	if err := httpserver.ValidateAppPassword(appPassword); err != nil {
+		return envConfig{}, err
+	}
+
 	sessionSecret := []byte(getenv("SESSION_SECRET"))
-	if len(sessionSecret) == 0 {
-		generated := make([]byte, sessionSecretBytes)
-		if _, err := rand.Read(generated); err != nil {
+	switch {
+	case len(sessionSecret) == 0:
+		sessionSecret = make([]byte, sessionSecretBytes)
+		if _, err := rand.Read(sessionSecret); err != nil {
 			return envConfig{}, fmt.Errorf("generate session secret: %w", err)
 		}
-
-		sessionSecret = generated
+	case len(sessionSecret) < sessionSecretBytes:
+		return envConfig{}, fmt.Errorf("SESSION_SECRET must be at least %d bytes", sessionSecretBytes)
 	}
 
 	location := time.Local

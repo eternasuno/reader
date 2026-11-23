@@ -1,43 +1,65 @@
 /**
  * Feed-level library actions: moving a feed between folders and storing its reader preferences
- * (`FD-MOVE-1`, `FD-PREF-1`, `RD-MODE-1`). A rollback never touches rows owned by a newer scope
- * generation (`LIB-RELOAD-1`).
+ * (`FD-MOVE-1`, `FD-PREF-1`, `RD-MODE-1`). Overlapping moves track per-feed desired state so a
+ * late failure never undoes a newer choice.
  */
 
 import { flush } from 'solid-js';
 import type { Feed } from '../api';
-import { ApiError, feedsApi } from '../api';
+import { errorCodeOf, feedsApi } from '../api';
 import { t, translateErrorCode } from '../i18n';
 import { showToast } from '../ui';
-import type { LibraryArticle } from './library-store';
-import { activeScope, requestState, rows, setRows } from './library-store';
+import type { DroppedFeedRows } from './library-mutations';
+import { feedMoveTracker, LatestTokenMap } from './library-mutations';
+import {
+  activeScope,
+  dropFeedRows,
+  requestState,
+  restoreFeedRows,
+  rowIds,
+  rows,
+} from './library-store';
+import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
 
-const codeOf = (error: unknown): string =>
-  error instanceof ApiError ? error.code : 'RequestFailed';
+const readerModeTokens = new LatestTokenMap();
 
-const dropFeedRows = (feedId: string): void => {
-  setRows((rowsNow) =>
-    rowsNow.filter((row) => !(row.kind === 'feed' && row.feedId === feedId))
-  );
+const currentFolderOf = (feed: Feed): string | null => {
+  const stored = sidebar.feeds().find((entry) => entry.id === feed.id);
+  return stored !== undefined
+    ? (stored.folderId ?? null)
+    : (feed.folderId ?? null);
 };
 
-/** Re-inserts `removed` rows (skipping ids already present) using the previous list order. */
-const mergeRows = (
-  current: ReadonlyArray<LibraryArticle>,
-  removed: ReadonlyArray<LibraryArticle>,
-  previousOrder: ReadonlyArray<LibraryArticle>
-): ReadonlyArray<LibraryArticle> => {
-  const present = new Set(current.map((row) => row.id));
-  const missing = removed.filter((row) => !present.has(row.id));
-  if (missing.length === 0) return current;
+const currentFolderOfId = (feedId: string): string | null | undefined => {
+  const stored = sidebar.feeds().find((entry) => entry.id === feedId);
+  return stored !== undefined ? (stored.folderId ?? null) : undefined;
+};
 
-  const positions = new Map(previousOrder.map((row, index) => [row.id, index]));
-  return [...current, ...missing].sort(
-    (left, right) =>
-      (positions.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
-      (positions.get(right.id) ?? Number.MAX_SAFE_INTEGER)
-  );
+const maybeRestoreDropped = (
+  dropped: DroppedFeedRows | null,
+  targetFolderId: string | null
+): void => {
+  if (
+    dropped !== null &&
+    targetFolderId === dropped.folderId &&
+    requestState.generation === dropped.scopeGeneration
+  ) {
+    restoreFeedRows(dropped.rows, dropped.orderIds);
+  }
+};
+
+const reconcileFeedMove = (
+  feedId: string,
+  targetFolderId: string | null,
+  dropped: DroppedFeedRows | null
+): void => {
+  const current = currentFolderOfId(feedId);
+  if (current !== undefined && current !== targetFolderId) {
+    sidebar.updateFeedLocal(feedId, { folderId: targetFolderId });
+  }
+  maybeRestoreDropped(dropped, targetFolderId);
+  flush();
 };
 
 /**
@@ -48,32 +70,44 @@ export const moveFeedToFolder = async (
   feed: Feed,
   folderId: string | null
 ): Promise<boolean> => {
-  const startGeneration = requestState.generation;
-  const previousFolderId = feed.folderId ?? null;
+  const token = feedMoveTracker.begin(feed.id, currentFolderOf(feed), folderId);
   const scope = activeScope();
-  const leavesOpenFolder =
-    scope.kind === 'folder' && scope.folderId !== folderId;
-  const previousRows = rows();
-  const removedRows = previousRows.filter(
-    (row) => row.kind === 'feed' && row.feedId === feed.id
-  );
+
+  if (scope.kind === 'folder' && scope.folderId !== folderId) {
+    const orderIds = rowIds();
+    const removedRows = rows().filter(
+      (row) => row.kind === 'feed' && row.feedId === feed.id
+    );
+    feedMoveTracker.recordDrop(feed.id, {
+      scopeGeneration: requestState.generation,
+      folderId: scope.folderId,
+      rows: removedRows,
+      orderIds,
+    });
+    dropFeedRows(feed.id);
+  }
 
   sidebar.updateFeedLocal(feed.id, { folderId });
-  if (leavesOpenFolder) dropFeedRows(feed.id);
   flush();
 
   try {
     await feedsApi.moveToFolder(feed.id, folderId);
-    showToast(String(t('folders.movedToast')), 'success');
+    const outcome = feedMoveTracker.succeed(feed.id, token, folderId);
+    if (outcome !== null) {
+      reconcileFeedMove(feed.id, outcome.targetFolderId, outcome.dropped);
+      if (outcome.owns) {
+        showToast(String(t('folders.movedToast')), 'success');
+      }
+    }
     return true;
   } catch (error) {
-    sidebar.updateFeedLocal(feed.id, { folderId: previousFolderId });
-    // Restore only the dropped rows, and only while the same scope generation owns the list.
-    if (leavesOpenFolder && requestState.generation === startGeneration) {
-      setRows((rowsNow) => mergeRows(rowsNow, removedRows, previousRows));
-      flush();
+    const outcome = feedMoveTracker.fail(feed.id, token);
+    if (outcome === null) return false;
+
+    reconcileFeedMove(feed.id, outcome.targetFolderId, outcome.dropped);
+    if (outcome.owns) {
+      showToast(translateErrorCode(errorCodeOf(error)), 'error');
     }
-    showToast(translateErrorCode(codeOf(error)), 'error');
     return false;
   }
 };
@@ -83,14 +117,23 @@ export const changeFeedReaderMode = async (
   feed: Feed,
   readerMode: Feed['readerMode']
 ): Promise<boolean> => {
+  const token = readerModeTokens.claim(feed.id);
   try {
     await feedsApi.setReaderMode(feed.id, readerMode);
+    if (readerModeTokens.isCurrent(feed.id, token)) {
+      sidebar.updateFeedLocal(feed.id, { readerMode });
+    }
+    return true;
   } catch (error) {
-    showToast(translateErrorCode(codeOf(error)), 'error');
+    if (readerModeTokens.isCurrent(feed.id, token)) {
+      showToast(translateErrorCode(errorCodeOf(error)), 'error');
+    }
     return false;
+  } finally {
+    readerModeTokens.release(feed.id, token);
   }
-
-  sidebar.updateFeedLocal(feed.id, { readerMode });
-
-  return true;
 };
+
+onSessionCleared(() => {
+  readerModeTokens.reset();
+});

@@ -2,24 +2,28 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"reader/internal/domain"
 )
 
 const (
-	defaultKindleTickInterval = 5 * time.Minute
-	kindleDateLayout          = "2006-01-02"
-
-	completeSendAttempts = 3
-	completeSendTimeout  = 5 * time.Second
+	defaultKindleTickInterval  = 5 * time.Minute
+	kindleDateLayout           = "2006-01-02"
+	detachedWriteTimeout       = 5 * time.Second
+	defaultCompleteBaseBackoff = 100 * time.Millisecond
+	defaultCompleteMaxBackoff  = 30 * time.Second
+	maxLoggedErrorBytes        = 256
+	completeLogIntervalAttempt = 10
 )
 
 type KindleConfig struct {
 	BaseCtx      context.Context
-	Settings     domain.SettingRepository
 	KindleSends  domain.KindleSendRepository
 	FeedItems    domain.FeedItemRepository
 	Fetcher      domain.WebpageFetcher
@@ -32,19 +36,20 @@ type KindleConfig struct {
 }
 
 // KindleSender delivers unread articles as EPUB mail from a single background
-// job at a time, using a snapshot of the delivery settings taken on enqueue.
+// job at a time, using a snapshot of the delivery settings claimed atomically.
 type KindleSender struct {
-	baseCtx      context.Context
-	settings     domain.SettingRepository
-	kindleSends  domain.KindleSendRepository
-	feedItems    domain.FeedItemRepository
-	fetcher      domain.WebpageFetcher
-	extractor    domain.ArticleExtractor
-	epubBuilder  domain.EPUBBuilder
-	mailSender   domain.MailSender
-	loc          *time.Location
-	tickInterval time.Duration
-	now          func() time.Time
+	baseCtx             context.Context
+	kindleSends         domain.KindleSendRepository
+	feedItems           domain.FeedItemRepository
+	fetcher             domain.WebpageFetcher
+	extractor           domain.ArticleExtractor
+	epubBuilder         domain.EPUBBuilder
+	mailSender          domain.MailSender
+	loc                 *time.Location
+	tickInterval        time.Duration
+	now                 func() time.Time
+	completeBaseBackoff time.Duration
+	completeMaxBackoff  time.Duration
 
 	mu      sync.Mutex
 	running bool
@@ -73,17 +78,18 @@ func NewKindleSender(cfg KindleConfig) *KindleSender {
 	}
 
 	return &KindleSender{
-		baseCtx:      baseCtx,
-		settings:     cfg.Settings,
-		kindleSends:  cfg.KindleSends,
-		feedItems:    cfg.FeedItems,
-		fetcher:      cfg.Fetcher,
-		extractor:    cfg.Extractor,
-		epubBuilder:  cfg.EPUBBuilder,
-		mailSender:   cfg.MailSender,
-		loc:          loc,
-		tickInterval: tickInterval,
-		now:          now,
+		baseCtx:             baseCtx,
+		kindleSends:         cfg.KindleSends,
+		feedItems:           cfg.FeedItems,
+		fetcher:             cfg.Fetcher,
+		extractor:           cfg.Extractor,
+		epubBuilder:         cfg.EPUBBuilder,
+		mailSender:          cfg.MailSender,
+		loc:                 loc,
+		tickInterval:        tickInterval,
+		now:                 now,
+		completeBaseBackoff: defaultCompleteBaseBackoff,
+		completeMaxBackoff:  defaultCompleteMaxBackoff,
 	}
 }
 
@@ -101,121 +107,49 @@ func (s *KindleSender) Wait() {
 
 func (s *KindleSender) EnqueueManual(ctx context.Context) (domain.KindleSendRecord, error) {
 	s.mu.Lock()
-
 	if s.running {
 		s.mu.Unlock()
 		return domain.KindleSendRecord{}, domain.NewError(domain.ErrKindleSendInProgress, nil)
 	}
 
-	settings, err := s.settings.Get(ctx)
+	claimed, err := s.kindleSends.ClaimManualSend(ctx, domain.NewID(), s.now().UTC())
 	if err != nil {
 		s.mu.Unlock()
 		return domain.KindleSendRecord{}, err
 	}
 
-	if !isKindleUsable(settings) {
-		s.mu.Unlock()
-		return domain.KindleSendRecord{}, domain.NewError(domain.ErrKindleNotConfigured, nil)
-	}
-
-	snapshot := cloneKindleDelivery(*settings.SMTP, settings.Kindle.KindleEmail)
-
-	rec, err := s.kindleSends.CreateRunning(ctx, domain.KindleSendRecord{
-		ID:        domain.NewID(),
-		Trigger:   domain.KindleTriggerManual,
-		Status:    domain.KindleStatusRunning,
-		StartedAt: s.now().UTC(),
-	})
-	if err != nil {
-		s.mu.Unlock()
-		return domain.KindleSendRecord{}, err
-	}
-
-	s.running = true
-	s.wg.Add(1)
+	s.startClaimedLocked(claimed)
 	s.mu.Unlock()
 
-	go s.runJob(rec.ID, snapshot)
-
-	return rec, nil
+	return claimed.Record, nil
 }
 
-// CheckSchedule starts a scheduled send when the stored nextSendAt is due,
-// advancing the schedule before the job is handed to the background worker.
+// CheckSchedule atomically checks eligibility, advances nextSendAt when due,
+// and starts a scheduled send when no other send is active.
 func (s *KindleSender) CheckSchedule(ctx context.Context) error {
-	settings, err := s.settings.Get(ctx)
-	if err != nil {
-		return err
-	}
-
-	if !isKindleUsable(settings) || settings.Kindle.SendTime == nil || settings.Kindle.NextSendAt == nil {
-		return nil
-	}
-
-	now := s.now().UTC()
-	if settings.Kindle.NextSendAt.After(now) {
-		return nil
-	}
-
-	nextSendAt, err := domain.ComputeNextSendAt(*settings.Kindle.SendTime, now, s.loc)
-	if err != nil {
-		return err
-	}
-
-	return s.startScheduledJob(ctx, *settings.SMTP, settings.Kindle.KindleEmail, now, nextSendAt)
-}
-
-func (s *KindleSender) startScheduledJob(ctx context.Context, smtp domain.SMTPSettings, kindleEmail string, now, nextSendAt time.Time) error {
-	// The running flag and the schedule advance are decided under one lock so a
-	// manual send cannot slip in between the check and the create.
 	s.mu.Lock()
-
-	// A send already in flight keeps this window: the schedule still advances so
-	// the next tick does not replay it, and the due run is skipped per KD-SCHED-1.
-	if s.running {
+	claimed, err := s.kindleSends.ClaimDueSend(ctx, domain.NewID(), s.now().UTC(), s.loc, s.running)
+	if err != nil || !claimed.Claimed {
 		s.mu.Unlock()
-
-		return s.settings.AdvanceNextSendAt(ctx, nextSendAt)
-	}
-
-	snapshot := cloneKindleDelivery(smtp, kindleEmail)
-
-	// Create the running record before advancing the schedule: a failed insert
-	// leaves nextSendAt due so the next tick retries instead of losing the run.
-	rec, err := s.kindleSends.CreateRunning(ctx, domain.KindleSendRecord{
-		ID:        domain.NewID(),
-		Trigger:   domain.KindleTriggerScheduled,
-		Status:    domain.KindleStatusRunning,
-		StartedAt: now,
-	})
-	if err != nil {
-		s.mu.Unlock()
-
 		return err
 	}
 
-	if err := s.settings.AdvanceNextSendAt(ctx, nextSendAt); err != nil {
-		s.mu.Unlock()
-
-		// Never leave the just-created record behind as a stuck running row.
-		s.completeSend(ctx, rec.ID, domain.KindleStatusFailed, err)
-
-		return err
-	}
-
-	s.running = true
-	s.wg.Add(1)
+	s.startClaimedLocked(claimed)
 	s.mu.Unlock()
-
-	go s.runJob(rec.ID, snapshot)
 
 	return nil
+}
+
+func (s *KindleSender) startClaimedLocked(claimed domain.ClaimedKindleSend) {
+	s.running = true
+	s.wg.Add(1)
+	go s.runJob(claimed.Record.ID, claimed.Delivery)
 }
 
 // StartScheduler catches up a missed schedule once and then re-checks on the
 // configured tick interval until ctx is canceled.
 func (s *KindleSender) StartScheduler(ctx context.Context) {
-	_ = s.CheckSchedule(ctx)
+	s.checkScheduleLogged(ctx)
 
 	ticker := time.NewTicker(s.tickInterval)
 	defer ticker.Stop()
@@ -225,8 +159,14 @@ func (s *KindleSender) StartScheduler(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = s.CheckSchedule(ctx)
+			s.checkScheduleLogged(ctx)
 		}
+	}
+}
+
+func (s *KindleSender) checkScheduleLogged(ctx context.Context) {
+	if err := s.CheckSchedule(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		logBoundedError("check kindle schedule failed", err)
 	}
 }
 
@@ -240,26 +180,26 @@ func (s *KindleSender) runJob(sendID string, snapshot domain.KindleDelivery) {
 	}()
 
 	ctx := s.baseCtx
+	status, sendErr := s.executeJob(ctx, sendID, snapshot)
+	s.persistTerminalStatus(ctx, sendID, status, sendErr)
+}
 
+func (s *KindleSender) executeJob(ctx context.Context, sendID string, snapshot domain.KindleDelivery) (domain.KindleStatus, error) {
 	savedPages, feeds, itemsByFeed, err := s.kindleSends.ListUnreadForKindle(ctx)
 	if err != nil {
-		s.failSend(ctx, sendID, err)
-		return
+		return domain.KindleStatusFailed, err
 	}
 
 	articles := s.buildArticles(ctx, savedPages, feeds, itemsByFeed)
 	if len(articles) == 0 {
-		s.completeSend(ctx, sendID, domain.KindleStatusSucceeded, nil)
-
-		return
+		return domain.KindleStatusSucceeded, nil
 	}
 
 	if err := s.deliverBooks(ctx, sendID, snapshot, articles); err != nil {
-		s.failSend(ctx, sendID, err)
-		return
+		return domain.KindleStatusFailed, err
 	}
 
-	s.completeSend(ctx, sendID, domain.KindleStatusSucceeded, nil)
+	return domain.KindleStatusSucceeded, nil
 }
 
 func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot domain.KindleDelivery, articles []domain.KindleArticle) error {
@@ -271,16 +211,27 @@ func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot
 	}
 
 	for _, book := range books {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if err := s.mailSender.SendEPUB(ctx, snapshot, book); err != nil {
 			return err
 		}
 
-		if err := s.kindleSends.RecordBookAccepted(ctx, sendID, book.SavedPageIDs, book.FeedItemIDs, book.ArticleCount); err != nil {
+		if err := s.recordBookAccepted(ctx, sendID, book); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func (s *KindleSender) recordBookAccepted(ctx context.Context, sendID string, book domain.EPUBBook) error {
+	writeCtx, cancel := detachedWriteContext(ctx)
+	defer cancel()
+
+	return s.kindleSends.RecordBookAccepted(writeCtx, sendID, book.SavedPageIDs, book.FeedItemIDs, book.ArticleCount)
 }
 
 func (s *KindleSender) buildArticles(ctx context.Context, savedPages []domain.SavedPage, feeds []domain.Feed, itemsByFeed map[string][]domain.FeedItem) []domain.KindleArticle {
@@ -362,64 +313,107 @@ func (s *KindleSender) extractFeedItem(ctx context.Context, item domain.FeedItem
 		return ""
 	}
 
-	_, _ = s.feedItems.SaveExtractedContent(ctx, item.ID, extracted.Content)
+	if s.feedItems != nil {
+		stored, _, err := s.feedItems.SaveExtractedContentIfEmpty(ctx, item.ID, extracted.Content)
+		if err != nil {
+			logBoundedError("save kindle extracted content failed", err, "item_id", item.ID)
+		} else if stored != nil && stored.ExtractedContent != nil && strings.TrimSpace(*stored.ExtractedContent) != "" {
+			return *stored.ExtractedContent
+		}
+	}
 
 	return extracted.Content
 }
 
-func (s *KindleSender) failSend(ctx context.Context, sendID string, err error) {
-	s.completeSend(ctx, sendID, domain.KindleStatusFailed, err)
-}
+// persistTerminalStatus is the sole owner of terminal status persistence. It
+// retries with bounded exponential backoff while ctx lives and makes one
+// final detached attempt if ctx was already canceled.
+func (s *KindleSender) persistTerminalStatus(ctx context.Context, sendID string, status domain.KindleStatus, sendErr error) {
+	summary := sanitizedSummary(sendErr)
+	backoff := s.completeBaseBackoff
 
-// completeSend writes the terminal send status on a context detached from the
-// job's cancellation and retries a bounded number of times so a canceled job or
-// a single transient error cannot leave a permanently stuck running row.
-func (s *KindleSender) completeSend(ctx context.Context, sendID string, status domain.KindleStatus, sendErr error) {
-	completeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), completeSendTimeout)
-	defer cancel()
-
-	var summary *string
-	if sendErr != nil {
-		sanitized := domain.SanitizeErrorText(sendErr.Error())
-		summary = &sanitized
-	}
-
-	for range completeSendAttempts {
-		if err := s.kindleSends.CompleteSend(completeCtx, sendID, status, summary, s.now().UTC()); err == nil {
+	for attempt := 1; ; attempt++ {
+		wasCanceled := ctx.Err() != nil
+		if s.tryCompleteSend(ctx, sendID, status, summary, attempt) {
 			return
 		}
+
+		if wasCanceled {
+			return
+		}
+
+		if !sleepWithContext(ctx, backoff) {
+			s.tryCompleteSend(ctx, sendID, status, summary, attempt+1)
+			return
+		}
+
+		backoff = min(backoff*2, s.completeMaxBackoff)
 	}
 }
 
-func isKindleUsable(settings domain.Settings) bool {
-	return settings.SMTP != nil &&
-		settings.Kindle != nil &&
-		strings.TrimSpace(settings.Kindle.KindleEmail) != "" &&
-		strings.TrimSpace(settings.SMTP.SenderEmail) != "" &&
-		strings.TrimSpace(settings.SMTP.Host) != "" &&
-		settings.SMTP.Port >= 1 &&
-		settings.SMTP.Port <= 65535
-}
+func (s *KindleSender) tryCompleteSend(ctx context.Context, sendID string, status domain.KindleStatus, summary *string, attempt int) bool {
+	completeCtx, cancel := detachedWriteContext(ctx)
+	defer cancel()
 
-// cloneKindleDelivery deep-copies a delivery configuration so later settings
-// updates never mutate an accepted job.
-func cloneKindleDelivery(smtp domain.SMTPSettings, kindleEmail string) domain.KindleDelivery {
-	clonedSMTP := smtp
-	clonedSMTP.User = cloneString(smtp.User)
-	clonedSMTP.Password = cloneString(smtp.Password)
-
-	return domain.KindleDelivery{
-		SMTP:        clonedSMTP,
-		KindleEmail: kindleEmail,
+	err := s.kindleSends.CompleteSend(completeCtx, sendID, status, summary, s.now().UTC())
+	if err == nil {
+		return true
 	}
+
+	if attempt == 1 || attempt%completeLogIntervalAttempt == 0 {
+		logBoundedError("persist kindle send terminal status failed", err, "send_id", sendID, "status", string(status), "attempt", attempt)
+	}
+
+	return false
 }
 
-func cloneString(value *string) *string {
-	if value == nil {
+func sanitizedSummary(sendErr error) *string {
+	if sendErr == nil {
 		return nil
 	}
 
-	cloned := *value
+	sanitized := domain.SanitizeErrorText(sendErr.Error())
 
-	return &cloned
+	return &sanitized
+}
+
+func detachedWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), detachedWriteTimeout)
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func logBoundedError(msg string, err error, attrs ...any) {
+	args := make([]any, 0, len(attrs)+2)
+	args = append(args, attrs...)
+	args = append(args, "error", boundedSanitizedError(err))
+	slog.Error(msg, args...)
+}
+
+func boundedSanitizedError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	clean := domain.SanitizeErrorText(err.Error())
+	if len(clean) <= maxLoggedErrorBytes {
+		return clean
+	}
+
+	limit := maxLoggedErrorBytes
+	for limit > 0 && !utf8.ValidString(clean[:limit]) {
+		limit--
+	}
+
+	return clean[:limit] + "..."
 }

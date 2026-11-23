@@ -63,7 +63,7 @@ describe('dictionaries', () => {
 
   it('mirrors Chinese keys in English and keeps the copy', () => {
     expect(flattenKeys(enDict).sort()).toEqual(flattenKeys(zhDict).sort());
-    expect(zhDict.common.brand).toBe('留白');
+    expect(zhDict.common.brand).toBe('拾叶');
     expect(zhDict.common.justNow).toBe('刚刚');
     expect(zhDict.library.laterScope).toBe('稍后阅读');
     expect(translateErrorCode('SomethingElse')).toBe('操作失败，请稍后重试');
@@ -103,6 +103,25 @@ describe('locale detection', () => {
   it('detects Chinese from navigator.language', async () => {
     vi.spyOn(navigator, 'language', 'get').mockReturnValue('zh-CN');
     expect((await freshModule()).locale()).toBe('zh-CN');
+  });
+
+  it('falls back to navigator.language when window.localStorage throws', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('Blocked', 'SecurityError');
+      },
+    });
+    try {
+      vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-US');
+      const mod = await freshModule();
+      expect(mod.locale()).toBe('en');
+      expect(() => mod.setLocale('zh-CN')).not.toThrow();
+      expect(mod.locale()).toBe('zh-CN');
+    } finally {
+      if (descriptor) Object.defineProperty(window, 'localStorage', descriptor);
+    }
   });
 });
 

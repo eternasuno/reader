@@ -112,6 +112,33 @@ describe('readerAppearance legacy migration', () => {
   });
 });
 
+describe('safe storage fallback', () => {
+  it('survives when window.localStorage throws on access', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('Blocked', 'SecurityError');
+      },
+    });
+    try {
+      vi.resetModules();
+      const isolated = await import('../src/state/appearance');
+      expect(isolated.readerAppearance()).toEqual(isolated.DEFAULT_APPEARANCE);
+      expect(isolated.readerTheme()).toBe('auto');
+      expect(() =>
+        isolated.updateReaderAppearance({ fontSize: 20 })
+      ).not.toThrow();
+      expect(isolated.readerAppearance().fontSize).toBe(20);
+      expect(() => isolated.setReaderTheme('dark')).not.toThrow();
+      expect(isolated.readerTheme()).toBe('dark');
+      expect(() => isolated.resetReaderAppearance()).not.toThrow();
+    } finally {
+      if (descriptor) Object.defineProperty(window, 'localStorage', descriptor);
+    }
+  });
+});
+
 describe('sidebarCollapsed state', () => {
   it('defaults to false and persists toggle and explicit updates', () => {
     expect(state.sidebarCollapsed()).toBe(false);

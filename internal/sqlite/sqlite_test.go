@@ -101,6 +101,102 @@ func TestOpenMigratesDatabase(t *testing.T) {
 	}
 }
 
+func TestOpenSupportsSpecialCharactersInPath(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "data?query=1#frag%20", "reader.db")
+	ctx := context.Background()
+
+	store, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open store with special path chars: %v", err)
+	}
+
+	defer store.Close()
+
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("stat database file at special path: %v", err)
+	}
+
+	created, err := store.Folders().Create(ctx, domain.NewID(), "Special")
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+
+	got, err := store.Folders().GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get folder: %v", err)
+	}
+
+	if got == nil || got.Name != "Special" {
+		t.Fatalf("folder = %+v, want Special", got)
+	}
+}
+
+func TestOpenResolvesRelativePaths(t *testing.T) {
+	cases := []struct {
+		name     string
+		relative string
+		topLevel string
+	}{
+		{name: "default data dir", relative: filepath.Join(".data", "reader.db"), topLevel: ".data"},
+		{name: "bare file name", relative: "reader.db", topLevel: "reader.db"},
+		{name: "dot prefixed", relative: filepath.Join(".", "nested", "reader.db"), topLevel: "nested"},
+		{name: "query fragment and percent", relative: filepath.Join("data?query=1#frag%20%2F", "reader.db"), topLevel: "data?query=1#frag%20%2F"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workDir := t.TempDir()
+			t.Chdir(workDir)
+
+			ctx := context.Background()
+
+			store, err := Open(ctx, tc.relative)
+			if err != nil {
+				t.Fatalf("open store with relative path %q: %v", tc.relative, err)
+			}
+
+			folder, err := store.Folders().Create(ctx, domain.NewID(), "Relative")
+			if err != nil {
+				_ = store.Close()
+				t.Fatalf("create folder: %v", err)
+			}
+
+			if err := store.Close(); err != nil {
+				t.Fatalf("close store: %v", err)
+			}
+
+			if _, err := os.Stat(filepath.Join(workDir, tc.relative)); err != nil {
+				t.Fatalf("database file is not at the relative path: %v", err)
+			}
+
+			entries, err := os.ReadDir(workDir)
+			if err != nil {
+				t.Fatalf("read work dir: %v", err)
+			}
+
+			if len(entries) != 1 || entries[0].Name() != tc.topLevel {
+				t.Fatalf("work dir entries = %v, want only %q", entries, tc.topLevel)
+			}
+
+			reopened, err := Open(ctx, tc.relative)
+			if err != nil {
+				t.Fatalf("reopen store: %v", err)
+			}
+
+			defer reopened.Close()
+
+			got, err := reopened.Folders().GetByID(ctx, folder.ID)
+			if err != nil {
+				t.Fatalf("get folder after reopen: %v", err)
+			}
+
+			if got == nil || got.Name != "Relative" {
+				t.Fatalf("folder after reopen = %+v, want Relative", got)
+			}
+		})
+	}
+}
+
 func TestPragmasApplyToEveryPooledConnection(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -919,33 +1015,180 @@ func TestFeedItemUnreadCountsAndMarking(t *testing.T) {
 	}
 }
 
-func TestFeedItemSaveExtractedContent(t *testing.T) {
+func TestFeedItemSaveExtractedContentIfEmpty(t *testing.T) {
+	// Emptiness follows strings.TrimSpace (Unicode White_Space), not SQLite trim().
+	cases := []struct {
+		name      string
+		existing  *string
+		wantWrote bool
+	}{
+		{name: "null", existing: nil, wantWrote: true},
+		{name: "empty", existing: ptr(""), wantWrote: true},
+		{name: "spaces", existing: ptr("   "), wantWrote: true},
+		{name: "tab and newline", existing: ptr("\t\r\n"), wantWrote: true},
+		{name: "vertical tab and form feed", existing: ptr("\v\f"), wantWrote: true},
+		{name: "next line", existing: ptr("\u0085"), wantWrote: true},
+		{name: "no-break space", existing: ptr("\u00a0"), wantWrote: true},
+		{name: "em space and line separator", existing: ptr("\u2003\u2028\u2029"), wantWrote: true},
+		{name: "ideographic space", existing: ptr("\u3000 \n"), wantWrote: true},
+		{name: "text", existing: ptr("<p>first</p>"), wantWrote: false},
+		{name: "text with surrounding whitespace", existing: ptr("\n <p>first</p>\t"), wantWrote: false},
+		{name: "zero-width space is not whitespace", existing: ptr("\u200b"), wantWrote: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestStore(t)
+			ctx := context.Background()
+			feed := createFeed(t, store, "Example", nil)
+			item := domain.FeedItem{
+				ID:               domain.NewID(),
+				FeedID:           feed.ID,
+				URL:              mustURL(t, "https://example.com/items/"+domain.NewID()),
+				Title:            "Item",
+				ExtractedContent: tc.existing,
+			}
+
+			if err := store.Feeds().ApplySync(ctx, feed.ID, feed.Title, time.Now().UTC(), []domain.FeedItem{item}, nil); err != nil {
+				t.Fatalf("seed item: %v", err)
+			}
+
+			if err := store.FeedItems().SetRead(ctx, item.ID, true); err != nil {
+				t.Fatalf("mark item read: %v", err)
+			}
+
+			const incoming = "<p>incoming</p>"
+
+			result, wrote, err := store.FeedItems().SaveExtractedContentIfEmpty(ctx, item.ID, incoming)
+			if err != nil {
+				t.Fatalf("SaveExtractedContentIfEmpty: %v", err)
+			}
+
+			want := incoming
+			if !tc.wantWrote {
+				want = *tc.existing
+			}
+
+			if wrote != tc.wantWrote {
+				t.Fatalf("wrote = %v, want %v", wrote, tc.wantWrote)
+			}
+
+			if result == nil || result.ExtractedContent == nil || *result.ExtractedContent != want {
+				t.Fatalf("returned content = %v, want %q", result, want)
+			}
+
+			if !result.Read || result.ID != item.ID {
+				t.Fatalf("returned item = %+v, want same read item", result)
+			}
+
+			stored, err := store.FeedItems().GetByID(ctx, item.ID)
+			if err != nil {
+				t.Fatalf("get item: %v", err)
+			}
+
+			if stored == nil || stored.ExtractedContent == nil || *stored.ExtractedContent != want {
+				t.Fatalf("stored content = %v, want %q", stored, want)
+			}
+		})
+	}
+}
+
+func TestFeedItemSaveExtractedContentIfEmptyMissingItem(t *testing.T) {
+	store := newTestStore(t)
+
+	_, wrote, err := store.FeedItems().SaveExtractedContentIfEmpty(context.Background(), "missing", "<p>x</p>")
+	if err == nil {
+		t.Fatal("expected a missing feed item error")
+	}
+
+	requireCode(t, err, domain.ErrFeedItemNotFound)
+
+	if wrote {
+		t.Fatal("wrote = true for a missing item")
+	}
+}
+
+func TestFeedItemSaveExtractedContentIfEmptyConcurrentWritersAgree(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	feed := createFeed(t, store, "Example", nil)
 	items := addItems(t, store, feed, 1)
 
-	if err := store.FeedItems().SetRead(ctx, items[0].ID, true); err != nil {
-		t.Fatalf("mark item read: %v", err)
+	const writers = 8
+
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		winners int
+		seen    = make(map[string]struct{})
+	)
+
+	for i := range writers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			result, wrote, err := store.FeedItems().SaveExtractedContentIfEmpty(ctx, items[0].ID, fmt.Sprintf("<p>writer %d</p>", i))
+			if err != nil {
+				t.Errorf("writer %d: %v", i, err)
+
+				return
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if wrote {
+				winners++
+			}
+
+			seen[*result.ExtractedContent] = struct{}{}
+		}()
 	}
 
-	updated, err := store.FeedItems().SaveExtractedContent(ctx, items[0].ID, "<p>extracted</p>")
+	wg.Wait()
+
+	if winners != 1 {
+		t.Fatalf("winning writers = %d, want 1", winners)
+	}
+
+	if len(seen) != 1 {
+		t.Fatalf("writers observed %d distinct contents, want 1: %v", len(seen), seen)
+	}
+}
+
+func TestStoreExportOPML(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	tech, err := store.Folders().Create(ctx, domain.NewID(), "Tech")
 	if err != nil {
-		t.Fatalf("save extracted content: %v", err)
+		t.Fatalf("create folder: %v", err)
+	}
+	emptyFolder, err := store.Folders().Create(ctx, domain.NewID(), "Empty")
+	if err != nil {
+		t.Fatalf("create empty folder: %v", err)
 	}
 
-	if updated.ExtractedContent == nil || *updated.ExtractedContent != "<p>extracted</p>" {
-		t.Fatalf("extracted content = %v", updated.ExtractedContent)
+	top := createFeed(t, store, "Top Feed", nil)
+	inTech := createFeed(t, store, "Tech Feed", &tech.ID)
+
+	folders, topFeeds, err := store.Feeds().ExportOPML(ctx)
+	if err != nil {
+		t.Fatalf("export opml: %v", err)
 	}
 
-	if !updated.Read || updated.ID != items[0].ID {
-		t.Fatalf("updated item = %+v", updated)
+	if len(topFeeds) != 1 || topFeeds[0].ID != top.ID {
+		t.Fatalf("topFeeds = %+v, want [%s]", topFeeds, top.ID)
 	}
 
-	if _, err := store.FeedItems().SaveExtractedContent(ctx, "missing", "<p>extracted</p>"); err == nil {
-		t.Fatal("expected a missing feed item error")
-	} else {
-		requireCode(t, err, domain.ErrFeedItemNotFound)
+	if len(folders) != 2 || folders[0].Name != emptyFolder.Name || len(folders[0].Feeds) != 0 {
+		t.Fatalf("folders[0] = %+v", folders)
+	}
+
+	if folders[1].Name != tech.Name || len(folders[1].Feeds) != 1 || folders[1].Feeds[0].ID != inTech.ID {
+		t.Fatalf("folders[1] = %+v", folders[1])
 	}
 }
 
@@ -962,15 +1205,6 @@ func TestFeedItemStoredRefsAndRetention(t *testing.T) {
 		t.Fatalf("apply sync: %v", err)
 	}
 
-	retained, err := store.FeedItems().ListByFeedForRetention(ctx, feed.ID)
-	if err != nil {
-		t.Fatalf("list retention items: %v", err)
-	}
-
-	if got := itemIDs(retained); !slices.Equal(got, []string{items[1].ID, items[0].ID}) {
-		t.Fatalf("retention item ids = %v", got)
-	}
-
 	refs, err := store.FeedItems().ListStoredRefsByFeed(ctx, feed.ID)
 	if err != nil {
 		t.Fatalf("list stored refs: %v", err)
@@ -984,6 +1218,10 @@ func TestFeedItemStoredRefsAndRetention(t *testing.T) {
 		t.Fatalf("first stored ref = %+v", refs[0])
 	}
 
+	if refs[1].ID != items[0].ID || refs[1].URL.Raw() != items[0].URL.Raw() {
+		t.Fatalf("second stored ref = %+v", refs[1])
+	}
+
 	if !refs[0].URL.HasCredentials() {
 		t.Fatal("stored ref lost its credentials")
 	}
@@ -992,13 +1230,87 @@ func TestFeedItemStoredRefsAndRetention(t *testing.T) {
 		t.Fatalf("delete feed: %v", err)
 	}
 
-	remaining, err := store.FeedItems().ListByFeedForRetention(ctx, feed.ID)
+	remaining, err := store.FeedItems().ListStoredRefsByFeed(ctx, feed.ID)
 	if err != nil {
-		t.Fatalf("list retention items after delete: %v", err)
+		t.Fatalf("list stored refs after delete: %v", err)
 	}
 
 	if len(remaining) != 0 {
-		t.Fatalf("retention items after delete = %d, want 0", len(remaining))
+		t.Fatalf("stored refs after delete = %d, want 0", len(remaining))
+	}
+}
+
+func TestRejectsMalformedStoredURLs(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	badFeedID := domain.NewID()
+	badFeedURL := "not-a-valid-url-secretfeedmarker"
+	if _, err := store.WriteDB().ExecContext(
+		ctx,
+		`INSERT INTO feed (id, url, title) VALUES (?, ?, 'Broken Feed')`,
+		badFeedID,
+		badFeedURL,
+	); err != nil {
+		t.Fatalf("insert malformed feed: %v", err)
+	}
+
+	if _, err := store.Feeds().GetByID(ctx, badFeedID); err == nil {
+		t.Fatal("Feeds().GetByID() error = nil, want repository error")
+	} else {
+		requireCode(t, err, domain.ErrFeedRepositoryError)
+		if strings.Contains(err.Error(), "secretfeedmarker") {
+			t.Fatalf("Feeds().GetByID() error leaked stored text: %v", err)
+		}
+	}
+
+	if _, err := store.Feeds().List(ctx); err == nil {
+		t.Fatal("Feeds().List() error = nil, want repository error")
+	} else {
+		requireCode(t, err, domain.ErrFeedRepositoryError)
+		if strings.Contains(err.Error(), "secretfeedmarker") {
+			t.Fatalf("Feeds().List() error leaked stored text: %v", err)
+		}
+	}
+
+	validFeed := createFeed(t, store, "Valid Feed", nil)
+	badItemID := domain.NewID()
+	badItemURL := "ftp://secretitemmarker.example/item"
+	if _, err := store.WriteDB().ExecContext(
+		ctx,
+		`INSERT INTO feed_item (id, feed_id, url, title) VALUES (?, ?, ?, 'Broken Item')`,
+		badItemID,
+		validFeed.ID,
+		badItemURL,
+	); err != nil {
+		t.Fatalf("insert malformed feed item: %v", err)
+	}
+
+	if _, err := store.FeedItems().GetByID(ctx, badItemID); err == nil {
+		t.Fatal("FeedItems().GetByID() error = nil, want repository error")
+	} else {
+		requireCode(t, err, domain.ErrFeedItemRepositoryError)
+		if strings.Contains(err.Error(), "secretitemmarker") {
+			t.Fatalf("FeedItems().GetByID() error leaked stored text: %v", err)
+		}
+	}
+
+	if _, err := store.FeedItems().ListAll(ctx, domain.PageParams{Limit: 10}); err == nil {
+		t.Fatal("FeedItems().ListAll() error = nil, want repository error")
+	} else {
+		requireCode(t, err, domain.ErrFeedItemRepositoryError)
+		if strings.Contains(err.Error(), "secretitemmarker") {
+			t.Fatalf("FeedItems().ListAll() error leaked stored text: %v", err)
+		}
+	}
+
+	if _, err := store.FeedItems().ListStoredRefsByFeed(ctx, validFeed.ID); err == nil {
+		t.Fatal("FeedItems().ListStoredRefsByFeed() error = nil, want repository error")
+	} else {
+		requireCode(t, err, domain.ErrFeedItemRepositoryError)
+		if strings.Contains(err.Error(), "secretitemmarker") {
+			t.Fatalf("FeedItems().ListStoredRefsByFeed() error leaked stored text: %v", err)
+		}
 	}
 }
 
@@ -1021,7 +1333,7 @@ func TestStoreImportOPML(t *testing.T) {
 		SkippedInvalid: 2,
 	}
 
-	result, created, err := store.ImportOPML(ctx, doc)
+	result, createdIDs, err := store.Feeds().ImportOPML(ctx, doc)
 	if err != nil {
 		t.Fatalf("import opml: %v", err)
 	}
@@ -1038,25 +1350,34 @@ func TestStoreImportOPML(t *testing.T) {
 		t.Fatalf("skipped feeds = %d, want 3", result.SkippedFeeds)
 	}
 
-	createdTitles := make([]string, len(created))
-	for i, feed := range created {
+	if len(createdIDs) != 4 {
+		t.Fatalf("created feed ids = %d, want 4", len(createdIDs))
+	}
+
+	newsFolderID := folderIDByName(t, store, "News")
+	createdTitles := make([]string, len(createdIDs))
+	for i, id := range createdIDs {
+		feed, err := store.Feeds().GetByID(ctx, id)
+		if err != nil || feed == nil {
+			t.Fatalf("get created feed %q: (%v, %v)", id, feed, err)
+		}
+
 		createdTitles[i] = feed.Title
 		if feed.ReaderMode != domain.ReaderModeDefault || feed.Order != domain.SortOrderNewest {
 			t.Fatalf("created feed defaults = %+v", feed)
+		}
+
+		if i == 0 && (feed.FolderID == nil || *feed.FolderID != newsFolderID) {
+			t.Fatalf("news feed folder = %v, want %s", feed.FolderID, newsFolderID)
+		}
+
+		if i == 2 && feed.FolderID != nil {
+			t.Fatalf("top level feed folder = %v, want nil", *feed.FolderID)
 		}
 	}
 
 	if want := []string{"News 1", "News 2", "Top", "Tech 1"}; !slices.Equal(createdTitles, want) {
 		t.Fatalf("created feed titles = %v, want %v", createdTitles, want)
-	}
-
-	newsFolderID := folderIDByName(t, store, "News")
-	if created[0].FolderID == nil || *created[0].FolderID != newsFolderID {
-		t.Fatalf("news feed folder = %v, want %s", created[0].FolderID, newsFolderID)
-	}
-
-	if created[2].FolderID != nil {
-		t.Fatalf("top level feed folder = %v, want nil", *created[2].FolderID)
 	}
 
 	folders, err := store.Folders().List(ctx)
@@ -1109,7 +1430,7 @@ func TestImportOPMLIsAtomic(t *testing.T) {
 		},
 	}
 
-	if _, _, err := store.ImportOPML(ctx, doc); err == nil {
+	if _, _, err := store.Feeds().ImportOPML(ctx, doc); err == nil {
 		t.Fatal("expected the import to fail")
 	} else {
 		requireCode(t, err, domain.ErrInvalidFolderName)
@@ -1172,6 +1493,10 @@ func TestSavedPageRepoCreateAndLookup(t *testing.T) {
 		Content: "<p>body</p>",
 	})
 	conflict := requireCode(t, err, domain.ErrSavedPageAlreadyExists)
+	if conflict.ID != page.ID {
+		t.Fatalf("conflict id = %q, want %q", conflict.ID, page.ID)
+	}
+
 	if conflict.URL != "https://example.com/article" {
 		t.Fatalf("conflict url = %q, want %q", conflict.URL, "https://example.com/article")
 	}
@@ -1645,20 +1970,6 @@ func TestSettingRepoKindle(t *testing.T) {
 	assertSMTPSettings(t, *settings.SMTP, smtp)
 	assertKindleSettings(t, *settings.Kindle, kindle)
 
-	advanced := time.Date(2024, 6, 2, 8, 30, 0, 0, time.UTC)
-	if err := repo.AdvanceNextSendAt(ctx, advanced); err != nil {
-		t.Fatalf("advance next send at: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after advancing next send: %v", err)
-	}
-
-	if settings.Kindle == nil || settings.Kindle.NextSendAt == nil || !settings.Kindle.NextSendAt.Equal(advanced) {
-		t.Fatalf("next send at = %+v", settings.Kindle)
-	}
-
 	manualOnly := domain.KindleSettings{
 		KindleEmail: "reader@kindle.com",
 	}
@@ -1676,33 +1987,84 @@ func TestSettingRepoKindle(t *testing.T) {
 	}
 }
 
+func configureKindleDeliveryForTest(t *testing.T, store *Store, kindle domain.KindleSettings) {
+	t.Helper()
+
+	ctx := context.Background()
+	smtp := domain.SMTPSettings{
+		SenderEmail: "sender@example.com",
+		Host:        "smtp.example.com",
+		Port:        587,
+		Security:    domain.SMTPSecuritySTARTTLS,
+		User:        ptr("smtp-user"),
+		Password:    ptr("smtp-password"),
+	}
+	if err := store.Settings().UpdateSMTP(ctx, smtp); err != nil {
+		t.Fatalf("update smtp: %v", err)
+	}
+
+	if err := store.Settings().UpdateKindle(ctx, kindle); err != nil {
+		t.Fatalf("update kindle: %v", err)
+	}
+}
+
 func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	repo := store.KindleSends()
 
 	startedAt := time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC)
-	record, err := repo.CreateRunning(ctx, domain.KindleSendRecord{
-		ID:        domain.NewID(),
-		Trigger:   domain.KindleTriggerManual,
-		StartedAt: startedAt,
+	if _, err := repo.ClaimManualSend(ctx, domain.NewID(), startedAt); err == nil {
+		t.Fatal("expected KindleNotConfigured before settings exist")
+	} else {
+		requireCode(t, err, domain.ErrKindleNotConfigured)
+	}
+
+	dueAt := startedAt.Add(-time.Hour)
+	configureKindleDeliveryForTest(t, store, domain.KindleSettings{
+		KindleEmail: "reader@kindle.com",
+		SendTime:    ptr("09:00"),
+		NextSendAt:  &dueAt,
 	})
+
+	claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), startedAt)
 	if err != nil {
-		t.Fatalf("create running send: %v", err)
+		t.Fatalf("claim manual send: %v", err)
 	}
 
-	if record.Status != domain.KindleStatusRunning || record.ArticleCount != 0 || record.BookCount != 0 || record.FinishedAt != nil {
-		t.Fatalf("created running send = %+v", record)
+	record := claimed.Record
+	if !claimed.Claimed || record.Status != domain.KindleStatusRunning || record.ArticleCount != 0 || record.BookCount != 0 || record.FinishedAt != nil {
+		t.Fatalf("claimed manual send = %+v", claimed)
 	}
 
-	if _, err := repo.CreateRunning(ctx, domain.KindleSendRecord{
-		ID:        domain.NewID(),
-		Trigger:   domain.KindleTriggerScheduled,
-		StartedAt: startedAt.Add(time.Minute),
-	}); err == nil {
+	if claimed.Delivery.KindleEmail != "reader@kindle.com" || claimed.Delivery.SMTP.Host != "smtp.example.com" {
+		t.Fatalf("claimed delivery = %+v", claimed.Delivery)
+	}
+
+	if _, err := repo.ClaimManualSend(ctx, domain.NewID(), startedAt.Add(time.Minute)); err == nil {
 		t.Fatal("expected a send in progress error")
 	} else {
 		requireCode(t, err, domain.ErrKindleSendInProgress)
+	}
+
+	// Scheduled claim while manual send is active must advance next_send_at and skip.
+	skipped, err := repo.ClaimDueSend(ctx, domain.NewID(), startedAt.Add(time.Minute), time.UTC, false)
+	if err != nil {
+		t.Fatalf("claim due send while active: %v", err)
+	}
+
+	if skipped.Claimed {
+		t.Fatalf("expected due send to skip while manual send is running: %+v", skipped)
+	}
+
+	settingsAfterSkip, err := store.Settings().Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after skip: %v", err)
+	}
+
+	wantNext := time.Date(2024, 5, 1, 9, 0, 0, 0, time.UTC)
+	if settingsAfterSkip.Kindle == nil || settingsAfterSkip.Kindle.NextSendAt == nil || !settingsAfterSkip.Kindle.NextSendAt.Equal(wantNext) {
+		t.Fatalf("next_send_at after skip = %+v, want %v", settingsAfterSkip.Kindle, wantNext)
 	}
 
 	recent, err := repo.ListRecent(ctx)
@@ -1725,22 +2087,34 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 	}
 
 	if len(recent) != 1 || recent[0].Status != domain.KindleStatusSucceeded || recent[0].Error != nil {
-		t.Fatalf("completed send = %+v", recent)
+		t.Fatalf("recent sends after completion = %+v", recent)
 	}
 
 	if recent[0].FinishedAt == nil || !recent[0].FinishedAt.Equal(finishedAt) {
 		t.Fatalf("completed send finished at = %v, want %v", recent[0].FinishedAt, finishedAt)
 	}
 
-	crashed, err := repo.CreateRunning(ctx, domain.KindleSendRecord{
-		ID:        domain.NewID(),
-		Trigger:   domain.KindleTriggerScheduled,
-		StartedAt: startedAt.Add(3 * time.Minute),
-	})
+	// Now ClaimDueSend at 09:30 UTC (after 09:00 UTC) claims and advances to next day.
+	dueClaimAt := time.Date(2024, 5, 1, 9, 30, 0, 0, time.UTC)
+	dueClaim, err := repo.ClaimDueSend(ctx, domain.NewID(), dueClaimAt, time.UTC, false)
 	if err != nil {
-		t.Fatalf("create second running send: %v", err)
+		t.Fatalf("claim due send: %v", err)
 	}
 
+	if !dueClaim.Claimed || dueClaim.Record.Trigger != domain.KindleTriggerScheduled {
+		t.Fatalf("due claim = %+v", dueClaim)
+	}
+
+	crashed := dueClaim.Record
+	settingsAfterDue, err := store.Settings().Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings after due claim: %v", err)
+	}
+
+	wantNextDay := time.Date(2024, 5, 2, 9, 0, 0, 0, time.UTC)
+	if settingsAfterDue.Kindle == nil || settingsAfterDue.Kindle.NextSendAt == nil || !settingsAfterDue.Kindle.NextSendAt.Equal(wantNextDay) {
+		t.Fatalf("next_send_at after due claim = %+v, want %v", settingsAfterDue.Kindle, wantNextDay)
+	}
 	recoveredAt := startedAt.Add(time.Hour)
 	if err := repo.RecoverRunningOnStartup(ctx, recoveredAt); err != nil {
 		t.Fatalf("recover running sends: %v", err)
@@ -1786,20 +2160,18 @@ func TestKindleSendRepoPrunesHistory(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	repo := store.KindleSends()
+	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "reader@kindle.com"})
 
 	base := time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC)
 	ids := make([]string, kindleSendLimit+1)
 	for i := range ids {
 		startedAt := base.Add(time.Duration(i) * time.Minute)
-		record, err := repo.CreateRunning(ctx, domain.KindleSendRecord{
-			ID:        domain.NewID(),
-			Trigger:   domain.KindleTriggerManual,
-			StartedAt: startedAt,
-		})
+		claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), startedAt)
 		if err != nil {
-			t.Fatalf("create running send %d: %v", i, err)
+			t.Fatalf("claim manual send %d: %v", i, err)
 		}
 
+		record := claimed.Record
 		ids[i] = record.ID
 
 		if err := repo.CompleteSend(ctx, record.ID, domain.KindleStatusSucceeded, nil, startedAt.Add(30*time.Second)); err != nil {
@@ -1939,14 +2311,13 @@ func TestKindleSendRepoRecordBookAccepted(t *testing.T) {
 		savedPages[i] = created
 	}
 
-	send, err := repo.CreateRunning(ctx, domain.KindleSendRecord{
-		ID:        domain.NewID(),
-		Trigger:   domain.KindleTriggerManual,
-		StartedAt: time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC),
-	})
+	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "reader@kindle.com"})
+
+	claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC))
 	if err != nil {
-		t.Fatalf("create running send: %v", err)
+		t.Fatalf("claim manual send: %v", err)
 	}
+	send := claimed.Record
 
 	if err := repo.RecordBookAccepted(ctx, send.ID, []string{savedPages[0].ID}, []string{feedItems[0].ID}, 2); err != nil {
 		t.Fatalf("record accepted book: %v", err)
@@ -2033,14 +2404,13 @@ func TestKindleSendRepoRecordBookAcceptedRequiresRunningSend(t *testing.T) {
 		t.Fatalf("create saved page: %v", err)
 	}
 
-	send, err := repo.CreateRunning(ctx, domain.KindleSendRecord{
-		ID:        domain.NewID(),
-		Trigger:   domain.KindleTriggerManual,
-		StartedAt: time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC),
-	})
+	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "reader@kindle.com"})
+
+	claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC))
 	if err != nil {
-		t.Fatalf("create running send: %v", err)
+		t.Fatalf("claim manual send: %v", err)
 	}
+	send := claimed.Record
 
 	assertUnread := func(stage string) {
 		t.Helper()
@@ -2087,6 +2457,141 @@ func TestKindleSendRepoRecordBookAcceptedRequiresRunningSend(t *testing.T) {
 
 	if len(recent) != 1 || recent[0].ArticleCount != 0 || recent[0].BookCount != 0 {
 		t.Fatalf("send counters = %+v, want 0 articles and 0 books", recent)
+	}
+}
+
+func TestKindleSendRepoClaimDueSendNeverInsertsWhileLocalSlotBusy(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.KindleSends()
+
+	now := time.Date(2024, 5, 1, 9, 30, 0, 0, time.UTC)
+	dueAt := now.Add(-30 * time.Minute)
+	kindle := domain.KindleSettings{
+		KindleEmail: "reader@kindle.com",
+		SendTime:    ptr("09:00"),
+		NextSendAt:  &dueAt,
+	}
+	configureKindleDeliveryForTest(t, store, kindle)
+
+	// The previous job already committed its terminal status (no running row) but
+	// has not released the in-process slot yet.
+	busy, err := repo.ClaimDueSend(ctx, domain.NewID(), now, time.UTC, true)
+	if err != nil {
+		t.Fatalf("ClaimDueSend() with busy slot error = %v", err)
+	}
+
+	if busy.Claimed {
+		t.Fatalf("ClaimDueSend() claimed while the local slot was busy: %+v", busy)
+	}
+
+	recent, err := repo.ListRecent(ctx)
+	if err != nil {
+		t.Fatalf("list recent sends: %v", err)
+	}
+
+	if len(recent) != 0 {
+		t.Fatalf("busy claim left rows behind: %+v", recent)
+	}
+
+	settings, err := store.Settings().Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings: %v", err)
+	}
+
+	wantNext := time.Date(2024, 5, 2, 9, 0, 0, 0, time.UTC)
+	if settings.Kindle == nil || settings.Kindle.NextSendAt == nil || !settings.Kindle.NextSendAt.Equal(wantNext) {
+		t.Fatalf("next_send_at after busy claim = %+v, want %v", settings.Kindle, wantNext)
+	}
+
+	// Once the slot is free the next due claim inserts exactly one running row.
+	kindle.NextSendAt = &dueAt
+	if err := store.Settings().UpdateKindle(ctx, kindle); err != nil {
+		t.Fatalf("make schedule due again: %v", err)
+	}
+
+	claimed, err := repo.ClaimDueSend(ctx, domain.NewID(), now, time.UTC, false)
+	if err != nil {
+		t.Fatalf("ClaimDueSend() with free slot error = %v", err)
+	}
+
+	if !claimed.Claimed || claimed.Record.Trigger != domain.KindleTriggerScheduled || claimed.Record.Status != domain.KindleStatusRunning {
+		t.Fatalf("ClaimDueSend() with free slot = %+v, want a running scheduled claim", claimed)
+	}
+
+	recent, err = repo.ListRecent(ctx)
+	if err != nil {
+		t.Fatalf("list recent sends after claim: %v", err)
+	}
+
+	if len(recent) != 1 || recent[0].ID != claimed.Record.ID || recent[0].Status != domain.KindleStatusRunning {
+		t.Fatalf("recent sends after claim = %+v, want the single running claim", recent)
+	}
+}
+
+func TestKindleSendRepoClaimDueSendRaceWithSettingsUpdate(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	now := time.Date(2024, 5, 1, 9, 30, 0, 0, time.UTC)
+	dueAt := now.Add(-15 * time.Minute)
+	futureAt := now.Add(5 * time.Hour)
+
+	configureKindleDeliveryForTest(t, store, domain.KindleSettings{
+		KindleEmail: "old@kindle.com",
+		SendTime:    ptr("09:00"),
+		NextSendAt:  &dueAt,
+	})
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var claim domain.ClaimedKindleSend
+	var claimErr error
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		claim, claimErr = store.KindleSends().ClaimDueSend(ctx, domain.NewID(), now, time.UTC, false)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{
+			KindleEmail: "new@kindle.com",
+			SendTime:    ptr("15:00"),
+			NextSendAt:  &futureAt,
+		}); err != nil {
+			t.Errorf("update kindle: %v", err)
+		}
+	}()
+
+	close(start)
+	wg.Wait()
+
+	if claimErr != nil {
+		t.Fatalf("ClaimDueSend() error = %v", claimErr)
+	}
+
+	settings, err := store.Settings().Get(ctx)
+	if err != nil {
+		t.Fatalf("get settings: %v", err)
+	}
+
+	if claim.Claimed {
+		// ClaimDueSend committed before UpdateKindle: snapshot used old settings and UpdateKindle's futureAt won afterward.
+		if claim.Delivery.KindleEmail != "old@kindle.com" {
+			t.Fatalf("claimed email = %q, want old@kindle.com", claim.Delivery.KindleEmail)
+		}
+		if settings.Kindle == nil || settings.Kindle.NextSendAt == nil || !settings.Kindle.NextSendAt.Equal(futureAt) {
+			t.Fatalf("settings after UpdateKindle = %+v, want next_send_at = %v", settings.Kindle, futureAt)
+		}
+		return
+	}
+
+	// UpdateKindle committed before ClaimDueSend: ClaimDueSend saw futureAt and skipped without overwriting it.
+	if settings.Kindle == nil || settings.Kindle.KindleEmail != "new@kindle.com" || settings.Kindle.NextSendAt == nil || !settings.Kindle.NextSendAt.Equal(futureAt) {
+		t.Fatalf("settings after skipped claim = %+v, want new@kindle.com at %v", settings.Kindle, futureAt)
 	}
 }
 
@@ -2317,6 +2822,14 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		query, args := listSavedPagesQuery(params)
 		requireIndexedPlan(t, "list saved pages", queryPlan(t, store, query, args...), "", false)
 	}
+
+	storedRefsPlan := queryPlan(t, store, `SELECT id, url FROM feed_item WHERE feed_id = ? ORDER BY id DESC`, "feed")
+	requireIndexedPlan(t, "list stored refs by feed", storedRefsPlan, "feed_item_feed_id_url", false)
+	if !slices.ContainsFunc(storedRefsPlan, func(detail string) bool {
+		return strings.Contains(detail, "USING COVERING INDEX feed_item_feed_id_url")
+	}) {
+		t.Fatalf("stored refs plan is not a covering index:\n%s", strings.Join(storedRefsPlan, "\n"))
+	}
 }
 
 func newTestStore(t *testing.T) *Store {
@@ -2540,7 +3053,7 @@ func requireIndexedPlan(t *testing.T, name string, details []string, index strin
 		}
 	}
 
-	if index != "" && !strings.Contains(plan, "USING INDEX "+index) {
+	if index != "" && !strings.Contains(plan, "USING INDEX "+index) && !strings.Contains(plan, "USING COVERING INDEX "+index) {
 		t.Fatalf("%s: plan does not use index %q:\n%s", name, index, plan)
 	}
 }

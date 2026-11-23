@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 
 	"reader/internal/domain"
 )
@@ -174,6 +175,11 @@ func (s *server) fetchFeedPreview(ctx context.Context, rawURL string) (feedPrevi
 		return feedPreviewJSON{}, err
 	}
 
+	if err := s.acquireFetchSlot(ctx); err != nil {
+		return feedPreviewJSON{}, err
+	}
+	defer s.releaseFetchSlot()
+
 	body, finalURL, err := s.cfg.FeedFetcher.FetchFeed(ctx, feedURL)
 	if err != nil {
 		return feedPreviewJSON{}, err
@@ -268,8 +274,15 @@ func (s *server) handleFeedDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleFeedRefresh(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.Refresher != nil {
-		s.cfg.Refresher.Enqueue(r.PathValue("id"))
+	feed, err := s.cfg.Feeds.GetByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	if feed != nil && s.cfg.Refresher != nil {
+		s.cfg.Refresher.Enqueue(feed.ID)
 	}
 
 	w.WriteHeader(http.StatusAccepted)
@@ -457,56 +470,6 @@ func (s *server) handleFeedItemGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, itemResponse[feedItemJSON]{Item: toFeedItemPtr(item)})
 }
 
-func (s *server) handleFeedItemSetRead(w http.ResponseWriter, r *http.Request) {
-	var req readStateRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if req.Read == nil {
-		writeError(w, domain.NewError(domain.ErrRequestFailed, nil))
-
-		return
-	}
-
-	if err := s.cfg.FeedItems.SetRead(r.Context(), r.PathValue("id"), *req.Read); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
-}
-
-func (s *server) handleFeedItemsMarkRead(w http.ResponseWriter, r *http.Request) {
-	var req idsRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if err := s.cfg.FeedItems.MarkIDsRead(r.Context(), req.IDs); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
-}
-
-func (s *server) handleFeedItemsMarkAllRead(w http.ResponseWriter, r *http.Request) {
-	if err := s.cfg.FeedItems.MarkAllRead(r.Context()); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
-}
-
 func (s *server) handleFeedItemExtract(w http.ResponseWriter, r *http.Request) {
 	item, err := s.cfg.FeedItems.GetByID(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -527,22 +490,11 @@ func (s *server) handleFeedItemExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	article, err := s.extractWebpage(r.Context(), item.URL)
+	updated, err := s.extracts.do(r.Context(), item.ID, func(ctx context.Context) (*domain.FeedItem, error) {
+		return s.extractAndSaveFeedItem(ctx, item)
+	})
 	if err != nil {
 		writeError(w, err)
-
-		return
-	}
-
-	updated, err := s.cfg.FeedItems.SaveExtractedContent(r.Context(), item.ID, article.Content)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if updated == nil {
-		writeError(w, domain.NewError(domain.ErrFeedItemNotFound, nil))
 
 		return
 	}
@@ -550,22 +502,113 @@ func (s *server) handleFeedItemExtract(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, itemResponse[feedItemJSON]{Item: toFeedItemPtr(updated)})
 }
 
+func (s *server) extractAndSaveFeedItem(ctx context.Context, item *domain.FeedItem) (*domain.FeedItem, error) {
+	article, err := s.extractWebpage(ctx, item.URL)
+	if err != nil {
+		return nil, err
+	}
+
+	updated, _, err := s.cfg.FeedItems.SaveExtractedContentIfEmpty(ctx, item.ID, article.Content)
+	if err != nil {
+		return nil, err
+	}
+
+	if updated == nil {
+		return nil, domain.NewError(domain.ErrFeedItemNotFound, nil)
+	}
+
+	return updated, nil
+}
+
+type extractCall struct {
+	done    chan struct{}
+	cancel  context.CancelFunc
+	waiters int
+	item    *domain.FeedItem
+	err     error
+}
+
+type extractGroup struct {
+	mu    sync.Mutex
+	calls map[string]*extractCall
+}
+
+func newExtractGroup() *extractGroup {
+	return &extractGroup{calls: make(map[string]*extractCall)}
+}
+
+func (g *extractGroup) do(ctx context.Context, key string, fn func(context.Context) (*domain.FeedItem, error)) (*domain.FeedItem, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	call := g.joinOrStart(ctx, key, fn)
+
+	select {
+	case <-call.done:
+		return call.item, call.err
+	case <-ctx.Done():
+		g.abandon(key, call)
+
+		return nil, ctx.Err()
+	}
+}
+
+func (g *extractGroup) joinOrStart(ctx context.Context, key string, fn func(context.Context) (*domain.FeedItem, error)) *extractCall {
+	g.mu.Lock()
+	if call, ok := g.calls[key]; ok {
+		call.waiters++
+		g.mu.Unlock()
+
+		return call
+	}
+
+	callCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	call := &extractCall{done: make(chan struct{}), cancel: cancel, waiters: 1}
+	g.calls[key] = call
+	g.mu.Unlock()
+
+	go g.run(callCtx, key, call, fn)
+
+	return call
+}
+
+func (g *extractGroup) run(callCtx context.Context, key string, call *extractCall, fn func(context.Context) (*domain.FeedItem, error)) {
+	item, err := fn(callCtx)
+
+	g.mu.Lock()
+	call.item = item
+	call.err = err
+	if g.calls[key] == call {
+		delete(g.calls, key)
+	}
+	close(call.done)
+	g.mu.Unlock()
+
+	call.cancel()
+}
+
+func (g *extractGroup) abandon(key string, call *extractCall) {
+	g.mu.Lock()
+	call.waiters--
+	shouldCancel := call.waiters == 0
+	if shouldCancel && g.calls[key] == call {
+		delete(g.calls, key)
+	}
+	g.mu.Unlock()
+
+	if shouldCancel {
+		call.cancel()
+	}
+}
+
 func (s *server) handleOPMLExport(w http.ResponseWriter, r *http.Request) {
-	folders, err := s.cfg.Folders.List(r.Context())
+	exportFolders, topFeeds, err := s.cfg.Feeds.ExportOPML(r.Context())
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
-
-	feeds, err := s.cfg.Feeds.List(r.Context())
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	exportFolders, topFeeds := groupFeedsForOPML(folders, feeds)
 
 	payload, err := domain.ExportOPML(exportFolders, topFeeds)
 	if err != nil {
@@ -579,40 +622,6 @@ func (s *server) handleOPMLExport(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	_, _ = w.Write(payload)
-}
-
-func groupFeedsForOPML(folders []domain.Folder, feeds []domain.Feed) ([]domain.OPMLExportFolder, []domain.Feed) {
-	grouped := make(map[string][]domain.Feed, len(folders))
-	folderIndex := make(map[string]struct{}, len(folders))
-	for _, folder := range folders {
-		folderIndex[folder.ID] = struct{}{}
-	}
-
-	topFeeds := make([]domain.Feed, 0, len(feeds))
-	for _, feed := range feeds {
-		if feed.FolderID == nil {
-			topFeeds = append(topFeeds, feed)
-
-			continue
-		}
-
-		// A folder deleted between the two reads leaves the feed orphaned; export
-		// it at the top level rather than silently dropping it.
-		if _, ok := folderIndex[*feed.FolderID]; !ok {
-			topFeeds = append(topFeeds, feed)
-
-			continue
-		}
-
-		grouped[*feed.FolderID] = append(grouped[*feed.FolderID], feed)
-	}
-
-	exportFolders := make([]domain.OPMLExportFolder, 0, len(folders))
-	for _, folder := range folders {
-		exportFolders = append(exportFolders, domain.OPMLExportFolder{Name: folder.Name, Feeds: grouped[folder.ID]})
-	}
-
-	return exportFolders, topFeeds
 }
 
 func (s *server) handleOPMLImport(w http.ResponseWriter, r *http.Request) {

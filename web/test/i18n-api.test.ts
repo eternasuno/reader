@@ -34,7 +34,6 @@ const KD_IN: KindleSettings = { kindleEmail: 'k@example.com' };
 const PAGE = 'https://example.com/a';
 const PARAMS = { limit: 30, unread: true, cursor: 'abc' };
 const LIST_URL = `${SAVED}?limit=30&unread=true&cursor=abc`;
-const LOOKUP = `${SAVED}/lookup?url=${encodeURIComponent(PAGE)}`;
 const PREV_U = `${FEEDS}/preview`;
 const READ_U = `${ITEMS}/read`;
 const URL_BODY = { url: PAGE };
@@ -89,7 +88,6 @@ const SHAPES: Array<Shape> = [
   ['logout', () => authApi.logout(), '/api/auth/logout', 'POST'],
   ['list', () => savedPagesApi.list(PARAMS), LIST_URL, 'GET'],
   ['count', () => savedPagesApi.unreadCount(), `${SAVED}/unread-count`, 'GET'],
-  ['lookup', () => savedPagesApi.lookup(PAGE), LOOKUP, 'GET'],
   ['page', () => savedPagesApi.getById('p/1'), `${SAVED}/p%2F1`, 'GET'],
   ['add', () => savedPagesApi.create(PAGE), SAVED, 'POST', URL_BODY],
   ['save', () => savedPagesApi.saveFeedItem('i'), `${ITEMS}/i/save`, 'POST'],
@@ -141,16 +139,13 @@ describe('request shapes', () => {
 describe('saved pages responses', () => {
   const page = { id: 'p', url: PAGE, read: false };
 
-  it('unwraps counts, lookups, pages, and creates', async () => {
+  it('unwraps counts, pages, and creates', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ count: 4 }));
     await expect(savedPagesApi.unreadCount()).resolves.toBe(4);
-    fetchMock.mockResolvedValueOnce(jsonResponse({ item: page }));
-    await expect(savedPagesApi.lookup(PAGE)).resolves.toEqual(page);
     fetchMock.mockResolvedValueOnce(jsonResponse({ item: page }));
     await expect(savedPagesApi.getById('p')).resolves.toEqual(page);
     fetchMock.mockResolvedValueOnce(jsonResponse({ item: page }, 201));
     await expect(savedPagesApi.create(PAGE)).resolves.toEqual(page);
-    expect(requestUrl(1)).toContain(`url=${encodeURIComponent(PAGE)}`);
   });
 });
 
@@ -303,13 +298,21 @@ describe('error mapping', () => {
     });
   });
 
-  it('keeps backend codes and conflict URLs', async () => {
+  it('keeps backend codes, conflict URLs, and conflict IDs', async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ error: 'FeedAlreadyExists', url: PAGE }, 409)
     );
     await expect(feedsApi.create(URL_BODY)).rejects.toMatchObject({
       code: 'FeedAlreadyExists',
       url: PAGE,
+      id: undefined,
+    });
+    const body = { error: 'SavedPageAlreadyExists', id: 'page-9', url: PAGE };
+    fetchMock.mockResolvedValueOnce(jsonResponse(body, 409));
+    await expect(savedPagesApi.create(PAGE)).rejects.toMatchObject({
+      code: 'SavedPageAlreadyExists',
+      url: PAGE,
+      id: 'page-9',
     });
     expect(translateErrorCode('FeedAlreadyExists')).toBe('该订阅已存在');
   });

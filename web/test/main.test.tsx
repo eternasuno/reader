@@ -125,7 +125,7 @@ describe('app entry', () => {
     await import('../src/main');
     await settle(4);
 
-    expect(root.textContent).toContain('留白');
+    expect(root.textContent).toContain('拾叶');
     expect(root.textContent).toContain('登录');
     expect(root.querySelector('input[type="password"]')).not.toBeNull();
 
@@ -180,15 +180,16 @@ describe('session guard sign in', () => {
   /** The first attempt fails with `InvalidCredentials`, the second one succeeds. */
   const respondFailedThenSignedIn = (): void => {
     let attempts = 0;
+    let signedIn = false;
     respond((url) => {
       if (url.includes('/api/auth/session'))
-        return json({ authenticated: false });
+        return json({ authenticated: signedIn });
       if (!url.includes('/api/auth/login')) return undefined;
 
       attempts += 1;
-      return attempts === 1
-        ? json({ error: 'InvalidCredentials' }, 401)
-        : new Response(null, { status: 204 });
+      if (attempts === 1) return json({ error: 'InvalidCredentials' }, 401);
+      signedIn = true;
+      return new Response(null, { status: 204 });
     });
   };
 
@@ -279,7 +280,7 @@ describe('library layout', () => {
     const navToggle = must(container, '[aria-label="切换导航"]');
     expect(navToggle.closest('[data-panel="list"]')).not.toBeNull();
     expect(navToggle.className).toContain('md:hidden');
-    expect(container.textContent).not.toContain('留白 / 全部订阅');
+    expect(container.textContent).not.toContain('拾叶 / 全部订阅');
 
     const urls = requestUrls();
     expect(listPages()).toHaveLength(1);

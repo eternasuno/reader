@@ -1,7 +1,8 @@
 import type { JSX } from '@solidjs/web';
 import { type Accessor, createSignal, type Setter } from 'solid-js';
-import { ApiError, type SavedPage, savedPagesApi } from '../api';
-import { t, translateErrorCode } from '../i18n';
+import type { SavedPage } from '../api';
+import { t } from '../i18n';
+import { createOrFindSavedPage } from '../state/saved-page-create';
 import { Dialog, showToast } from '../ui';
 import { AddLinkForm } from './AddLinkForm';
 import { createOpenReset } from './createOpenReset';
@@ -77,42 +78,14 @@ const submitAddLink = async (
   form.setError(undefined);
 
   try {
-    const page = await savedPagesApi.create(target);
-    showToast(String(t('later.addedToast')), 'success');
+    const { page, created } = await createOrFindSavedPage(target);
+    if (created) showToast(String(t('later.addedToast')), 'success');
     props.onClose();
-    props.onSaved(page);
+    if (created) props.onSaved(page);
+    else props.onDuplicateFound(page);
   } catch (err) {
-    await handleCreateFailure(props, form, err, target);
+    form.setError(errorText(err));
   } finally {
     form.setSubmitting(false);
   }
-};
-
-/** `409 SavedPageAlreadyExists` opens the stored page; anything else is inline. */
-const handleCreateFailure = async (
-  props: AddLinkDialogProps,
-  form: AddLinkFormState,
-  err: unknown,
-  target: string
-): Promise<void> => {
-  if (!(err instanceof ApiError && err.code === 'SavedPageAlreadyExists')) {
-    form.setError(errorText(err));
-    return;
-  }
-
-  let existing: SavedPage | null = null;
-  try {
-    existing = await savedPagesApi.lookup(err.url ?? target);
-  } catch {
-    form.setError(translateErrorCode('RequestFailed'));
-    return;
-  }
-
-  if (existing === null) {
-    form.setError(translateErrorCode('SavedPageAlreadyExists'));
-    return;
-  }
-
-  props.onClose();
-  props.onDuplicateFound(existing);
 };

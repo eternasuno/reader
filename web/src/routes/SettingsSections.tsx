@@ -6,6 +6,7 @@ import { t } from '../i18n';
 import {
   isBrowserAvailable,
   isSaving,
+  isSettingsReady,
   providerDraft,
   retentionDraft,
   saveProvider,
@@ -13,9 +14,12 @@ import {
   savingAction,
   setProviderDraft,
   setRetentionDraft,
+  settings,
 } from '../state';
 import { Button, Icon, Input, SettingsGroup, SettingsRow } from '../ui';
 import { useOpmlImport } from './importOpml';
+
+const controlsDisabled = (): boolean => isSaving() || !isSettingsReady();
 
 const PROVIDERS = [
   {
@@ -50,7 +54,7 @@ function RetentionGroup(): JSX.Element {
           variant="primary"
           size="sm"
           loading={savingAction() === 'retention'}
-          disabled={isSaving()}
+          disabled={controlsDisabled()}
           onClick={() => void saveRetention()}
         >
           {String(t('settings.saveArticles'))}
@@ -69,7 +73,7 @@ function RetentionGroup(): JSX.Element {
           containerClass="sm:w-28"
           class="tabular-nums"
           value={String(retentionDraft())}
-          disabled={isSaving()}
+          disabled={controlsDisabled()}
           onInput={(event) => {
             const parsed = Number.parseInt(event.currentTarget.value, 10);
             setRetentionDraft(Number.isNaN(parsed) ? 0 : parsed);
@@ -153,7 +157,7 @@ function BrowserUnavailableHint(props: {
         variant="ghost"
         size="sm"
         class="btn-xs text-primary"
-        disabled={isSaving()}
+        disabled={controlsDisabled()}
         onClick={props.onGoToServices}
       >
         {String(t('settings.goToServices'))}
@@ -168,7 +172,9 @@ function ProviderOption(props: {
   onGoToServices: () => void;
 }): JSX.Element {
   const browserUnavailable = (): boolean =>
-    props.provider.id === 'browser' && !isBrowserAvailable();
+    props.provider.id === 'browser' &&
+    settings() !== null &&
+    !isBrowserAvailable();
 
   return (
     <div class="flex flex-col gap-1 px-4 py-3.5 transition-colors has-[:checked]:bg-base-200">
@@ -179,7 +185,7 @@ function ProviderOption(props: {
           name="extractor-provider"
           value={props.provider.id}
           checked={providerDraft() === props.provider.id}
-          disabled={isSaving() || browserUnavailable()}
+          disabled={controlsDisabled() || browserUnavailable()}
           onChange={() => setProviderDraft(props.provider.id)}
         />
         <span class="flex min-w-0 flex-col gap-1">
@@ -210,7 +216,7 @@ export function ExtractionSection(props: {
   onGoToServices: () => void;
 }): JSX.Element {
   return (
-    <fieldset>
+    <fieldset disabled={controlsDisabled()}>
       <legend class="sr-only">{String(t('settings.providerLabel'))}</legend>
       <SettingsGroup
         title={String(t('settings.providerLabel'))}
@@ -219,7 +225,7 @@ export function ExtractionSection(props: {
             variant="primary"
             size="sm"
             loading={savingAction() === 'provider'}
-            disabled={isSaving()}
+            disabled={controlsDisabled()}
             onClick={() => void saveProvider()}
           >
             {String(t('settings.saveExtraction'))}

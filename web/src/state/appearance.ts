@@ -3,6 +3,7 @@
  */
 
 import { createSignal, flush } from 'solid-js';
+import { getItem, removeItem, setItem } from './storage';
 
 export const APPEARANCE_STORAGE_KEY = 'reader.appearance';
 export const THEME_STORAGE_KEY = 'reader.theme';
@@ -128,12 +129,10 @@ const normalizeAppearance = (
 };
 
 function loadAppearance(): ReaderAppearance {
-  if (typeof localStorage === 'undefined') return { ...DEFAULT_APPEARANCE };
+  const raw = getItem(APPEARANCE_STORAGE_KEY);
+  if (raw === null) return { ...DEFAULT_APPEARANCE };
 
   try {
-    const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY);
-    if (raw === null) return { ...DEFAULT_APPEARANCE };
-
     return normalizeAppearance(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_APPEARANCE };
@@ -141,23 +140,11 @@ function loadAppearance(): ReaderAppearance {
 }
 
 const persistAppearance = (next: ReaderAppearance): void => {
-  if (typeof localStorage === 'undefined') return;
-
-  try {
-    localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // Storage may be unavailable (private mode / quota); keep appearance in memory.
-  }
+  setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(next));
 };
 
 const removePersistedAppearance = (): void => {
-  if (typeof localStorage === 'undefined') return;
-
-  try {
-    localStorage.removeItem(APPEARANCE_STORAGE_KEY);
-  } catch {
-    // Storage may be unavailable; keep default appearance in memory.
-  }
+  removeItem(APPEARANCE_STORAGE_KEY);
 };
 
 const [readerAppearance, setReaderAppearance] = createSignal<ReaderAppearance>(
@@ -218,27 +205,13 @@ const applyTheme = (next: ReaderTheme): void => {
 };
 
 const loadTheme = (): ReaderTheme => {
-  if (typeof localStorage === 'undefined') return 'auto';
-  try {
-    const theme = pickAllowed(
-      localStorage.getItem(THEME_STORAGE_KEY),
-      THEMES,
-      'auto'
-    );
-    if (theme !== 'auto') applyTheme(theme);
-    return theme;
-  } catch {
-    return 'auto';
-  }
+  const theme = pickAllowed(getItem(THEME_STORAGE_KEY), THEMES, 'auto');
+  if (theme !== 'auto') applyTheme(theme);
+  return theme;
 };
 
 const persistTheme = (next: ReaderTheme): void => {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, next);
-  } catch {
-    // Storage may be unavailable; keep theme in memory.
-  }
+  setItem(THEME_STORAGE_KEY, next);
 };
 
 const [readerTheme, setReaderThemeSignal] = createSignal<ReaderTheme>(

@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +14,7 @@ import (
 const (
 	defaultRefreshConcurrency = 5
 	defaultRefreshInterval    = 30 * time.Minute
-	defaultFeedRetention      = 100
+	maxLogErrorBytes          = 512
 )
 
 type RefreshConfig struct {
@@ -42,6 +44,7 @@ type RefreshQueue struct {
 	queue  []string
 	queued map[string]struct{}
 	notify chan struct{}
+	wg     sync.WaitGroup
 }
 
 func NewRefreshQueue(cfg RefreshConfig) *RefreshQueue {
@@ -126,7 +129,9 @@ func (q *RefreshQueue) RefreshOne(ctx context.Context, feedID string) error {
 	}
 
 	if err := q.syncFeed(ctx, *feed); err != nil {
-		q.recordFailure(ctx, feedID, err)
+		if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+			q.recordFailure(ctx, feedID, err)
+		}
 
 		return err
 	}
@@ -135,7 +140,9 @@ func (q *RefreshQueue) RefreshOne(ctx context.Context, feedID string) error {
 }
 
 func (q *RefreshQueue) syncFeed(ctx context.Context, feed domain.Feed) error {
-	retention, err := q.loadRetention(ctx)
+	// A settings read failure aborts the refresh: pruning with an unknown
+	// retention setting could delete items the user asked to keep.
+	settings, err := q.settings.Get(ctx)
 	if err != nil {
 		return err
 	}
@@ -150,29 +157,14 @@ func (q *RefreshQueue) syncFeed(ctx context.Context, feed domain.Feed) error {
 		return err
 	}
 
-	storedItems, err := q.feedItems.ListByFeedForRetention(ctx, feed.ID)
+	storedRefs, err := q.feedItems.ListStoredRefsByFeed(ctx, feed.ID)
 	if err != nil {
 		return err
 	}
 
-	newItems, deleteIDs := domain.PlanFeedSync(feed.ID, parsed.Entries, storedItems, retention, domain.NewID)
+	newItems, deleteIDs := domain.PlanFeedSync(feed.ID, parsed.Entries, storedRefs, settings.Retention, domain.NewID)
 
 	return q.feeds.ApplySync(ctx, feed.ID, resolveFeedTitle(parsed.Title, feed), q.now().UTC(), newItems, deleteIDs)
-}
-
-func (q *RefreshQueue) loadRetention(ctx context.Context) (int, error) {
-	// A settings read failure aborts the refresh: pruning with an unknown
-	// retention setting could delete items the user asked to keep.
-	settings, err := q.settings.Get(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	if settings.Retention >= 1 {
-		return settings.Retention, nil
-	}
-
-	return defaultFeedRetention, nil
 }
 
 func resolveFeedTitle(parsedTitle string, feed domain.Feed) string {
@@ -191,24 +183,45 @@ func resolveFeedTitle(parsedTitle string, feed domain.Feed) string {
 // enqueueing all feeds on the configured interval until ctx is canceled.
 func (q *RefreshQueue) Start(ctx context.Context) {
 	for range q.concurrency {
-		go q.work(ctx)
+		q.wg.Add(1)
+
+		go func() {
+			defer q.wg.Done()
+			q.work(ctx)
+		}()
 	}
 
-	_ = q.EnqueueAll(ctx)
+	if err := q.EnqueueAll(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		slog.Warn("initial feed refresh enqueue failed", "error", sanitizeLogError(err))
+	}
+
+	q.wg.Add(1)
 
 	go func() {
-		ticker := time.NewTicker(q.interval)
-		defer ticker.Stop()
+		defer q.wg.Done()
+		q.runScheduler(ctx)
+	}()
+}
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_ = q.EnqueueAll(ctx)
+// Wait blocks until all workers and the scheduler started by Start have exited.
+func (q *RefreshQueue) Wait() {
+	q.wg.Wait()
+}
+
+func (q *RefreshQueue) runScheduler(ctx context.Context) {
+	ticker := time.NewTicker(q.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := q.EnqueueAll(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("scheduled feed refresh enqueue failed", "error", sanitizeLogError(err))
 			}
 		}
-	}()
+	}
 }
 
 func (q *RefreshQueue) work(ctx context.Context) {
@@ -218,7 +231,9 @@ func (q *RefreshQueue) work(ctx context.Context) {
 			return
 		}
 
-		_ = q.RefreshOne(ctx, feedID)
+		if err := q.RefreshOne(ctx, feedID); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Warn("feed refresh failed", "feed_id", feedID, "error", sanitizeLogError(err))
+		}
 
 		q.finish(feedID)
 	}
@@ -226,6 +241,10 @@ func (q *RefreshQueue) work(ctx context.Context) {
 
 func (q *RefreshQueue) next(ctx context.Context) (string, bool) {
 	for {
+		if ctx.Err() != nil {
+			return "", false
+		}
+
 		q.mu.Lock()
 		if len(q.queue) > 0 {
 			feedID := q.queue[0]
@@ -265,5 +284,16 @@ func (q *RefreshQueue) signal() {
 }
 
 func (q *RefreshQueue) recordFailure(ctx context.Context, feedID string, err error) {
-	_ = q.feeds.RecordRefreshFailure(ctx, feedID, domain.SanitizeErrorText(err.Error()))
+	if recErr := q.feeds.RecordRefreshFailure(ctx, feedID, domain.SanitizeErrorText(err.Error())); recErr != nil && !errors.Is(recErr, context.Canceled) {
+		slog.Warn("record feed refresh failure failed", "feed_id", feedID, "error", sanitizeLogError(recErr))
+	}
+}
+
+func sanitizeLogError(err error) string {
+	sanitized := strings.NewReplacer("\r", " ", "\n", " ").Replace(domain.SanitizeErrorText(err.Error()))
+	if len(sanitized) <= maxLogErrorBytes {
+		return sanitized
+	}
+
+	return sanitized[:maxLogErrorBytes] + "..."
 }

@@ -79,20 +79,17 @@ func (r *FolderRepo) Rename(ctx context.Context, id string, name string) error {
 		return err
 	}
 
-	current, err := r.GetByID(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	if current == nil {
+	var updatedID string
+	err = r.write.QueryRowContext(
+		ctx,
+		`UPDATE folder SET name = ? WHERE id = ? RETURNING id`,
+		trimmed,
+		id,
+	).Scan(&updatedID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NewError(domain.ErrFolderNotFound, nil)
 	}
 
-	if current.Name == trimmed {
-		return nil
-	}
-
-	_, err = r.write.ExecContext(ctx, `UPDATE folder SET name = ? WHERE id = ?`, trimmed, id)
 	if err != nil {
 		if isUniqueViolation(err, "folder.name") {
 			return domain.NewError(domain.ErrFolderAlreadyExists, nil)

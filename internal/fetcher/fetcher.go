@@ -25,7 +25,7 @@ const (
 	defaultImageTimeout   = 15 * time.Second
 	defaultMaxBodyBytes   = 10 * 1024 * 1024
 	defaultJinaBaseURL    = "https://r.jina.ai/"
-	defaultUserAgent      = "LiubaiReader/1.0"
+	defaultUserAgent      = "LeafReader/1.0"
 
 	feedAccept    = "application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, */*"
 	webpageAccept = "text/html, application/xhtml+xml, application/xml;q=0.9, */*;q=0.8"
@@ -58,11 +58,23 @@ type browserSnapshot struct {
 	TooLarge bool   `json:"tooLarge"`
 }
 
+// ExtractorSettings carries the narrow subset of settings that webpage
+// fetching needs.
+type ExtractorSettings struct {
+	Provider        domain.ExtractorProvider
+	JinaKey         *string
+	BrowserEndpoint *string
+}
+
+// SettingsQuery reads the current webpage extractor settings dynamically on
+// each extraction.
+type SettingsQuery func(ctx context.Context) (ExtractorSettings, error)
+
 type BrowserFetchFunc func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (htmlBody string, finalURL string, err error)
 
 type Config struct {
 	AllowPrivateNetwork bool
-	Settings            domain.SettingRepository
+	Settings            SettingsQuery
 	FeedTimeout         time.Duration
 	WebpageTimeout      time.Duration
 	ImageTimeout        time.Duration
@@ -74,7 +86,7 @@ type Config struct {
 
 type Client struct {
 	httpClient     *http.Client
-	settings       domain.SettingRepository
+	settings       SettingsQuery
 	feedTimeout    time.Duration
 	webpageTimeout time.Duration
 	imageTimeout   time.Duration
@@ -85,7 +97,6 @@ type Client struct {
 }
 
 type fetchResult struct {
-	status   int
 	body     []byte
 	finalURL *url.URL
 }
@@ -165,17 +176,13 @@ func (c *Client) FetchFeed(ctx context.Context, target domain.NormalizedURL) (bo
 		return nil, "", domain.NewError(domain.ErrFetchFeedError, sanitizedError(err))
 	}
 
-	if result.status < http.StatusOK || result.status > 299 {
-		return nil, "", domain.NewError(domain.ErrFetchFeedError, fmt.Errorf("unexpected status code %d", result.status))
-	}
-
 	return result.body, sanitizedURL(result.finalURL), nil
 }
 
 func (c *Client) FetchWebpage(ctx context.Context, target domain.NormalizedURL) (htmlBody string, finalURL string, err error) {
-	settings := domain.Settings{Provider: domain.ProviderDirect}
+	settings := ExtractorSettings{Provider: domain.ProviderDirect}
 	if c.settings != nil {
-		loaded, loadErr := c.settings.Get(ctx)
+		loaded, loadErr := c.settings(ctx)
 		if loadErr != nil {
 			return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(loadErr))
 		}
@@ -212,10 +219,6 @@ func (c *Client) FetchImage(ctx context.Context, rawURL string) (data []byte, me
 		return nil, "", "", sanitizedError(err)
 	}
 
-	if result.status < http.StatusOK || result.status > 299 {
-		return nil, "", "", fmt.Errorf("unexpected status code %d", result.status)
-	}
-
 	if len(result.body) == 0 {
 		return nil, "", "", errEmptyResponseBody
 	}
@@ -242,14 +245,10 @@ func (c *Client) fetchDirect(ctx context.Context, target domain.NormalizedURL) (
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(doErr))
 	}
 
-	if result.status < http.StatusOK || result.status > 299 {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, fmt.Errorf("unexpected status code %d", result.status))
-	}
-
 	return string(result.body), sanitizedURL(result.finalURL), nil
 }
 
-func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL, settings domain.Settings) (htmlBody string, finalURL string, err error) {
+func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL, settings ExtractorSettings) (htmlBody string, finalURL string, err error) {
 	if target.HasCredentials() {
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errExternalCredentials)
 	}
@@ -275,10 +274,6 @@ func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL,
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(doErr))
 	}
 
-	if result.status < http.StatusOK || result.status > 299 {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, fmt.Errorf("unexpected status code %d", result.status))
-	}
-
 	if len(result.body) == 0 {
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errEmptyResponseBody)
 	}
@@ -286,7 +281,7 @@ func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL,
 	return string(result.body), target.RedactedString(), nil
 }
 
-func (c *Client) fetchWithBrowser(ctx context.Context, target domain.NormalizedURL, settings domain.Settings) (htmlBody string, finalURL string, err error) {
+func (c *Client) fetchWithBrowser(ctx context.Context, target domain.NormalizedURL, settings ExtractorSettings) (htmlBody string, finalURL string, err error) {
 	if target.HasCredentials() {
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errExternalCredentials)
 	}
@@ -336,12 +331,16 @@ func (c *Client) do(ctx context.Context, req *http.Request, timeout time.Duratio
 
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode < http.StatusOK || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+	}
+
 	body, err := readLimitedBody(resp.Body, c.maxBodyBytes)
 	if err != nil {
 		return nil, sanitizedError(err)
 	}
 
-	return &fetchResult{status: resp.StatusCode, body: body, finalURL: resp.Request.URL}, nil
+	return &fetchResult{body: body, finalURL: resp.Request.URL}, nil
 }
 
 func newRequest(ctx context.Context, target domain.NormalizedURL) (*http.Request, error) {
@@ -472,7 +471,7 @@ func createSnapshotWorld(ctx context.Context) (runtime.ExecutionContextID, error
 		page.CreateIsolatedWorld,
 		page.CreateIsolatedWorldParams{
 			FrameID:   frameTree.FrameTree.Frame.ID,
-			WorldName: "liubai-snapshot",
+			WorldName: "leaf-snapshot",
 		},
 	)
 	if err != nil {

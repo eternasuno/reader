@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -19,8 +20,12 @@ import (
 )
 
 const (
-	maxRequestBodyBytes = 10 << 20
+	maxRequestBodyBytes            = 10 << 20
+	maxLoginBodyBytes              = 4 << 10
+	maxConcurrentForegroundFetches = 4
+	minSessionSecretBytes          = 32
 
+	apiCacheControl       = "no-store"
 	immutableCacheControl = "public, max-age=31536000, immutable"
 	indexCacheControl     = "no-cache"
 )
@@ -66,11 +71,13 @@ type Config struct {
 }
 
 type server struct {
-	cfg     Config
-	appURL  *url.URL
-	secure  bool
-	limiter *loginLimiter
-	mux     *http.ServeMux
+	cfg       Config
+	appOrigin domain.Origin
+	secure    bool
+	limiter   *loginLimiter
+	fetchSem  chan struct{}
+	extracts  *extractGroup
+	mux       *http.ServeMux
 }
 
 // NewServer validates the static configuration and wires the route table.
@@ -83,8 +90,8 @@ func NewServer(cfg Config) (http.Handler, error) {
 		cfg.Location = time.UTC
 	}
 
-	if len(cfg.SessionSecret) == 0 {
-		return nil, errors.New("http: session secret is required")
+	if len(cfg.SessionSecret) < minSessionSecretBytes {
+		return nil, fmt.Errorf("http: session secret must be at least %d bytes", minSessionSecretBytes)
 	}
 
 	appURL, err := url.Parse(strings.TrimSpace(cfg.AppURL))
@@ -93,15 +100,22 @@ func NewServer(cfg Config) (http.Handler, error) {
 		return nil, errors.New("http: invalid APP_URL")
 	}
 
-	if appURL.Scheme == "" || appURL.Host == "" || appURL.User != nil {
+	if appURL.User != nil || appURL.Host == "" {
+		return nil, errors.New("http: invalid APP_URL")
+	}
+
+	appOrigin, ok := domain.OriginFromURL(appURL)
+	if !ok {
 		return nil, errors.New("http: invalid APP_URL")
 	}
 
 	s := &server{
-		cfg:     cfg,
-		appURL:  appURL,
-		secure:  strings.EqualFold(appURL.Scheme, "https"),
-		limiter: newLoginLimiter(cfg.Now),
+		cfg:       cfg,
+		appOrigin: appOrigin,
+		secure:    appOrigin.Scheme == "https",
+		limiter:   newLoginLimiter(cfg.Now),
+		fetchSem:  make(chan struct{}, maxConcurrentForegroundFetches),
+		extracts:  newExtractGroup(),
 	}
 
 	s.mux = s.routes()
@@ -111,6 +125,8 @@ func NewServer(cfg Config) (http.Handler, error) {
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isAPIPath(r.URL.Path) {
+		w.Header().Set("Cache-Control", apiCacheControl)
+
 		if isStateChanging(r.Method) && !s.originAllowed(r) {
 			writeError(w, domain.NewError(domain.ErrForbidden, nil))
 
@@ -151,11 +167,10 @@ func (s *server) registerSavedPageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/saved-pages", s.handleSavedPageList)
 	mux.HandleFunc("POST /api/saved-pages", s.handleSavedPageCreate)
 	mux.HandleFunc("GET /api/saved-pages/unread-count", s.handleSavedPageUnreadCount)
-	mux.HandleFunc("GET /api/saved-pages/lookup", s.handleSavedPageLookup)
-	mux.HandleFunc("POST /api/saved-pages/read", s.handleSavedPagesMarkRead)
-	mux.HandleFunc("POST /api/saved-pages/read-all", s.handleSavedPagesMarkAllRead)
+	mux.HandleFunc("POST /api/saved-pages/read", handleMarkIDsRead(s.cfg.SavedPages))
+	mux.HandleFunc("POST /api/saved-pages/read-all", handleMarkAllRead(s.cfg.SavedPages))
 	mux.HandleFunc("GET /api/saved-pages/{id}", s.handleSavedPageGet)
-	mux.HandleFunc("PATCH /api/saved-pages/{id}", s.handleSavedPageSetRead)
+	mux.HandleFunc("PATCH /api/saved-pages/{id}", handleSetRead(s.cfg.SavedPages))
 	mux.HandleFunc("DELETE /api/saved-pages/{id}", s.handleSavedPageDelete)
 }
 
@@ -173,10 +188,10 @@ func (s *server) registerFeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/feeds/{id}/read-all", s.handleFeedMarkRead)
 
 	mux.HandleFunc("GET /api/feed-items", s.handleFeedItemList)
-	mux.HandleFunc("POST /api/feed-items/read", s.handleFeedItemsMarkRead)
-	mux.HandleFunc("POST /api/feed-items/read-all", s.handleFeedItemsMarkAllRead)
+	mux.HandleFunc("POST /api/feed-items/read", handleMarkIDsRead(s.cfg.FeedItems))
+	mux.HandleFunc("POST /api/feed-items/read-all", handleMarkAllRead(s.cfg.FeedItems))
 	mux.HandleFunc("GET /api/feed-items/{id}", s.handleFeedItemGet)
-	mux.HandleFunc("PATCH /api/feed-items/{id}", s.handleFeedItemSetRead)
+	mux.HandleFunc("PATCH /api/feed-items/{id}", handleSetRead(s.cfg.FeedItems))
 	mux.HandleFunc("POST /api/feed-items/{id}/save", s.handleFeedItemSave)
 	mux.HandleFunc("POST /api/feed-items/{id}/extract", s.handleFeedItemExtract)
 
@@ -254,6 +269,12 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(name, "assets/") {
 		w.Header().Set("Cache-Control", immutableCacheControl)
+	} else {
+		w.Header().Set("Cache-Control", indexCacheControl)
+	}
+
+	if path.Ext(name) == ".webmanifest" {
+		w.Header().Set("Content-Type", "application/manifest+json")
 	}
 
 	http.ServeFileFS(w, r, s.cfg.StaticFS, name)
@@ -268,7 +289,29 @@ func hasFileExtension(name string) bool {
 	return path.Ext(name) != ""
 }
 
+func (s *server) acquireFetchSlot(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	select {
+	case s.fetchSem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *server) releaseFetchSlot() {
+	<-s.fetchSem
+}
+
 func (s *server) extractWebpage(ctx context.Context, pageURL domain.NormalizedURL) (domain.ExtractedArticle, error) {
+	if err := s.acquireFetchSlot(ctx); err != nil {
+		return domain.ExtractedArticle{}, err
+	}
+	defer s.releaseFetchSlot()
+
 	htmlBody, finalURL, err := s.cfg.WebpageFetcher.FetchWebpage(ctx, pageURL)
 	if err != nil {
 		return domain.ExtractedArticle{}, err
@@ -277,12 +320,75 @@ func (s *server) extractWebpage(ctx context.Context, pageURL domain.NormalizedUR
 	return s.cfg.ArticleExtractor.ExtractArticle(htmlBody, finalURL)
 }
 
+type readStateRepository interface {
+	SetRead(ctx context.Context, id string, read bool) error
+	MarkIDsRead(ctx context.Context, ids []string) error
+	MarkAllRead(ctx context.Context) error
+}
+
+func handleSetRead(repo readStateRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req readStateRequest
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		if req.Read == nil {
+			writeError(w, domain.NewError(domain.ErrRequestFailed, nil))
+
+			return
+		}
+
+		if err := repo.SetRead(r.Context(), r.PathValue("id"), *req.Read); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		writeNoContent(w)
+	}
+}
+
+func handleMarkIDsRead(repo readStateRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req idsRequest
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		if err := repo.MarkIDsRead(r.Context(), req.IDs); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		writeNoContent(w)
+	}
+}
+
+func handleMarkAllRead(repo readStateRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := repo.MarkAllRead(r.Context()); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		writeNoContent(w)
+	}
+}
+
 type statusResponse struct {
 	Status string `json:"status"`
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
+	ID    string `json:"id,omitempty"`
 	URL   string `json:"url,omitempty"`
 }
 
@@ -400,15 +506,17 @@ func writeError(w http.ResponseWriter, err error) {
 	code := domain.ErrRequestFailed
 	status := http.StatusInternalServerError
 	redactedURL := ""
+	conflictID := ""
 
 	var domainErr *domain.DomainError
 	if errors.As(err, &domainErr) {
 		code = domainErr.Code
 		status = statusForCode(code)
 		redactedURL = domainErr.URL
+		conflictID = domainErr.ID
 	}
 
-	writeJSON(w, status, errorResponse{Error: string(code), URL: redactedURL})
+	writeJSON(w, status, errorResponse{Error: string(code), ID: conflictID, URL: redactedURL})
 }
 
 func statusForCode(code domain.ErrorCode) int {
@@ -453,17 +561,20 @@ func statusForCode(code domain.ErrorCode) int {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	return decodeJSONWithLimit(w, r, maxRequestBodyBytes, dst)
+}
+
+func decodeJSONWithLimit(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(dst); err != nil {
 		return domain.NewError(domain.ErrRequestFailed, err)
 	}
 
-	// Reject a second JSON value so `{"read":true}{"read":false}` cannot smuggle
-	// ambiguous trailing payloads past validation.
-	var trailing any
-	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+	// Reject a second JSON token so `{"read":true}{"read":false}` cannot smuggle
+	// ambiguous trailing payloads without allocating an arbitrary value tree.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return domain.NewError(domain.ErrRequestFailed, nil)
 	}
 

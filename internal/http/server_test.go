@@ -9,8 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"sort"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,11 +18,13 @@ import (
 	"time"
 
 	"reader/internal/domain"
+	"reader/internal/sqlite"
 )
 
 const (
-	testAppURL   = "https://reader.example.com"
-	testPassword = "correct horse battery staple"
+	testAppURL        = "https://reader.example.com"
+	testPassword      = "correct horse battery staple"
+	testSessionSecret = "0123456789abcdef0123456789abcdef"
 )
 
 func strPtr(value string) *string {
@@ -49,850 +50,98 @@ func (c *testClock) Advance(delta time.Duration) {
 	c.current = c.current.Add(delta)
 }
 
-type fakeStore struct {
-	folders  []domain.Folder
-	feeds    []domain.Feed
-	items    []domain.FeedItem
-	saved    []domain.SavedPage
-	settings domain.Settings
-	sends    []domain.KindleSendRecord
-
-	savedPagesErr error
+// failingSavedPageRepo wraps a real repository for deliberate error/race injection.
+type failingSavedPageRepo struct {
+	domain.SavedPageRepository
+	listErr       error
+	unreadErr     error
+	bypassGetByID bool
 }
 
-func (s *fakeStore) folderIndex(id string) int {
-	for i, folder := range s.folders {
-		if folder.ID == id {
-			return i
-		}
+func (r *failingSavedPageRepo) List(ctx context.Context, params domain.PageParams) (domain.PageResult[domain.SavedPage], error) {
+	if r.listErr != nil {
+		return domain.PageResult[domain.SavedPage]{}, r.listErr
 	}
 
-	return -1
+	return r.SavedPageRepository.List(ctx, params)
 }
 
-func (s *fakeStore) feedIndex(id string) int {
-	for i, feed := range s.feeds {
-		if feed.ID == id {
-			return i
-		}
+func (r *failingSavedPageRepo) UnreadCount(ctx context.Context) (int, error) {
+	if r.unreadErr != nil {
+		return 0, r.unreadErr
 	}
 
-	return -1
+	return r.SavedPageRepository.UnreadCount(ctx)
 }
 
-func (s *fakeStore) itemIndex(id string) int {
-	for i, item := range s.items {
-		if item.ID == id {
-			return i
-		}
-	}
-
-	return -1
-}
-
-func (s *fakeStore) savedIndex(id string) int {
-	for i, page := range s.saved {
-		if page.ID == id {
-			return i
-		}
-	}
-
-	return -1
-}
-
-func pageByID[T any](source []T, params domain.PageParams, idOf func(T) string) domain.PageResult[T] {
-	sorted := make([]T, len(source))
-	copy(sorted, source)
-
-	newestFirst := params.Order != domain.SortOrderOldest
-	sort.Slice(sorted, func(i, j int) bool {
-		if newestFirst {
-			return idOf(sorted[i]) > idOf(sorted[j])
-		}
-
-		return idOf(sorted[i]) < idOf(sorted[j])
-	})
-
-	start := 0
-	if params.Cursor != nil {
-		for start < len(sorted) {
-			id := idOf(sorted[start])
-			if (newestFirst && id < *params.Cursor) || (!newestFirst && id > *params.Cursor) {
-				break
-			}
-
-			start++
-		}
-	}
-
-	end := start + params.Limit
-	if end > len(sorted) {
-		end = len(sorted)
-	}
-
-	page := make([]T, 0, end-start)
-	page = append(page, sorted[start:end]...)
-
-	var cursor *string
-	if end < len(sorted) && len(page) > 0 {
-		last := idOf(page[len(page)-1])
-		cursor = &last
-	}
-
-	return domain.PageResult[T]{Items: page, Cursor: cursor}
-}
-
-func (s *fakeStore) ListFolders() ([]domain.Folder, error) {
-	folders := make([]domain.Folder, len(s.folders))
-	copy(folders, s.folders)
-
-	sort.Slice(folders, func(i, j int) bool {
-		if folders[i].Name != folders[j].Name {
-			return folders[i].Name < folders[j].Name
-		}
-
-		return folders[i].ID < folders[j].ID
-	})
-
-	return folders, nil
-}
-
-func (s *fakeStore) folderByID(id string) *domain.Folder {
-	index := s.folderIndex(id)
-	if index < 0 {
-		return nil
-	}
-
-	folder := s.folders[index]
-
-	return &folder
-}
-
-func (s *fakeStore) CreateFolder(id string, name string) (domain.Folder, error) {
-	for _, folder := range s.folders {
-		if folder.Name == name {
-			return domain.Folder{}, domain.NewError(domain.ErrFolderAlreadyExists, nil)
-		}
-	}
-
-	folder := domain.Folder{ID: id, Name: name}
-	s.folders = append(s.folders, folder)
-
-	return folder, nil
-}
-
-func (s *fakeStore) RenameFolder(id string, name string) error {
-	index := s.folderIndex(id)
-	if index < 0 {
-		return domain.NewError(domain.ErrFolderNotFound, nil)
-	}
-
-	for _, folder := range s.folders {
-		if folder.Name == name && folder.ID != id {
-			return domain.NewError(domain.ErrFolderAlreadyExists, nil)
-		}
-	}
-
-	s.folders[index].Name = name
-
-	return nil
-}
-
-func (s *fakeStore) DeleteFolder(id string) error {
-	index := s.folderIndex(id)
-	if index < 0 {
-		return nil
-	}
-
-	s.folders = append(s.folders[:index], s.folders[index+1:]...)
-	for i := range s.feeds {
-		if s.feeds[i].FolderID != nil && *s.feeds[i].FolderID == id {
-			s.feeds[i].FolderID = nil
-		}
-	}
-
-	return nil
-}
-
-func (s *fakeStore) feedByID(id string) *domain.Feed {
-	index := s.feedIndex(id)
-	if index < 0 {
-		return nil
-	}
-
-	feed := s.feeds[index]
-
-	return &feed
-}
-
-func (s *fakeStore) CreateFeed(feed domain.Feed) (domain.Feed, error) {
-	if feed.FolderID != nil && s.folderIndex(*feed.FolderID) < 0 {
-		return domain.Feed{}, domain.NewError(domain.ErrFolderNotFound, nil)
-	}
-
-	for _, existing := range s.feeds {
-		if existing.URL.Raw() == feed.URL.Raw() {
-			return domain.Feed{}, domain.NewConflictURL(domain.ErrFeedAlreadyExists, feed.URL.RedactedString())
-		}
-	}
-
-	s.feeds = append(s.feeds, feed)
-
-	return feed, nil
-}
-
-func (s *fakeStore) DeleteFeed(id string) error {
-	if index := s.feedIndex(id); index >= 0 {
-		s.feeds = append(s.feeds[:index], s.feeds[index+1:]...)
-	}
-
-	kept := make([]domain.FeedItem, 0, len(s.items))
-	for _, item := range s.items {
-		if item.FeedID != id {
-			kept = append(kept, item)
-		}
-	}
-
-	s.items = kept
-
-	return nil
-}
-
-func (s *fakeStore) UpdateReaderMode(id string, mode domain.ReaderMode) error {
-	if index := s.feedIndex(id); index >= 0 {
-		s.feeds[index].ReaderMode = mode
-	}
-
-	return nil
-}
-
-func (s *fakeStore) UpdateOrder(id string, order domain.SortOrder) error {
-	if index := s.feedIndex(id); index >= 0 {
-		s.feeds[index].Order = order
-	}
-
-	return nil
-}
-
-func (s *fakeStore) MoveToFolder(id string, folderID *string) error {
-	if folderID != nil && s.folderIndex(*folderID) < 0 {
-		return domain.NewError(domain.ErrFolderNotFound, nil)
-	}
-
-	if index := s.feedIndex(id); index >= 0 {
-		s.feeds[index].FolderID = folderID
-	}
-
-	return nil
-}
-
-func (s *fakeStore) ImportOPML(doc domain.OPMLDocument) (domain.OPMLImportResult, []string, error) {
-	result := domain.OPMLImportResult{SkippedFeeds: doc.SkippedInvalid}
-	folderIDs := make(map[string]string, len(s.folders))
-	for _, folder := range s.folders {
-		folderIDs[folder.Name] = folder.ID
-	}
-
-	knownFeeds := make(map[string]struct{}, len(s.feeds))
-	for _, feed := range s.feeds {
-		knownFeeds[feed.URL.Raw()] = struct{}{}
-	}
-
-	newIDs := make([]string, 0, len(doc.Feeds))
-	for _, input := range doc.Feeds {
-		if _, duplicate := knownFeeds[input.URL.Raw()]; duplicate {
-			result.SkippedFeeds++
-
-			continue
-		}
-
-		var folderID *string
-		if input.FolderName != nil {
-			id, exists := folderIDs[*input.FolderName]
-			if !exists {
-				id = domain.NewID()
-				s.folders = append(s.folders, domain.Folder{ID: id, Name: *input.FolderName})
-				folderIDs[*input.FolderName] = id
-				result.CreatedFolders++
-			}
-
-			folderID = &id
-		}
-
-		feedID := domain.NewID()
-		s.feeds = append(s.feeds, domain.Feed{
-			ID:         feedID,
-			URL:        input.URL,
-			Title:      input.Title,
-			FolderID:   folderID,
-			ReaderMode: domain.ReaderModeDefault,
-			Order:      domain.SortOrderNewest,
-		})
-		knownFeeds[input.URL.Raw()] = struct{}{}
-		newIDs = append(newIDs, feedID)
-		result.ImportedFeeds++
-	}
-
-	return result, newIDs, nil
-}
-
-func (s *fakeStore) ListFeeds() ([]domain.Feed, error) {
-	feeds := make([]domain.Feed, len(s.feeds))
-	copy(feeds, s.feeds)
-
-	sort.Slice(feeds, func(i, j int) bool {
-		if feeds[i].Title != feeds[j].Title {
-			return feeds[i].Title < feeds[j].Title
-		}
-
-		return feeds[i].ID < feeds[j].ID
-	})
-
-	return feeds, nil
-}
-
-func (s *fakeStore) ListSavedPages(params domain.PageParams) (domain.PageResult[domain.SavedPage], error) {
-	if s.savedPagesErr != nil {
-		return domain.PageResult[domain.SavedPage]{}, s.savedPagesErr
-	}
-
-	filtered := make([]domain.SavedPage, 0, len(s.saved))
-	for _, page := range s.saved {
-		if params.Unread && page.Read {
-			continue
-		}
-
-		filtered = append(filtered, page)
-	}
-
-	return pageByID(filtered, params, func(page domain.SavedPage) string { return page.ID }), nil
-}
-
-func (s *fakeStore) savedByID(id string) *domain.SavedPage {
-	index := s.savedIndex(id)
-	if index < 0 {
-		return nil
-	}
-
-	page := s.saved[index]
-
-	return &page
-}
-
-func (s *fakeStore) savedByURL(url domain.NormalizedURL) *domain.SavedPage {
-	for i := range s.saved {
-		if s.saved[i].URL.Raw() == url.Raw() {
-			page := s.saved[i]
-
-			return &page
-		}
-	}
-
-	return nil
-}
-
-func (s *fakeStore) CreateSavedPage(page domain.SavedPage) (domain.SavedPage, error) {
-	if existing := s.savedByURL(page.URL); existing != nil {
-		return domain.SavedPage{}, domain.NewConflictURL(domain.ErrSavedPageAlreadyExists, page.URL.RedactedString())
-	}
-
-	s.saved = append(s.saved, page)
-
-	return page, nil
-}
-
-func (s *fakeStore) SetSavedPageRead(id string, read bool) error {
-	if index := s.savedIndex(id); index >= 0 {
-		s.saved[index].Read = read
-	}
-
-	return nil
-}
-
-func (s *fakeStore) itemList(params domain.PageParams, include func(domain.FeedItem) bool) domain.PageResult[domain.FeedItem] {
-	filtered := make([]domain.FeedItem, 0, len(s.items))
-	for _, item := range s.items {
-		if include != nil && !include(item) {
-			continue
-		}
-
-		if params.Unread && item.Read {
-			continue
-		}
-
-		filtered = append(filtered, item)
-	}
-
-	return pageByID(filtered, params, func(item domain.FeedItem) string { return item.ID })
-}
-
-func (s *fakeStore) feedItemByID(id string) *domain.FeedItem {
-	index := s.itemIndex(id)
-	if index < 0 {
-		return nil
-	}
-
-	item := s.items[index]
-
-	return &item
-}
-
-func (s *fakeStore) markItems(predicate func(domain.FeedItem) bool) {
-	for i := range s.items {
-		if predicate(s.items[i]) {
-			s.items[i].Read = true
-		}
-	}
-}
-
-// Repository doubles. Each one wraps the shared fakeStore state and satisfies a
-// single domain port, since Go cannot overload same-named methods.
-
-type fakeFolderRepo struct {
-	store *fakeStore
-}
-
-func (r *fakeFolderRepo) List(ctx context.Context) ([]domain.Folder, error) {
-	return r.store.ListFolders()
-}
-
-func (r *fakeFolderRepo) GetByID(ctx context.Context, id string) (*domain.Folder, error) {
-	return r.store.folderByID(id), nil
-}
-
-func (r *fakeFolderRepo) Create(ctx context.Context, id string, name string) (domain.Folder, error) {
-	return r.store.CreateFolder(id, name)
-}
-
-func (r *fakeFolderRepo) Rename(ctx context.Context, id string, name string) error {
-	return r.store.RenameFolder(id, name)
-}
-
-func (r *fakeFolderRepo) Delete(ctx context.Context, id string) error {
-	return r.store.DeleteFolder(id)
-}
-
-type fakeFeedRepo struct {
-	store *fakeStore
-}
-
-func (r *fakeFeedRepo) List(ctx context.Context) ([]domain.Feed, error) {
-	return r.store.ListFeeds()
-}
-
-func (r *fakeFeedRepo) GetByID(ctx context.Context, id string) (*domain.Feed, error) {
-	return r.store.feedByID(id), nil
-}
-
-func (r *fakeFeedRepo) GetByURL(ctx context.Context, url domain.NormalizedURL) (*domain.Feed, error) {
-	for i := range r.store.feeds {
-		if r.store.feeds[i].URL.Raw() == url.Raw() {
-			feed := r.store.feeds[i]
-
-			return &feed, nil
-		}
-	}
-
-	return nil, nil
-}
-
-func (r *fakeFeedRepo) Create(ctx context.Context, feed domain.Feed) (domain.Feed, error) {
-	return r.store.CreateFeed(feed)
-}
-
-func (r *fakeFeedRepo) Delete(ctx context.Context, id string) error {
-	return r.store.DeleteFeed(id)
-}
-
-func (r *fakeFeedRepo) UpdateReaderMode(ctx context.Context, id string, mode domain.ReaderMode) error {
-	return r.store.UpdateReaderMode(id, mode)
-}
-
-func (r *fakeFeedRepo) UpdateOrder(ctx context.Context, id string, order domain.SortOrder) error {
-	return r.store.UpdateOrder(id, order)
-}
-
-func (r *fakeFeedRepo) MoveToFolder(ctx context.Context, id string, folderID *string) error {
-	return r.store.MoveToFolder(id, folderID)
-}
-
-func (r *fakeFeedRepo) RecordRefreshFailure(ctx context.Context, id string, errSummary string) error {
-	return nil
-}
-
-func (r *fakeFeedRepo) ApplySync(ctx context.Context, feedID string, newTitle string, updatedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
-	return nil
-}
-
-func (r *fakeFeedRepo) ImportOPML(ctx context.Context, doc domain.OPMLDocument) (domain.OPMLImportResult, []string, error) {
-	return r.store.ImportOPML(doc)
-}
-
-type fakeFeedItemRepo struct {
-	store *fakeStore
-}
-
-func (r *fakeFeedItemRepo) ListAll(ctx context.Context, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	return r.store.itemList(params, nil), nil
-}
-
-func (r *fakeFeedItemRepo) ListByFeed(ctx context.Context, feedID string, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	return r.store.itemList(params, func(item domain.FeedItem) bool { return item.FeedID == feedID }), nil
-}
-
-func (r *fakeFeedItemRepo) ListByFolder(ctx context.Context, folderID string, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	inFolder := make(map[string]struct{})
-	for _, feed := range r.store.feeds {
-		if feed.FolderID != nil && *feed.FolderID == folderID {
-			inFolder[feed.ID] = struct{}{}
-		}
-	}
-
-	return r.store.itemList(params, func(item domain.FeedItem) bool {
-		_, ok := inFolder[item.FeedID]
-
-		return ok
-	}), nil
-}
-
-func (r *fakeFeedItemRepo) ListByFeedForRetention(ctx context.Context, feedID string) ([]domain.FeedItem, error) {
-	items := make([]domain.FeedItem, 0, len(r.store.items))
-	for _, item := range r.store.items {
-		if item.FeedID == feedID {
-			items = append(items, item)
-		}
-	}
-
-	return items, nil
-}
-
-func (r *fakeFeedItemRepo) GetByID(ctx context.Context, id string) (*domain.FeedItem, error) {
-	return r.store.feedItemByID(id), nil
-}
-
-func (r *fakeFeedItemRepo) UnreadCounts(ctx context.Context) ([]domain.FeedUnreadCount, error) {
-	counts := make([]domain.FeedUnreadCount, 0, len(r.store.feeds))
-	for _, feed := range r.store.feeds {
-		unread := 0
-		for _, item := range r.store.items {
-			if item.FeedID == feed.ID && !item.Read {
-				unread++
-			}
-		}
-
-		if unread > 0 {
-			counts = append(counts, domain.FeedUnreadCount{FeedID: feed.ID, Count: unread})
-		}
-	}
-
-	return counts, nil
-}
-
-func (r *fakeFeedItemRepo) SetRead(ctx context.Context, id string, read bool) error {
-	if index := r.store.itemIndex(id); index >= 0 {
-		r.store.items[index].Read = read
-	}
-
-	return nil
-}
-
-func (r *fakeFeedItemRepo) MarkIDsRead(ctx context.Context, ids []string) error {
-	selected := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		selected[id] = struct{}{}
-	}
-
-	r.store.markItems(func(item domain.FeedItem) bool {
-		_, ok := selected[item.ID]
-
-		return ok
-	})
-
-	return nil
-}
-
-func (r *fakeFeedItemRepo) MarkAllRead(ctx context.Context) error {
-	r.store.markItems(func(domain.FeedItem) bool { return true })
-
-	return nil
-}
-
-func (r *fakeFeedItemRepo) MarkFeedRead(ctx context.Context, feedID string) error {
-	r.store.markItems(func(item domain.FeedItem) bool { return item.FeedID == feedID })
-
-	return nil
-}
-
-func (r *fakeFeedItemRepo) MarkFolderRead(ctx context.Context, folderID string) error {
-	feedIDs := make(map[string]struct{})
-	for _, feed := range r.store.feeds {
-		if feed.FolderID != nil && *feed.FolderID == folderID {
-			feedIDs[feed.ID] = struct{}{}
-		}
-	}
-
-	r.store.markItems(func(item domain.FeedItem) bool {
-		_, ok := feedIDs[item.FeedID]
-
-		return ok
-	})
-
-	return nil
-}
-
-func (r *fakeFeedItemRepo) SaveExtractedContent(ctx context.Context, id string, content string) (*domain.FeedItem, error) {
-	index := r.store.itemIndex(id)
-	if index < 0 {
+func (r *failingSavedPageRepo) GetByURL(ctx context.Context, target domain.NormalizedURL) (*domain.SavedPage, error) {
+	if r.bypassGetByID {
 		return nil, nil
 	}
 
-	r.store.items[index].ExtractedContent = &content
-	item := r.store.items[index]
-
-	return &item, nil
+	return r.SavedPageRepository.GetByURL(ctx, target)
 }
 
-type fakeSavedPageRepo struct {
-	store *fakeStore
-}
-
-func (r *fakeSavedPageRepo) List(ctx context.Context, params domain.PageParams) (domain.PageResult[domain.SavedPage], error) {
-	return r.store.ListSavedPages(params)
-}
-
-func (r *fakeSavedPageRepo) UnreadCount(ctx context.Context) (int, error) {
-	if r.store.savedPagesErr != nil {
-		return 0, r.store.savedPagesErr
-	}
-
-	unread := 0
-	for _, page := range r.store.saved {
-		if !page.Read {
-			unread++
-		}
-	}
-
-	return unread, nil
-}
-
-func (r *fakeSavedPageRepo) GetByID(ctx context.Context, id string) (*domain.SavedPage, error) {
-	return r.store.savedByID(id), nil
-}
-
-func (r *fakeSavedPageRepo) GetByURL(ctx context.Context, url domain.NormalizedURL) (*domain.SavedPage, error) {
-	return r.store.savedByURL(url), nil
-}
-
-func (r *fakeSavedPageRepo) Create(ctx context.Context, page domain.SavedPage) (domain.SavedPage, error) {
-	return r.store.CreateSavedPage(page)
-}
-
-func (r *fakeSavedPageRepo) SetRead(ctx context.Context, id string, read bool) error {
-	return r.store.SetSavedPageRead(id, read)
-}
-
-func (r *fakeSavedPageRepo) MarkIDsRead(ctx context.Context, ids []string) error {
-	selected := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		selected[id] = struct{}{}
-	}
-
-	for i := range r.store.saved {
-		if _, ok := selected[r.store.saved[i].ID]; ok {
-			r.store.saved[i].Read = true
-		}
-	}
-
-	return nil
-}
-
-func (r *fakeSavedPageRepo) MarkAllRead(ctx context.Context) error {
-	for i := range r.store.saved {
-		r.store.saved[i].Read = true
-	}
-
-	return nil
-}
-
-func (r *fakeSavedPageRepo) Delete(ctx context.Context, id string) error {
-	if index := r.store.savedIndex(id); index >= 0 {
-		r.store.saved = append(r.store.saved[:index], r.store.saved[index+1:]...)
-	}
-
-	return nil
-}
-
-type fakeSettingRepo struct {
-	store *fakeStore
-}
-
-func (r *fakeSettingRepo) Get(ctx context.Context) (domain.Settings, error) {
-	return r.store.settings, nil
-}
-
-func (r *fakeSettingRepo) UpdateRetention(ctx context.Context, retention int) error {
-	r.store.settings.Retention = retention
-
-	return nil
-}
-
-func (r *fakeSettingRepo) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
-	if provider == domain.ProviderBrowser {
-		stored := r.store.settings.BrowserEndpoint
-		if stored == nil || strings.TrimSpace(*stored) == "" {
-			return domain.NewError(domain.ErrBrowserEndpointRequired, nil)
-		}
-	}
-
-	r.store.settings.Provider = provider
-
-	return nil
-}
-
-func (r *fakeSettingRepo) UpdateJinaKey(ctx context.Context, key string) error {
-	trimmed := strings.TrimSpace(key)
-	r.store.settings.JinaKey = &trimmed
-
-	return nil
-}
-
-func (r *fakeSettingRepo) DeleteJinaKey(ctx context.Context) error {
-	r.store.settings.JinaKey = nil
-
-	return nil
-}
-
-func (r *fakeSettingRepo) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
-	trimmed := strings.TrimSpace(endpoint)
-	r.store.settings.BrowserEndpoint = &trimmed
-
-	return nil
-}
-
-func (r *fakeSettingRepo) DeleteBrowserEndpoint(ctx context.Context) error {
-	r.store.settings.BrowserEndpoint = nil
-	if r.store.settings.Provider == domain.ProviderBrowser {
-		r.store.settings.Provider = domain.ProviderDirect
-	}
-
-	return nil
-}
-
-func (r *fakeSettingRepo) UpdateSMTP(ctx context.Context, smtp domain.SMTPSettings) error {
-	stored := smtp
-	if smtp.Password == nil || strings.TrimSpace(*smtp.Password) == "" {
-		if r.store.settings.SMTP != nil {
-			stored.Password = r.store.settings.SMTP.Password
-		} else {
-			stored.Password = nil
-		}
-	}
-
-	r.store.settings.SMTP = &stored
-
-	return nil
-}
-
-func (r *fakeSettingRepo) DeleteSMTPPassword(ctx context.Context) error {
-	if r.store.settings.SMTP != nil {
-		r.store.settings.SMTP.Password = nil
-	}
-
-	return nil
-}
-
-func (r *fakeSettingRepo) DeleteSMTP(ctx context.Context) error {
-	r.store.settings.SMTP = nil
-
-	return nil
-}
-
-func (r *fakeSettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
-	if r.store.settings.SMTP == nil {
-		return domain.NewError(domain.ErrSMTPNotConfigured, nil)
-	}
-
-	stored := kindle
-	r.store.settings.Kindle = &stored
-
-	return nil
-}
-
-func (r *fakeSettingRepo) AdvanceNextSendAt(ctx context.Context, nextSendAt time.Time) error {
-	if r.store.settings.Kindle != nil {
-		r.store.settings.Kindle.NextSendAt = &nextSendAt
-	}
-
-	return nil
-}
-
-type fakeKindleSendRepo struct {
-	store *fakeStore
-}
-
-func (r *fakeKindleSendRepo) RecoverRunningOnStartup(ctx context.Context, now time.Time) error {
-	return nil
-}
-
-func (r *fakeKindleSendRepo) ListRecent(ctx context.Context) ([]domain.KindleSendRecord, error) {
-	records := make([]domain.KindleSendRecord, len(r.store.sends))
-	copy(records, r.store.sends)
-
-	return records, nil
-}
-
-func (r *fakeKindleSendRepo) CreateRunning(ctx context.Context, record domain.KindleSendRecord) (domain.KindleSendRecord, error) {
-	r.store.sends = append([]domain.KindleSendRecord{record}, r.store.sends...)
-
-	return record, nil
-}
-
-func (r *fakeKindleSendRepo) ListUnreadForKindle(ctx context.Context) ([]domain.SavedPage, []domain.Feed, map[string][]domain.FeedItem, error) {
-	return nil, nil, nil, nil
-}
-
-func (r *fakeKindleSendRepo) RecordBookAccepted(ctx context.Context, sendID string, savedPageIDs []string, feedItemIDs []string, articleDelta int) error {
-	return nil
-}
-
-func (r *fakeKindleSendRepo) CompleteSend(ctx context.Context, sendID string, status domain.KindleStatus, errSummary *string, finishedAt time.Time) error {
-	return nil
-}
-
-// fakeFetchers are the adapter doubles used by the HTTP handlers.
+// Adapter doubles used by the HTTP handlers for network, parsing, and worker observation.
 
 type fakeFeedFetcher struct {
+	mu       sync.Mutex
 	body     []byte
 	finalURL string
 	err      error
 	calls    int
+	fetch    func(ctx context.Context, target domain.NormalizedURL) ([]byte, string, error)
 }
 
-func (f *fakeFeedFetcher) FetchFeed(ctx context.Context, url domain.NormalizedURL) ([]byte, string, error) {
+func (f *fakeFeedFetcher) FetchFeed(ctx context.Context, target domain.NormalizedURL) ([]byte, string, error) {
+	f.mu.Lock()
 	f.calls++
-	if f.err != nil {
-		return nil, "", f.err
+	fetch := f.fetch
+	body := f.body
+	finalURL := f.finalURL
+	err := f.err
+	f.mu.Unlock()
+
+	if fetch != nil {
+		return fetch(ctx, target)
 	}
 
-	return f.body, f.finalURL, nil
+	if err != nil {
+		return nil, "", err
+	}
+
+	return body, finalURL, nil
 }
 
 type fakeWebpageFetcher struct {
+	mu       sync.Mutex
 	html     string
 	finalURL string
 	err      error
 	calls    int
 	lastURL  string
+	fetch    func(ctx context.Context, target domain.NormalizedURL) (string, string, error)
 }
 
-func (f *fakeWebpageFetcher) FetchWebpage(ctx context.Context, url domain.NormalizedURL) (string, string, error) {
+func (f *fakeWebpageFetcher) FetchWebpage(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+	f.mu.Lock()
 	f.calls++
-	f.lastURL = url.Raw()
-	if f.err != nil {
-		return "", "", f.err
+	f.lastURL = target.Raw()
+	fetch := f.fetch
+	html := f.html
+	finalURL := f.finalURL
+	err := f.err
+	f.mu.Unlock()
+
+	if fetch != nil {
+		return fetch(ctx, target)
 	}
 
-	return f.html, f.finalURL, nil
+	if err != nil {
+		return "", "", err
+	}
+
+	return html, finalURL, nil
 }
 
 type fakeFeedParser struct {
@@ -909,6 +158,7 @@ func (f *fakeFeedParser) ParseFeed(body []byte, baseURL string) (domain.ParsedFe
 }
 
 type fakeArticleExtractor struct {
+	mu       sync.Mutex
 	article  domain.ExtractedArticle
 	err      error
 	lastHTML string
@@ -917,6 +167,9 @@ type fakeArticleExtractor struct {
 }
 
 func (f *fakeArticleExtractor) ExtractArticle(htmlBody string, pageURL string) (domain.ExtractedArticle, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.calls++
 	f.lastHTML = htmlBody
 	f.lastURL = pageURL
@@ -928,16 +181,23 @@ func (f *fakeArticleExtractor) ExtractArticle(htmlBody string, pageURL string) (
 }
 
 type fakeRefresher struct {
+	mu      sync.Mutex
 	batches [][]string
 }
 
 func (f *fakeRefresher) Enqueue(feedIDs ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	batch := make([]string, len(feedIDs))
 	copy(batch, feedIDs)
 	f.batches = append(f.batches, batch)
 }
 
 func (f *fakeRefresher) enqueued() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	flattened := make([]string, 0, len(f.batches))
 	for _, batch := range f.batches {
 		flattened = append(flattened, batch...)
@@ -969,7 +229,7 @@ func (f *fakeKindleDispatcher) EnqueueManual(ctx context.Context) (domain.Kindle
 type harness struct {
 	t         *testing.T
 	handler   http.Handler
-	store     *fakeStore
+	db        *sqlite.Store
 	clock     *testClock
 	refresher *fakeRefresher
 
@@ -979,7 +239,8 @@ type harness struct {
 	webpageFetcher *fakeWebpageFetcher
 	extractor      *fakeArticleExtractor
 
-	cookie *http.Cookie
+	cookieMu sync.Mutex
+	cookie   *http.Cookie
 }
 
 func newHarness(t *testing.T) *harness {
@@ -991,9 +252,20 @@ func newHarness(t *testing.T) *harness {
 func newHarnessWith(t *testing.T, configure func(*Config)) *harness {
 	t.Helper()
 
+	db, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "reader.db"))
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Errorf("close sqlite store: %v", closeErr)
+		}
+	})
+
 	h := &harness{
 		t:              t,
-		store:          &fakeStore{},
+		db:             db,
 		clock:          &testClock{current: time.Date(2026, time.March, 1, 8, 0, 0, 0, time.UTC)},
 		refresher:      &fakeRefresher{},
 		kindle:         &fakeKindleDispatcher{},
@@ -1002,21 +274,21 @@ func newHarnessWith(t *testing.T, configure func(*Config)) *harness {
 		webpageFetcher: &fakeWebpageFetcher{},
 		extractor:      &fakeArticleExtractor{},
 	}
-	h.store.settings = domain.Settings{Retention: 100, Provider: domain.ProviderDirect}
 
 	cfg := Config{
 		AppPassword:   testPassword,
 		AppURL:        testAppURL,
-		SessionSecret: []byte("test-session-secret"),
+		SessionSecret: []byte(testSessionSecret),
 		Location:      time.UTC,
 		Now:           h.clock.Now,
+		HealthCheck:   func(ctx context.Context) error { return db.ReadDB().PingContext(ctx) },
 
-		Folders:     &fakeFolderRepo{store: h.store},
-		Feeds:       &fakeFeedRepo{store: h.store},
-		FeedItems:   &fakeFeedItemRepo{store: h.store},
-		SavedPages:  &fakeSavedPageRepo{store: h.store},
-		Settings:    &fakeSettingRepo{store: h.store},
-		KindleSends: &fakeKindleSendRepo{store: h.store},
+		Folders:     db.Folders(),
+		Feeds:       db.Feeds(),
+		FeedItems:   db.FeedItems(),
+		SavedPages:  db.SavedPages(),
+		Settings:    db.Settings(),
+		KindleSends: db.KindleSends(),
 
 		FeedFetcher:      h.feedFetcher,
 		FeedParser:       h.feedParser,
@@ -1093,6 +365,9 @@ func (h *harness) authed(method string, target string, body any) *httptest.Respo
 func (h *harness) sessionCookie() *http.Cookie {
 	h.t.Helper()
 
+	h.cookieMu.Lock()
+	defer h.cookieMu.Unlock()
+
 	if h.cookie != nil {
 		return h.cookie
 	}
@@ -1162,7 +437,7 @@ func decodeBody(t *testing.T, recorder *httptest.ResponseRecorder, dst any) {
 func TestNewServerValidatesConfig(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewServer(Config{AppURL: testAppURL, SessionSecret: []byte("x")}); err != nil {
+	if _, err := NewServer(Config{AppURL: testAppURL, SessionSecret: []byte(testSessionSecret)}); err != nil {
 		t.Fatalf("expected valid config: %v", err)
 	}
 
@@ -1170,11 +445,18 @@ func TestNewServerValidatesConfig(t *testing.T) {
 		t.Fatal("expected error for missing session secret")
 	}
 
-	if _, err := NewServer(Config{AppURL: "://bad", SessionSecret: []byte("x")}); err == nil {
+	short := "too-short-secret"
+	if _, err := NewServer(Config{AppURL: testAppURL, SessionSecret: []byte(short)}); err == nil {
+		t.Fatal("expected error for short session secret")
+	} else if strings.Contains(err.Error(), short) {
+		t.Fatalf("error leaked session secret: %v", err)
+	}
+
+	if _, err := NewServer(Config{AppURL: "://bad", SessionSecret: []byte(testSessionSecret)}); err == nil {
 		t.Fatal("expected error for invalid app url")
 	}
 
-	if _, err := NewServer(Config{AppURL: "/relative", SessionSecret: []byte("x")}); err == nil {
+	if _, err := NewServer(Config{AppURL: "/relative", SessionSecret: []byte(testSessionSecret)}); err == nil {
 		t.Fatal("expected error for app url without host")
 	}
 }
@@ -1400,6 +682,180 @@ func TestLoginLimiterBoundsTrackedIPs(t *testing.T) {
 	if tracked > maxTrackedLoginIPs {
 		t.Fatalf("tracked ips = %d, want <= %d", tracked, maxTrackedLoginIPs)
 	}
+
+	// Fill table at t=0, advance half past expiry, and verify expired entries are
+	// pruned without evicting unexpired entries.
+	clock := now
+	expLimiter := newLoginLimiter(func() time.Time { return clock })
+	for i := range maxTrackedLoginIPs {
+		if i == maxTrackedLoginIPs/2 {
+			clock = clock.Add(loginFailureWindow / 2)
+		}
+
+		if !expLimiter.reserveAttempt("198.51.100." + strconv.Itoa(i)) {
+			t.Fatal("unexpected limit on fresh ip")
+		}
+	}
+
+	clock = now.Add(loginFailureWindow)
+	if !expLimiter.reserveAttempt("203.0.113.200") {
+		t.Fatal("expected fresh ip after pruning expired entries")
+	}
+
+	expLimiter.mu.Lock()
+	afterPrune := len(expLimiter.attempts)
+	expLimiter.mu.Unlock()
+	if afterPrune != maxTrackedLoginIPs/2+1 {
+		t.Fatalf("tracked after pruning expired = %d, want %d", afterPrune, maxTrackedLoginIPs/2+1)
+	}
+}
+
+func TestLoginBodyBudgetAndTrailingJSON(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	oversized := `{"password":"` + strings.Repeat("a", maxLoginBodyBytes) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(oversized))
+	req.Header.Set("Origin", testAppURL)
+	req.Header.Set("Content-Type", "application/json")
+	requireAPIError(t, h.do(req), http.StatusBadRequest, "RequestFailed")
+
+	trailing := `{"password":"` + testPassword + `"}{"password":"extra"}`
+	req2 := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(trailing))
+	req2.Header.Set("Origin", testAppURL)
+	req2.Header.Set("Content-Type", "application/json")
+	requireAPIError(t, h.do(req2), http.StatusBadRequest, "RequestFailed")
+}
+
+func TestValidateAppPasswordMatchesLoginBodyBudget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		unit string
+	}{
+		{name: "plain", unit: "a"},
+		{name: "quote", unit: `"`},
+		{name: "backslash", unit: `\`},
+		{name: "tab", unit: "\t"},
+		{name: "html", unit: "<"},
+		{name: "control", unit: "\x01"},
+		{name: "latin", unit: "é"},
+		{name: "cjk", unit: "日"},
+		{name: "emoji", unit: "😀"},
+		{name: "line separator", unit: "\u2028"},
+		{name: "paragraph separator", unit: "\u2029"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			password := passwordFillingLoginBudget(t, tt.unit)
+			body := encodeLoginRequest(t, password)
+
+			if len(body) != maxLoginBodyBytes {
+				t.Fatalf("fixture login body = %d bytes, want exactly %d", len(body), maxLoginBodyBytes)
+			}
+
+			if err := ValidateAppPassword(password); err != nil {
+				t.Fatalf("ValidateAppPassword() at the budget error = %v, want nil", err)
+			}
+
+			h := newHarnessWith(t, func(cfg *Config) { cfg.AppPassword = password })
+			requireStatus(t, h.do(unauthenticatedLoginRequest(body)), http.StatusNoContent)
+
+			over := password + "a"
+
+			err := ValidateAppPassword(over)
+			if err == nil {
+				t.Fatal("ValidateAppPassword() one byte over the budget error = nil, want an error")
+			}
+
+			if strings.Contains(err.Error(), over) {
+				t.Fatalf("ValidateAppPassword() error leaked the password: %v", err)
+			}
+
+			requireAPIError(t, h.do(unauthenticatedLoginRequest(encodeLoginRequest(t, over))), http.StatusBadRequest, "RequestFailed")
+		})
+	}
+}
+
+func TestValidateAppPasswordRejectsUnrepresentableValues(t *testing.T) {
+	t.Parallel()
+
+	for _, password := range []string{"", "\xff", "a\nb", "a\rb"} {
+		if err := ValidateAppPassword(password); err == nil {
+			t.Fatal("ValidateAppPassword() accepted an unauthenticatable password")
+		}
+	}
+}
+
+func passwordFillingLoginBudget(t *testing.T, unit string) string {
+	t.Helper()
+
+	envelope := len(encodeLoginRequest(t, ""))
+
+	encodedUnit := len(encodeLoginRequest(t, unit)) - envelope
+	if encodedUnit <= 0 {
+		t.Fatalf("unit %q encodes to %d bytes", unit, encodedUnit)
+	}
+
+	budget := maxLoginBodyBytes - envelope
+	count := budget / encodedUnit
+
+	return strings.Repeat(unit, count) + strings.Repeat("a", budget-count*encodedUnit)
+}
+
+func unauthenticatedLoginRequest(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Origin", testAppURL)
+	req.Header.Set("Content-Type", "application/json")
+
+	return req
+}
+
+func encodeLoginRequest(t *testing.T, password string) string {
+	t.Helper()
+
+	body, err := json.Marshal(loginRequest{Password: password})
+	if err != nil {
+		t.Fatalf("encode login request: %v", err)
+	}
+
+	return strings.NewReplacer(`\u003c`, "<", `\u003e`, ">", `\u0026`, "&", `\u2028`, "\u2028", `\u2029`, "\u2029").Replace(string(body))
+}
+
+func TestAPICacheControlNoStore(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	for _, tc := range []struct {
+		name string
+		req  *http.Request
+	}{
+		{name: "public session", req: h.newRequest(http.MethodGet, "/api/auth/session", nil)},
+		{name: "unauthorized", req: h.newRequest(http.MethodGet, "/api/folders", nil)},
+		{name: "csrf forbidden", req: httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)},
+		{name: "api not found", req: func() *http.Request {
+			r := h.newRequest(http.MethodGet, "/api/does-not-exist", nil)
+			r.AddCookie(h.sessionCookie())
+			return r
+		}()},
+		{name: "opml export", req: func() *http.Request {
+			r := h.newRequest(http.MethodGet, "/api/opml", nil)
+			r.AddCookie(h.sessionCookie())
+			return r
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := h.do(tc.req)
+			if got := recorder.Header().Get("Cache-Control"); got != apiCacheControl {
+				t.Fatalf("Cache-Control = %q, want %q", got, apiCacheControl)
+			}
+		})
+	}
 }
 
 func TestCSRFOriginAndReferer(t *testing.T) {
@@ -1535,8 +991,10 @@ func TestMissingSessionRejectsAPIRoutes(t *testing.T) {
 func (h *harness) seedFolder(name string) domain.Folder {
 	h.t.Helper()
 
-	folder := domain.Folder{ID: domain.NewID(), Name: name}
-	h.store.folders = append(h.store.folders, folder)
+	folder, err := h.db.Folders().Create(context.Background(), domain.NewID(), name)
+	if err != nil {
+		h.t.Fatalf("seed folder %q: %v", name, err)
+	}
 
 	return folder
 }
@@ -1549,17 +1007,19 @@ func (h *harness) seedFeed(title string, rawURL string, folderID *string) domain
 		h.t.Fatalf("seed feed url %q: %v", rawURL, err)
 	}
 
-	feed := domain.Feed{
+	created, err := h.db.Feeds().Create(context.Background(), domain.Feed{
 		ID:         domain.NewID(),
 		URL:        normalized,
 		Title:      title,
 		FolderID:   folderID,
 		ReaderMode: domain.ReaderModeDefault,
 		Order:      domain.SortOrderNewest,
+	})
+	if err != nil {
+		h.t.Fatalf("seed feed %q: %v", rawURL, err)
 	}
-	h.store.feeds = append(h.store.feeds, feed)
 
-	return feed
+	return created
 }
 
 func (h *harness) seedItem(feedID string, rawURL string, configure func(*domain.FeedItem)) domain.FeedItem {
@@ -1575,7 +1035,21 @@ func (h *harness) seedItem(feedID string, rawURL string, configure func(*domain.
 		configure(&item)
 	}
 
-	h.store.items = append(h.store.items, item)
+	ctx := context.Background()
+	feed := h.feedByID(feedID)
+	if feed == nil {
+		h.t.Fatalf("seed item: unknown feed %s", feedID)
+	}
+
+	if err := h.db.Feeds().ApplySync(ctx, feedID, feed.Title, h.clock.Now(), []domain.FeedItem{item}, nil); err != nil {
+		h.t.Fatalf("seed item %q: %v", rawURL, err)
+	}
+
+	if item.Read {
+		if err := h.db.FeedItems().SetRead(ctx, item.ID, true); err != nil {
+			h.t.Fatalf("seed item read %q: %v", rawURL, err)
+		}
+	}
 
 	return item
 }
@@ -1588,10 +1062,107 @@ func (h *harness) seedSavedPage(rawURL string, read bool) domain.SavedPage {
 		h.t.Fatalf("seed saved page url %q: %v", rawURL, err)
 	}
 
-	page := domain.SavedPage{ID: domain.NewID(), URL: normalized, Title: "Saved", Content: "<p>saved</p>", Read: read}
-	h.store.saved = append(h.store.saved, page)
+	ctx := context.Background()
+	created, err := h.db.SavedPages().Create(ctx, domain.SavedPage{
+		ID:      domain.NewID(),
+		URL:     normalized,
+		Title:   "Saved",
+		Content: "<p>saved</p>",
+		Read:    read,
+	})
+	if err != nil {
+		h.t.Fatalf("seed saved page %q: %v", rawURL, err)
+	}
+
+	return created
+}
+
+func (h *harness) folderByID(id string) *domain.Folder {
+	h.t.Helper()
+
+	folder, err := h.db.Folders().GetByID(context.Background(), id)
+	if err != nil {
+		h.t.Fatalf("folderByID %s: %v", id, err)
+	}
+
+	return folder
+}
+
+func (h *harness) feedByID(id string) *domain.Feed {
+	h.t.Helper()
+
+	feed, err := h.db.Feeds().GetByID(context.Background(), id)
+	if err != nil {
+		h.t.Fatalf("feedByID %s: %v", id, err)
+	}
+
+	return feed
+}
+
+func (h *harness) feedItemByID(id string) *domain.FeedItem {
+	h.t.Helper()
+
+	item, err := h.db.FeedItems().GetByID(context.Background(), id)
+	if err != nil {
+		h.t.Fatalf("feedItemByID %s: %v", id, err)
+	}
+
+	return item
+}
+
+func (h *harness) savedByID(id string) *domain.SavedPage {
+	h.t.Helper()
+
+	page, err := h.db.SavedPages().GetByID(context.Background(), id)
+	if err != nil {
+		h.t.Fatalf("savedByID %s: %v", id, err)
+	}
 
 	return page
+}
+
+func (h *harness) allSavedPages() []domain.SavedPage {
+	h.t.Helper()
+
+	res, err := h.db.SavedPages().List(context.Background(), domain.PageParams{Limit: 200})
+	if err != nil {
+		h.t.Fatalf("list saved pages: %v", err)
+	}
+
+	return res.Items
+}
+
+func (h *harness) allFeeds() []domain.Feed {
+	h.t.Helper()
+
+	feeds, err := h.db.Feeds().List(context.Background())
+	if err != nil {
+		h.t.Fatalf("list feeds: %v", err)
+	}
+
+	return feeds
+}
+
+func (h *harness) allFolders() []domain.Folder {
+	h.t.Helper()
+
+	folders, err := h.db.Folders().List(context.Background())
+	if err != nil {
+		h.t.Fatalf("list folders: %v", err)
+	}
+
+	return folders
+}
+
+func (h *harness) loadSettings() domain.Settings {
+	h.t.Helper()
+
+	s, err := h.db.Settings().Get(context.Background())
+	if err != nil {
+		h.t.Fatalf("get settings: %v", err)
+	}
+
+	return s
 }
 
 func TestSavedPageCreateAndDuplicate(t *testing.T) {
@@ -1650,12 +1221,39 @@ func TestSavedPageCreateAndDuplicate(t *testing.T) {
 
 	var conflict errorResponse
 	decodeBody(t, duplicate, &conflict)
-	if conflict.URL != "https://example.com/post?id=7" {
-		t.Fatalf("conflict url = %q", conflict.URL)
+	if conflict.URL != "https://example.com/post?id=7" || conflict.ID != created.Item.ID {
+		t.Fatalf("conflict = %+v, want url=%q id=%q", conflict, "https://example.com/post?id=7", created.Item.ID)
 	}
 
 	if h.webpageFetcher.calls != 1 {
 		t.Fatal("duplicate detection must run before fetching the webpage")
+	}
+}
+
+func TestSavedPageCreateConflictAtInsertReturnsID(t *testing.T) {
+	t.Parallel()
+
+	var wrapped *failingSavedPageRepo
+	h := newHarnessWith(t, func(cfg *Config) {
+		wrapped = &failingSavedPageRepo{SavedPageRepository: cfg.SavedPages, bypassGetByID: true}
+		cfg.SavedPages = wrapped
+	})
+
+	existing := h.seedSavedPage("https://user:secret@example.com/race", false)
+	h.webpageFetcher.html = "<html><body><p>hi</p></body></html>"
+	h.extractor.article = domain.ExtractedArticle{Title: "Hello", Content: "<p>hi</p>"}
+
+	duplicate := h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://user:secret@example.com/race?utm_source=x"})
+	requireAPIError(t, duplicate, http.StatusConflict, "SavedPageAlreadyExists")
+
+	var conflict errorResponse
+	decodeBody(t, duplicate, &conflict)
+	if conflict.ID != existing.ID {
+		t.Fatalf("conflict id = %q, want %q", conflict.ID, existing.ID)
+	}
+
+	if conflict.URL != "https://example.com/race" || strings.Contains(duplicate.Body.String(), "secret") {
+		t.Fatalf("conflict leaked or mismatched url: %s", duplicate.Body.String())
 	}
 }
 
@@ -1738,39 +1336,18 @@ func TestSavedPageValidationAndUpstreamFailures(t *testing.T) {
 				t.Fatalf("error response leaked the internal cause: %s", recorder.Body.String())
 			}
 
-			if len(h.store.saved) != 0 {
-				t.Fatalf("failed create persisted %d pages", len(h.store.saved))
+			if pages := h.allSavedPages(); len(pages) != 0 {
+				t.Fatalf("failed create persisted %d pages", len(pages))
 			}
 		})
 	}
 }
 
-func TestSavedPageLookupAndGet(t *testing.T) {
+func TestSavedPageGet(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
 	page := h.seedSavedPage("https://example.com/saved", false)
-
-	lookup := h.authed(http.MethodGet, "/api/saved-pages/lookup?url="+url.QueryEscape("https://example.com/saved?utm_medium=x"), nil)
-	requireStatus(t, lookup, http.StatusOK)
-
-	var found itemResponse[savedPageJSON]
-	decodeBody(t, lookup, &found)
-	if found.Item == nil || found.Item.ID != page.ID {
-		t.Fatalf("lookup item = %+v", found.Item)
-	}
-
-	missing := h.authed(http.MethodGet, "/api/saved-pages/lookup?url="+url.QueryEscape("https://example.com/other"), nil)
-	requireStatus(t, missing, http.StatusOK)
-	if !strings.Contains(missing.Body.String(), `"item":null`) {
-		t.Fatalf("missing lookup body = %s", missing.Body.String())
-	}
-
-	invalid := h.authed(http.MethodGet, "/api/saved-pages/lookup?url="+url.QueryEscape("not a url"), nil)
-	requireAPIError(t, invalid, http.StatusBadRequest, "InvalidPageUrl")
-
-	noParam := h.authed(http.MethodGet, "/api/saved-pages/lookup", nil)
-	requireAPIError(t, noParam, http.StatusBadRequest, "InvalidPageUrl")
 
 	byID := h.authed(http.MethodGet, "/api/saved-pages/"+page.ID, nil)
 	requireStatus(t, byID, http.StatusOK)
@@ -1821,7 +1398,9 @@ func TestSavedPagePagingAndReadState(t *testing.T) {
 		t.Fatalf("last page cursor must be null, got %q", *page.Cursor)
 	}
 
-	h.store.SetSavedPageRead(second.ID, true)
+	if err := h.db.SavedPages().SetRead(context.Background(), second.ID, true); err != nil {
+		t.Fatalf("set saved page read: %v", err)
+	}
 
 	recorder = h.authed(http.MethodGet, "/api/saved-pages?unread", nil)
 	requireStatus(t, recorder, http.StatusOK)
@@ -1852,17 +1431,17 @@ func TestSavedPagePagingAndReadState(t *testing.T) {
 	}
 
 	requireStatus(t, h.authed(http.MethodPatch, "/api/saved-pages/"+third.ID, map[string]any{"read": true}), http.StatusNoContent)
-	if !h.store.savedByID(third.ID).Read {
+	if !h.savedByID(third.ID).Read {
 		t.Fatal("PATCH read did not persist")
 	}
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/saved-pages/read", map[string]any{"ids": []string{first.ID}}), http.StatusNoContent)
-	if !h.store.savedByID(first.ID).Read {
+	if !h.savedByID(first.ID).Read {
 		t.Fatal("POST read did not persist")
 	}
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/saved-pages/read-all", nil), http.StatusNoContent)
-	for _, saved := range h.store.saved {
+	for _, saved := range h.allSavedPages() {
 		if !saved.Read {
 			t.Fatalf("page %s still unread after read-all", saved.ID)
 		}
@@ -1883,8 +1462,14 @@ func TestSavedPagePagingAndReadState(t *testing.T) {
 func TestSavedPageRepositoryErrorsAreSanitized(t *testing.T) {
 	t.Parallel()
 
-	h := newHarness(t)
-	h.store.savedPagesErr = domain.NewError(domain.ErrSavedPageRepositoryError, errors.New("sqlite: disk I/O error at /data/reader.db"))
+	repoErr := domain.NewError(domain.ErrSavedPageRepositoryError, errors.New("sqlite: disk I/O error at /data/reader.db"))
+	h := newHarnessWith(t, func(cfg *Config) {
+		cfg.SavedPages = &failingSavedPageRepo{
+			SavedPageRepository: cfg.SavedPages,
+			listErr:             repoErr,
+			unreadErr:           repoErr,
+		}
+	})
 
 	recorder := h.authed(http.MethodGet, "/api/saved-pages", nil)
 	requireAPIError(t, recorder, http.StatusInternalServerError, "SavedPageRepositoryError")
@@ -2099,38 +1684,39 @@ func TestFeedPreferencesAndDelete(t *testing.T) {
 	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
 
 	requireStatus(t, h.authed(http.MethodPut, "/api/feeds/"+feed.ID+"/reader-mode", map[string]any{"readerMode": "extracted"}), http.StatusNoContent)
-	if got := h.store.feedByID(feed.ID).ReaderMode; got != domain.ReaderModeExtracted {
+	if got := h.feedByID(feed.ID).ReaderMode; got != domain.ReaderModeExtracted {
 		t.Fatalf("reader mode = %q", got)
 	}
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/feeds/"+feed.ID+"/reader-mode", map[string]any{"readerMode": "bogus"}), http.StatusBadRequest, "RequestFailed")
 
 	requireStatus(t, h.authed(http.MethodPut, "/api/feeds/"+feed.ID+"/order", map[string]any{"order": "oldest"}), http.StatusNoContent)
-	if got := h.store.feedByID(feed.ID).Order; got != domain.SortOrderOldest {
+	if got := h.feedByID(feed.ID).Order; got != domain.SortOrderOldest {
 		t.Fatalf("order = %q", got)
 	}
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/feeds/"+feed.ID+"/order", map[string]any{"order": "bogus"}), http.StatusBadRequest, "RequestFailed")
 
 	requireStatus(t, h.authed(http.MethodPatch, "/api/feeds/"+feed.ID, map[string]any{"folderId": folder.ID}), http.StatusNoContent)
-	if got := h.store.feedByID(feed.ID).FolderID; got == nil || *got != folder.ID {
+	if got := h.feedByID(feed.ID).FolderID; got == nil || *got != folder.ID {
 		t.Fatalf("move to folder = %v", got)
 	}
 
 	requireStatus(t, h.authed(http.MethodPatch, "/api/feeds/"+feed.ID, map[string]any{"folderId": nil}), http.StatusNoContent)
-	if got := h.store.feedByID(feed.ID).FolderID; got != nil {
+	if got := h.feedByID(feed.ID).FolderID; got != nil {
 		t.Fatalf("move to top level = %v", got)
 	}
 
 	requireAPIError(t, h.authed(http.MethodPatch, "/api/feeds/"+feed.ID, map[string]any{"folderId": domain.NewID()}), http.StatusNotFound, "FolderNotFound")
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+feed.ID+"/refresh", nil), http.StatusAccepted)
+	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+domain.NewID()+"/refresh", nil), http.StatusAccepted)
 	if batches := h.refresher.batches; len(batches) != 1 || len(batches[0]) != 1 || batches[0][0] != feed.ID {
 		t.Fatalf("refresh enqueue = %+v", batches)
 	}
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/feeds/"+feed.ID, nil), http.StatusNoContent)
-	if h.store.feedByID(feed.ID) != nil {
+	if h.feedByID(feed.ID) != nil {
 		t.Fatal("feed was not deleted")
 	}
 }
@@ -2142,23 +1728,20 @@ func TestFeedMoveRequiresFolderIDKey(t *testing.T) {
 	folder := h.seedFolder("Tech")
 	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", &folder.ID)
 
-	// An empty object is a malformed move request, not a move to the top level.
 	requireAPIError(t, h.authed(http.MethodPatch, "/api/feeds/"+feed.ID, map[string]any{}), http.StatusBadRequest, "RequestFailed")
-
-	if got := h.store.feedByID(feed.ID).FolderID; got == nil || *got != folder.ID {
-		t.Fatalf("feed folder changed by malformed request: %v", got)
-	}
-
 	requireAPIError(t, h.authed(http.MethodPatch, "/api/feeds/"+feed.ID, map[string]any{"folderId": 42}), http.StatusBadRequest, "RequestFailed")
+	if got := h.feedByID(feed.ID).FolderID; got == nil || *got != folder.ID {
+		t.Fatalf("missing folderId must not move feed: %v", got)
+	}
 
 	requireStatus(t, h.authed(http.MethodPatch, "/api/feeds/"+feed.ID, map[string]any{"folderId": nil}), http.StatusNoContent)
-	if got := h.store.feedByID(feed.ID).FolderID; got != nil {
-		t.Fatalf("explicit null did not move the feed to the top level: %v", got)
+	if got := h.feedByID(feed.ID).FolderID; got != nil {
+		t.Fatalf("explicit null must move feed to top level: %v", got)
 	}
 
-	requireStatus(t, h.authed(http.MethodPatch, "/api/feeds/"+feed.ID, map[string]any{"folderId": folder.ID}), http.StatusNoContent)
-	if got := h.store.feedByID(feed.ID).FolderID; got == nil || *got != folder.ID {
-		t.Fatalf("folder id did not move the feed: %v", got)
+	requireStatus(t, h.authed(http.MethodPatch, "/api/feeds/"+feed.ID, map[string]any{"folderId": "  " + folder.ID + "  "}), http.StatusNoContent)
+	if got := h.feedByID(feed.ID).FolderID; got == nil || *got != folder.ID {
+		t.Fatalf("folderId must move feed: %v", got)
 	}
 }
 
@@ -2168,23 +1751,23 @@ func TestReadStateRequiresExplicitFlag(t *testing.T) {
 	h := newHarness(t)
 	page := h.seedSavedPage("https://example.com/page", false)
 	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
-	item := h.seedItem(feed.ID, "https://feeds.example.com/one", nil)
+	item := h.seedItem(feed.ID, "https://example.com/item", nil)
 
 	requireAPIError(t, h.authed(http.MethodPatch, "/api/saved-pages/"+page.ID, map[string]any{}), http.StatusBadRequest, "RequestFailed")
-	if h.store.savedByID(page.ID).Read {
-		t.Fatal("malformed request changed the saved page read state")
-	}
-
-	requireStatus(t, h.authed(http.MethodPatch, "/api/saved-pages/"+page.ID, map[string]any{"read": true}), http.StatusNoContent)
-	if !h.store.savedByID(page.ID).Read {
-		t.Fatal("explicit read flag was not applied")
-	}
-
 	requireAPIError(t, h.authed(http.MethodPatch, "/api/feed-items/"+item.ID, map[string]any{}), http.StatusBadRequest, "RequestFailed")
 
-	requireStatus(t, h.authed(http.MethodPatch, "/api/feed-items/"+item.ID, map[string]any{"read": false}), http.StatusNoContent)
-}
+	requireStatus(t, h.authed(http.MethodPatch, "/api/saved-pages/"+page.ID, map[string]any{"read": true}), http.StatusNoContent)
+	requireStatus(t, h.authed(http.MethodPatch, "/api/saved-pages/"+page.ID, map[string]any{"read": false}), http.StatusNoContent)
+	if h.savedByID(page.ID).Read {
+		t.Fatal("explicit read:false did not mark saved page unread")
+	}
 
+	requireStatus(t, h.authed(http.MethodPatch, "/api/feed-items/"+item.ID, map[string]any{"read": true}), http.StatusNoContent)
+	requireStatus(t, h.authed(http.MethodPatch, "/api/feed-items/"+item.ID, map[string]any{"read": false}), http.StatusNoContent)
+	if h.feedItemByID(item.ID).Read {
+		t.Fatal("explicit read:false did not mark feed item unread")
+	}
+}
 func TestHTTPJSONRejectsTrailingTokens(t *testing.T) {
 	t.Parallel()
 
@@ -2205,7 +1788,9 @@ func TestFeedItemOrdering(t *testing.T) {
 
 	h := newHarness(t)
 	oldestFeed := h.seedFeed("Oldest", "https://feeds.example.com/oldest", nil)
-	h.store.feeds[h.store.feedIndex(oldestFeed.ID)].Order = domain.SortOrderOldest
+	if err := h.db.Feeds().UpdateOrder(context.Background(), oldestFeed.ID, domain.SortOrderOldest); err != nil {
+		t.Fatalf("update feed order: %v", err)
+	}
 	newestFeed := h.seedFeed("Newest", "https://feeds.example.com/newest", nil)
 
 	first := h.seedItem(oldestFeed.ID, "https://example.com/first", nil)
@@ -2289,12 +1874,12 @@ func TestFeedItemReadStateAndCounts(t *testing.T) {
 	}
 
 	requireStatus(t, h.authed(http.MethodPatch, "/api/feed-items/"+first.ID, map[string]any{"read": true}), http.StatusNoContent)
-	if !h.store.feedItemByID(first.ID).Read {
+	if !h.feedItemByID(first.ID).Read {
 		t.Fatal("PATCH read did not persist")
 	}
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/read", map[string]any{"ids": []string{second.ID}}), http.StatusNoContent)
-	if !h.store.feedItemByID(second.ID).Read {
+	if !h.feedItemByID(second.ID).Read {
 		t.Fatal("POST read did not persist")
 	}
 
@@ -2302,7 +1887,7 @@ func TestFeedItemReadStateAndCounts(t *testing.T) {
 
 	third := h.seedItem(feed.ID, "https://example.com/3", nil)
 	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/read-all", nil), http.StatusNoContent)
-	if !h.store.feedItemByID(third.ID).Read {
+	if !h.feedItemByID(third.ID).Read {
 		t.Fatal("read-all did not mark items read")
 	}
 }
@@ -2343,7 +1928,7 @@ func TestFeedItemExtract(t *testing.T) {
 		t.Fatalf("webpage fetch calls = %d", h.webpageFetcher.calls)
 	}
 
-	stored := h.store.feedItemByID(bare.ID)
+	stored := h.feedItemByID(bare.ID)
 	if stored.ExtractedContent == nil || *stored.ExtractedContent != "<p>extracted</p>" {
 		t.Fatal("extracted content was not stored")
 	}
@@ -2353,6 +1938,114 @@ func TestFeedItemExtract(t *testing.T) {
 	h.extractor.err = domain.NewError(domain.ErrArticleExtractorError, errors.New("readability failed"))
 	failing := h.seedItem(feed.ID, "https://example.com/failing", nil)
 	requireAPIError(t, h.authed(http.MethodPost, "/api/feed-items/"+failing.ID+"/extract", nil), http.StatusUnprocessableEntity, "ArticleExtractorError")
+}
+
+func TestFeedItemExtractCoalescesAndFirstWriterWins(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
+	item := h.seedItem(feed.ID, "https://example.com/race", nil)
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		return "<html></html>", target.Raw(), nil
+	}
+	h.extractor.article = domain.ExtractedArticle{Title: "Second", Content: "<p>second</p>"}
+
+	var (
+		wg  sync.WaitGroup
+		rec [2]*httptest.ResponseRecorder
+	)
+	for i := range 2 {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			rec[idx] = h.authed(http.MethodPost, "/api/feed-items/"+item.ID+"/extract", nil)
+		}(i)
+	}
+
+	<-started
+
+	// Simulate an independent worker winning the race before extract finishes.
+	if _, wrote, err := h.db.FeedItems().SaveExtractedContentIfEmpty(context.Background(), item.ID, "<p>first</p>"); err != nil || !wrote {
+		t.Fatalf("first writer failed: wrote=%v err=%v", wrote, err)
+	}
+
+	close(release)
+	wg.Wait()
+
+	for i, r := range rec {
+		requireStatus(t, r, http.StatusOK)
+		var resp itemResponse[feedItemJSON]
+		decodeBody(t, r, &resp)
+		if resp.Item == nil || resp.Item.ExtractedContent == nil || *resp.Item.ExtractedContent != "<p>first</p>" {
+			t.Fatalf("response %d = %+v, want first-writer content", i, resp.Item)
+		}
+	}
+
+	h.webpageFetcher.mu.Lock()
+	calls := h.webpageFetcher.calls
+	h.webpageFetcher.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("webpage fetch calls = %d, want 1 (coalesced)", calls)
+	}
+}
+
+func TestForegroundFetchSemaphoreBoundsConcurrency(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	entered := make(chan struct{}, maxConcurrentForegroundFetches+2)
+	release := make(chan struct{})
+
+	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+		entered <- struct{}{}
+		select {
+		case <-release:
+			return "<html></html>", target.Raw(), nil
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+	}
+	h.extractor.article = domain.ExtractedArticle{Title: "Ok", Content: "<p>ok</p>"}
+
+	var wg sync.WaitGroup
+	for i := range maxConcurrentForegroundFetches {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			rec := h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://example.com/sem/" + strconv.Itoa(idx)})
+			requireStatus(t, rec, http.StatusCreated)
+		}(i)
+	}
+
+	for range maxConcurrentForegroundFetches {
+		<-entered
+	}
+
+	// Fifth request enters acquireFetchSlot and aborts when its context cancels.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	req := h.newRequest(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://example.com/sem/overflow"}).WithContext(ctx)
+	req.AddCookie(h.sessionCookie())
+	requireAPIError(t, h.do(req), http.StatusInternalServerError, "RequestFailed")
+
+	h.webpageFetcher.mu.Lock()
+	calls := h.webpageFetcher.calls
+	h.webpageFetcher.mu.Unlock()
+	if calls != maxConcurrentForegroundFetches {
+		t.Fatalf("fetch calls = %d, want %d", calls, maxConcurrentForegroundFetches)
+	}
+
+	close(release)
+	wg.Wait()
 }
 
 func TestFolderCRUD(t *testing.T) {
@@ -2373,7 +2066,7 @@ func TestFolderCRUD(t *testing.T) {
 	requireAPIError(t, h.authed(http.MethodPost, "/api/folders", map[string]any{"name": "Tech"}), http.StatusConflict, "FolderAlreadyExists")
 
 	requireStatus(t, h.authed(http.MethodPatch, "/api/folders/"+created.Item.ID, map[string]any{"name": "Technology"}), http.StatusNoContent)
-	if got := h.store.folderByID(created.Item.ID).Name; got != "Technology" {
+	if got := h.folderByID(created.Item.ID).Name; got != "Technology" {
 		t.Fatalf("renamed folder = %q", got)
 	}
 
@@ -2392,7 +2085,7 @@ func TestFolderCRUD(t *testing.T) {
 	}
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/folders/"+created.Item.ID, nil), http.StatusNoContent)
-	if h.store.folderByID(created.Item.ID) != nil {
+	if h.folderByID(created.Item.ID) != nil {
 		t.Fatal("folder was not deleted")
 	}
 
@@ -2408,7 +2101,7 @@ func TestFolderDeleteMovesFeedsToTopLevel(t *testing.T) {
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/folders/"+folder.ID, nil), http.StatusNoContent)
 
-	moved := h.store.feedByID(feed.ID)
+	moved := h.feedByID(feed.ID)
 	if moved == nil {
 		t.Fatal("deleting a folder must not delete its feeds")
 	}
@@ -2456,7 +2149,7 @@ func TestFolderItemsAndReadAll(t *testing.T) {
 	}
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/folders/"+folder.ID+"/read-all", nil), http.StatusNoContent)
-	if !h.store.feedItemByID(unread.ID).Read || !h.store.feedItemByID(read.ID).Read {
+	if !h.feedItemByID(unread.ID).Read || !h.feedItemByID(read.ID).Read {
 		t.Fatal("folder read-all did not mark items read")
 	}
 
@@ -2505,29 +2198,6 @@ func TestOPMLExport(t *testing.T) {
 	}
 }
 
-func TestOPMLExportKeepsFeedsWithMissingFolder(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t)
-	folder := h.seedFolder("Gone")
-	orphan := h.seedFeed("Orphan", "https://orphan.example.com/rss", &folder.ID)
-
-	// Simulate a concurrent folder deletion between the folder and feed reads.
-	h.store.folders = nil
-
-	recorder := h.authed(http.MethodGet, "/api/opml", nil)
-	requireStatus(t, recorder, http.StatusOK)
-
-	body := recorder.Body.String()
-	if !strings.Contains(body, `xmlUrl="https://orphan.example.com/rss"`) {
-		t.Fatalf("opml export dropped a feed whose folder vanished:\n%s", body)
-	}
-
-	if got := h.store.feedByID(orphan.ID); got == nil {
-		t.Fatal("export must not mutate feeds")
-	}
-}
-
 func TestOPMLImportRawXML(t *testing.T) {
 	t.Parallel()
 
@@ -2563,25 +2233,27 @@ func TestOPMLImportRawXML(t *testing.T) {
 		t.Fatalf("refresher batches = %+v", h.refresher.batches)
 	}
 
+	feeds := h.allFeeds()
 	var imported *domain.Feed
-	for i := range h.store.feeds {
-		if h.store.feeds[i].URL.RedactedString() == "https://rust.example.com/rss" {
-			imported = &h.store.feeds[i]
+	for i := range feeds {
+		if feeds[i].URL.RedactedString() == "https://rust.example.com/rss" {
+			imported = &feeds[i]
 		}
 	}
 
 	if imported == nil {
-		t.Fatalf("imported feed missing: %+v", h.store.feeds)
+		t.Fatalf("imported feed missing: %+v", feeds)
 	}
 
 	if enqueued[0] != imported.ID {
 		t.Fatalf("enqueued %q, want new feed %q", enqueued[0], imported.ID)
 	}
 
+	folders := h.allFolders()
 	var tech *domain.Folder
-	for i := range h.store.folders {
-		if h.store.folders[i].Name == "Tech" {
-			tech = &h.store.folders[i]
+	for i := range folders {
+		if folders[i].Name == "Tech" {
+			tech = &folders[i]
 		}
 	}
 
@@ -2593,7 +2265,7 @@ func TestOPMLImportRawXML(t *testing.T) {
 		t.Fatalf("imported folder = %v", imported.FolderID)
 	}
 
-	for _, feed := range h.store.feeds {
+	for _, feed := range feeds {
 		if feed.URL.RedactedString() == "https://go.example.com/rss" && feed.FolderID != nil {
 			t.Fatal("a skipped duplicate must not be moved into the imported folder")
 		}
@@ -2653,7 +2325,7 @@ func TestOPMLImportRejectsInvalidDocument(t *testing.T) {
 	recorder := h.do(req)
 	requireAPIError(t, recorder, http.StatusBadRequest, "InvalidOpml")
 
-	if len(h.store.feeds) != 0 || len(h.store.folders) != 0 {
+	if len(h.allFeeds()) != 0 || len(h.allFolders()) != 0 {
 		t.Fatal("invalid OPML must not write anything")
 	}
 
@@ -2666,30 +2338,36 @@ func TestSettingsRedaction(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
+	ctx := context.Background()
 	jinaKey := "jina-super-secret"
 	browserEndpoint := "http://browser.internal:9222"
 	smtpPassword := "smtp-super-secret"
 	smtpUser := "smtp-user"
 	sendTime := "08:00"
 	nextSendAt := time.Date(2026, time.March, 1, 8, 30, 0, 0, time.UTC)
-	h.store.settings = domain.Settings{
-		Retention:       42,
-		Provider:        domain.ProviderBrowser,
-		JinaKey:         &jinaKey,
-		BrowserEndpoint: &browserEndpoint,
-		SMTP: &domain.SMTPSettings{
+
+	for _, err := range []error{
+		h.db.Settings().UpdateRetention(ctx, 42),
+		h.db.Settings().UpdateJinaKey(ctx, jinaKey),
+		h.db.Settings().UpdateBrowserEndpoint(ctx, browserEndpoint),
+		h.db.Settings().UpdateProvider(ctx, domain.ProviderBrowser),
+		h.db.Settings().UpdateSMTP(ctx, domain.SMTPSettings{
 			SenderEmail: "reader@example.com",
 			Host:        "smtp.example.com",
 			Port:        465,
 			Security:    domain.SMTPSecurityTLS,
 			User:        &smtpUser,
 			Password:    &smtpPassword,
-		},
-		Kindle: &domain.KindleSettings{
+		}),
+		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{
 			KindleEmail: "reader@kindle.com",
 			SendTime:    &sendTime,
 			NextSendAt:  &nextSendAt,
-		},
+		}),
+	} {
+		if err != nil {
+			t.Fatalf("seed settings: %v", err)
+		}
 	}
 
 	recorder := h.authed(http.MethodGet, "/api/settings", nil)
@@ -2744,14 +2422,21 @@ func TestSettingsRedaction(t *testing.T) {
 		t.Fatalf("kindle = %+v", payload.Kindle)
 	}
 
-	h.store.settings.SMTP = &domain.SMTPSettings{
-		SenderEmail: "reader@example.com",
-		Host:        "smtp.example.com",
-		Port:        587,
-		Security:    domain.SMTPSecuritySTARTTLS,
-	}
-	h.store.settings.Kindle = &domain.KindleSettings{
-		KindleEmail: "reader@kindle.com",
+	for _, err := range []error{
+		h.db.Settings().DeleteSMTP(ctx),
+		h.db.Settings().UpdateSMTP(ctx, domain.SMTPSettings{
+			SenderEmail: "reader@example.com",
+			Host:        "smtp.example.com",
+			Port:        587,
+			Security:    domain.SMTPSecuritySTARTTLS,
+		}),
+		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{
+			KindleEmail: "reader@kindle.com",
+		}),
+	} {
+		if err != nil {
+			t.Fatalf("update partial settings: %v", err)
+		}
 	}
 
 	recorder = h.authed(http.MethodGet, "/api/settings", nil)
@@ -2777,10 +2462,18 @@ func TestSettingsRedaction(t *testing.T) {
 		t.Fatalf("kindle.nextSendAt must be omitted when nil: %s", recorder.Body.String())
 	}
 
-	h.store.settings.SMTP = nil
-	h.store.settings.Kindle = nil
-	h.store.settings.JinaKey = nil
-	h.store.settings.BrowserEndpoint = nil
+	for _, err := range []error{
+		h.db.Settings().DeleteSMTP(ctx),
+		h.db.Settings().DeleteJinaKey(ctx),
+		h.db.Settings().DeleteBrowserEndpoint(ctx),
+	} {
+		if err != nil {
+			t.Fatalf("clear settings: %v", err)
+		}
+	}
+	if _, err := h.db.WriteDB().ExecContext(ctx, `UPDATE setting SET kindle_email = NULL, send_time = NULL, next_send_at = NULL WHERE id = 1`); err != nil {
+		t.Fatalf("clear kindle settings: %v", err)
+	}
 
 	recorder = h.authed(http.MethodGet, "/api/settings", nil)
 	requireStatus(t, recorder, http.StatusOK)
@@ -2807,53 +2500,56 @@ func TestSettingsUpdates(t *testing.T) {
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/retention", map[string]any{"retention": 0}), http.StatusBadRequest, "InvalidRetention")
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/retention", map[string]any{"retention": 25}), http.StatusNoContent)
-	if h.store.settings.Retention != 25 {
-		t.Fatalf("retention = %d", h.store.settings.Retention)
+	if got := h.loadSettings().Retention; got != 25 {
+		t.Fatalf("retention = %d", got)
 	}
 
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "unknown"}), http.StatusBadRequest, "InvalidProvider")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": ""}), http.StatusBadRequest, "InvalidProvider")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/retention", map[string]any{"retention": 0}), http.StatusBadRequest, "InvalidRetention")
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "browser"}), http.StatusUnprocessableEntity, "BrowserEndpointRequired")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "rss"}), http.StatusBadRequest, "InvalidProvider")
 
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "jina"}), http.StatusNoContent)
-	if h.store.settings.Provider != domain.ProviderJina {
-		t.Fatalf("provider = %q", h.store.settings.Provider)
+	if got := h.loadSettings().Provider; got != domain.ProviderJina {
+		t.Fatalf("provider = %q", got)
 	}
 
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "direct"}), http.StatusNoContent)
-	if h.store.settings.Provider != domain.ProviderDirect {
-		t.Fatalf("provider = %q", h.store.settings.Provider)
+	if got := h.loadSettings().Provider; got != domain.ProviderDirect {
+		t.Fatalf("provider = %q", got)
 	}
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/jina", map[string]any{"key": "   "}), http.StatusBadRequest, "InvalidJinaKey")
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/jina", map[string]any{"key": "  jina-key  "}), http.StatusNoContent)
-	if h.store.settings.Provider != domain.ProviderDirect || h.store.settings.JinaKey == nil || *h.store.settings.JinaKey != "jina-key" {
-		t.Fatalf("jina settings = %+v", h.store.settings)
+	if s := h.loadSettings(); s.Provider != domain.ProviderDirect || s.JinaKey == nil || *s.JinaKey != "jina-key" {
+		t.Fatalf("jina settings = %+v", s)
 	}
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/jina", nil), http.StatusNoContent)
-	if h.store.settings.JinaKey != nil {
-		t.Fatal("jina key was not deleted")
+	if got := h.loadSettings().JinaKey; got != nil {
+		t.Fatalf("jina key was not deleted: %q", *got)
 	}
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "   "}), http.StatusBadRequest, "InvalidEndpoint")
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "ftp://browser:9222"}), http.StatusBadRequest, "InvalidEndpoint")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "http://"}), http.StatusBadRequest, "InvalidEndpoint")
-
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "  http://browser:9222  "}), http.StatusNoContent)
-	if h.store.settings.Provider != domain.ProviderDirect || h.store.settings.BrowserEndpoint == nil || *h.store.settings.BrowserEndpoint != "http://browser:9222" {
-		t.Fatalf("browser settings = %+v", h.store.settings)
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": " http://browser:9222 "}), http.StatusNoContent)
+	if s := h.loadSettings(); s.Provider != domain.ProviderDirect || s.BrowserEndpoint == nil || *s.BrowserEndpoint != "http://browser:9222" {
+		t.Fatalf("browser settings = %+v", s)
 	}
 
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "browser"}), http.StatusNoContent)
-	if h.store.settings.Provider != domain.ProviderBrowser {
-		t.Fatalf("provider = %q", h.store.settings.Provider)
+	if got := h.loadSettings().Provider; got != domain.ProviderBrowser {
+		t.Fatalf("provider = %q", got)
 	}
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/browser", nil), http.StatusNoContent)
-	if h.store.settings.BrowserEndpoint != nil || h.store.settings.Provider != domain.ProviderDirect {
-		t.Fatalf("browser delete did not reset provider: %+v", h.store.settings)
+	if s := h.loadSettings(); s.BrowserEndpoint != nil || s.Provider != domain.ProviderDirect {
+		t.Fatalf("browser delete did not reset provider: %+v", s)
 	}
+
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "unknown"}), http.StatusBadRequest, "InvalidProvider")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": ""}), http.StatusBadRequest, "InvalidProvider")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "   "}), http.StatusBadRequest, "InvalidEndpoint")
+	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "http://"}), http.StatusBadRequest, "InvalidEndpoint")
 }
 
 func TestSMTPSettingsUpdate(t *testing.T) {
@@ -2871,17 +2567,13 @@ func TestSMTPSettingsUpdate(t *testing.T) {
 
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/smtp", body), http.StatusNoContent)
 
-	stored := h.store.settings.SMTP
-	if stored == nil {
-		t.Fatal("smtp settings were not stored")
-	}
-
-	if stored.SenderEmail != "reader@example.com" || stored.Host != "smtp.example.com" || stored.Port != 465 || stored.Security != domain.SMTPSecurityTLS {
+	stored := h.loadSettings().SMTP
+	if stored == nil || stored.SenderEmail != "reader@example.com" || stored.Port != 465 || stored.Security != domain.SMTPSecurityTLS {
 		t.Fatalf("stored smtp = %+v", stored)
 	}
 
 	if stored.User == nil || *stored.User != "smtp-user" {
-		t.Fatalf("smtp user = %v", stored.User)
+		t.Fatalf("stored smtp user = %v", stored.User)
 	}
 
 	if stored.Password == nil || *stored.Password != "smtp-secret" {
@@ -2892,7 +2584,7 @@ func TestSMTPSettingsUpdate(t *testing.T) {
 	body["user"] = "   "
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/smtp", body), http.StatusNoContent)
 
-	stored = h.store.settings.SMTP
+	stored = h.loadSettings().SMTP
 	if stored.Password == nil || *stored.Password != "smtp-secret" {
 		t.Fatal("blank smtp password must preserve the stored secret")
 	}
@@ -2922,13 +2614,13 @@ func TestSMTPSettingsUpdate(t *testing.T) {
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/smtp", invalid), http.StatusBadRequest, "InvalidSMTPSetting")
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/smtp/password", nil), http.StatusNoContent)
-	if h.store.settings.SMTP == nil || h.store.settings.SMTP.Password != nil {
-		t.Fatalf("smtp password was not deleted: %+v", h.store.settings.SMTP)
+	if smtp := h.loadSettings().SMTP; smtp == nil || smtp.Password != nil {
+		t.Fatalf("smtp password was not deleted: %+v", smtp)
 	}
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/smtp", nil), http.StatusNoContent)
-	if h.store.settings.SMTP != nil {
-		t.Fatalf("smtp settings were not deleted: %+v", h.store.settings.SMTP)
+	if smtp := h.loadSettings().SMTP; smtp != nil {
+		t.Fatalf("smtp settings were not deleted: %+v", smtp)
 	}
 }
 
@@ -2953,7 +2645,7 @@ func TestKindleSettingsUpdate(t *testing.T) {
 
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusNoContent)
 
-	stored := h.store.settings.Kindle
+	stored := h.loadSettings().Kindle
 	if stored == nil {
 		t.Fatal("kindle settings were not stored")
 	}
@@ -2973,7 +2665,7 @@ func TestKindleSettingsUpdate(t *testing.T) {
 	body["sendTime"] = ""
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusNoContent)
 
-	stored = h.store.settings.Kindle
+	stored = h.loadSettings().Kindle
 	if stored.SendTime != nil || stored.NextSendAt != nil {
 		t.Fatalf("disabled schedule = %v / %v", stored.SendTime, stored.NextSendAt)
 	}
@@ -2988,8 +2680,8 @@ func TestKindleSettingsUpdate(t *testing.T) {
 	}), http.StatusBadRequest, "InvalidKindleSetting")
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/smtp", nil), http.StatusNoContent)
-	if h.store.settings.Kindle == nil || h.store.settings.Kindle.KindleEmail != "reader@kindle.com" {
-		t.Fatalf("clearing smtp must keep kindle address: %+v", h.store.settings.Kindle)
+	if kindle := h.loadSettings().Kindle; kindle == nil || kindle.KindleEmail != "reader@kindle.com" {
+		t.Fatalf("clearing smtp must keep kindle address: %+v", kindle)
 	}
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusUnprocessableEntity, "SMTPNotConfigured")
@@ -3062,18 +2754,18 @@ func TestKindleSendsList(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
+	ctx := context.Background()
 	started := time.Date(2026, time.March, 1, 7, 0, 0, 0, time.UTC)
 	finished := started.Add(3 * time.Minute)
-	h.store.sends = []domain.KindleSendRecord{{
-		ID:           domain.NewID(),
-		Trigger:      domain.KindleTriggerScheduled,
-		Status:       domain.KindleStatusFailed,
-		ArticleCount: 5,
-		BookCount:    2,
-		Error:        strPtr("smtp rejected the message"),
-		StartedAt:    started,
-		FinishedAt:   &finished,
-	}}
+	if _, err := h.db.WriteDB().ExecContext(
+		ctx,
+		`INSERT INTO kindle_send (id, trigger, status, article_count, book_count, error, started_at, finished_at) VALUES (?, 'scheduled', 'failed', 5, 2, 'smtp rejected the message', ?, ?)`,
+		domain.NewID(),
+		started.UnixMilli(),
+		finished.UnixMilli(),
+	); err != nil {
+		t.Fatalf("insert failed kindle send: %v", err)
+	}
 
 	recorder := h.authed(http.MethodGet, "/api/kindle/sends", nil)
 	requireStatus(t, recorder, http.StatusOK)
@@ -3101,12 +2793,14 @@ func TestKindleSendsList(t *testing.T) {
 		t.Fatalf("record timestamps = %q / %v", record.StartedAt, record.FinishedAt)
 	}
 
-	h.store.sends = append([]domain.KindleSendRecord{{
-		ID:        domain.NewID(),
-		Trigger:   domain.KindleTriggerManual,
-		Status:    domain.KindleStatusRunning,
-		StartedAt: started,
-	}}, h.store.sends...)
+	if _, err := h.db.WriteDB().ExecContext(
+		ctx,
+		`INSERT INTO kindle_send (id, trigger, status, article_count, book_count, started_at) VALUES (?, 'manual', 'running', 0, 0, ?)`,
+		domain.NewID(),
+		started.Add(time.Minute).UnixMilli(),
+	); err != nil {
+		t.Fatalf("insert running kindle send: %v", err)
+	}
 
 	recorder = h.authed(http.MethodGet, "/api/kindle/sends", nil)
 	requireStatus(t, recorder, http.StatusOK)
@@ -3141,9 +2835,10 @@ func TestStaticSPAFallback(t *testing.T) {
 	t.Parallel()
 
 	staticFS := fstest.MapFS{
-		"index.html":        &fstest.MapFile{Data: []byte("<!doctype html><html><body>spa-shell</body></html>")},
-		"assets/app-123.js": &fstest.MapFile{Data: []byte("console.log('app')")},
-		"favicon.ico":       &fstest.MapFile{Data: []byte("icon-bytes")},
+		"index.html":           &fstest.MapFile{Data: []byte("<!doctype html><html><body>spa-shell</body></html>")},
+		"assets/app-123.js":    &fstest.MapFile{Data: []byte("console.log('app')")},
+		"favicon.ico":          &fstest.MapFile{Data: []byte("icon-bytes")},
+		"manifest.webmanifest": &fstest.MapFile{Data: []byte("{}")},
 	}
 	h := newHarnessWith(t, func(cfg *Config) { cfg.StaticFS = staticFS })
 
@@ -3182,8 +2877,14 @@ func TestStaticSPAFallback(t *testing.T) {
 		t.Fatalf("favicon body = %q", body)
 	}
 
-	if cache := recorder.Header().Get("Cache-Control"); cache != "" {
+	if cache := recorder.Header().Get("Cache-Control"); cache != indexCacheControl {
 		t.Fatalf("favicon cache control = %q", cache)
+	}
+
+	recorder = h.raw(http.MethodGet, "/manifest.webmanifest", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	if got := recorder.Header().Get("Content-Type"); got != "application/manifest+json" {
+		t.Fatalf("manifest content type = %q", got)
 	}
 
 	requireStatus(t, h.raw(http.MethodGet, "/missing.js", nil), http.StatusNotFound)

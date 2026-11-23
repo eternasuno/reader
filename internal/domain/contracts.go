@@ -49,6 +49,7 @@ const (
 
 type DomainError struct {
 	Code  ErrorCode
+	ID    string
 	URL   string
 	Cause error
 }
@@ -71,6 +72,10 @@ func NewError(code ErrorCode, cause error) *DomainError {
 
 func NewConflictURL(code ErrorCode, redactedURL string) *DomainError {
 	return &DomainError{Code: code, URL: redactedURL}
+}
+
+func NewSavedPageConflict(id string, redactedURL string) *DomainError {
+	return &DomainError{Code: ErrSavedPageAlreadyExists, ID: id, URL: redactedURL}
 }
 
 type NormalizedURL struct {
@@ -207,6 +212,11 @@ type FeedItem struct {
 	Read             bool
 }
 
+type StoredRef struct {
+	ID  string
+	URL NormalizedURL
+}
+
 type SavedPage struct {
 	ID          string
 	URL         NormalizedURL
@@ -298,6 +308,13 @@ type KindleDelivery struct {
 	KindleEmail string
 }
 
+// ClaimedKindleSend is the atomic result of claiming a manual or scheduled send.
+type ClaimedKindleSend struct {
+	Claimed  bool
+	Record   KindleSendRecord
+	Delivery KindleDelivery
+}
+
 type KindleSendRecord struct {
 	ID           string
 	Trigger      KindleTrigger
@@ -348,13 +365,14 @@ type FeedRepository interface {
 	RecordRefreshFailure(ctx context.Context, id string, errSummary string) error
 	ApplySync(ctx context.Context, feedID string, newTitle string, updatedAt time.Time, newItems []FeedItem, deleteIDs []string) error
 	ImportOPML(ctx context.Context, doc OPMLDocument) (OPMLImportResult, []string, error)
+	ExportOPML(ctx context.Context) ([]OPMLExportFolder, []Feed, error)
 }
 
 type FeedItemRepository interface {
 	ListAll(ctx context.Context, params PageParams) (PageResult[FeedItem], error)
 	ListByFeed(ctx context.Context, feedID string, params PageParams) (PageResult[FeedItem], error)
 	ListByFolder(ctx context.Context, folderID string, params PageParams) (PageResult[FeedItem], error)
-	ListByFeedForRetention(ctx context.Context, feedID string) ([]FeedItem, error)
+	ListStoredRefsByFeed(ctx context.Context, feedID string) ([]StoredRef, error)
 	GetByID(ctx context.Context, id string) (*FeedItem, error)
 	UnreadCounts(ctx context.Context) ([]FeedUnreadCount, error)
 	SetRead(ctx context.Context, id string, read bool) error
@@ -362,7 +380,7 @@ type FeedItemRepository interface {
 	MarkAllRead(ctx context.Context) error
 	MarkFeedRead(ctx context.Context, feedID string) error
 	MarkFolderRead(ctx context.Context, folderID string) error
-	SaveExtractedContent(ctx context.Context, id string, content string) (*FeedItem, error)
+	SaveExtractedContentIfEmpty(ctx context.Context, id string, content string) (*FeedItem, bool, error)
 }
 
 type SavedPageRepository interface {
@@ -389,13 +407,13 @@ type SettingRepository interface {
 	DeleteSMTPPassword(ctx context.Context) error
 	DeleteSMTP(ctx context.Context) error
 	UpdateKindle(ctx context.Context, kindle KindleSettings) error
-	AdvanceNextSendAt(ctx context.Context, nextSendAt time.Time) error
 }
 
 type KindleSendRepository interface {
 	RecoverRunningOnStartup(ctx context.Context, now time.Time) error
 	ListRecent(ctx context.Context) ([]KindleSendRecord, error)
-	CreateRunning(ctx context.Context, record KindleSendRecord) (KindleSendRecord, error)
+	ClaimManualSend(ctx context.Context, sendID string, now time.Time) (ClaimedKindleSend, error)
+	ClaimDueSend(ctx context.Context, sendID string, now time.Time, loc *time.Location, slotBusy bool) (ClaimedKindleSend, error)
 	ListUnreadForKindle(ctx context.Context) ([]SavedPage, []Feed, map[string][]FeedItem, error)
 	RecordBookAccepted(ctx context.Context, sendID string, savedPageIDs []string, feedItemIDs []string, articleDelta int) error
 	CompleteSend(ctx context.Context, sendID string, status KindleStatus, errSummary *string, finishedAt time.Time) error

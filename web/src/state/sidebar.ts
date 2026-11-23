@@ -6,6 +6,8 @@
 import { createSignal, flush } from 'solid-js';
 import type { Feed, FeedUnreadCount, Folder } from '../api';
 import { feedsApi, foldersApi, savedPagesApi } from '../api';
+import { onSessionCleared } from './session';
+import { getItem, setItem } from './storage';
 
 /** `folders.md:16`: folder collapse state persists in `localStorage`. */
 export const COLLAPSED_FOLDERS_STORAGE_KEY = 'reader.collapsedFolders';
@@ -23,7 +25,25 @@ const [collapsedFolders, setCollapsedFolders] = createSignal<
 const [sidebarCollapsed, setSidebarCollapsed] = createSignal<boolean>(
   loadSidebarCollapsed()
 );
-let snapshotGeneration = 0;
+
+type SnapshotField = 'feeds' | 'folders' | 'feedCounts' | 'savedCount';
+
+const fieldEpochs: Record<SnapshotField, number> = {
+  feeds: 0,
+  folders: 0,
+  feedCounts: 0,
+  savedCount: 0,
+};
+
+let feedsLoaded = false;
+
+interface ActiveRefresh {
+  promise: Promise<void>;
+  startEpochs: Record<SnapshotField, number>;
+  rerunNeeded: boolean;
+}
+
+let activeRefresh: ActiveRefresh | null = null;
 
 export {
   collapsedFolders,
@@ -35,12 +55,10 @@ export {
 };
 
 function loadCollapsed(): ReadonlySet<string> {
-  if (typeof localStorage === 'undefined') return new Set<string>();
+  const raw = getItem(COLLAPSED_FOLDERS_STORAGE_KEY);
+  if (raw === null) return new Set<string>();
 
   try {
-    const raw = localStorage.getItem(COLLAPSED_FOLDERS_STORAGE_KEY);
-    if (raw === null) return new Set<string>();
-
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return new Set<string>();
 
@@ -52,47 +70,18 @@ function loadCollapsed(): ReadonlySet<string> {
   }
 }
 
-const persistCollapsed = (next: ReadonlySet<string>): void => {
-  if (typeof localStorage === 'undefined') return;
-
-  try {
-    localStorage.setItem(
-      COLLAPSED_FOLDERS_STORAGE_KEY,
-      JSON.stringify([...next])
-    );
-  } catch {
-    // Storage may be unavailable (private mode / quota); collapse state then stays in memory.
-  }
-};
-
 const applyCollapsed = (next: ReadonlySet<string>): void => {
   setCollapsedFolders(next);
-  persistCollapsed(next);
+  setItem(COLLAPSED_FOLDERS_STORAGE_KEY, JSON.stringify([...next]));
 };
 
 function loadSidebarCollapsed(): boolean {
-  if (typeof localStorage === 'undefined') return false;
-
-  try {
-    return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
+  return getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
 }
-
-const persistSidebarCollapsed = (next: boolean): void => {
-  if (typeof localStorage === 'undefined') return;
-
-  try {
-    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next));
-  } catch {
-    // Storage may be unavailable (private mode / quota); collapse state then stays in memory.
-  }
-};
 
 export const setSidebarCollapsedState = (collapsed: boolean): void => {
   setSidebarCollapsed(collapsed);
-  persistSidebarCollapsed(collapsed);
+  setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed));
   flush();
 };
 
@@ -130,43 +119,115 @@ type SidebarSnapshotResults = [
   PromiseSettledResult<number>,
 ];
 
-const applySidebarSnapshot = ([
-  feedsResult,
-  foldersResult,
-  countsResult,
-  savedResult,
-]: SidebarSnapshotResults): void => {
-  if (feedsResult.status === 'fulfilled') setFeeds(feedsResult.value);
-  if (foldersResult.status === 'fulfilled') setFolders(foldersResult.value);
-  if (countsResult.status === 'fulfilled') {
+const captureEpochs = (): Record<SnapshotField, number> => ({ ...fieldEpochs });
+
+const hasEpochChanged = (
+  start: Readonly<Record<SnapshotField, number>>
+): boolean =>
+  start.feeds !== fieldEpochs.feeds ||
+  start.folders !== fieldEpochs.folders ||
+  start.feedCounts !== fieldEpochs.feedCounts ||
+  start.savedCount !== fieldEpochs.savedCount;
+
+const applySidebarSnapshot = (
+  [
+    feedsResult,
+    foldersResult,
+    countsResult,
+    savedResult,
+  ]: SidebarSnapshotResults,
+  startEpochs: Readonly<Record<SnapshotField, number>>
+): void => {
+  if (
+    feedsResult.status === 'fulfilled' &&
+    startEpochs.feeds === fieldEpochs.feeds
+  ) {
+    feedsLoaded = true;
+    setFeeds(feedsResult.value);
+  }
+  if (
+    foldersResult.status === 'fulfilled' &&
+    startEpochs.folders === fieldEpochs.folders
+  ) {
+    setFolders(foldersResult.value);
+  }
+  if (
+    countsResult.status === 'fulfilled' &&
+    startEpochs.feedCounts === fieldEpochs.feedCounts
+  ) {
     setFeedUnreadMap(
       Object.fromEntries(
         countsResult.value.map((entry) => [entry.feedId, entry.count])
       )
     );
   }
-  if (savedResult.status === 'fulfilled')
+  if (
+    savedResult.status === 'fulfilled' &&
+    startEpochs.savedCount === fieldEpochs.savedCount
+  ) {
     setSavedUnreadSignal(Math.max(0, savedResult.value));
+  }
 
   flush();
 };
 
-/** `LIB-RELOAD-1`: entering/switching a scope refreshes feeds, folders and unread counts. The
- * sidebar is auxiliary, so a failed request keeps the previous value instead of breaking the list.
- * Local feed/folder removals invalidate in-flight snapshots so a racing refresh re-fetches.
+const runRefreshRound = async (owner: ActiveRefresh): Promise<void> => {
+  while (activeRefresh === owner) {
+    const current = activeRefresh;
+    current.rerunNeeded = false;
+    current.startEpochs = captureEpochs();
+    const results = await Promise.allSettled([
+      feedsApi.list(),
+      foldersApi.list(),
+      feedsApi.unreadCounts(),
+      savedPagesApi.unreadCount(),
+    ]);
+
+    if (activeRefresh !== owner) return;
+    applySidebarSnapshot(results, current.startEpochs);
+    if (!current.rerunNeeded) return;
+  }
+};
+
+const startOrJoinRefresh = (invalidate: boolean): Promise<void> => {
+  if (activeRefresh !== null) {
+    if (invalidate || hasEpochChanged(activeRefresh.startEpochs)) {
+      activeRefresh.rerunNeeded = true;
+    }
+    return activeRefresh.promise;
+  }
+
+  const state: ActiveRefresh = {
+    promise: Promise.resolve(),
+    startEpochs: captureEpochs(),
+    rerunNeeded: false,
+  };
+  activeRefresh = state;
+  state.promise = runRefreshRound(state).finally(() => {
+    if (activeRefresh === state) activeRefresh = null;
+  });
+  return state.promise;
+};
+
+/** `LIB-RELOAD-1`: entering/switching a scope refreshes feeds, folders and unread counts.
+ * Coalesces concurrent read requests under one owner, skips fields invalidated by local mutations
+ * during flight, and preserves partial-success behavior.
  */
-export const refreshSidebar = async (): Promise<void> => {
-  const generation = snapshotGeneration;
-  const results = await Promise.allSettled([
-    feedsApi.list(),
-    foldersApi.list(),
-    feedsApi.unreadCounts(),
-    savedPagesApi.unreadCount(),
-  ]);
+export const refreshSidebar = (): Promise<void> => startOrJoinRefresh(false);
 
-  if (generation !== snapshotGeneration) return refreshSidebar();
+/** Requests a fresh sidebar snapshot after a server-side write, scheduling at most one trailing
+ * round if a pre-mutation refresh is already in flight.
+ */
+export const invalidateSidebar = (): Promise<void> => startOrJoinRefresh(true);
 
-  applySidebarSnapshot(results);
+/** Resolves once the feed list has been fetched (or joins any in-flight sidebar refresh). */
+export const ensureFeeds = async (): Promise<void> => {
+  if (activeRefresh !== null) {
+    await activeRefresh.promise;
+    return;
+  }
+  if (feedsLoaded) return;
+  await refreshSidebar();
 };
 
 export const toggleFolderCollapse = (folderId: string): void => {
@@ -189,16 +250,19 @@ export const expandFolder = (folderId: string): void => {
 };
 
 export const adjustSavedUnread = (delta: number): void => {
+  fieldEpochs.savedCount += 1;
   setSavedUnreadSignal((count) => Math.max(0, count + delta));
 };
 
 export const setSavedUnread = (count: number): void => {
+  fieldEpochs.savedCount += 1;
   setSavedUnreadSignal(Math.max(0, count));
 };
 
 const updateUnreadMap = (
   update: (map: Readonly<Record<string, number>>) => Record<string, number>
 ) => {
+  fieldEpochs.feedCounts += 1;
   setFeedUnreadMap((map) => update(map));
 };
 
@@ -235,20 +299,24 @@ export const clearAllFeedsUnread = (): void => {
 };
 
 export const updateFeedLocal = (feedId: string, patch: Partial<Feed>): void => {
+  fieldEpochs.feeds += 1;
   setFeeds((current) =>
     current.map((feed) => (feed.id === feedId ? { ...feed, ...patch } : feed))
   );
 };
 
 export const removeFeedLocal = (feedId: string): void => {
-  snapshotGeneration += 1;
+  fieldEpochs.feeds += 1;
+  if (activeRefresh !== null) activeRefresh.rerunNeeded = true;
   setFeeds((current) => current.filter((feed) => feed.id !== feedId));
   clearFeedUnread(feedId);
 };
 
 /** `FD-FOLDER-4`: deleting a folder keeps its feeds and moves them to the top level. */
 export const removeFolderLocal = (folderId: string): void => {
-  snapshotGeneration += 1;
+  fieldEpochs.folders += 1;
+  fieldEpochs.feeds += 1;
+  if (activeRefresh !== null) activeRefresh.rerunNeeded = true;
   setFolders((current) => current.filter((folder) => folder.id !== folderId));
   setFeeds((current) =>
     current.map((feed) =>
@@ -261,3 +329,19 @@ export const removeFolderLocal = (folderId: string): void => {
     applyCollapsed(next);
   }
 };
+
+export const clearSidebarState = (): void => {
+  fieldEpochs.feeds += 1;
+  fieldEpochs.folders += 1;
+  fieldEpochs.feedCounts += 1;
+  fieldEpochs.savedCount += 1;
+  feedsLoaded = false;
+  activeRefresh = null;
+  setFeeds([]);
+  setFolders([]);
+  setSavedUnreadSignal(0);
+  setFeedUnreadMap({});
+  flush();
+};
+
+onSessionCleared(clearSidebarState);

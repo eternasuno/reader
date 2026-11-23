@@ -2,6 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"net"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,7 +62,7 @@ func TestLoadConfigOverrides(t *testing.T) {
 		"APP_URL":               "https://reader.example.com",
 		"PORT":                  "9000",
 		"DATA_DIR":              "/var/lib/reader",
-		"SESSION_SECRET":        "fixed-secret",
+		"SESSION_SECRET":        "fixed-secret-0123456789abcdef01234",
 		"TZ":                    "Asia/Shanghai",
 		"ALLOW_PRIVATE_NETWORK": "TRUE",
 	}))
@@ -81,8 +86,8 @@ func TestLoadConfigOverrides(t *testing.T) {
 		t.Fatalf("data dir = %q", cfg.DataDir)
 	}
 
-	if string(cfg.SessionSecret) != "fixed-secret" {
-		t.Fatalf("session secret = %q, want fixed-secret", cfg.SessionSecret)
+	if string(cfg.SessionSecret) != "fixed-secret-0123456789abcdef01234" {
+		t.Fatalf("session secret = %q, want fixed-secret-0123456789abcdef01234", cfg.SessionSecret)
 	}
 
 	if cfg.Location == nil || cfg.Location.String() != "Asia/Shanghai" {
@@ -97,6 +102,190 @@ func TestLoadConfigOverrides(t *testing.T) {
 func TestLoadConfigRequiresPassword(t *testing.T) {
 	if _, err := loadConfig(getenvFrom(map[string]string{})); err == nil {
 		t.Fatal("expected error for missing APP_PASSWORD")
+	}
+}
+
+func TestLoadConfigRejectsShortSessionSecret(t *testing.T) {
+	shortSecret := "too-short-secret-value"
+	_, err := loadConfig(getenvFrom(map[string]string{
+		"APP_PASSWORD":   "secret",
+		"SESSION_SECRET": shortSecret,
+	}))
+	if err == nil {
+		t.Fatal("expected error for short SESSION_SECRET")
+	}
+
+	if strings.Contains(err.Error(), shortSecret) {
+		t.Fatalf("error leaked SESSION_SECRET value: %v", err)
+	}
+}
+
+func TestLoadConfigChecksPasswordAgainstLoginBodyBudget(t *testing.T) {
+	// The login endpoint accepts a 4096 byte JSON body: {"password":"<escaped>"}
+	// has a 15 byte envelope, and JSON escaping makes some characters longer.
+	const (
+		bodyBudget = 4 << 10
+		envelope   = len(`{"password":""}`)
+	)
+
+	tests := []struct {
+		name     string
+		password string
+		wantOK   bool
+	}{
+		{name: "ascii at the budget", password: strings.Repeat("a", bodyBudget-envelope), wantOK: true},
+		{name: "ascii one byte over", password: strings.Repeat("a", bodyBudget-envelope+1), wantOK: false},
+		{name: "quotes at the budget", password: strings.Repeat(`"`, (bodyBudget-envelope)/2), wantOK: true},
+		{name: "quotes over while shorter than the ascii limit", password: strings.Repeat(`"`, (bodyBudget-envelope)/2+1), wantOK: false},
+		{name: "backslashes at the budget", password: strings.Repeat(`\`, (bodyBudget-envelope)/2), wantOK: true},
+		{name: "tabs over while shorter than the ascii limit", password: strings.Repeat("\t", (bodyBudget-envelope)/2+1), wantOK: false},
+		{name: "html characters at the budget", password: strings.Repeat("<", bodyBudget-envelope), wantOK: true},
+		{name: "html characters one byte over", password: strings.Repeat("<", bodyBudget-envelope+1), wantOK: false},
+		{name: "control characters over", password: strings.Repeat("\x01", (bodyBudget-envelope)/6+1), wantOK: false},
+		{name: "multibyte characters stay raw", password: strings.Repeat("日", (bodyBudget-envelope)/3), wantOK: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := loadConfig(getenvFrom(map[string]string{"APP_PASSWORD": tt.password}))
+			if tt.wantOK {
+				if err != nil {
+					t.Fatalf("load config: %v", err)
+				}
+
+				if cfg.AppPassword != tt.password {
+					t.Fatal("app password was altered")
+				}
+
+				return
+			}
+
+			if err == nil {
+				t.Fatal("expected an error for an APP_PASSWORD exceeding the login body budget")
+			}
+
+			if strings.Contains(err.Error(), tt.password) {
+				t.Fatalf("error leaked APP_PASSWORD value: %v", err)
+			}
+		})
+	}
+}
+
+func TestServeUntilExitDrainsAndStopsWorkers(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := false
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- serveUntilExit(ctx, listener, handler, func() { stopped = true })
+	}()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+listener.Addr().String()+"/", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get server: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Fatalf("serveUntilExit error = %v", err)
+	}
+
+	if !stopped {
+		t.Fatal("expected stopWorkers to run on shutdown")
+	}
+}
+
+func TestServeUntilExitWaitsForForcedHandler(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	stopped := make(chan struct{})
+	done := make(chan error, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(canceled)
+		<-release
+	})
+	go func() {
+		done <- serveUntilExitWithTimeout(ctx, listener, handler, func() { close(stopped) }, 20*time.Millisecond)
+	}()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+listener.Addr().String()+"/", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("forced close did not cancel request")
+	}
+
+	select {
+	case <-stopped:
+		t.Fatal("workers stopped before handler completed")
+	case <-done:
+		t.Fatal("server returned before handler completed")
+	default:
+	}
+
+	close(release)
+	released = true
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("serveUntilExit error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not stop after handler completed")
+	}
+
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("workers did not stop")
 	}
 }
 

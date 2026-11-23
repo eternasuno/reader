@@ -19,11 +19,6 @@ type FeedItemRepo struct {
 	write *sql.DB
 }
 
-type StoredFeedItemRef struct {
-	ID  string
-	URL domain.NormalizedURL
-}
-
 func (r *FeedItemRepo) ListAll(ctx context.Context, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
 	return r.list(ctx, listAllQuery(params))
 }
@@ -36,32 +31,7 @@ func (r *FeedItemRepo) ListByFolder(ctx context.Context, folderID string, params
 	return r.list(ctx, listByFolderQuery(folderID, params))
 }
 
-func (r *FeedItemRepo) ListByFeedForRetention(ctx context.Context, feedID string) ([]domain.FeedItem, error) {
-	rows, err := r.read.QueryContext(ctx, `SELECT `+feedItemColumns+` FROM feed_item WHERE feed_id = ? ORDER BY id DESC`, feedID)
-	if err != nil {
-		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
-	}
-
-	defer closeRows(rows)
-
-	items := []domain.FeedItem{}
-	for rows.Next() {
-		item, err := scanFeedItem(rows)
-		if err != nil {
-			return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
-		}
-
-		items = append(items, item)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
-	}
-
-	return items, nil
-}
-
-func (r *FeedItemRepo) ListStoredRefsByFeed(ctx context.Context, feedID string) ([]StoredFeedItemRef, error) {
+func (r *FeedItemRepo) ListStoredRefsByFeed(ctx context.Context, feedID string) ([]domain.StoredRef, error) {
 	rows, err := r.read.QueryContext(ctx, `SELECT id, url FROM feed_item WHERE feed_id = ? ORDER BY id DESC`, feedID)
 	if err != nil {
 		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
@@ -69,7 +39,7 @@ func (r *FeedItemRepo) ListStoredRefsByFeed(ctx context.Context, feedID string) 
 
 	defer closeRows(rows)
 
-	refs := []StoredFeedItemRef{}
+	refs := []domain.StoredRef{}
 	for rows.Next() {
 		var id string
 		var rawURL string
@@ -77,7 +47,12 @@ func (r *FeedItemRepo) ListStoredRefsByFeed(ctx context.Context, feedID string) 
 			return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 		}
 
-		refs = append(refs, StoredFeedItemRef{ID: id, URL: domain.NormalizedURLFromStored(rawURL)})
+		parsedURL, err := domain.ParseStoredNormalizedURL(rawURL)
+		if err != nil {
+			return nil, domain.NewError(domain.ErrFeedItemRepositoryError, errors.New("invalid stored feed item url"))
+		}
+
+		refs = append(refs, domain.StoredRef{ID: id, URL: parsedURL})
 	}
 
 	if err := rows.Err(); err != nil {
@@ -177,57 +152,56 @@ func (r *FeedItemRepo) MarkFolderRead(ctx context.Context, folderID string) erro
 	return nil
 }
 
-func (r *FeedItemRepo) SaveExtractedContent(ctx context.Context, id string, content string) (*domain.FeedItem, error) {
-	item, err := scanFeedItem(r.write.QueryRowContext(
+func (r *FeedItemRepo) SaveExtractedContentIfEmpty(ctx context.Context, id string, content string) (*domain.FeedItem, bool, error) {
+	var (
+		result domain.FeedItem
+		wrote  bool
+	)
+
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		var txErr error
+		result, wrote, txErr = saveExtractedContentIfEmptyInTx(ctx, tx, id, content)
+
+		return txErr
+	})
+	if err != nil {
+		return nil, false, wrapRepositoryError(err, domain.ErrFeedItemRepositoryError)
+	}
+
+	return &result, wrote, nil
+}
+
+func saveExtractedContentIfEmptyInTx(ctx context.Context, tx *sql.Tx, id string, content string) (domain.FeedItem, bool, error) {
+	existing, err := scanFeedItem(tx.QueryRowContext(ctx, `SELECT `+feedItemColumns+` FROM feed_item WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.FeedItem{}, false, domain.NewError(domain.ErrFeedItemNotFound, nil)
+	}
+
+	if err != nil {
+		return domain.FeedItem{}, false, err
+	}
+
+	if existing.ExtractedContent != nil && strings.TrimSpace(*existing.ExtractedContent) != "" {
+		return existing, false, nil
+	}
+
+	updated, err := scanFeedItem(tx.QueryRowContext(
 		ctx,
 		`UPDATE feed_item SET extracted_content = ? WHERE id = ? RETURNING `+feedItemColumns,
 		content,
 		id,
 	))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, domain.NewError(domain.ErrFeedItemNotFound, nil)
-	}
-
 	if err != nil {
-		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
+		return domain.FeedItem{}, false, err
 	}
 
-	return &item, nil
-}
-
-type feedItemQuerySpec struct {
-	source string
-	join   string
-	where  []string
-	order  string
-	args   []any
-	limit  int
+	return updated, true, nil
 }
 
 type feedItemQuery struct {
 	query string
 	args  []any
 	limit int
-}
-
-func buildFeedItemsQuery(spec feedItemQuerySpec) feedItemQuery {
-	columns := feedItemColumns
-	if spec.join != "" {
-		columns = qualifyColumns(spec.source, feedItemColumns)
-	}
-
-	query := `SELECT ` + columns + ` FROM ` + spec.source
-	if spec.join != "" {
-		query += ` ` + spec.join
-	}
-
-	if len(spec.where) > 0 {
-		query += ` WHERE ` + strings.Join(spec.where, ` AND `)
-	}
-
-	query += ` ORDER BY ` + spec.order + ` LIMIT ?`
-
-	return feedItemQuery{query: query, args: append(spec.args, spec.limit+1), limit: spec.limit}
 }
 
 func qualifyColumns(table string, columns string) string {
@@ -239,80 +213,35 @@ func qualifyColumns(table string, columns string) string {
 	return strings.Join(parts, `, `)
 }
 
-// pageDirection returns the keyset cursor comparison and ORDER BY direction.
-func pageDirection(order domain.SortOrder) (string, string) {
-	if order == domain.SortOrderOldest {
-		return `>`, `ASC`
-	}
-
-	return `<`, `DESC`
-}
-
 func listAllQuery(params domain.PageParams) feedItemQuery {
-	where := []string{}
-	args := []any{}
-	if params.Unread {
-		where = append(where, `read = 0`)
-	}
+	where, tail, args := appendKeysetClauses(unqualifiedKeysetColumns, nil, nil, params)
 
-	comparison, order := pageDirection(params.Order)
-	if params.Cursor != nil {
-		where = append(where, `id `+comparison+` ?`)
-		args = append(args, *params.Cursor)
+	return feedItemQuery{
+		query: `SELECT ` + feedItemColumns + ` FROM feed_item` + where + tail,
+		args:  args,
+		limit: params.Limit,
 	}
-
-	return buildFeedItemsQuery(feedItemQuerySpec{
-		source: `feed_item`,
-		where:  where,
-		order:  `id ` + order,
-		args:   args,
-		limit:  params.Limit,
-	})
 }
 
 func listByFeedQuery(feedID string, params domain.PageParams) feedItemQuery {
-	where := []string{`feed_id = ?`}
-	args := []any{feedID}
-	if params.Unread {
-		where = append(where, `read = 0`)
-	}
+	where, tail, args := appendKeysetClauses(unqualifiedKeysetColumns, []string{`feed_id = ?`}, []any{feedID}, params)
 
-	comparison, order := pageDirection(params.Order)
-	if params.Cursor != nil {
-		where = append(where, `id `+comparison+` ?`)
-		args = append(args, *params.Cursor)
+	return feedItemQuery{
+		query: `SELECT ` + feedItemColumns + ` FROM feed_item` + where + tail,
+		args:  args,
+		limit: params.Limit,
 	}
-
-	return buildFeedItemsQuery(feedItemQuerySpec{
-		source: `feed_item`,
-		where:  where,
-		order:  `id ` + order,
-		args:   args,
-		limit:  params.Limit,
-	})
 }
 
 func listByFolderQuery(folderID string, params domain.PageParams) feedItemQuery {
-	where := []string{`feed.folder_id = ?`}
-	args := []any{folderID}
-	if params.Unread {
-		where = append(where, `feed_item.read = 0`)
-	}
+	columns := qualifyColumns(`feed_item`, feedItemColumns)
+	where, tail, args := appendKeysetClauses(feedItemKeysetColumns, []string{`feed.folder_id = ?`}, []any{folderID}, params)
 
-	comparison, order := pageDirection(params.Order)
-	if params.Cursor != nil {
-		where = append(where, `feed_item.id `+comparison+` ?`)
-		args = append(args, *params.Cursor)
+	return feedItemQuery{
+		query: `SELECT ` + columns + ` FROM feed_item JOIN feed ON feed_item.feed_id = feed.id` + where + tail,
+		args:  args,
+		limit: params.Limit,
 	}
-
-	return buildFeedItemsQuery(feedItemQuerySpec{
-		source: `feed_item`,
-		join:   `JOIN feed ON feed_item.feed_id = feed.id`,
-		where:  where,
-		order:  `feed_item.id ` + order,
-		args:   args,
-		limit:  params.Limit,
-	})
 }
 
 func (r *FeedItemRepo) list(ctx context.Context, query feedItemQuery) (domain.PageResult[domain.FeedItem], error) {
@@ -337,7 +266,7 @@ func (r *FeedItemRepo) list(ctx context.Context, query feedItemQuery) (domain.Pa
 		return domain.PageResult[domain.FeedItem]{}, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
 
-	return paginateFeedItems(items, query.limit), nil
+	return finalizeKeysetPage(items, query.limit, func(item domain.FeedItem) string { return item.ID }), nil
 }
 
 func scanFeedItem(row interface{ Scan(...any) error }) (domain.FeedItem, error) {
@@ -358,10 +287,15 @@ func scanFeedItem(row interface{ Scan(...any) error }) (domain.FeedItem, error) 
 		return domain.FeedItem{}, err
 	}
 
+	parsedURL, err := domain.ParseStoredNormalizedURL(rawURL)
+	if err != nil {
+		return domain.FeedItem{}, errors.New("invalid stored feed item url")
+	}
+
 	return domain.FeedItem{
 		ID:               id,
 		FeedID:           feedID,
-		URL:              domain.NormalizedURLFromStored(rawURL),
+		URL:              parsedURL,
 		Title:            title,
 		Description:      optionalText(description),
 		Content:          optionalText(content),
@@ -369,22 +303,4 @@ func scanFeedItem(row interface{ Scan(...any) error }) (domain.FeedItem, error) 
 		PublishedAt:      optionalMillis(publishedAt),
 		Read:             intBool(read),
 	}, nil
-}
-
-func paginateFeedItems(items []domain.FeedItem, limit int) domain.PageResult[domain.FeedItem] {
-	result := domain.PageResult[domain.FeedItem]{Items: items}
-	if result.Items == nil {
-		result.Items = []domain.FeedItem{}
-	}
-
-	if len(items) <= limit {
-		return result
-	}
-
-	trimmed := items[:limit]
-	cursor := trimmed[len(trimmed)-1].ID
-	result.Items = trimmed
-	result.Cursor = &cursor
-
-	return result
 }

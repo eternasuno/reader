@@ -9,11 +9,17 @@ import type { Settings } from '../api';
 import { kindleApi, settingsApi } from '../api';
 import { t } from '../i18n';
 import { showToast } from '../ui';
+import { sessionGeneration } from './session';
 import type { SettingsSection } from './settings-store';
 import {
   browserEndpointDraft,
+  currentDraftsOwner,
+  isCurrentDraftsOwner,
+  isCurrentKindleSendsGeneration,
   jinaKeyDraft,
   kindleEmailDraft,
+  loadingSettings,
+  nextKindleSendsGeneration,
   providerDraft,
   retentionDraft,
   runSave,
@@ -24,6 +30,7 @@ import {
   setKindleEmailDraft,
   setKindleRunning,
   setKindleSends,
+  setLoadingSettings,
   setProviderDraft,
   setRetentionDraft,
   setSendTimeDraft,
@@ -52,6 +59,7 @@ export {
   kindleRunning,
   kindleSending,
   kindleSends,
+  mountSettingsDrafts,
   providerDraft,
   retentionDraft,
   savingAction,
@@ -151,6 +159,7 @@ const kindleDirty = (kindle: Settings['kindle'] | undefined): boolean =>
 
 /** `settings.md:25`: unsaved changes guard section switches and leaving `/settings`. */
 export const isSectionDirty = (section: SettingsSection): boolean => {
+  if (currentDraftsOwner() === null) return false;
   const loaded = settings();
   if (loaded === null) return false;
 
@@ -174,6 +183,9 @@ export const hasAnyUnsavedChanges = (): boolean =>
 
 export const isSaving = (): boolean => savingAction() !== null;
 
+export const isSettingsReady = (): boolean =>
+  settings() !== null && !loadingSettings();
+
 export const isBrowserAvailable = (): boolean =>
   settings()?.browserEndpointConfigured === true;
 
@@ -182,46 +194,92 @@ export const isSmtpConfigured = (): boolean => settings()?.smtp !== undefined;
 export const canSendToKindle = (): boolean =>
   isSmtpConfigured() && settings()?.kindle !== undefined;
 
+const commitSettingSave = async (
+  save: () => Promise<void>,
+  patch: (current: Settings) => Settings,
+  toastKey: 'settings.extractionSavedToast' | 'settings.retentionSavedToast'
+): Promise<boolean> => {
+  const startSession = sessionGeneration();
+  try {
+    await save();
+    if (sessionGeneration() !== startSession) return false;
+
+    const current = settings();
+    if (current !== null) setSettings(patch(current));
+    showToast(String(t(toastKey)), 'success');
+    return true;
+  } catch (error) {
+    if (sessionGeneration() !== startSession) return false;
+    return toastSettingsError(error);
+  }
+};
+
 export const saveProvider = (): Promise<boolean> =>
   runSave('provider', async () => {
-    const loaded = settings();
-    if (loaded === null) return false;
-
+    if (settings() === null) return false;
     const provider = providerDraft();
-    try {
-      await settingsApi.updateProvider(provider);
-      setSettings({ ...loaded, provider });
-      showToast(String(t('settings.extractionSavedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
+    return commitSettingSave(
+      () => settingsApi.updateProvider(provider),
+      (current) => ({ ...current, provider }),
+      'settings.extractionSavedToast'
+    );
   });
 
 export const saveRetention = (): Promise<boolean> =>
   runSave('retention', async () => {
-    const loaded = settings();
-    if (loaded === null) return false;
-
+    if (settings() === null) return false;
     const retention = retentionDraft();
-    try {
-      await settingsApi.updateRetention(retention);
-      setSettings({ ...loaded, retention });
-      showToast(String(t('settings.retentionSavedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
+    return commitSettingSave(
+      () => settingsApi.updateRetention(retention),
+      (current) => ({ ...current, retention }),
+      'settings.retentionSavedToast'
+    );
   });
+
+let loadGeneration = 0;
 
 /** Loads settings and the recent Kindle send history (`KD-LOG-1`). */
 export const loadSettings = async (): Promise<void> => {
-  const loaded = await settingsApi.get();
-  applyDrafts(loaded);
+  const startSession = sessionGeneration();
+  const startDrafts = currentDraftsOwner();
+  loadGeneration += 1;
+  const startLoad = loadGeneration;
+  const startSendsGeneration = nextKindleSendsGeneration();
+
+  setLoadingSettings(true);
+
+  let loaded: Settings;
+  try {
+    loaded = await settingsApi.get();
+  } finally {
+    if (loadGeneration === startLoad && sessionGeneration() === startSession) {
+      setLoadingSettings(false);
+      flush();
+    }
+  }
+
+  if (
+    sessionGeneration() !== startSession ||
+    loadGeneration !== startLoad ||
+    !isCurrentDraftsOwner(startDrafts)
+  ) {
+    return;
+  }
+
   setSettings(loaded);
+  if (startDrafts !== null) applyDrafts(loaded);
   flush();
 
   const sends = await kindleApi.listSends();
+  if (
+    sessionGeneration() !== startSession ||
+    loadGeneration !== startLoad ||
+    !isCurrentDraftsOwner(startDrafts) ||
+    !isCurrentKindleSendsGeneration(startSendsGeneration)
+  ) {
+    return;
+  }
+
   setKindleSends(sends.items);
   setKindleRunning(sends.running);
   flush();

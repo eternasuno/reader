@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,7 +21,6 @@ import (
 )
 
 const (
-	defaultRetention    = 100
 	readPoolConnections = 4
 	sqliteConstraint    = 19
 	foreignKeyFailed    = "FOREIGN KEY constraint failed"
@@ -42,11 +42,16 @@ type Store struct {
 }
 
 func Open(ctx context.Context, dbPath string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
+	absPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve database path: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o750); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	writeDB, err := sql.Open("sqlite", writeDSN(dbPath))
+	writeDB, err := sql.Open("sqlite", sqliteDSN(absPath, true))
 	if err != nil {
 		return nil, fmt.Errorf("open write pool: %w", err)
 	}
@@ -54,7 +59,7 @@ func Open(ctx context.Context, dbPath string) (*Store, error) {
 	writeDB.SetMaxOpenConns(1)
 	writeDB.SetMaxIdleConns(1)
 
-	store, err := initialize(ctx, dbPath, writeDB)
+	store, err := initialize(ctx, absPath, writeDB)
 	if err != nil {
 		_ = writeDB.Close()
 
@@ -73,17 +78,7 @@ func initialize(ctx context.Context, dbPath string, writeDB *sql.DB) (*Store, er
 		return nil, err
 	}
 
-	_, err := writeDB.ExecContext(
-		ctx,
-		`INSERT INTO setting (id, retention, provider) VALUES (1, ?, ?) ON CONFLICT (id) DO NOTHING`,
-		defaultRetention,
-		string(domain.ProviderDirect),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("initialize settings: %w", err)
-	}
-
-	readDB, err := sql.Open("sqlite", readDSN(dbPath))
+	readDB, err := sql.Open("sqlite", sqliteDSN(dbPath, false))
 	if err != nil {
 		return nil, fmt.Errorf("open read pool: %w", err)
 	}
@@ -107,12 +102,24 @@ func initialize(ctx context.Context, dbPath string, writeDB *sql.DB) (*Store, er
 	return store, nil
 }
 
-func writeDSN(dbPath string) string {
-	return "file:" + dbPath + "?_txlock=immediate&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
-}
+func sqliteDSN(dbPath string, txLockImmediate bool) string {
+	query := "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	if txLockImmediate {
+		query = "_txlock=immediate&" + query
+	}
 
-func readDSN(dbPath string) string {
-	return "file:" + dbPath + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	slashPath := filepath.ToSlash(dbPath)
+	if !strings.HasPrefix(slashPath, "/") {
+		slashPath = "/" + slashPath
+	}
+
+	uri := url.URL{
+		Scheme:   "file",
+		Path:     slashPath,
+		RawQuery: query,
+	}
+
+	return uri.String()
 }
 
 func applyMigrations(ctx context.Context, db *sql.DB) error {
@@ -171,10 +178,6 @@ func (s *Store) Settings() *SettingRepo {
 
 func (s *Store) KindleSends() *KindleSendRepo {
 	return s.kindleSends
-}
-
-func (s *Store) ImportOPML(ctx context.Context, doc domain.OPMLDocument) (domain.OPMLImportResult, []domain.Feed, error) {
-	return importOPML(ctx, s.writeDB, doc)
 }
 
 func withTx(ctx context.Context, db *sql.DB, apply func(tx *sql.Tx) error) error {

@@ -407,3 +407,126 @@ func TestOPMLExportEmptyDocument(t *testing.T) {
 		t.Fatalf("document = %+v, want empty", document)
 	}
 }
+
+func TestOPMLParseTraversesDescendantsOfFeedOutlines(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`<opml version="2.0"><body>
+  <outline text="Tech">
+    <outline text="Parent Feed" xmlUrl="https://example.com/parent.xml">
+      <outline text="Child Feed" xmlUrl="https://example.com/child.xml"/>
+      <outline text="Nested Folder">
+        <outline text="Grandchild Feed" xmlUrl="https://example.com/grandchild.xml"/>
+      </outline>
+    </outline>
+  </outline>
+  <outline text="Top Parent" xmlUrl="https://example.com/top-parent.xml">
+    <outline text="Top Child" xmlUrl="https://example.com/top-child.xml"/>
+  </outline>
+  <outline text="Invalid Parent" xmlUrl="">
+    <outline text="Recovered Child" xmlUrl="https://example.com/recovered.xml"/>
+  </outline>
+</body></opml>`)
+
+	document, err := ParseOPML(data)
+	if err != nil {
+		t.Fatalf("ParseOPML returned %v", err)
+	}
+
+	if document.SkippedInvalid != 1 {
+		t.Fatalf("SkippedInvalid = %d, want 1", document.SkippedInvalid)
+	}
+
+	if strings.Join(document.Folders, ",") != "Tech,Nested Folder" {
+		t.Fatalf("Folders = %v, want [Tech Nested Folder]", document.Folders)
+	}
+
+	want := []struct {
+		title  string
+		folder string
+		url    string
+	}{
+		{title: "Parent Feed", folder: "Tech", url: "https://example.com/parent.xml"},
+		{title: "Child Feed", folder: "Tech", url: "https://example.com/child.xml"},
+		{title: "Grandchild Feed", folder: "Nested Folder", url: "https://example.com/grandchild.xml"},
+		{title: "Top Parent", folder: "<top>", url: "https://example.com/top-parent.xml"},
+		{title: "Top Child", folder: "<top>", url: "https://example.com/top-child.xml"},
+		{title: "Recovered Child", folder: "<top>", url: "https://example.com/recovered.xml"},
+	}
+
+	if len(document.Feeds) != len(want) {
+		t.Fatalf("got %d feeds, want %d", len(document.Feeds), len(want))
+	}
+
+	for i, tc := range want {
+		feed := document.Feeds[i]
+		if feed.Title != tc.title || opmlTestFolderName(feed) != tc.folder || feed.URL.Raw() != tc.url {
+			t.Fatalf("Feeds[%d] = (%q, %q, %q), want (%q, %q, %q)", i, feed.Title, opmlTestFolderName(feed), feed.URL.Raw(), tc.title, tc.folder, tc.url)
+		}
+	}
+}
+
+func TestOPMLImportAndExportStripLabelCredentials(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`<opml version="2.0"><body>
+  <outline text="https://fuser:fpass@example.com/folder">
+    <outline title="https://user:secret@example.com/feed.xml" xmlUrl="https://example.com/feed.xml"/>
+    <outline text="http://user%20name:p%40ss@example.com/encoded" xmlUrl="https://example.com/encoded.xml"/>
+  </outline>
+  <outline text="Feed (https://tok@example.com/embedded)" xmlUrl="https://example.com/embedded.xml"/>
+</body></opml>`)
+
+	document, err := ParseOPML(data)
+	if err != nil {
+		t.Fatalf("ParseOPML returned %v", err)
+	}
+
+	if len(document.Folders) != 1 || document.Folders[0] != "https://example.com/folder" {
+		t.Fatalf("Folders = %v", document.Folders)
+	}
+
+	wantTitles := []string{
+		"https://example.com/feed.xml",
+		"http://example.com/encoded",
+		"Feed (https://example.com/embedded)",
+	}
+	for i, wantTitle := range wantTitles {
+		if document.Feeds[i].Title != wantTitle {
+			t.Fatalf("Feeds[%d].Title = %q, want %q", i, document.Feeds[i].Title, wantTitle)
+		}
+	}
+
+	exported, err := ExportOPML([]OPMLExportFolder{
+		{
+			Name: "https://fuser:fpass@example.com/folder",
+			Feeds: []Feed{
+				opmlTestFeed(t, "id-1", "https://user:secret@example.com/feed.xml", "https://u:p@example.com/feed.xml"),
+			},
+		},
+	}, []Feed{
+		opmlTestFeed(t, "id-2", "Top (http://tok:pw@example.com/top)", "https://u:p@example.com/top.xml"),
+	})
+	if err != nil {
+		t.Fatalf("ExportOPML returned %v", err)
+	}
+
+	body := string(exported)
+	for _, secret := range []string{"fuser", "fpass", "user:secret", "tok:pw", "u:p@"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("export leaked credential %q in:\n%s", secret, body)
+		}
+	}
+
+	if !strings.Contains(body, `text="https://example.com/folder"`) {
+		t.Fatalf("export missing redacted folder label:\n%s", body)
+	}
+
+	if !strings.Contains(body, `title="https://example.com/feed.xml"`) {
+		t.Fatalf("export missing redacted feed title:\n%s", body)
+	}
+
+	if !strings.Contains(body, `title="Top (http://example.com/top)"`) {
+		t.Fatalf("export missing redacted top feed title:\n%s", body)
+	}
+}

@@ -1,5 +1,7 @@
 import * as i18n from '@solid-primitives/i18n';
 import { createMemo, createRoot, createSignal, flush } from 'solid-js';
+// biome-ignore lint/style/noRestrictedImports: storage.ts is a dependency-free leaf helper
+import { getItem, setItem } from '../state/storage';
 import type { Dict } from './en';
 import { enDict } from './en';
 import { zhDict } from './zh';
@@ -19,10 +21,8 @@ const isLocale = (value: string | null): value is Locale =>
   value === 'zh-CN' || value === 'en';
 
 const detectLocale = (): Locale => {
-  if (typeof localStorage !== 'undefined') {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (isLocale(stored)) return stored;
-  }
+  const stored = getItem(STORAGE_KEY);
+  if (isLocale(stored)) return stored;
 
   const language =
     typeof navigator === 'undefined' ? '' : (navigator.language ?? '');
@@ -48,9 +48,7 @@ export const setLocale = (next: Locale) => {
   applyDocumentLang(next);
   flush();
 
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY, next);
-  }
+  setItem(STORAGE_KEY, next);
 };
 
 export const toggleLocale = () => {

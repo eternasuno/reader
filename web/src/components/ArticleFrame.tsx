@@ -34,8 +34,8 @@ export interface ArticleFrameKeyMessage {
 
 export interface ArticleSrcdocOptions {
   html: string;
-  nonce: string;
-  token: string;
+  nonce?: string | null;
+  token?: string | null;
   appOrigin: string;
   stylesheetHrefs?: ReadonlyArray<string>;
   appearance?: ReaderAppearance;
@@ -73,25 +73,18 @@ const jsStringLiteral = (value: string): string =>
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
 
-/** Fresh unguessable value for the CSP nonce and the resize-message token. */
-const randomToken = (): string => {
+/** Fresh unguessable value for the CSP nonce and the resize-message token, or `null` without Web Crypto. */
+const randomToken = (): string | null => {
   const source =
     typeof globalThis.crypto === 'undefined' ? undefined : globalThis.crypto;
+  if (!source || typeof source.getRandomValues !== 'function') return null;
 
-  if (source && typeof source.randomUUID === 'function') {
-    return source.randomUUID().replace(/-/g, '');
-  }
+  const bytes = new Uint8Array(16);
+  source.getRandomValues(bytes);
 
-  if (source && typeof source.getRandomValues === 'function') {
-    const bytes = new Uint8Array(16);
-    source.getRandomValues(bytes);
-
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
-      ''
-    );
-  }
-
-  return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
 };
 
 const currentOrigin = (): string => {
@@ -261,16 +254,22 @@ export const isValidKeyMessage = (
 
 export const buildArticleSrcdoc = (options: ArticleSrcdocOptions): string => {
   const appOrigin = options.appOrigin ? ` ${options.appOrigin}` : '';
+  const nonce = options.nonce ?? '';
+  const token = options.token ?? '';
+  const hasBridge = nonce.length > 0 && token.length > 0;
+  const scriptSrc = hasBridge ? `'nonce-${nonce}'` : "'none'";
   const csp =
     `default-src 'none'; img-src https: http:; style-src 'unsafe-inline'${appOrigin}; ` +
-    `script-src 'nonce-${options.nonce}'; base-uri 'none'; form-action 'none'`;
+    `script-src ${scriptSrc}; base-uri 'none'; form-action 'none'`;
 
   const stylesheets = (options.stylesheetHrefs ?? [])
     .map((href) => `<link rel="stylesheet" href="${escapeAttribute(href)}">`)
     .join('');
 
-  const nonce = escapeAttribute(options.nonce);
   const styles = buildReaderStyles(options.appearance ?? DEFAULT_APPEARANCE);
+  const scriptTag = hasBridge
+    ? `<script nonce="${escapeAttribute(nonce)}">${buildResizeScript(token)}</script>`
+    : '';
 
   return [
     '<!DOCTYPE html>',
@@ -284,7 +283,7 @@ export const buildArticleSrcdoc = (options: ArticleSrcdocOptions): string => {
     `<style>${styles}</style>`,
     '</head>',
     `<body>${stripSourceClasses(options.html)}`,
-    `<script nonce="${nonce}">${buildResizeScript(options.token)}</script>`,
+    scriptTag,
     '</body>',
     '</html>',
   ].join('');
@@ -314,7 +313,7 @@ const dispatchFrameMessage = (
 
 const useFrameMessages = (
   getIframe: () => HTMLIFrameElement | undefined,
-  getToken: () => string,
+  getToken: () => string | null,
   handlers: {
     onResize: (height: number) => void;
     onImage: (image: LightboxState) => void;
@@ -323,10 +322,13 @@ const useFrameMessages = (
 ): void => {
   onSettled(() => {
     const onMessage = (event: MessageEvent) => {
+      const token = getToken();
+      if (token === null) return;
+
       const iframe = getIframe();
       if (!iframe || event.source !== iframe.contentWindow) return;
 
-      dispatchFrameMessage(event.data, getToken(), handlers);
+      dispatchFrameMessage(event.data, token, handlers);
     };
 
     window.addEventListener('message', onMessage);
@@ -338,14 +340,14 @@ const createFrameContent = (html: () => string) =>
   createMemo(() => {
     const nonce = randomToken();
     const token = randomToken();
+    const hasBridge = nonce !== null && token !== null;
 
     return {
-      token,
-      nonce,
+      token: hasBridge ? token : null,
       srcdoc: buildArticleSrcdoc({
         html: html(),
-        nonce,
-        token,
+        nonce: hasBridge ? nonce : null,
+        token: hasBridge ? token : null,
         appOrigin: currentOrigin(),
         stylesheetHrefs: activeStylesheetHrefs(),
         appearance: readerAppearance(),
@@ -391,7 +393,11 @@ export function ArticleFrame(props: ArticleFrameProps): JSX.Element {
           iframeRef = element;
         }}
         title={props.title ?? ''}
-        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+        sandbox={
+          frame().token === null
+            ? 'allow-popups allow-popups-to-escape-sandbox'
+            : 'allow-scripts allow-popups allow-popups-to-escape-sandbox'
+        }
         referrerpolicy="no-referrer"
         srcdoc={frame().srcdoc}
         style={height() === undefined ? undefined : `height: ${height()}px`}

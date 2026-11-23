@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Settings, SmtpSettingsView } from '../src/api';
 
 type StateModule = typeof import('../src/state');
@@ -17,6 +17,7 @@ const fresh = async (): Promise<void> => {
   i18n = await import('../src/i18n');
   ui = await import('../src/ui');
   state = await import('../src/state');
+  onTestFinished(state.mountSettingsDrafts());
 };
 
 beforeEach(async () => {

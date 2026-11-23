@@ -17,17 +17,56 @@ type FeedRepo struct {
 }
 
 type opmlImporter struct {
-	ctx       context.Context
-	tx        *sql.Tx
-	folderIDs map[string]string
-	result    domain.OPMLImportResult
-	created   []domain.Feed
+	ctx        context.Context
+	tx         *sql.Tx
+	folderIDs  map[string]string
+	result     domain.OPMLImportResult
+	createdIDs []string
 }
 
 func (r *FeedRepo) List(ctx context.Context) ([]domain.Feed, error) {
-	rows, err := r.read.QueryContext(ctx, `SELECT `+feedColumns+` FROM feed ORDER BY title ASC, id ASC`)
+	feeds, err := queryFeeds(ctx, r.read)
 	if err != nil {
 		return nil, domain.NewError(domain.ErrFeedRepositoryError, err)
+	}
+
+	return feeds, nil
+}
+
+func (r *FeedRepo) ExportOPML(ctx context.Context) ([]domain.OPMLExportFolder, []domain.Feed, error) {
+	tx, err := r.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, nil, domain.NewError(domain.ErrFeedRepositoryError, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	folders, err := queryFolders(ctx, tx)
+	if err != nil {
+		return nil, nil, domain.NewError(domain.ErrFeedRepositoryError, err)
+	}
+
+	feeds, err := queryFeeds(ctx, tx)
+	if err != nil {
+		return nil, nil, domain.NewError(domain.ErrFeedRepositoryError, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, nil, domain.NewError(domain.ErrFeedRepositoryError, err)
+	}
+
+	exportFolders, topFeeds := groupOPMLFeeds(folders, feeds)
+
+	return exportFolders, topFeeds, nil
+}
+
+type rowsQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func queryFeeds(ctx context.Context, querier rowsQuerier) ([]domain.Feed, error) {
+	rows, err := querier.QueryContext(ctx, `SELECT `+feedColumns+` FROM feed ORDER BY title ASC, id ASC`)
+	if err != nil {
+		return nil, err
 	}
 
 	defer closeRows(rows)
@@ -36,17 +75,62 @@ func (r *FeedRepo) List(ctx context.Context) ([]domain.Feed, error) {
 	for rows.Next() {
 		feed, err := scanFeed(rows)
 		if err != nil {
-			return nil, domain.NewError(domain.ErrFeedRepositoryError, err)
+			return nil, err
 		}
 
 		feeds = append(feeds, feed)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, domain.NewError(domain.ErrFeedRepositoryError, err)
+		return nil, err
 	}
 
 	return feeds, nil
+}
+
+func queryFolders(ctx context.Context, querier rowsQuerier) ([]domain.Folder, error) {
+	rows, err := querier.QueryContext(ctx, `SELECT id, name FROM folder ORDER BY name ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+
+	defer closeRows(rows)
+
+	folders := []domain.Folder{}
+	for rows.Next() {
+		var folder domain.Folder
+		if err := rows.Scan(&folder.ID, &folder.Name); err != nil {
+			return nil, err
+		}
+
+		folders = append(folders, folder)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return folders, nil
+}
+
+func groupOPMLFeeds(folders []domain.Folder, feeds []domain.Feed) ([]domain.OPMLExportFolder, []domain.Feed) {
+	grouped := make(map[string][]domain.Feed, len(folders))
+	topFeeds := make([]domain.Feed, 0, len(feeds))
+	for _, feed := range feeds {
+		if feed.FolderID == nil {
+			topFeeds = append(topFeeds, feed)
+			continue
+		}
+
+		grouped[*feed.FolderID] = append(grouped[*feed.FolderID], feed)
+	}
+
+	exportFolders := make([]domain.OPMLExportFolder, 0, len(folders))
+	for _, folder := range folders {
+		exportFolders = append(exportFolders, domain.OPMLExportFolder{Name: folder.Name, Feeds: grouped[folder.ID]})
+	}
+
+	return exportFolders, topFeeds
 }
 
 func (r *FeedRepo) GetByID(ctx context.Context, id string) (*domain.Feed, error) {
@@ -260,17 +344,15 @@ func deleteSyncItems(ctx context.Context, tx *sql.Tx, feedID string, deleteIDs [
 }
 
 func (r *FeedRepo) ImportOPML(ctx context.Context, doc domain.OPMLDocument) (domain.OPMLImportResult, []string, error) {
-	result, created, err := importOPML(ctx, r.write, doc)
+	importer := &opmlImporter{ctx: ctx, result: domain.OPMLImportResult{SkippedFeeds: doc.SkippedInvalid}, createdIDs: []string{}}
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		return importer.run(tx, doc)
+	})
 	if err != nil {
-		return domain.OPMLImportResult{}, nil, err
+		return domain.OPMLImportResult{}, nil, wrapRepositoryError(err, domain.ErrFeedRepositoryError)
 	}
 
-	feedIDs := make([]string, len(created))
-	for i, feed := range created {
-		feedIDs[i] = feed.ID
-	}
-
-	return result, feedIDs, nil
+	return importer.result, importer.createdIDs, nil
 }
 
 func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
@@ -291,9 +373,14 @@ func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
 		return domain.Feed{}, err
 	}
 
+	parsedURL, err := domain.ParseStoredNormalizedURL(rawURL)
+	if err != nil {
+		return domain.Feed{}, errors.New("invalid stored feed url")
+	}
+
 	return domain.Feed{
 		ID:           id,
-		URL:          domain.NormalizedURLFromStored(rawURL),
+		URL:          parsedURL,
 		Title:        title,
 		FolderID:     optionalText(folderID),
 		UpdatedAt:    optionalMillis(updatedAt),
@@ -302,18 +389,6 @@ func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
 		ReaderMode:   domain.ReaderMode(readerMode),
 		Order:        domain.SortOrder(sortOrder),
 	}, nil
-}
-
-func importOPML(ctx context.Context, db *sql.DB, doc domain.OPMLDocument) (domain.OPMLImportResult, []domain.Feed, error) {
-	importer := &opmlImporter{ctx: ctx, result: domain.OPMLImportResult{SkippedFeeds: doc.SkippedInvalid}, created: []domain.Feed{}}
-	err := withTx(ctx, db, func(tx *sql.Tx) error {
-		return importer.run(tx, doc)
-	})
-	if err != nil {
-		return domain.OPMLImportResult{}, nil, wrapRepositoryError(err, domain.ErrFeedRepositoryError)
-	}
-
-	return importer.result, importer.created, nil
 }
 
 func (i *opmlImporter) run(tx *sql.Tx, doc domain.OPMLDocument) error {
@@ -430,21 +505,14 @@ func (i *opmlImporter) importFeed(input domain.OPMLFeedInput) error {
 		return nil
 	}
 
-	i.recordCreatedFeed(id, folderID, input)
+	i.recordCreatedFeed(id)
 
 	return nil
 }
 
-func (i *opmlImporter) recordCreatedFeed(id string, folderID *string, input domain.OPMLFeedInput) {
+func (i *opmlImporter) recordCreatedFeed(id string) {
 	i.result.ImportedFeeds++
-	i.created = append(i.created, domain.Feed{
-		ID:         id,
-		URL:        input.URL,
-		Title:      input.Title,
-		FolderID:   folderID,
-		ReaderMode: domain.ReaderModeDefault,
-		Order:      domain.SortOrderNewest,
-	})
+	i.createdIDs = append(i.createdIDs, id)
 }
 
 type rowQuerier interface {

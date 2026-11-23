@@ -5,13 +5,17 @@
 
 import { flush } from 'solid-js';
 import type { KindleSettings, KindleSettingsView, Settings } from '../api';
-import { kindleApi, settingsApi } from '../api';
+import { errorCodeOf, kindleApi, settingsApi } from '../api';
 import { t, translateErrorCode } from '../i18n';
 import { showToast } from '../ui';
+import { sessionGeneration } from './session';
 import {
-  errorCodeOf,
+  currentDraftsOwner,
+  isCurrentDraftsOwner,
+  isCurrentKindleSendsGeneration,
   kindleEmailDraft,
   kindleSending,
+  nextKindleSendsGeneration,
   optionalText,
   runSave,
   sendTimeDraft,
@@ -46,40 +50,86 @@ const fetchSavedKindle = async (
   }
 };
 
+const applySavedKindle = (
+  kindle: KindleSettingsView,
+  input: KindleSettings,
+  startDrafts: ReturnType<typeof currentDraftsOwner>
+): void => {
+  const current = settings();
+  if (current !== null) setSettings({ ...current, kindle });
+  if (isCurrentDraftsOwner(startDrafts)) {
+    setKindleEmailDraft(input.kindleEmail);
+    setSendTimeDraft(input.sendTime ?? '');
+  }
+  showToast(String(t('settings.kindleSavedToast')), 'success');
+};
+
+const performKindleSave = async (loaded: Settings): Promise<boolean> => {
+  const startSession = sessionGeneration();
+  const startDrafts = currentDraftsOwner();
+  const input: KindleSettings = {
+    kindleEmail: kindleEmailDraft().trim(),
+    sendTime: optionalText(sendTimeDraft()),
+  };
+
+  try {
+    await settingsApi.updateKindle(input);
+    if (sessionGeneration() !== startSession) return false;
+
+    const kindle = await fetchSavedKindle(input, loaded.kindle);
+    if (sessionGeneration() !== startSession) return false;
+
+    applySavedKindle(kindle, input, startDrafts);
+    return true;
+  } catch (error) {
+    return sessionGeneration() === startSession
+      ? toastSettingsError(error)
+      : false;
+  }
+};
+
 export const saveKindle = (): Promise<boolean> =>
   runSave('kindle', async () => {
     const loaded = settings();
-    if (loaded === null) return false;
-
-    const input: KindleSettings = {
-      kindleEmail: kindleEmailDraft().trim(),
-      sendTime: optionalText(sendTimeDraft()),
-    };
-
-    try {
-      await settingsApi.updateKindle(input);
-      const kindle = await fetchSavedKindle(input, loaded.kindle);
-      setSettings({ ...loaded, kindle });
-      setKindleEmailDraft(input.kindleEmail);
-      setSendTimeDraft(input.sendTime ?? '');
-      showToast(String(t('settings.kindleSavedToast')), 'success');
-
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
+    return loaded === null ? false : performKindleSave(loaded);
   });
 
 /** `KD-SEND-1` / `KD-LOG-1`: re-reads the running state and history once, without polling. */
 export const refreshKindleSends = async (): Promise<void> => {
+  const startSession = sessionGeneration();
+  const startGeneration = nextKindleSendsGeneration();
   try {
     const sends = await kindleApi.listSends();
+    if (
+      sessionGeneration() !== startSession ||
+      !isCurrentKindleSendsGeneration(startGeneration)
+    ) {
+      return;
+    }
     setKindleSends(sends.items);
     setKindleRunning(sends.running);
     flush();
   } catch {
     // The button state is derived from `running`; keep the previous snapshot on failure.
   }
+};
+
+let kindleSendToken = 0;
+let activeKindleSendToken: number | null = null;
+
+const handleKindleSendError = async (
+  error: unknown,
+  startSession: number
+): Promise<false> => {
+  if (sessionGeneration() !== startSession) return false;
+
+  const code = errorCodeOf(error);
+  if (code === 'KindleSendInProgress') await refreshKindleSends();
+  if (sessionGeneration() === startSession) {
+    showToast(translateErrorCode(code), 'error');
+  }
+
+  return false;
 };
 
 /**
@@ -89,24 +139,32 @@ export const refreshKindleSends = async (): Promise<void> => {
 export const triggerKindleSend = async (): Promise<boolean> => {
   if (kindleSending()) return false;
 
+  const startSession = sessionGeneration();
+  kindleSendToken += 1;
+  const ownerToken = kindleSendToken;
+  activeKindleSendToken = ownerToken;
   setKindleSending(true);
   flush();
 
   try {
     const record = await kindleApi.sendNow();
+    if (sessionGeneration() !== startSession) return false;
+
     setKindleSends((current) => [record, ...current]);
     setKindleRunning(record.status === 'running');
     showToast(String(t('kindle.queuedToast')), 'success');
 
     return true;
   } catch (error) {
-    const code = errorCodeOf(error);
-    if (code === 'KindleSendInProgress') await refreshKindleSends();
-    showToast(translateErrorCode(code), 'error');
-
-    return false;
+    return handleKindleSendError(error, startSession);
   } finally {
-    setKindleSending(false);
-    flush();
+    if (
+      activeKindleSendToken === ownerToken &&
+      sessionGeneration() === startSession
+    ) {
+      activeKindleSendToken = null;
+      setKindleSending(false);
+      flush();
+    }
   }
 };

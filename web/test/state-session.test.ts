@@ -52,38 +52,110 @@ describe('session checks', () => {
     expect(requestUrl()).toBe('/api/auth/session');
   });
 
-  it('checks an unauthenticated session and survives request failures', async () => {
+  it('clears session only on false or 401', async () => {
+    const cleared = vi.fn();
+    const unsub = state.onSessionCleared(cleared);
+
     queue({ authenticated: false });
     await expect(state.checkSession()).resolves.toBe(false);
-    solid.flush();
     expect(state.sessionStatus()).toBe('unauthenticated');
+    expect(cleared).toHaveBeenCalledTimes(1);
 
     state.markAuthenticated();
-    solid.flush();
-    queue({ error: 'RequestFailed' }, 500);
+    queue({ error: 'Unauthorized' }, 401);
     await expect(state.checkSession()).resolves.toBe(false);
-    solid.flush();
     expect(state.sessionStatus()).toBe('unauthenticated');
+    expect(cleared).toHaveBeenCalledTimes(2);
+    unsub();
+  });
+
+  it('coalesces concurrent checkSession calls into one in-flight request', async () => {
+    let resolveSession: (res: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveSession = resolve;
+        })
+    );
+
+    const first = state.checkSession();
+    const second = state.checkSession();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    resolveSession(json({ authenticated: true }));
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    solid.flush();
+    expect(state.sessionStatus()).toBe('authenticated');
   });
 });
 
-describe('session teardown', () => {
-  it('signs out and clears local session state', async () => {
+describe('session probe error handling', () => {
+  it('moves to error without clearing session on 500 or NetworkError and recovers on retry', async () => {
+    const cleared = vi.fn();
+    const unsub = state.onSessionCleared(cleared);
     state.markAuthenticated();
-    solid.flush();
-    queueEmpty();
 
+    queue({ error: 'RequestFailed' }, 500);
+    await expect(state.checkSession()).resolves.toBe(false);
+    expect(state.sessionStatus()).toBe('error');
+    expect(state.sessionErrorCode()).toBe('RequestFailed');
+    expect(cleared).not.toHaveBeenCalled();
+
+    fetchMock.mockRejectedValueOnce(new TypeError('offline'));
+    await expect(state.checkSession()).resolves.toBe(false);
+    expect(state.sessionStatus()).toBe('error');
+    expect(state.sessionErrorCode()).toBe('NetworkError');
+    expect(cleared).not.toHaveBeenCalled();
+
+    queue({ authenticated: true });
+    await expect(state.checkSession()).resolves.toBe(true);
+    expect(state.sessionStatus()).toBe('authenticated');
+    expect(state.sessionErrorCode()).toBeNull();
+    unsub();
+  });
+});
+
+const seedSettings = async (): Promise<void> => {
+  queue({
+    retention: 50,
+    provider: 'direct',
+    jinaKeyConfigured: false,
+    browserEndpointConfigured: false,
+  });
+  queue({ running: true, items: [] });
+  await state.loadSettings();
+  solid.flush();
+};
+
+describe('session signOut', () => {
+  it('signs out and clears local session state', async () => {
+    const cleared = vi.fn();
+    const unsub = state.onSessionCleared(cleared);
+    state.markAuthenticated();
+    await seedSettings();
+    expect(state.settings()).not.toBeNull();
+    expect(state.kindleRunning()).toBe(true);
+
+    queueEmpty();
     await state.signOut();
     solid.flush();
 
-    expect(requestUrl()).toBe('/api/auth/logout');
-    expect(requestInit().method).toBe('POST');
+    expect(requestUrl(2)).toBe('/api/auth/logout');
+    expect(requestInit(2).method).toBe('POST');
     expect(state.sessionStatus()).toBe('unauthenticated');
+    expect(cleared).toHaveBeenCalledTimes(1);
+    expect(state.settings()).toBeNull();
+    expect(state.kindleRunning()).toBe(false);
+    unsub();
   });
+});
 
-  it('flips to unauthenticated on any non-login 401', async () => {
+describe('session 401 handling', () => {
+  it('flips to unauthenticated and clears session state on any non-login 401', async () => {
+    const cleared = vi.fn();
+    const unsub = state.onSessionCleared(cleared);
     state.markAuthenticated();
-    solid.flush();
+    await seedSettings();
 
     queue({ error: 'Unauthorized' }, 401);
     await expect(api.feedsApi.list()).rejects.toMatchObject({
@@ -92,5 +164,35 @@ describe('session teardown', () => {
     solid.flush();
 
     expect(state.sessionStatus()).toBe('unauthenticated');
+    expect(cleared).toHaveBeenCalledTimes(1);
+    expect(state.settings()).toBeNull();
+    unsub();
+  });
+
+  it('ignores a delayed 401 from an obsolete auth generation after re-login', async () => {
+    state.markAuthenticated();
+    let resolveStale: (res: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveStale = resolve;
+        })
+    );
+    const staleRequest = api.feedsApi.list();
+
+    state.markUnauthenticated();
+    state.markAuthenticated();
+    await seedSettings();
+
+    const cleared = vi.fn();
+    const unsub = state.onSessionCleared(cleared);
+    resolveStale(json({ error: 'Unauthorized' }, 401));
+    await expect(staleRequest).rejects.toMatchObject({ code: 'Unauthorized' });
+    solid.flush();
+
+    expect(state.sessionStatus()).toBe('authenticated');
+    expect(state.settings()).not.toBeNull();
+    expect(cleared).not.toHaveBeenCalled();
+    unsub();
   });
 });

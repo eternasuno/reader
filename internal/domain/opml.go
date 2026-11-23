@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"net/url"
 	"slices"
 	"strings"
 )
@@ -64,18 +65,20 @@ func (s *opmlWalkState) walk(outlines []opmlXMLOutline, folder *string) {
 
 func (s *opmlWalkState) processOutline(outline opmlXMLOutline, folder *string) {
 	rawXMLURL, hasXMLURL := opmlAttribute(outline.Attrs, "xmlUrl")
-	if !hasXMLURL {
-		if isInvalidEmptyRSSOutline(outline) {
-			// A feed outline without any url is invalid; it must not become a folder.
-			s.document.SkippedInvalid++
-			return
-		}
+	if hasXMLURL {
+		s.addFeed(outline, rawXMLURL, folder)
+		s.walk(outline.Outlines, folder)
 
-		s.walk(outline.Outlines, opmlFolderName(outline, folder, &s.document, s.seenFolders))
 		return
 	}
 
-	s.addFeed(outline, rawXMLURL, folder)
+	if isInvalidEmptyRSSOutline(outline) {
+		// A feed outline without any url is invalid; it must not become a folder.
+		s.document.SkippedInvalid++
+		return
+	}
+
+	s.walk(outline.Outlines, opmlFolderName(outline, folder, &s.document, s.seenFolders))
 }
 
 func isInvalidEmptyRSSOutline(outline opmlXMLOutline) bool {
@@ -234,7 +237,7 @@ func ExportOPML(folders []OPMLExportFolder, topFeeds []Feed) ([]byte, error) {
 func opmlSortedFolders(folders []OPMLExportFolder) []OPMLExportFolder {
 	sorted := make([]OPMLExportFolder, len(folders))
 	for i, folder := range folders {
-		sorted[i] = OPMLExportFolder{Name: folder.Name, Feeds: opmlSortedFeeds(folder.Feeds)}
+		sorted[i] = OPMLExportFolder{Name: redactOPMLLabel(folder.Name), Feeds: opmlSortedFeeds(folder.Feeds)}
 	}
 
 	slices.SortFunc(sorted, func(a, b OPMLExportFolder) int {
@@ -246,7 +249,11 @@ func opmlSortedFolders(folders []OPMLExportFolder) []OPMLExportFolder {
 
 func opmlSortedFeeds(feeds []Feed) []Feed {
 	sorted := make([]Feed, len(feeds))
-	copy(sorted, feeds)
+	for i, feed := range feeds {
+		feed.Title = redactOPMLLabel(feed.Title)
+		sorted[i] = feed
+	}
+
 	slices.SortFunc(sorted, func(a, b Feed) int {
 		if byTitle := cmp.Compare(a.Title, b.Title); byTitle != 0 {
 			return byTitle
@@ -259,10 +266,12 @@ func opmlSortedFeeds(feeds []Feed) []Feed {
 }
 
 func opmlFeedOutline(feed Feed) opmlXMLOutline {
+	title := redactOPMLLabel(feed.Title)
+
 	return opmlXMLOutline{Attrs: []xml.Attr{
 		{Name: xml.Name{Local: "type"}, Value: "rss"},
-		{Name: xml.Name{Local: "text"}, Value: feed.Title},
-		{Name: xml.Name{Local: "title"}, Value: feed.Title},
+		{Name: xml.Name{Local: "text"}, Value: title},
+		{Name: xml.Name{Local: "title"}, Value: title},
 		{Name: xml.Name{Local: "xmlUrl"}, Value: feed.URL.RedactedString()},
 	}}
 }
@@ -273,6 +282,7 @@ func opmlFolderName(outline opmlXMLOutline, parent *string, document *OPMLDocume
 		name = opmlOptionalAttribute(outline.Attrs, "title")
 	}
 
+	name = redactOPMLLabel(name)
 	if name == "" {
 		return parent
 	}
@@ -291,11 +301,29 @@ func opmlFeedTitle(outline opmlXMLOutline, feedURL NormalizedURL) string {
 		title = opmlOptionalAttribute(outline.Attrs, "text")
 	}
 
+	title = redactOPMLLabel(title)
 	if title == "" {
 		title = feedURL.Host()
 	}
 
 	return title
+}
+
+func redactOPMLLabel(label string) string {
+	if label == "" {
+		return ""
+	}
+
+	if parsed, err := url.Parse(label); err == nil && parsed.User != nil {
+		switch strings.ToLower(parsed.Scheme) {
+		case "http", "https":
+			parsed.User = nil
+
+			return parsed.String()
+		}
+	}
+
+	return SanitizeErrorText(label)
 }
 
 func opmlOptionalAttribute(attrs []xml.Attr, name string) string {

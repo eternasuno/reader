@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings } from '../src/api';
 
 type StateModule = typeof import('../src/state');
@@ -10,14 +10,22 @@ let solid: typeof import('solid-js');
 let i18n: I18nModule;
 let ui: UiModule;
 let fetchMock: ReturnType<typeof vi.fn>;
+let disposeDrafts: (() => void) | undefined;
 
 const fresh = async (): Promise<void> => {
+  disposeDrafts?.();
   vi.resetModules();
   solid = await import('solid-js');
   i18n = await import('../src/i18n');
   ui = await import('../src/ui');
   state = await import('../src/state');
+  disposeDrafts = state.mountSettingsDrafts();
 };
+
+afterEach(() => {
+  disposeDrafts?.();
+  disposeDrafts = undefined;
+});
 
 beforeEach(async () => {
   fetchMock = vi.fn();
@@ -152,5 +160,50 @@ describe('provider save', () => {
     expect(ui.currentToast()?.message).toBe(
       i18n.translateErrorCode('BrowserEndpointRequired')
     );
+  });
+});
+
+describe('save lock ownership across sessions', () => {
+  it('prevents an old in-flight save from releasing a newer session lock', async () => {
+    state.markAuthenticated();
+    await load();
+    state.setRetentionDraft(50);
+    solid.flush();
+
+    let resolveOld: (res: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (resolveOld = resolve))
+    );
+    const oldSave = state.saveRetention();
+    solid.flush();
+    expect(state.savingAction()).toBe('retention');
+
+    state.markUnauthenticated();
+    state.markAuthenticated();
+    disposeDrafts = state.mountSettingsDrafts();
+    await load();
+    state.setProviderDraft('jina');
+    solid.flush();
+
+    let resolveNew: (res: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (resolveNew = resolve))
+    );
+    const newSave = state.saveProvider();
+    solid.flush();
+    expect(state.savingAction()).toBe('provider');
+
+    resolveOld(noContent());
+    await expect(oldSave).resolves.toBe(false);
+    solid.flush();
+    expect(state.isSaving()).toBe(true);
+    expect(state.savingAction()).toBe('provider');
+    expect(state.settings()?.retention).toBe(100);
+
+    resolveNew(noContent());
+    await expect(newSave).resolves.toBe(true);
+    solid.flush();
+    expect(state.isSaving()).toBe(false);
+    expect(state.savingAction()).toBeNull();
   });
 });

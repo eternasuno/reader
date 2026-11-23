@@ -21,7 +21,7 @@ type Harness = Awaited<ReturnType<typeof load>>;
 
 let h: Harness;
 let fetchMock: ReturnType<typeof vi.fn>;
-let disposers: Array<() => void> = [];
+const disposers: Array<() => void> = [];
 
 const SAVE_PATH = '/save?url=https%3A%2F%2Fexample.com%2Fpost';
 
@@ -64,6 +64,7 @@ const settle = async (times = 1): Promise<void> => {
 };
 
 const mountApp = (path: string) => {
+  for (const dispose of disposers.splice(0)) dispose();
   const history = h.router.memoryHistory(path);
   const router = h.routes.createAppRouter(history);
   const container = document.createElement('div');
@@ -125,10 +126,9 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  h?.ui.dismissToast();
+  for (const dispose of disposers.splice(0)) dispose();
   document.body.innerHTML = '';
+  h?.ui.dismissToast();
   vi.restoreAllMocks();
 });
 
@@ -158,12 +158,11 @@ describe('quick save page', () => {
     expect(history.get()).toBe('/later/page-1');
   });
 
-  it('opens the existing page when the URL is already saved', async () => {
+  it('opens the existing page by conflict id when the URL is already saved', async () => {
     respond((url, init) => {
       if (url === '/api/saved-pages' && init.method === 'POST')
-        return json({ error: 'SavedPageAlreadyExists' }, 409);
-      if (url.startsWith('/api/saved-pages/lookup'))
-        return json({ item: savedPage() });
+        return json({ error: 'SavedPageAlreadyExists', id: 'page-1' }, 409);
+      if (url === '/api/saved-pages/page-1') return json({ item: savedPage() });
 
       return undefined;
     });
@@ -173,8 +172,10 @@ describe('quick save page', () => {
     submitForm(container);
     await settle(4);
 
-    expect(hasUrl('/api/saved-pages/lookup?url=')).toBe(true);
+    expect(hasUrl('/api/saved-pages/lookup')).toBe(false);
+    expect(hasUrl('/api/saved-pages/page-1')).toBe(true);
     expect(history.get()).toBe('/later/page-1');
+    expect(h.ui.currentToast()).toBeNull();
   });
 });
 

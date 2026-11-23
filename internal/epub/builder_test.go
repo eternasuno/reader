@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"slices"
@@ -88,12 +91,12 @@ func TestBuildBooksProducesSingleValidBook(t *testing.T) {
 	}
 
 	book := books[0]
-	if book.Title != "留白 2026-03-15" {
-		t.Fatalf("Title = %q, want %q", book.Title, "留白 2026-03-15")
+	if book.Title != "拾叶 2026-03-15" {
+		t.Fatalf("Title = %q, want %q", book.Title, "拾叶 2026-03-15")
 	}
 
-	if book.Filename != "liubai-2026-03-15.epub" {
-		t.Fatalf("Filename = %q, want %q", book.Filename, "liubai-2026-03-15.epub")
+	if book.Filename != "leaf-2026-03-15.epub" {
+		t.Fatalf("Filename = %q, want %q", book.Filename, "leaf-2026-03-15.epub")
 	}
 
 	if book.ArticleCount != 2 {
@@ -153,7 +156,7 @@ func TestBuildBooksProducesSingleValidBook(t *testing.T) {
 	}
 
 	opf := string(entryBody(t, entryByName(t, reader, "OEBPS/content.opf")))
-	if !strings.Contains(opf, "<dc:title>留白 2026-03-15</dc:title>") {
+	if !strings.Contains(opf, "<dc:title>拾叶 2026-03-15</dc:title>") {
 		t.Fatalf("content.opf missing book title:\n%s", opf)
 	}
 
@@ -187,9 +190,9 @@ func TestBuildBooksProducesSingleValidBook(t *testing.T) {
 func TestBuildBooksEmbedsSupportedImagesAndStripsOthers(t *testing.T) {
 	t.Parallel()
 
-	pngData := []byte("\x89PNG\r\n\x1a\npng-bytes")
-	jpgData := []byte("\xff\xd8\xffjpg-bytes")
-	gifData := []byte("GIF89agif-bytes")
+	pngData := encodeTestPNG(t, 16, 16)
+	jpgData := encodeTestJPEG(t, 16, 16)
+	gifData := encodeTestGIF(t, 16, 16)
 	fetcher := newFakeImageFetcher(map[string]fakeImage{
 		"https://example.com/a.png":  {data: pngData, mediaType: "image/png"},
 		"https://example.com/b.jpg":  {data: jpgData, mediaType: "image/jpeg"},
@@ -396,8 +399,8 @@ func TestBuildBooksSplitsOversizedLibrariesInOrder(t *testing.T) {
 		t.Fatalf("BuildBooks() returned %d books, want 2", len(books))
 	}
 
-	wantTitles := []string{"留白 2026-03-15 (1/2)", "留白 2026-03-15 (2/2)"}
-	wantFilenames := []string{"liubai-2026-03-15-1.epub", "liubai-2026-03-15-2.epub"}
+	wantTitles := []string{"拾叶 2026-03-15 (1/2)", "拾叶 2026-03-15 (2/2)"}
+	wantFilenames := []string{"leaf-2026-03-15-1.epub", "leaf-2026-03-15-2.epub"}
 	wantSavedPageIDs := [][]string{{"article-1", "article-2"}, {}}
 	wantFeedItemIDs := [][]string{{}, {"article-3", "article-4"}}
 	wantChapterTitles := [][]string{{"第一篇", "第二篇"}, {"第三篇", "第四篇"}}
@@ -478,9 +481,11 @@ func TestBuildBooksRetriesTextOnlyForOversizedImage(t *testing.T) {
 
 	const maxBytes = 64 * 1024
 
+	// Each 95x95 uncompressed PNG is ~36 KiB (<= 128 KiB, <= 1200x1600), so
+	// both keep original size and together exceed maxBytes.
 	fetcher := newFakeImageFetcher(map[string]fakeImage{
-		"https://example.com/huge-1.png": {data: randomBytes(t, 48*1024), mediaType: "image/png"},
-		"https://example.com/huge-2.png": {data: randomBytes(t, 48*1024), mediaType: "image/png"},
+		"https://example.com/huge-1.png": {data: encodeTestPNG(t, 95, 95), mediaType: "image/png"},
+		"https://example.com/huge-2.png": {data: encodeTestPNG(t, 95, 95), mediaType: "image/png"},
 	})
 	articles := []domain.KindleArticle{{
 		ID:          "saved-1",
@@ -501,12 +506,12 @@ func TestBuildBooksRetriesTextOnlyForOversizedImage(t *testing.T) {
 	}
 
 	book := books[0]
-	if book.Title != "留白 2026-03-15" {
-		t.Fatalf("Title = %q, want %q", book.Title, "留白 2026-03-15")
+	if book.Title != "拾叶 2026-03-15" {
+		t.Fatalf("Title = %q, want %q", book.Title, "拾叶 2026-03-15")
 	}
 
-	if book.Filename != "liubai-2026-03-15.epub" {
-		t.Fatalf("Filename = %q, want %q", book.Filename, "liubai-2026-03-15.epub")
+	if book.Filename != "leaf-2026-03-15.epub" {
+		t.Fatalf("Filename = %q, want %q", book.Filename, "leaf-2026-03-15.epub")
 	}
 
 	if len(book.Data) > maxBytes {
@@ -550,7 +555,7 @@ func TestBuildBooksFetchesFailedImageOnceAcrossSplits(t *testing.T) {
 	)
 
 	fetcher := newFakeImageFetcher(map[string]fakeImage{
-		okURL: {data: []byte("\x89PNG\r\n\x1a\npng-bytes"), mediaType: "image/png"},
+		okURL: {data: encodeTestPNG(t, 16, 16), mediaType: "image/png"},
 	})
 
 	articles := make([]domain.KindleArticle, 4)
@@ -600,7 +605,7 @@ func TestBuildBooksKeepsNumberedBooksWithinLimit(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	baseTitle := "留白 2026-03-15"
+	baseTitle := "拾叶 2026-03-15"
 	articles := make([]domain.KindleArticle, 4)
 	for i := range articles {
 		articles[i] = domain.KindleArticle{
@@ -611,18 +616,17 @@ func TestBuildBooksKeepsNumberedBooksWithinLimit(t *testing.T) {
 		}
 	}
 
-	builder := NewBuilder(Config{})
-	pairDraft, err := builder.buildDraft(ctx, articles[:2], true, newImageCache(builder.maxEPUBBytes))
+	chapters, err := parseChapters(ctx, articles[:2])
 	if err != nil {
-		t.Fatalf("buildDraft() error = %v", err)
+		t.Fatalf("parseChapters() error = %v", err)
 	}
 
-	unnumbered, err := renderEPUB(baseTitle, pairDraft)
+	unnumbered, err := renderEPUB(ctx, baseTitle, chapters, nil, false)
 	if err != nil {
 		t.Fatalf("renderEPUB() error = %v", err)
 	}
 
-	numbered, err := renderEPUB(baseTitle+" (1/2)", pairDraft)
+	numbered, err := renderEPUB(ctx, baseTitle+" (1/2)", chapters, nil, false)
 	if err != nil {
 		t.Fatalf("renderEPUB() error = %v", err)
 	}
@@ -656,7 +660,7 @@ func TestBuildBooksRejectsOversizedSingleImageInFirstDraft(t *testing.T) {
 		bigURL   = "https://example.com/huge.png"
 	)
 
-	bigImage := append([]byte("\x89PNG\r\n\x1a\n"), randomBytes(t, maxBytes+1024)...)
+	bigImage := encodeTestPNG(t, 140, 140)
 	fetcher := newFakeImageFetcher(map[string]fakeImage{
 		bigURL: {data: bigImage, mediaType: "image/png"},
 	})
@@ -723,6 +727,376 @@ func TestBuildBooksDownscalesAndCompressesLargeImages(t *testing.T) {
 	if format != "jpeg" || cfg.Width != 1200 || cfg.Height != 900 {
 		t.Fatalf("decoded format=%q size=%dx%d, want jpeg 1200x900", format, cfg.Width, cfg.Height)
 	}
+}
+
+func TestBuildBooksStripsMalformedAndOverDimensionImages(t *testing.T) {
+	t.Parallel()
+
+	// GIF header declaring 0x0 dimensions (unsized GIF).
+	unsizedGIF := []byte("GIF89a\x00\x00\x00\x00\x00\x00\x00;")
+	// Valid PNG header declaring 7000x10 dimensions (> maxImageDecodeDimension).
+	overDimPNG := encodeTestPNG(t, 16, 16)
+	// Patch IHDR width (bytes 16..19) to 7000 (0x00001B58) -> DecodeConfig fails cap, never decoded.
+	overDimPNG[16], overDimPNG[17], overDimPNG[18], overDimPNG[19] = 0x00, 0x00, 0x1b, 0x58
+
+	validPNG := encodeTestPNG(t, 16, 16)
+
+	fetcher := newFakeImageFetcher(map[string]fakeImage{
+		"https://example.com/bad.png":     {data: []byte("\x89PNG\r\n\x1a\nnot-a-png"), mediaType: "image/png"},
+		"https://example.com/bad.jpg":     {data: []byte("\xff\xd8\xffnot-a-jpg"), mediaType: "image/jpeg"},
+		"https://example.com/unsized.gif": {data: unsizedGIF, mediaType: "image/gif"},
+		"https://example.com/huge.png":    {data: overDimPNG, mediaType: "image/png"},
+		"https://example.com/ok.png":      {data: validPNG, mediaType: "image/png"},
+	})
+
+	articles := []domain.KindleArticle{{
+		ID:       "article-1",
+		URL:      "https://example.com/posts/1",
+		Title:    "校验图片",
+		HTMLBody: `<img src="https://example.com/bad.png"><img src="https://example.com/bad.jpg"><img src="https://example.com/unsized.gif"><img src="https://example.com/huge.png"><img src="https://example.com/ok.png">`,
+	}}
+
+	books, err := NewBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", articles)
+	if err != nil {
+		t.Fatalf("BuildBooks() error = %v", err)
+	}
+
+	reader := openArchive(t, books[0].Data)
+	chapter := string(entryBody(t, entryByName(t, reader, "OEBPS/chapters/chapter-0001.xhtml")))
+	if strings.Count(chapter, "<img") != 1 || !strings.Contains(chapter, `src="../images/img-0001.png"`) {
+		t.Fatalf("expected only ok.png embedded, got:\n%s", chapter)
+	}
+}
+
+func TestDecodeBudgetBoundsConcurrentDecodes(t *testing.T) {
+	t.Parallel()
+
+	budget := newDecodeBudget(20 << 20)
+	if budget.acquire(context.Background(), 25<<20) {
+		t.Fatal("expected acquire exceeding limit to return false")
+	}
+
+	if !budget.acquire(context.Background(), 12<<20) {
+		t.Fatal("expected first acquire to succeed")
+	}
+
+	secondDone := make(chan bool, 1)
+	go func() {
+		secondDone <- budget.acquire(context.Background(), 12<<20)
+	}()
+
+	select {
+	case got := <-secondDone:
+		t.Fatalf("second acquire returned %v before first released", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	budget.release(12 << 20)
+
+	select {
+	case got := <-secondDone:
+		if !got {
+			t.Fatal("second acquire returned false after release")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second acquire did not wake after release")
+	}
+}
+
+func TestEstimateDecodeBytesChargesSixteenBitPNGAtEightBytesPerPixel(t *testing.T) {
+	t.Parallel()
+
+	const side = 1000
+
+	pixels := int64(side) * int64(side)
+	dstBytes := pixels * bytesPerRGBAPixel
+
+	tests := []struct {
+		name      string
+		canvas    image.Image
+		wantBPP   int64
+		wantModel color.Model
+	}{
+		{name: "NRGBA 8-bit", canvas: image.NewNRGBA(image.Rect(0, 0, side, side)), wantBPP: 4, wantModel: color.NRGBAModel},
+		{name: "RGBA 8-bit", canvas: opaqueRGBA(side, side), wantBPP: 4, wantModel: color.RGBAModel},
+		{name: "Gray 8-bit", canvas: image.NewGray(image.Rect(0, 0, side, side)), wantBPP: 4, wantModel: color.GrayModel},
+		{name: "NRGBA 16-bit", canvas: image.NewNRGBA64(image.Rect(0, 0, side, side)), wantBPP: 8, wantModel: color.NRGBA64Model},
+		{name: "RGBA 16-bit", canvas: opaqueRGBA64(side, side), wantBPP: 8, wantModel: color.RGBA64Model},
+		{name: "Gray 16-bit", canvas: image.NewGray16(image.Rect(0, 0, side, side)), wantBPP: 8, wantModel: color.Gray16Model},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			if err := png.Encode(&buf, tt.canvas); err != nil {
+				t.Fatalf("png.Encode() error = %v", err)
+			}
+
+			cfg, valid := validateImageConfig(buf.Bytes(), pngFormat)
+			if !valid {
+				t.Fatal("validateImageConfig() rejected a valid PNG")
+			}
+
+			if cfg.ColorModel != tt.wantModel {
+				t.Fatalf("DecodeConfig color model = %v, want %v", cfg.ColorModel, tt.wantModel)
+			}
+
+			got := estimateDecodeBytes(pngFormat, buf.Bytes(), cfg, side, side)
+			if minimum := pixels*tt.wantBPP + dstBytes; got < minimum {
+				t.Fatalf("estimateDecodeBytes() = %d, want at least %d (%d bytes/pixel source plus target)", got, minimum, tt.wantBPP)
+			}
+
+			if expected := pixels*tt.wantBPP + dstBytes + pngDecoderOverheadBytes + 2*(side*tt.wantBPP+1); got != expected {
+				t.Fatalf("estimateDecodeBytes() = %d, want %d including decoder workspace", got, expected)
+			}
+		})
+	}
+}
+
+func TestBuildBooksChargesSixteenBitPNGAgainstDecodeBudget(t *testing.T) {
+	t.Parallel()
+
+	const side = 1000
+
+	// 8-bit costs about 8.5 MB (4 B/px source + 4 B/px target + workspace) and
+	// 16-bit about 12.5 MB, so this budget admits only the 8-bit image.
+	const budget = 10 << 20
+
+	eightBit := image.NewNRGBA(image.Rect(0, 0, side, side))
+	sixteenBit := image.NewNRGBA64(image.Rect(0, 0, side, side))
+
+	for _, pix := range [][]byte{eightBit.Pix, sixteenBit.Pix} {
+		if _, err := rand.Read(pix); err != nil {
+			t.Fatalf("rand.Read() error = %v", err)
+		}
+	}
+
+	encode := func(canvas image.Image) []byte {
+		var buf bytes.Buffer
+		if err := (&png.Encoder{CompressionLevel: png.NoCompression}).Encode(&buf, canvas); err != nil {
+			t.Fatalf("png.Encode() error = %v", err)
+		}
+
+		return buf.Bytes()
+	}
+
+	fetcher := newFakeImageFetcher(map[string]fakeImage{
+		"https://example.com/eight.png":   {data: encode(eightBit), mediaType: "image/png"},
+		"https://example.com/sixteen.png": {data: encode(sixteenBit), mediaType: "image/png"},
+	})
+	articles := []domain.KindleArticle{{
+		ID:       "article-1",
+		URL:      "https://example.com/posts/1",
+		Title:    "位深",
+		HTMLBody: `<p>正文</p><img src="https://example.com/eight.png"><img src="https://example.com/sixteen.png">`,
+	}}
+
+	books, err := NewBuilder(Config{ImageFetcher: fetcher, ImageDecodeMemoryBudget: budget}).BuildBooks(context.Background(), "2026-03-15", articles)
+	if err != nil {
+		t.Fatalf("BuildBooks() error = %v", err)
+	}
+
+	chapter := string(entryBody(t, entryByName(t, openArchive(t, books[0].Data), "OEBPS/chapters/chapter-0001.xhtml")))
+	if strings.Count(chapter, "<img") != 1 {
+		t.Fatalf("expected only the 8-bit image embedded within the %d byte budget, got:\n%s", budget, chapter)
+	}
+}
+
+func TestEstimateDecodeBytesChargesProgressiveJPEGCoefficients(t *testing.T) {
+	t.Parallel()
+
+	const side = 1000
+
+	baseline := encodeTestJPEG(t, side, side)
+	progressive := progressiveTestJPEG(t, baseline)
+
+	cfg, valid := validateImageConfig(baseline, jpegFormat)
+	if !valid {
+		t.Fatal("validateImageConfig() rejected a valid JPEG")
+	}
+
+	progressiveCfg, valid := validateImageConfig(progressive, jpegFormat)
+	if !valid {
+		t.Fatal("validateImageConfig() rejected a progressive JPEG header")
+	}
+
+	pixels := int64(side) * int64(side)
+	baselineBytes := estimateDecodeBytes(jpegFormat, baseline, cfg, side, side)
+	progressiveBytes := estimateDecodeBytes(jpegFormat, progressive, progressiveCfg, side, side)
+
+	// Three components keep 4 bytes per pixel each in coefficient blocks.
+	if want := baselineBytes + 3*jpegCoefficientBytesPerPixel*pixels; progressiveBytes != want {
+		t.Fatalf("progressive estimate = %d, want baseline %d plus coefficient blocks = %d", progressiveBytes, baselineBytes, want)
+	}
+
+	if baselineBytes < pixels*3 {
+		t.Fatalf("baseline estimate = %d, want at least 3 bytes per pixel", baselineBytes)
+	}
+}
+
+func TestJPEGProgressiveDetection(t *testing.T) {
+	t.Parallel()
+
+	baseline := encodeTestJPEG(t, 16, 16)
+
+	tests := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{name: "baseline encoder output", data: baseline, want: false},
+		{name: "progressive SOF2", data: progressiveTestJPEG(t, baseline), want: true},
+		{name: "baseline SOF0 after a skipped segment and fill bytes", data: []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xff, 0xff, 0xc0, 0x00, 0x00}, want: false},
+		{name: "extended sequential SOF1", data: []byte{0xff, 0xd8, 0xff, 0xc1, 0x00, 0x00}, want: false},
+		{name: "progressive SOF2 after a skipped segment", data: []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc2, 0x00, 0x00}, want: true},
+		{name: "unparsable bytes count as progressive", data: []byte{0xff, 0xd8, 0x00, 0x00, 0x00, 0x00}, want: true},
+		{name: "no frame header counts as progressive", data: []byte{0xff, 0xd8, 0xff, 0xd9}, want: true},
+		{name: "empty input counts as progressive", data: nil, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := jpegProgressive(tt.data); got != tt.want {
+				t.Fatalf("jpegProgressive() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// opaqueRGBA and opaqueRGBA64 are fully opaque so the PNG encoder emits
+// truecolor without alpha, which decodes to the RGBA models.
+func opaqueRGBA(width int, height int) *image.RGBA {
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	for i := range canvas.Pix {
+		canvas.Pix[i] = 0xff
+	}
+
+	return canvas
+}
+
+func opaqueRGBA64(width int, height int) *image.RGBA64 {
+	canvas := image.NewRGBA64(image.Rect(0, 0, width, height))
+	for i := range canvas.Pix {
+		canvas.Pix[i] = 0xff
+	}
+
+	return canvas
+}
+
+// progressiveTestJPEG relabels the frame header of a baseline JPEG as
+// progressive; only its header is ever read, never its scan data.
+func progressiveTestJPEG(t *testing.T, baseline []byte) []byte {
+	t.Helper()
+
+	index := bytes.Index(baseline, []byte{0xff, 0xc0})
+	if index < 0 {
+		t.Fatal("baseline JPEG has no SOF0 marker")
+	}
+
+	progressive := bytes.Clone(baseline)
+	progressive[index+1] = 0xc2
+
+	return progressive
+}
+
+type blockingImageFetcher struct {
+	fastURL  string
+	fastData []byte
+	slowURL  string
+	gate     <-chan struct{}
+}
+
+func (f *blockingImageFetcher) FetchImage(ctx context.Context, rawURL string) ([]byte, string, string, error) {
+	if rawURL == f.fastURL {
+		return f.fastData, "image/png", ".png", nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, "", "", ctx.Err()
+	case <-f.gate:
+		return f.fastData, "image/png", ".png", nil
+	}
+}
+
+func TestBuildBooksImagePrepDeadlineFallsBackWithoutFailingBook(t *testing.T) {
+	t.Parallel()
+
+	gate := make(chan struct{})
+	defer close(gate)
+
+	fetcher := &blockingImageFetcher{
+		fastURL:  "https://example.com/fast.png",
+		fastData: encodeTestPNG(t, 16, 16),
+		slowURL:  "https://example.com/slow.png",
+		gate:     gate,
+	}
+
+	articles := []domain.KindleArticle{{
+		ID:       "article-1",
+		URL:      "https://example.com/posts/1",
+		Title:    "超时回退",
+		HTMLBody: `<p>正文</p><img src="https://example.com/fast.png"><img src="https://example.com/slow.png">`,
+	}}
+
+	books, err := NewBuilder(Config{
+		ImageFetcher:     fetcher,
+		ImagePrepTimeout: 30 * time.Millisecond,
+	}).BuildBooks(context.Background(), "2026-03-15", articles)
+	if err != nil {
+		t.Fatalf("BuildBooks() error = %v, want fallback without error", err)
+	}
+
+	reader := openArchive(t, books[0].Data)
+	chapter := string(entryBody(t, entryByName(t, reader, "OEBPS/chapters/chapter-0001.xhtml")))
+	if strings.Count(chapter, "<img") != 1 || !strings.Contains(chapter, `src="../images/img-0001.png"`) {
+		t.Fatalf("expected fast.png kept and slow.png stripped, got:\n%s", chapter)
+	}
+}
+
+func TestBuildBooksPropagatesParentContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := NewBuilder(Config{}).BuildBooks(ctx, "2026-03-15", []domain.KindleArticle{{
+		ID:       "article-1",
+		Title:    "已取消",
+		HTMLBody: "<p>hello</p>",
+	}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("BuildBooks() error = %v, want context.Canceled", err)
+	}
+}
+
+func encodeTestJPEG(t *testing.T, width int, height int) []byte {
+	t.Helper()
+
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, canvas, &jpeg.Options{Quality: 75}); err != nil {
+		t.Fatalf("jpeg.Encode() error = %v", err)
+	}
+
+	return buf.Bytes()
+}
+
+func encodeTestGIF(t *testing.T, width int, height int) []byte {
+	t.Helper()
+
+	palette := color.Palette{color.Black, color.White}
+	canvas := image.NewPaletted(image.Rect(0, 0, width, height), palette)
+	var buf bytes.Buffer
+	if err := gif.Encode(&buf, canvas, nil); err != nil {
+		t.Fatalf("gif.Encode() error = %v", err)
+	}
+
+	return buf.Bytes()
 }
 
 func encodeTestPNG(t *testing.T, width int, height int) []byte {

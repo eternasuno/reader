@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS feed_item (
 
 CREATE INDEX IF NOT EXISTS feed_item_read_id ON feed_item (read, id);
 CREATE INDEX IF NOT EXISTS feed_item_feed_id ON feed_item (feed_id, id);
+CREATE INDEX IF NOT EXISTS feed_item_feed_id_url ON feed_item (feed_id, id, url);
 CREATE INDEX IF NOT EXISTS feed_item_feed_read_id ON feed_item (feed_id, read, id);
 
 CREATE TABLE IF NOT EXISTS saved_page (

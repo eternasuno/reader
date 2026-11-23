@@ -29,6 +29,7 @@ export function ArticleListBody(props: ArticleListBodyProps): JSX.Element {
     <VirtualList
       items={props.rows}
       estimateSize={136}
+      activeKey={props.openArticleId}
       activeIndex={activeIndex()}
       onEndReached={() => void loadNextPage()}
       class="min-h-0 flex-1"

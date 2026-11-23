@@ -205,21 +205,8 @@ func TestURLParseNormalizedInvalid(t *testing.T) {
 	requireDomainError(t, err, ErrInvalidPageUrl)
 }
 
-func TestURLFromStored(t *testing.T) {
+func TestParseStoredNormalizedURL(t *testing.T) {
 	t.Parallel()
-
-	stored := NormalizedURLFromStored("https://user:secret@example.com/feed#frag")
-	if stored.Raw() != "https://user:secret@example.com/feed" {
-		t.Fatalf("raw = %q", stored.Raw())
-	}
-
-	if stored.RedactedString() != "https://example.com/feed" {
-		t.Fatalf("redacted = %q", stored.RedactedString())
-	}
-
-	if !stored.HasCredentials() {
-		t.Fatalf("expected credentials")
-	}
 
 	parsedStored, err := ParseStoredNormalizedURL("https://user:secret@example.com/feed")
 	if err != nil {
@@ -230,13 +217,8 @@ func TestURLFromStored(t *testing.T) {
 		t.Fatalf("parsed redacted = %q", parsedStored.RedactedString())
 	}
 
-	broken := NormalizedURLFromStored("not a url at all")
-	if broken.Raw() != "" || broken.RedactedString() != "" {
-		t.Fatalf("broken raw = %q redacted = %q", broken.Raw(), broken.RedactedString())
-	}
-
-	if !broken.HasCredentials() {
-		t.Fatalf("broken url should be marked unusable for external fetchers")
+	if !parsedStored.HasCredentials() {
+		t.Fatalf("expected credentials")
 	}
 
 	if _, err := ParseStoredNormalizedURL("not a url at all"); err == nil {
@@ -244,19 +226,49 @@ func TestURLFromStored(t *testing.T) {
 	} else {
 		requireDomainError(t, err, ErrFeedUrlInvalid)
 	}
+}
 
-	for _, input := range []string{
-		"http://user:pass@example.com:badport/feed",
-		"http://user name:secret marker@example.com/feed",
-	} {
-		malformed := NormalizedURLFromStored(input)
-		if malformed.RedactedString() != "" {
-			t.Fatalf("redacted should be empty for invalid stored url %q: %q", input, malformed.RedactedString())
+func TestOriginFromURL(t *testing.T) {
+	t.Parallel()
+
+	parse := func(raw string) Origin {
+		t.Helper()
+		parsed, err := ParseNormalizedURL(raw, ErrFeedUrlInvalid)
+		if err != nil {
+			t.Fatalf("parse %q: %v", raw, err)
 		}
 
-		if !malformed.HasCredentials() {
-			t.Fatalf("expected invalid stored url %q to flag credentials", input)
+		u, err := parsed.Parsed()
+		if err != nil {
+			t.Fatalf("parsed %q: %v", raw, err)
 		}
+
+		origin, ok := OriginFromURL(u)
+		if !ok {
+			t.Fatalf("OriginFromURL(%q) = false", raw)
+		}
+
+		return origin
+	}
+
+	if parse("HTTPS://Example.COM:443/a") != parse("https://example.com/b") {
+		t.Fatal("expected normalized default HTTPS port and lowercase host/scheme to match")
+	}
+
+	if parse("http://example.com:80/a") != parse("http://example.com/b") {
+		t.Fatal("expected normalized default HTTP port to match")
+	}
+
+	if parse("https://example.com:8443/a") == parse("https://example.com/a") {
+		t.Fatal("expected different port to differ")
+	}
+
+	if parse("https://example.com/a") == parse("http://example.com/a") {
+		t.Fatal("expected different scheme to differ")
+	}
+
+	if _, ok := OriginFromURL(nil); ok {
+		t.Fatal("expected nil URL to return ok=false")
 	}
 }
 

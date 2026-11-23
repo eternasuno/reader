@@ -17,57 +17,10 @@ import (
 	"reader/internal/domain"
 )
 
-type stubSettings struct {
-	settings domain.Settings
-	err      error
-}
-
-func (s stubSettings) Get(ctx context.Context) (domain.Settings, error) {
-	return s.settings, s.err
-}
-
-func (s stubSettings) UpdateRetention(ctx context.Context, retention int) error {
-	return nil
-}
-
-func (s stubSettings) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
-	return nil
-}
-
-func (s stubSettings) UpdateJinaKey(ctx context.Context, key string) error {
-	return nil
-}
-
-func (s stubSettings) DeleteJinaKey(ctx context.Context) error {
-	return nil
-}
-
-func (s stubSettings) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
-	return nil
-}
-
-func (s stubSettings) DeleteBrowserEndpoint(ctx context.Context) error {
-	return nil
-}
-
-func (s stubSettings) UpdateSMTP(ctx context.Context, smtp domain.SMTPSettings) error {
-	return nil
-}
-
-func (s stubSettings) DeleteSMTPPassword(ctx context.Context) error {
-	return nil
-}
-
-func (s stubSettings) DeleteSMTP(ctx context.Context) error {
-	return nil
-}
-
-func (s stubSettings) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
-	return nil
-}
-
-func (s stubSettings) AdvanceNextSendAt(ctx context.Context, nextSendAt time.Time) error {
-	return nil
+func stubSettings(settings ExtractorSettings, err error) SettingsQuery {
+	return func(ctx context.Context) (ExtractorSettings, error) {
+		return settings, err
+	}
 }
 
 func ptr(value string) *string {
@@ -517,6 +470,16 @@ func TestFetchFeedErrors(t *testing.T) {
 		requireDomainCode(t, err, domain.ErrFetchFeedError)
 	})
 
+	t.Run("non 2xx skips body buffering", func(t *testing.T) {
+		client := New(Config{AllowPrivateNetwork: true, MaxBodyBytes: 1})
+		_, _, err := client.FetchFeed(context.Background(), mustNormalizedURL(t, server.URL+"/missing.xml"))
+		requireDomainCode(t, err, domain.ErrFetchFeedError)
+
+		if !strings.Contains(err.Error(), "unexpected status code 500") {
+			t.Fatalf("expected status code error before body read, got %v", err)
+		}
+	})
+
 	t.Run("body too large", func(t *testing.T) {
 		client := New(Config{AllowPrivateNetwork: true, MaxBodyBytes: 8})
 		_, _, err := client.FetchFeed(context.Background(), mustNormalizedURL(t, server.URL+"/large.xml"))
@@ -601,9 +564,25 @@ func TestFetchWebpageDirect(t *testing.T) {
 }
 
 func TestFetchWebpageSettingsError(t *testing.T) {
-	client := New(Config{AllowPrivateNetwork: true, Settings: stubSettings{err: errors.New("settings unavailable")}})
+	client := New(Config{AllowPrivateNetwork: true, Settings: stubSettings(ExtractorSettings{}, errors.New("settings unavailable"))})
 	_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
 	requireDomainCode(t, err, domain.ErrWebpageFetcherError)
+}
+
+func TestFetchStatusCheckedBeforeBufferingBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(strings.Repeat("x", 128)))
+	}))
+	defer server.Close()
+
+	client := New(Config{AllowPrivateNetwork: true, MaxBodyBytes: 8})
+	_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, server.URL+"/err"))
+	requireDomainCode(t, err, domain.ErrWebpageFetcherError)
+
+	if !strings.Contains(err.Error(), "unexpected status code 500") {
+		t.Fatalf("expected status error before reading oversize body, got: %v", err)
+	}
 }
 
 func TestFetchWebpageJina(t *testing.T) {
@@ -627,10 +606,8 @@ func TestFetchWebpageJina(t *testing.T) {
 	key := "  jina-secret-key  "
 	client := New(Config{
 		AllowPrivateNetwork: true,
-		Settings: stubSettings{
-			settings: domain.Settings{Provider: domain.ProviderJina, JinaKey: &key},
-		},
-		JinaBaseURL: server.URL,
+		Settings:            stubSettings(ExtractorSettings{Provider: domain.ProviderJina, JinaKey: &key}, nil),
+		JinaBaseURL:         server.URL,
 	})
 
 	body, finalURL, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/article"))
@@ -684,7 +661,7 @@ func TestFetchWebpageJinaWithoutKey(t *testing.T) {
 
 	client := New(Config{
 		AllowPrivateNetwork: true,
-		Settings:            stubSettings{settings: domain.Settings{Provider: domain.ProviderJina}},
+		Settings:            stubSettings(ExtractorSettings{Provider: domain.ProviderJina}, nil),
 		JinaBaseURL:         server.URL + "/",
 	})
 
@@ -707,7 +684,7 @@ func TestFetchWebpageJinaRefusesCredentials(t *testing.T) {
 
 	client := New(Config{
 		AllowPrivateNetwork: true,
-		Settings:            stubSettings{settings: domain.Settings{Provider: domain.ProviderJina}},
+		Settings:            stubSettings(ExtractorSettings{Provider: domain.ProviderJina}, nil),
 		JinaBaseURL:         server.URL,
 	})
 
@@ -727,12 +704,10 @@ func TestFetchWebpageBrowser(t *testing.T) {
 
 	client := New(Config{
 		AllowPrivateNetwork: true,
-		Settings: stubSettings{
-			settings: domain.Settings{
-				Provider:        domain.ProviderBrowser,
-				BrowserEndpoint: ptr("ws://browser.internal:9222"),
-			},
-		},
+		Settings: stubSettings(ExtractorSettings{
+			Provider:        domain.ProviderBrowser,
+			BrowserEndpoint: ptr("ws://browser.internal:9222"),
+		}, nil),
 		BrowserFetch: func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (string, string, error) {
 			called = true
 			gotEndpoint = endpoint
@@ -777,12 +752,10 @@ func TestFetchWebpageBrowserRefusesCredentials(t *testing.T) {
 	called := false
 	client := New(Config{
 		AllowPrivateNetwork: true,
-		Settings: stubSettings{
-			settings: domain.Settings{
-				Provider:        domain.ProviderBrowser,
-				BrowserEndpoint: ptr("ws://browser.internal:9222"),
-			},
-		},
+		Settings: stubSettings(ExtractorSettings{
+			Provider:        domain.ProviderBrowser,
+			BrowserEndpoint: ptr("ws://browser.internal:9222"),
+		}, nil),
 		BrowserFetch: func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (string, string, error) {
 			called = true
 
@@ -802,7 +775,7 @@ func TestFetchWebpageBrowserErrors(t *testing.T) {
 	t.Run("missing endpoint", func(t *testing.T) {
 		client := New(Config{
 			AllowPrivateNetwork: true,
-			Settings:            stubSettings{settings: domain.Settings{Provider: domain.ProviderBrowser}},
+			Settings:            stubSettings(ExtractorSettings{Provider: domain.ProviderBrowser}, nil),
 		})
 
 		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
@@ -816,12 +789,10 @@ func TestFetchWebpageBrowserErrors(t *testing.T) {
 	t.Run("invalid endpoint", func(t *testing.T) {
 		client := New(Config{
 			AllowPrivateNetwork: true,
-			Settings: stubSettings{
-				settings: domain.Settings{
-					Provider:        domain.ProviderBrowser,
-					BrowserEndpoint: ptr("ftp://browser.internal:21"),
-				},
-			},
+			Settings: stubSettings(ExtractorSettings{
+				Provider:        domain.ProviderBrowser,
+				BrowserEndpoint: ptr("ftp://browser.internal:21"),
+			}, nil),
 		})
 
 		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
@@ -832,12 +803,10 @@ func TestFetchWebpageBrowserErrors(t *testing.T) {
 		endpoint := "ws://token:browser-secret@browser.internal:9222/devtools/browser/abc"
 		client := New(Config{
 			AllowPrivateNetwork: true,
-			Settings: stubSettings{
-				settings: domain.Settings{
-					Provider:        domain.ProviderBrowser,
-					BrowserEndpoint: ptr(endpoint),
-				},
-			},
+			Settings: stubSettings(ExtractorSettings{
+				Provider:        domain.ProviderBrowser,
+				BrowserEndpoint: ptr(endpoint),
+			}, nil),
 			BrowserFetch: func(ctx context.Context, gotEndpoint string, targetURL string, timeout time.Duration) (string, string, error) {
 				return "", "", fmt.Errorf("could not dial %q: connection refused", endpoint)
 			},
@@ -855,12 +824,10 @@ func TestFetchWebpageBrowserErrors(t *testing.T) {
 		endpoint := "http://admin:secret@10.0.0.5:9222/devtools/browser/secret-path-token?api_key=secret-query-token"
 		client := New(Config{
 			AllowPrivateNetwork: true,
-			Settings: stubSettings{
-				settings: domain.Settings{
-					Provider:        domain.ProviderBrowser,
-					BrowserEndpoint: ptr(endpoint),
-				},
-			},
+			Settings: stubSettings(ExtractorSettings{
+				Provider:        domain.ProviderBrowser,
+				BrowserEndpoint: ptr(endpoint),
+			}, nil),
 			BrowserFetch: func(ctx context.Context, gotEndpoint string, targetURL string, timeout time.Duration) (string, string, error) {
 				return "", "", fmt.Errorf("could not connect to %s: dial tcp: connection refused", gotEndpoint)
 			},
@@ -880,12 +847,10 @@ func TestFetchWebpageBrowserErrors(t *testing.T) {
 		client := New(Config{
 			AllowPrivateNetwork: true,
 			MaxBodyBytes:        8,
-			Settings: stubSettings{
-				settings: domain.Settings{
-					Provider:        domain.ProviderBrowser,
-					BrowserEndpoint: ptr("ws://browser.internal:9222"),
-				},
-			},
+			Settings: stubSettings(ExtractorSettings{
+				Provider:        domain.ProviderBrowser,
+				BrowserEndpoint: ptr("ws://browser.internal:9222"),
+			}, nil),
 			BrowserFetch: func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (string, string, error) {
 				return strings.Repeat("x", 64), targetURL, nil
 			},

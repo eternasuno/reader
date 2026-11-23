@@ -21,37 +21,33 @@ const hiddenByStyle = (el: HTMLElement): boolean => {
   return window.getComputedStyle(el).display === 'none';
 };
 
-/** `LIB-VIEW-1`: a scroll container inside a CSS-hidden panel must never request more rows. */
-const isHidden = (el: HTMLElement): boolean => {
+/** `LIB-VIEW-1`: only panels visible via computed style and measured client height may paginate. */
+const isVisible = (el: HTMLElement): boolean => {
+  if (el.clientHeight <= 0) return false;
+
   let cur: HTMLElement | null = el;
   while (cur !== null) {
-    if (cur.classList.contains('hidden')) return true;
-    if (hiddenByStyle(cur)) return true;
+    if (hiddenByStyle(cur)) return false;
     cur = cur.parentElement;
   }
 
-  return false;
+  return true;
 };
 
-/** JSDOM (and hidden panels) report no geometry; only real scrolls may page. */
-const mayPage = (el: HTMLDivElement, fromScroll: boolean): boolean => {
-  if (isHidden(el)) return false;
-  return fromScroll || el.clientHeight !== 0 || el.scrollHeight !== 0;
-};
-
-/** End-of-list test; a zero-height viewport counts as "at the end". */
+/** End-of-list check using measured scroll geometry and computed panel visibility. */
 const isEndReached = (
-  mirrors: Mirrors,
+  el: HTMLDivElement | null,
   count: number,
   threshold: number
 ): boolean => {
-  if (mirrors.element === null || count === 0 || !mirrors.measured) {
-    return false;
-  }
-  const content = Math.max(mirrors.content, count * mirrors.estimate);
-  const viewport = mirrors.viewport;
-  if (viewport <= 0 || content <= viewport) return true;
-  return content - (mirrors.offset + viewport) <= threshold;
+  if (el === null || count === 0 || !isVisible(el)) return false;
+
+  const viewport = el.clientHeight;
+  const content = el.scrollHeight;
+  if (viewport <= 0 || content <= 0) return false;
+  if (content <= viewport) return true;
+
+  return content - (el.scrollTop + viewport) <= threshold;
 };
 
 /**
@@ -60,19 +56,9 @@ const isEndReached = (
  */
 class Mirrors {
   element: HTMLDivElement | null = null;
-  content = 0;
-  viewport = 0;
-  offset = 0;
   estimate = DEFAULT_ESTIMATE_SIZE;
   overscan = DEFAULT_OVERSCAN;
-  measured = false;
   triggered = -1;
-
-  sync(instance: ScrollVirtualizer): void {
-    this.content = instance.getTotalSize();
-    this.viewport = instance.scrollRect?.height ?? 0;
-    this.measured = true;
-  }
 
   configure(estimate: number, overscan: number): void {
     this.estimate = estimate;
@@ -83,28 +69,22 @@ class Mirrors {
     this.element = el;
   }
 
-  scrolled(el: HTMLDivElement): void {
-    this.offset = el.scrollTop;
-    this.viewport = el.clientHeight;
-  }
-
   markTriggered(count: number): void {
     this.triggered = count;
   }
 }
 
 /** Reactive mirrors of the virtualizer measurements, updated on change. */
-const useMeasurements = (mirrors: Mirrors) => {
+const useMeasurements = () => {
   const [rows, setRows] = createSignal<Array<VirtualItem>>([]);
   const [totalSize, setTotalSize] = createSignal(0);
   const [viewport, setViewport] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(0);
 
   const sync = (instance: ScrollVirtualizer) => {
-    mirrors.sync(instance);
     setRows(instance.getVirtualItems());
-    setTotalSize(mirrors.content);
-    setViewport(mirrors.viewport);
+    setTotalSize(instance.getTotalSize());
+    setViewport(instance.scrollRect?.height ?? 0);
   };
 
   return { rows, totalSize, viewport, scrollTop, setScrollTop, sync };
@@ -174,22 +154,17 @@ interface EndReachedInput {
   onEndReached: () => void;
 }
 
-const useEndReached = (
-  input: EndReachedInput
-): ((fromScroll: boolean) => void) => {
+const useEndReached = (input: EndReachedInput): (() => void) => {
   const { mirrors } = input;
-  const reached = () => isEndReached(mirrors, input.count(), input.threshold());
+  const reached = () =>
+    isEndReached(mirrors.element, input.count(), input.threshold());
 
   const nearEnd = createMemo(() => {
     input.deps();
     return reached();
   });
 
-  const check = (fromScroll: boolean): void => {
-    const el = mirrors.element;
-    if (el === null || !mayPage(el, fromScroll) || !reached()) return;
-
-    const count = input.count();
+  const trigger = (count: number): void => {
     if (count === 0 || count === mirrors.triggered) return;
     mirrors.markTriggered(count);
     input.onEndReached();
@@ -202,56 +177,35 @@ const useEndReached = (
         mirrors.markTriggered(-1);
         return;
       }
-      if (near) check(false);
+      if (near) trigger(count);
     }
   );
 
-  return check;
+  return () => {
+    if (reached()) trigger(input.count());
+  };
 };
 
-/**
- * JSDOM (and hidden panels) report a zero-height viewport. Render every row so
- * DOM tests can inspect the list, and so nothing silently disappears.
- */
-const useFallbackVisible = (
-  count: () => number,
-  rows: () => Array<VirtualItem>,
-  viewport: () => number,
-  element: () => HTMLDivElement | null
-): (() => boolean) =>
-  createMemo(() => {
-    if (count() === 0) return false;
-    if (element() === null) return true;
-    if (rows().length === 0) return true;
-    return viewport() === 0;
-  });
-
 const scrollHandler =
-  (
-    mirrors: Mirrors,
-    measurement: ReturnType<typeof useMeasurements>,
-    check: (fromScroll: boolean) => void
-  ) =>
+  (measurement: ReturnType<typeof useMeasurements>, check: () => void) =>
   (event: Event): void => {
     const el = event.currentTarget;
     if (!(el instanceof HTMLDivElement)) return;
-    mirrors.scrolled(el);
-    measurement.setScrollTop(mirrors.offset);
-    check(true);
+    measurement.setScrollTop(el.scrollTop);
+    check();
   };
 
 export interface ListState {
   virtualizer: ScrollVirtualizer;
   rows: () => Array<VirtualItem>;
   totalSize: () => number;
-  fallbackVisible: () => boolean;
   onScroll: (event: Event) => void;
   setScrollElement: (el: HTMLDivElement) => void;
 }
 
 export const useVirtualList = <T>(props: VirtualListProps<T>): ListState => {
   const mirrors = new Mirrors();
-  const measurement = useMeasurements(mirrors);
+  const measurement = useMeasurements();
   const [element, setElement] = createSignal<HTMLDivElement | null>(null);
   const count = () => props.items.length;
 
@@ -279,19 +233,11 @@ export const useVirtualList = <T>(props: VirtualListProps<T>): ListState => {
     onEndReached: () => props.onEndReached?.(),
   });
 
-  const fallbackVisible = useFallbackVisible(
-    count,
-    measurement.rows,
-    measurement.viewport,
-    element
-  );
-
   return {
     virtualizer,
     rows: measurement.rows,
     totalSize: measurement.totalSize,
-    fallbackVisible,
-    onScroll: scrollHandler(mirrors, measurement, check),
+    onScroll: scrollHandler(measurement, check),
     setScrollElement: (el) => {
       mirrors.setElement(el);
       setElement(el);

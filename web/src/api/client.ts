@@ -43,10 +43,6 @@ export const savedPagesApi = {
     request<{ count: number }>('/api/saved-pages/unread-count').then(
       (response) => response.count
     ),
-  lookup: (url: string): Promise<SavedPage | null> =>
-    request<{ item: SavedPage | null }>('/api/saved-pages/lookup', {
-      params: { url },
-    }).then((response) => response.item),
   getById: (id: string): Promise<SavedPage | null> =>
     item<SavedPage | null>(`/api/saved-pages/${encodeURIComponent(id)}`),
   create: (url: string): Promise<SavedPage> =>

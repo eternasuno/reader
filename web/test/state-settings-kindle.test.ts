@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings } from '../src/api';
 
 type StateModule = typeof import('../src/state');
@@ -10,14 +10,22 @@ let solid: typeof import('solid-js');
 let i18n: I18nModule;
 let ui: UiModule;
 let fetchMock: ReturnType<typeof vi.fn>;
+let disposeDrafts: (() => void) | undefined;
 
 const fresh = async (): Promise<void> => {
+  disposeDrafts?.();
   vi.resetModules();
   solid = await import('solid-js');
   i18n = await import('../src/i18n');
   ui = await import('../src/ui');
   state = await import('../src/state');
+  disposeDrafts = state.mountSettingsDrafts();
 };
+
+afterEach(() => {
+  disposeDrafts?.();
+  disposeDrafts = undefined;
+});
 
 beforeEach(async () => {
   fetchMock = vi.fn();

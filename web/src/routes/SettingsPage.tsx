@@ -1,6 +1,6 @@
 import { useBeforeLeave, useNavigate } from '@solidjs/router';
 import type { JSX } from '@solidjs/web';
-import { createSignal, For, onSettled } from 'solid-js';
+import { createSignal, For, onCleanup, onSettled } from 'solid-js';
 import { t, translateErrorCode } from '../i18n';
 import type { SettingsSection } from '../state';
 import {
@@ -8,6 +8,7 @@ import {
   isSaving,
   isSectionDirty,
   loadSettings,
+  mountSettingsDrafts,
   refreshKindleSends,
   resetSectionDraft,
 } from '../state';
@@ -165,12 +166,18 @@ export function SettingsPage(): JSX.Element {
   const [activeSection, setActiveSection] =
     createSignal<SettingsSection>('articles');
 
+  onCleanup(mountSettingsDrafts());
   useLeaveGuards();
 
   onSettled(() => {
+    let active = true;
     void loadSettings().catch((error: unknown) => {
-      showToast(translateErrorCode(errorCodeOf(error)), 'error');
+      if (active) showToast(translateErrorCode(errorCodeOf(error)), 'error');
     });
+
+    return () => {
+      active = false;
+    };
   });
 
   const selectSection = (next: SettingsSection): void => {

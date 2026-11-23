@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings } from '../src/api';
 
 type StateModule = typeof import('../src/state');
@@ -6,12 +6,20 @@ type StateModule = typeof import('../src/state');
 let state: StateModule;
 let solid: typeof import('solid-js');
 let fetchMock: ReturnType<typeof vi.fn>;
+let disposeDrafts: (() => void) | undefined;
 
 const fresh = async (): Promise<void> => {
+  disposeDrafts?.();
   vi.resetModules();
   solid = await import('solid-js');
   state = await import('../src/state');
+  disposeDrafts = state.mountSettingsDrafts();
 };
+
+afterEach(() => {
+  disposeDrafts?.();
+  disposeDrafts = undefined;
+});
 
 beforeEach(async () => {
   fetchMock = vi.fn();
@@ -223,5 +231,36 @@ describe('save guard', () => {
     await saving;
     solid.flush();
     expect(state.isSaving()).toBe(false);
+  });
+});
+
+describe('mounted draft ownership', () => {
+  it('disposes secret drafts on unmount and never retains secrets across mounts', async () => {
+    await load();
+    state.setJinaKeyDraft('jina-secret');
+    state.setBrowserEndpointDraft('http://browser:9222');
+    state.setSmtpPasswordDraft('smtp-secret');
+    solid.flush();
+    expect(state.hasAnyUnsavedChanges()).toBe(true);
+
+    disposeDrafts?.();
+    disposeDrafts = undefined;
+    solid.flush();
+
+    expect(state.jinaKeyDraft()).toBe('');
+    expect(state.browserEndpointDraft()).toBe('');
+    expect(state.smtpPasswordDraft()).toBe('');
+    expect(state.hasAnyUnsavedChanges()).toBe(false);
+
+    state.setJinaKeyDraft('should-not-persist');
+    expect(state.jinaKeyDraft()).toBe('');
+
+    disposeDrafts = state.mountSettingsDrafts();
+    solid.flush();
+    expect(state.retentionDraft()).toBe(100);
+    expect(state.smtpHostDraft()).toBe('smtp.example.com');
+    expect(state.jinaKeyDraft()).toBe('');
+    expect(state.browserEndpointDraft()).toBe('');
+    expect(state.smtpPasswordDraft()).toBe('');
   });
 });

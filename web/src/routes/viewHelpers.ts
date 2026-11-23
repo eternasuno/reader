@@ -1,5 +1,6 @@
-import { ApiError } from '../api';
 import type { RouteState } from '../state';
+
+export { errorCodeOf } from '../api';
 
 /** Panels collected by the library layout; focus recovery reads them after route changes. */
 export interface PanelElements {
@@ -7,9 +8,6 @@ export interface PanelElements {
   list?: HTMLElement;
   reader?: HTMLElement;
 }
-
-export const errorCodeOf = (error: unknown): string =>
-  error instanceof ApiError ? error.code : 'RequestFailed';
 
 /**
  * `LIB-VIEW-1`: panels are hidden by CSS. `offsetParent` catches a hidden ancestor; the computed

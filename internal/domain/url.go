@@ -128,17 +128,40 @@ func buildNormalizedURL(parsed *url.URL, host string) NormalizedURL {
 	}
 }
 
-func ParseStoredNormalizedURL(raw string) (NormalizedURL, error) {
-	return ParseNormalizedURL(raw, ErrFeedUrlInvalid)
+// Origin is a comparable (scheme, host, effective port) tuple for URL origin checks.
+type Origin struct {
+	Scheme string
+	Host   string
+	Port   string
 }
 
-func NormalizedURLFromStored(raw string) NormalizedURL {
-	u, err := ParseStoredNormalizedURL(raw)
-	if err != nil {
-		return NormalizedURL{hasCreds: true}
+// OriginFromURL extracts a normalized, comparable Origin from parsed.
+func OriginFromURL(parsed *url.URL) (Origin, bool) {
+	if parsed == nil {
+		return Origin{}, false
 	}
 
-	return u
+	scheme := strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+	if scheme == "" || host == "" {
+		return Origin{}, false
+	}
+
+	port := parsed.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+
+	return Origin{Scheme: scheme, Host: host, Port: port}, true
+}
+
+func ParseStoredNormalizedURL(raw string) (NormalizedURL, error) {
+	return ParseNormalizedURL(raw, ErrFeedUrlInvalid)
 }
 
 func SanitizeErrorText(msg string) string {

@@ -13,6 +13,13 @@ export interface RequestOptions {
   login?: boolean;
 }
 
+let readAuthGeneration: () => number = () => 0;
+
+/** Registers a session generation reader so stale `401`s never clear a newer session. */
+export const setAuthGenerationReader = (reader: () => number): void => {
+  readAuthGeneration = reader;
+};
+
 const unauthorizedListeners = new Set<() => void>();
 
 export const onUnauthorized = (listener: () => void): (() => void) => {
@@ -70,7 +77,11 @@ const parseError = (payload: unknown): ErrorResponse => {
         ? record.error
         : 'RequestFailed';
     const url = typeof record.url === 'string' ? record.url : undefined;
-    return { error: code, url };
+    const id =
+      typeof record.id === 'string' && record.id.length > 0
+        ? record.id
+        : undefined;
+    return { error: code, url, id };
   }
 
   return { error: 'RequestFailed' };
@@ -84,15 +95,20 @@ const send = async (path: string, init: RequestInit): Promise<Response> => {
   }
 };
 
-const unauthorizedError = (payload: unknown, isLogin: boolean): ApiError => {
+const unauthorizedError = (
+  payload: unknown,
+  isLogin: boolean,
+  isCurrentGeneration: boolean
+): ApiError => {
   if (isLogin) return new ApiError('InvalidCredentials', 401);
 
-  notifyUnauthorized();
+  if (isCurrentGeneration) notifyUnauthorized();
   const parsed = parseError(payload);
   return new ApiError(
     parsed.error === 'RequestFailed' ? 'Unauthorized' : parsed.error,
     401,
-    parsed.url
+    parsed.url,
+    parsed.id
   );
 };
 
@@ -118,16 +134,21 @@ export const request = async <T>(
     init.body = JSON.stringify(options.body);
   }
 
+  const authGeneration = readAuthGeneration();
   const response = await send(buildUrl(path, options.params), init);
   const payload = await readJson(response);
 
   if (response.status === 401) {
-    throw unauthorizedError(payload, Boolean(options.login));
+    throw unauthorizedError(
+      payload,
+      Boolean(options.login),
+      authGeneration === readAuthGeneration()
+    );
   }
 
   if (!response.ok) {
     const parsed = parseError(payload);
-    throw new ApiError(parsed.error, response.status, parsed.url);
+    throw new ApiError(parsed.error, response.status, parsed.url, parsed.id);
   }
 
   return payload as T;

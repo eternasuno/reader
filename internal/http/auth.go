@@ -1,10 +1,13 @@
 package httpserver
 
 import (
+	"container/heap"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"reader/internal/domain"
 )
@@ -32,6 +36,40 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// ValidateAppPassword checks that the browser can submit the configured password.
+func ValidateAppPassword(password string) error {
+	if password == "" || !utf8.ValidString(password) {
+		return errors.New("http: APP_PASSWORD must be nonempty valid UTF-8")
+	}
+
+	if strings.ContainsAny(password, "\r\n") {
+		return errors.New("http: APP_PASSWORD must not contain CR or LF because browsers strip them from password inputs")
+	}
+
+	// JSON.stringify leaves HTML characters and Unicode line separators unescaped.
+	size := len(`{"password":""}`)
+	for _, r := range password {
+		size += jsonRuneSize(r)
+	}
+
+	if size > maxLoginBodyBytes {
+		return fmt.Errorf("http: APP_PASSWORD is too long: its JSON login request exceeds %d bytes", maxLoginBodyBytes)
+	}
+
+	return nil
+}
+
+func jsonRuneSize(r rune) int {
+	switch {
+	case r == '"', r == '\\', r == '\b', r == '\f', r == '\t':
+		return 2
+	case r < 0x20:
+		return 6
+	default:
+		return utf8.RuneLen(r)
+	}
+}
+
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sessionResponse{Authenticated: s.hasValidSession(r)})
 }
@@ -45,7 +83,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req loginRequest
-	if err := decodeJSON(w, r, &req); err != nil {
+	if err := decodeJSONWithLimit(w, r, maxLoginBodyBytes, &req); err != nil {
 		writeError(w, err)
 
 		return
@@ -173,12 +211,13 @@ func (s *server) validateOriginHeader(values []string) bool {
 
 	// A serialized origin is scheme://host[:port] only, so any userinfo,
 	// path, query, fragment, or opaque part means the header is forged.
-	if parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
-		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
 		return false
 	}
 
-	return sameOrigin(parsed, s.appURL)
+	origin, ok := domain.OriginFromURL(parsed)
+
+	return ok && origin == s.appOrigin
 }
 
 func (s *server) validateRefererHeader(raw string) bool {
@@ -188,38 +227,13 @@ func (s *server) validateRefererHeader(raw string) bool {
 	}
 
 	parsed, err := url.Parse(rawReferer)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
+	if err != nil || parsed.User != nil {
 		return false
 	}
 
-	return sameOrigin(parsed, s.appURL)
-}
+	origin, ok := domain.OriginFromURL(parsed)
 
-func sameOrigin(left *url.URL, right *url.URL) bool {
-	if !strings.EqualFold(left.Scheme, right.Scheme) {
-		return false
-	}
-
-	if !strings.EqualFold(left.Hostname(), right.Hostname()) {
-		return false
-	}
-
-	return effectivePort(left) == effectivePort(right)
-}
-
-func effectivePort(u *url.URL) string {
-	if port := u.Port(); port != "" {
-		return port
-	}
-
-	switch strings.ToLower(u.Scheme) {
-	case "http":
-		return "80"
-	case "https":
-		return "443"
-	default:
-		return ""
-	}
+	return ok && origin == s.appOrigin
 }
 
 func clientIP(r *http.Request) string {
@@ -231,19 +245,57 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-type loginWindow struct {
+type loginEntry struct {
+	ip       string
 	started  time.Time
 	failures int
+	index    int
+}
+
+type loginExpiryHeap []*loginEntry
+
+func (h loginExpiryHeap) Len() int { return len(h) }
+
+func (h loginExpiryHeap) Less(i int, j int) bool {
+	return h[i].started.Before(h[j].started)
+}
+
+func (h loginExpiryHeap) Swap(i int, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index = i
+	h[j].index = j
+}
+
+func (h *loginExpiryHeap) Push(x any) {
+	entry, ok := x.(*loginEntry)
+	if !ok {
+		return
+	}
+
+	entry.index = len(*h)
+	*h = append(*h, entry)
+}
+
+func (h *loginExpiryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	entry := old[n-1]
+	old[n-1] = nil
+	entry.index = -1
+	*h = old[:n-1]
+
+	return entry
 }
 
 type loginLimiter struct {
 	mu       sync.Mutex
 	now      func() time.Time
-	attempts map[string]loginWindow
+	attempts map[string]*loginEntry
+	order    loginExpiryHeap
 }
 
 func newLoginLimiter(now func() time.Time) *loginLimiter {
-	return &loginLimiter{now: now, attempts: make(map[string]loginWindow)}
+	return &loginLimiter{now: now, attempts: make(map[string]*loginEntry)}
 }
 
 // reserveAttempt checks and records a login attempt for ip under one lock, so
@@ -255,19 +307,18 @@ func (l *loginLimiter) reserveAttempt(ip string) bool {
 
 	now := l.now()
 
-	window, tracked := l.liveWindowLocked(ip, now)
+	entry, tracked := l.liveEntryLocked(ip, now)
 	if !tracked {
-		l.storeLocked(ip, now, loginWindow{started: now, failures: 1})
+		l.storeLocked(ip, now)
 
 		return true
 	}
 
-	if window.failures >= loginFailureLimit {
+	if entry.failures >= loginFailureLimit {
 		return false
 	}
 
-	window.failures++
-	l.attempts[ip] = window
+	entry.failures++
 
 	return true
 }
@@ -276,31 +327,44 @@ func (l *loginLimiter) reset(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	l.deleteLocked(ip)
+}
+
+// liveEntryLocked returns the unexpired failure window for ip, dropping it when
+// the window has elapsed.
+func (l *loginLimiter) liveEntryLocked(ip string, now time.Time) (*loginEntry, bool) {
+	entry, tracked := l.attempts[ip]
+	if !tracked {
+		return nil, false
+	}
+
+	if now.Sub(entry.started) >= loginFailureWindow {
+		l.deleteLocked(ip)
+
+		return nil, false
+	}
+
+	return entry, true
+}
+
+func (l *loginLimiter) deleteLocked(ip string) {
+	entry, tracked := l.attempts[ip]
+	if !tracked {
+		return
+	}
+
+	if entry.index >= 0 {
+		heap.Remove(&l.order, entry.index)
+	}
+
 	delete(l.attempts, ip)
 }
 
-// liveWindowLocked returns the unexpired failure window for ip, dropping it when
-// the window has elapsed.
-func (l *loginLimiter) liveWindowLocked(ip string, now time.Time) (loginWindow, bool) {
-	window, tracked := l.attempts[ip]
-	if !tracked {
-		return loginWindow{}, false
-	}
-
-	if now.Sub(window.started) >= loginFailureWindow {
-		delete(l.attempts, ip)
-
-		return loginWindow{}, false
-	}
-
-	return window, true
-}
-
-// storeLocked writes a window while keeping the tracked-IP table strictly
+// storeLocked writes a new window while keeping the tracked-IP table strictly
 // bounded at maxTrackedLoginIPs: expired windows are pruned first and the oldest
 // entry is evicted when every remaining entry is still unexpired.
-func (l *loginLimiter) storeLocked(ip string, now time.Time, window loginWindow) {
-	if _, tracked := l.attempts[ip]; !tracked && len(l.attempts) >= maxTrackedLoginIPs {
+func (l *loginLimiter) storeLocked(ip string, now time.Time) {
+	if len(l.attempts) >= maxTrackedLoginIPs {
 		l.pruneExpiredLocked(now)
 
 		for len(l.attempts) >= maxTrackedLoginIPs {
@@ -308,29 +372,23 @@ func (l *loginLimiter) storeLocked(ip string, now time.Time, window loginWindow)
 		}
 	}
 
-	l.attempts[ip] = window
+	entry := &loginEntry{ip: ip, started: now, failures: 1}
+	heap.Push(&l.order, entry)
+	l.attempts[ip] = entry
 }
 
 func (l *loginLimiter) pruneExpiredLocked(now time.Time) {
-	for ip, window := range l.attempts {
-		if now.Sub(window.started) >= loginFailureWindow {
-			delete(l.attempts, ip)
-		}
+	for l.order.Len() > 0 && now.Sub(l.order[0].started) >= loginFailureWindow {
+		l.evictOldestLocked()
 	}
 }
 
 func (l *loginLimiter) evictOldestLocked() {
-	oldestIP := ""
-	oldestStarted := time.Time{}
-	found := false
-
-	for ip, window := range l.attempts {
-		if !found || window.started.Before(oldestStarted) {
-			oldestIP, oldestStarted, found = ip, window.started, true
-		}
+	if l.order.Len() == 0 {
+		return
 	}
 
-	if found {
-		delete(l.attempts, oldestIP)
+	if oldest, ok := heap.Pop(&l.order).(*loginEntry); ok {
+		delete(l.attempts, oldest.ip)
 	}
 }

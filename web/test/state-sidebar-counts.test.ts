@@ -1,66 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Feed, FeedUnreadCount, Folder } from '../src/api';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  createStateTestContext,
+  makeFeed,
+  makeFolder,
+} from './support/state-fixture';
 
-type StateModule = typeof import('../src/state');
-
-let state: StateModule;
-let solid: typeof import('solid-js');
-let fetchMock: ReturnType<typeof vi.fn>;
-
-const fresh = async (): Promise<void> => {
-  vi.resetModules();
-  solid = await import('solid-js');
-  state = await import('../src/state');
-};
-
-beforeEach(async () => {
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
-  localStorage.clear();
-  await fresh();
-});
-
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-const queue = (body: unknown, status = 200): void => {
-  fetchMock.mockResolvedValueOnce(json(body, status));
-};
-
-const makeFeed = (overrides: Partial<Feed> & { id: string }): Feed => ({
-  url: `https://example.com/${overrides.id}/feed.xml`,
-  title: `Feed ${overrides.id}`,
-  folderId: null,
-  failureCount: 0,
-  readerMode: 'default',
-  order: 'newest',
-  ...overrides,
-});
-
-const makeFolder = (id: string, name = `Folder ${id}`): Folder => ({
-  id,
-  name,
-});
-
-const queueSidebar = (
-  options: {
-    feeds?: Array<Feed>;
-    folders?: Array<Folder>;
-    counts?: Array<FeedUnreadCount>;
-    saved?: number;
-  } = {}
-): void => {
-  queue({ items: options.feeds ?? [] });
-  queue({ items: options.folders ?? [] });
-  queue({ items: options.counts ?? [] });
-  queue({ count: options.saved ?? 0 });
-};
+const ctx = createStateTestContext();
 
 const queueFoldersOfFeeds = async (): Promise<void> => {
-  queueSidebar({
+  ctx.queueSidebar({
     feeds: [
       makeFeed({ id: 'f1', folderId: 'd1' }),
       makeFeed({ id: 'f2', folderId: 'd1' }),
@@ -73,12 +21,17 @@ const queueFoldersOfFeeds = async (): Promise<void> => {
     ],
     saved: 2,
   });
-  await state.refreshSidebar();
-  solid.flush();
+  await ctx.state.refreshSidebar();
+  ctx.solid.flush();
 };
+
+beforeEach(async () => {
+  await ctx.reset();
+});
 
 describe('unread count adjustments', () => {
   it('adjusts and clamps saved and feed unread counts', async () => {
+    const { state, solid } = ctx;
     await queueFoldersOfFeeds();
 
     state.adjustSavedUnread(1);
@@ -104,6 +57,7 @@ describe('unread count adjustments', () => {
 
 describe('unread count resets', () => {
   it('clears folder and all-feeds unread counts', async () => {
+    const { state, solid } = ctx;
     await queueFoldersOfFeeds();
 
     state.clearFolderUnread('d1');
@@ -120,7 +74,8 @@ describe('unread count resets', () => {
 
 describe('local feed and folder edits', () => {
   it('updates, removes feeds and dissolves folders locally', async () => {
-    queueSidebar({
+    const { state, solid } = ctx;
+    ctx.queueSidebar({
       feeds: [
         makeFeed({ id: 'f1', folderId: 'd1' }),
         makeFeed({ id: 'f2', folderId: 'd1' }),

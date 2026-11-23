@@ -25,10 +25,9 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 | --- | --- | --- | --- | --- |
 | GET | `/api/saved-pages` | `limit`, `unread`, `order?`, `cursor?` | `200 { items, cursor }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/unread-count` | — | `200 { count }` | `SavedPageRepositoryError` 500 |
-| GET | `/api/saved-pages/lookup` | `url` | `200 { item \| null }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/:id` | `id` | `200 { item \| null }` | `SavedPageRepositoryError` 500 |
-| POST | `/api/saved-pages` | `{ url }` | `201 { item }` | `InvalidPageUrl` 400, `SavedPageAlreadyExists` 409 `{ url }`, `CM-FETCH` 422, 500 |
-| POST | `/api/feed-items/:id/save` | `id` | `201 { item }` | `FeedItemNotFound` 404, `SavedPageAlreadyExists` 409, `CM-FETCH` 422, 500 |
+| POST | `/api/saved-pages` | `{ url }` | `201 { item }` | `InvalidPageUrl` 400, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, 500 |
+| POST | `/api/feed-items/:id/save` | `id` | `201 { item }` | `FeedItemNotFound` 404, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, 500 |
 | PATCH | `/api/saved-pages/:id` | `{ read }` | `204` | `SavedPageRepositoryError` 500 |
 | POST | `/api/saved-pages/read` | `{ ids }` | `204` | `SavedPageRepositoryError` 500 |
 | POST | `/api/saved-pages/read-all` | — | `204` | `SavedPageRepositoryError` 500 |

@@ -766,6 +766,80 @@ func TestParseAtomIgnoresExtensionEntryAndSummaryElements(t *testing.T) {
 	}
 }
 
+func TestParseAtomRequiresEmptyNamespaceForTypeAttr(t *testing.T) {
+	t.Parallel()
+
+	payload := `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:ext="https://example.com/ext">
+  <title>Namespaced Type</title>
+  <entry>
+    <title>Namespaced only</title>
+    <link href="https://example.com/1"/>
+    <summary ext:type="html">&lt;b&gt;Summary&lt;/b&gt;</summary>
+    <content ext:type="html">&lt;b&gt;Content&lt;/b&gt;</content>
+  </entry>
+  <entry>
+    <title>Both present</title>
+    <link href="https://example.com/2"/>
+    <summary ext:type="text" type="html">&lt;p&gt;Summary&lt;/p&gt;</summary>
+    <content ext:type="text" type="html">&lt;p&gt;Content&lt;/p&gt;</content>
+  </entry>
+</feed>`
+
+	feed := parseFeed(t, payload, "https://example.com/feed.atom")
+	if len(feed.Entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(feed.Entries))
+	}
+
+	first := feed.Entries[0]
+	if first.Description == nil || *first.Description != "&lt;b&gt;Summary&lt;/b&gt;" {
+		t.Fatalf("first description = %v, want escaped summary", first.Description)
+	}
+
+	if first.Content == nil || *first.Content != "&lt;b&gt;Content&lt;/b&gt;" {
+		t.Fatalf("first content = %v, want escaped content", first.Content)
+	}
+
+	second := feed.Entries[1]
+	if second.Description == nil || *second.Description != "<p>Summary</p>" {
+		t.Fatalf("second description = %v, want html summary", second.Description)
+	}
+
+	if second.Content == nil || *second.Content != "<p>Content</p>" {
+		t.Fatalf("second content = %v, want html content", second.Content)
+	}
+}
+
+func TestSanitizeHTMLBudgetAndXSSVectors(t *testing.T) {
+	t.Parallel()
+
+	sanitizer := NewSanitizer()
+
+	// Relative URL expansion exceeding budget fails cleanly.
+	raw := strings.Repeat(`<a href="/x">link</a>`, 20)
+	longBase := "https://example.com/" + strings.Repeat("a", 64) + "/"
+	if _, err := sanitizer.sanitizeHTMLWithBudget(raw, longBase, 512); err == nil {
+		t.Fatal("expected budget overflow error, got nil")
+	}
+
+	// XSS vectors remain stripped with single bluemonday pass.
+	xss := `<p>ok</p><svg><script>alert(1)</script></svg><math><mtext></mtext></math>` +
+		`<noscript><img src=x onerror=alert(2)></noscript>` +
+		`<a href="javascript:alert(3)" onclick="alert(4)">click</a>` +
+		`<img src="vbscript:msgbox(1)">` +
+		`<a href="https://example.com/good" onmouseover="alert(5)">good</a>`
+	sanitized, err := sanitizer.SanitizeHTML(xss, "https://example.com/")
+	if err != nil {
+		t.Fatalf("SanitizeHTML() error = %v", err)
+	}
+
+	for _, vector := range []string{"<script", "<svg", "<math", "<noscript", "onerror", "onclick", "onmouseover", "javascript:", "vbscript:", "alert("} {
+		requireNotContains(t, sanitized, vector)
+	}
+
+	requireContains(t, sanitized, `<a href="https://example.com/good" target="_blank" rel="noopener noreferrer">good</a>`)
+}
+
 func TestExtractArticle(t *testing.T) {
 	t.Parallel()
 

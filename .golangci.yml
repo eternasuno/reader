@@ -130,10 +130,19 @@ linters:
         http:
           files:
             - "**/internal/http/*.go"
+            - "!**/internal/http/*_test.go"
           allow:
             - $gostd
             - reader/internal/domain
             - reader/internal/http
+        http-test:
+          files:
+            - "**/internal/http/*_test.go"
+          allow:
+            - $gostd
+            - reader/internal/domain
+            - reader/internal/http
+            - reader/internal/sqlite
 
   exclusions:
     generated: lax

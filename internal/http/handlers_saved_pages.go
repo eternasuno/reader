@@ -97,24 +97,6 @@ func (s *server) handleSavedPageUnreadCount(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, countResponse{Count: count})
 }
 
-func (s *server) handleSavedPageLookup(w http.ResponseWriter, r *http.Request) {
-	pageURL, err := domain.ParseNormalizedURL(r.URL.Query().Get("url"), domain.ErrInvalidPageUrl)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	page, err := s.cfg.SavedPages.GetByURL(r.Context(), pageURL)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, itemResponse[savedPageJSON]{Item: toSavedPagePtr(page)})
-}
-
 func (s *server) handleSavedPageGet(w http.ResponseWriter, r *http.Request) {
 	page, err := s.cfg.SavedPages.GetByID(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -178,60 +160,10 @@ func (s *server) ensureSavedPageAbsent(ctx context.Context, pageURL domain.Norma
 	}
 
 	if existing != nil {
-		return domain.NewConflictURL(domain.ErrSavedPageAlreadyExists, pageURL.RedactedString())
+		return domain.NewSavedPageConflict(existing.ID, pageURL.RedactedString())
 	}
 
 	return nil
-}
-
-func (s *server) handleSavedPageSetRead(w http.ResponseWriter, r *http.Request) {
-	var req readStateRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if req.Read == nil {
-		writeError(w, domain.NewError(domain.ErrRequestFailed, nil))
-
-		return
-	}
-
-	if err := s.cfg.SavedPages.SetRead(r.Context(), r.PathValue("id"), *req.Read); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
-}
-
-func (s *server) handleSavedPagesMarkRead(w http.ResponseWriter, r *http.Request) {
-	var req idsRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if err := s.cfg.SavedPages.MarkIDsRead(r.Context(), req.IDs); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
-}
-
-func (s *server) handleSavedPagesMarkAllRead(w http.ResponseWriter, r *http.Request) {
-	if err := s.cfg.SavedPages.MarkAllRead(r.Context()); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
 }
 
 func (s *server) handleSavedPageDelete(w http.ResponseWriter, r *http.Request) {

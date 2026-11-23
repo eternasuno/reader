@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import {
   browserEndpointDraft,
   isSaving,
+  isSettingsReady,
   isSmtpConfigured,
   jinaKeyDraft,
   removeBrowserEndpoint,
@@ -41,6 +42,8 @@ import {
 } from '../ui';
 import { statusKey } from './settingsHelpers';
 
+const controlsDisabled = (): boolean => isSaving() || !isSettingsReady();
+
 const confirmClearBrowser = (): void => {
   if (window.confirm(String(t('settings.clearBrowserEndpointConfirm')))) {
     void removeBrowserEndpoint();
@@ -63,7 +66,7 @@ function RemoveButton(props: {
       variant="ghost"
       size="sm"
       class="text-error hover:bg-error/10"
-      disabled={isSaving()}
+      disabled={controlsDisabled()}
       onClick={props.onClick}
     >
       {props.label}
@@ -79,7 +82,7 @@ function SaveButton(props: { label: string; loading: boolean }): JSX.Element {
       size="sm"
       class="ml-auto"
       loading={props.loading}
-      disabled={isSaving()}
+      disabled={controlsDisabled()}
     >
       {props.label}
     </Button>
@@ -130,7 +133,7 @@ function JinaCard(): JSX.Element {
             label={String(t('settings.jinaKeyLabel'))}
             placeholder={String(t('settings.jinaKeyPlaceholder'))}
             value={jinaKeyDraft()}
-            disabled={isSaving()}
+            disabled={controlsDisabled()}
             onInput={(event) => setJinaKeyDraft(event.currentTarget.value)}
           />
         </SettingsRow>
@@ -183,7 +186,7 @@ function BrowserCard(): JSX.Element {
             label={String(t('settings.browserEndpointLabel'))}
             placeholder={String(t('settings.browserEndpointPlaceholder'))}
             value={browserEndpointDraft()}
-            disabled={isSaving()}
+            disabled={controlsDisabled()}
             onInput={(event) =>
               setBrowserEndpointDraft(event.currentTarget.value)
             }
@@ -202,7 +205,7 @@ function SmtpServerFields(): JSX.Element {
         required
         label={String(t('settings.smtpHostLabel'))}
         value={smtpHostDraft()}
-        disabled={isSaving()}
+        disabled={controlsDisabled()}
         onInput={(event) => setSmtpHostDraft(event.currentTarget.value)}
       />
       <Input
@@ -213,7 +216,7 @@ function SmtpServerFields(): JSX.Element {
         class="tabular-nums"
         label={String(t('settings.smtpPortLabel'))}
         value={smtpPortDraft() === 0 ? '' : String(smtpPortDraft())}
-        disabled={isSaving()}
+        disabled={controlsDisabled()}
         onInput={(event) => {
           const parsed = Number.parseInt(event.currentTarget.value, 10);
           setSmtpPortDraft(Number.isNaN(parsed) ? 0 : parsed);
@@ -231,13 +234,13 @@ function SmtpSenderFields(): JSX.Element {
         required
         label={String(t('settings.smtpSenderEmailLabel'))}
         value={smtpSenderEmailDraft()}
-        disabled={isSaving()}
+        disabled={controlsDisabled()}
         onInput={(event) => setSmtpSenderEmailDraft(event.currentTarget.value)}
       />
       <Select
         label={String(t('settings.smtpSecurityLabel'))}
         value={smtpSecurityDraft()}
-        disabled={isSaving()}
+        disabled={controlsDisabled()}
         onChange={(event) =>
           setSmtpSecurityDraft(event.currentTarget.value as SMTPSecurity)
         }
@@ -259,7 +262,7 @@ function SmtpCredentialFields(): JSX.Element {
         autocomplete="off"
         label={String(t('settings.smtpUserLabel'))}
         value={smtpUserDraft()}
-        disabled={isSaving()}
+        disabled={controlsDisabled()}
         onInput={(event) => setSmtpUserDraft(event.currentTarget.value)}
       />
       <Input
@@ -273,7 +276,7 @@ function SmtpCredentialFields(): JSX.Element {
           })
         )}
         value={smtpPasswordDraft()}
-        disabled={isSaving()}
+        disabled={controlsDisabled()}
         onInput={(event) => setSmtpPasswordDraft(event.currentTarget.value)}
       />
     </>

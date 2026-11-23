@@ -1,49 +1,13 @@
 import { useLocation, useNavigate } from '@solidjs/router';
 import type { JSX } from '@solidjs/web';
 import { createSignal, onSettled, Show } from 'solid-js';
-import { ApiError, savedPagesApi } from '../api';
+import { errorCodeOf } from '../api';
 import { t, translateErrorCode } from '../i18n';
+import { createOrFindSavedPage } from '../state/saved-page-create';
 import { Button, Input, showToast } from '../ui';
-import { errorCodeOf } from './viewHelpers';
 
 const savedPageUrl = (pageId: string): string =>
   `/later/${encodeURIComponent(pageId)}`;
-
-interface SaveResult {
-  kind: 'saved' | 'existing' | 'error';
-  pageId?: string;
-  message?: string;
-}
-
-const failed = (message: string): SaveResult => ({ kind: 'error', message });
-
-/** `SP-ADD-1`: a duplicate opens the existing page instead of creating another one. */
-const resolveDuplicate = async (
-  caught: unknown,
-  url: string
-): Promise<SaveResult> => {
-  if (!(caught instanceof ApiError) || caught.code !== 'SavedPageAlreadyExists')
-    return failed(translateErrorCode(errorCodeOf(caught)));
-
-  try {
-    const existing = await savedPagesApi.lookup(caught.url ?? url);
-    if (existing !== null)
-      return { kind: 'existing', pageId: savedPageUrl(existing.id) };
-  } catch (lookupError) {
-    return failed(translateErrorCode(errorCodeOf(lookupError)));
-  }
-
-  return failed(translateErrorCode('SavedPageAlreadyExists'));
-};
-
-const savePage = async (url: string): Promise<SaveResult> => {
-  try {
-    const page = await savedPagesApi.create(url);
-    return { kind: 'saved', pageId: savedPageUrl(page.id) };
-  } catch (caught) {
-    return resolveDuplicate(caught, url);
-  }
-};
 
 /** `later.md:16,54-58`: `GET /save?url=…` never mutates; the form performs the single POST. */
 const useQuickSave = () => {
@@ -56,6 +20,20 @@ const useQuickSave = () => {
   const url = (): string =>
     urlDraft() ?? new URLSearchParams(location.search).get('url') ?? '';
 
+  const runSubmit = async (target: string): Promise<void> => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const { page, created } = await createOrFindSavedPage(target);
+      if (created) showToast(String(t('later.addedToast')), 'success');
+      navigate(savedPageUrl(page.id));
+    } catch (caught) {
+      setError(translateErrorCode(errorCodeOf(caught)));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submit = (event: SubmitEvent): void => {
     event.preventDefault();
     if (submitting()) return;
@@ -66,19 +44,7 @@ const useQuickSave = () => {
       return;
     }
 
-    setSubmitting(true);
-    setError(null);
-    void savePage(trimmed).then((result) => {
-      setSubmitting(false);
-      if (result.kind === 'error') {
-        setError(result.message ?? translateErrorCode('RequestFailed'));
-        return;
-      }
-
-      if (result.kind === 'saved')
-        showToast(String(t('later.addedToast')), 'success');
-      if (result.pageId !== undefined) navigate(result.pageId);
-    });
+    void runSubmit(trimmed);
   };
 
   return { url, error, submitting, setUrl: setUrlDraft, submit };
