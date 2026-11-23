@@ -1,8 +1,25 @@
 import type { JSX } from '@solidjs/web';
 import { createSignal, Show } from 'solid-js';
 import { t, toggleLocale } from '../i18n';
-import { signOut } from '../state';
-import { Icon, Menu, MenuDivider, MenuItem } from '../ui';
+import {
+  type ReaderTheme,
+  readerTheme,
+  setReaderTheme,
+  signOut,
+  toggleSidebarCollapse,
+} from '../state';
+import { Button, Icon, Menu, MenuDivider, MenuItem, MenuRadio } from '../ui';
+
+const handleCollapseSidebar = (): void => {
+  toggleSidebarCollapse();
+  queueMicrotask(() =>
+    document
+      .querySelector<HTMLButtonElement>(
+        `button[aria-label="${String(t('library.expandSidebar'))}"]`
+      )
+      ?.focus()
+  );
+};
 
 /**
  * `auth.md:16`: the brand row hosts the nav menu — settings, locale switch, and
@@ -37,12 +54,24 @@ export function SidebarBrand(props: {
           <Icon name="rss" size={22} strokeWidth={2.25} class="text-brand" />
           <span class="truncate">{String(t('common.brand'))}</span>
         </span>
-        <BrandMenu
-          signingOut={signingOut()}
-          signOutError={signOutError()}
-          onNavigate={props.onNavigate}
-          onSignOut={handleSignOut}
-        />
+        <div class="flex items-center gap-1">
+          <Button
+            variant="icon"
+            size="sm"
+            class="hidden btn-xs md:inline-flex"
+            aria-label={String(t('library.collapseSidebar'))}
+            title={String(t('library.collapseSidebar'))}
+            onClick={handleCollapseSidebar}
+          >
+            <Icon name="sidebar" size={16} />
+          </Button>
+          <BrandMenu
+            signingOut={signingOut()}
+            signOutError={signOutError()}
+            onNavigate={props.onNavigate}
+            onSignOut={handleSignOut}
+          />
+        </div>
       </div>
       <Show when={signOutError()}>
         <p role="alert" class="px-2 text-xs text-error">
@@ -60,29 +89,123 @@ interface BrandMenuProps {
   onSignOut: () => void;
 }
 
+const THEME_LABEL_KEYS: Record<
+  ReaderTheme,
+  'reader.themeAuto' | 'reader.themeLight' | 'reader.themeDark'
+> = {
+  auto: 'reader.themeAuto',
+  light: 'reader.themeLight',
+  dark: 'reader.themeDark',
+};
+
+function BrandThemeSubpanel(props: { onBack: () => void }): JSX.Element {
+  return (
+    <>
+      <button
+        type="button"
+        role="menuitem"
+        data-keep-open="true"
+        class="mx-2 flex min-h-10 w-[calc(100%-1rem)] items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm leading-5 text-base-content transition-colors hover:bg-base-300/70 focus-visible:bg-base-300/70 focus-visible:outline-none"
+        onClick={props.onBack}
+      >
+        <span class="flex size-5 shrink-0 items-center justify-center">
+          <Icon name="arrow-left" size={18} />
+        </span>
+        <span>{String(t('reader.theme'))}</span>
+      </button>
+      <MenuRadio
+        checked={readerTheme() === 'auto'}
+        onSelect={() => setReaderTheme('auto')}
+      >
+        {String(t('reader.themeAuto'))}
+      </MenuRadio>
+      <MenuRadio
+        checked={readerTheme() === 'light'}
+        onSelect={() => setReaderTheme('light')}
+      >
+        {String(t('reader.themeLight'))}
+      </MenuRadio>
+      <MenuRadio
+        checked={readerTheme() === 'dark'}
+        onSelect={() => setReaderTheme('dark')}
+      >
+        {String(t('reader.themeDark'))}
+      </MenuRadio>
+    </>
+  );
+}
+
 function BrandMenu(props: BrandMenuProps): JSX.Element {
+  const [panel, setPanel] = createSignal<'main' | 'theme'>('main');
+
   return (
     <Menu
       icon="user"
       label={String(t('library.appMenu'))}
       align="end"
       triggerClass="btn-xs"
+      onOpenChange={(open) => {
+        if (!open) setPanel('main');
+      }}
     >
-      <MenuItem icon="settings" onSelect={() => props.onNavigate('/settings')}>
+      <Show
+        when={panel() === 'theme'}
+        fallback={
+          <BrandMainMenuItems
+            props={props}
+            onOpenTheme={() => setPanel('theme')}
+          />
+        }
+      >
+        <BrandThemeSubpanel onBack={() => setPanel('main')} />
+      </Show>
+    </Menu>
+  );
+}
+
+function BrandMainMenuItems(props: {
+  props: BrandMenuProps;
+  onOpenTheme: () => void;
+}): JSX.Element {
+  return (
+    <>
+      <MenuItem
+        icon="settings"
+        onSelect={() => props.props.onNavigate('/settings')}
+      >
         {String(t('library.settings'))}
       </MenuItem>
-      <MenuItem onSelect={() => toggleLocale()}>
+      <button
+        type="button"
+        role="menuitem"
+        data-keep-open="true"
+        class="mx-2 flex min-h-10 w-[calc(100%-1rem)] items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm leading-5 text-base-content transition-colors hover:bg-base-300/70 focus-visible:bg-base-300/70 focus-visible:outline-none"
+        onClick={props.onOpenTheme}
+      >
+        <span class="flex size-5 shrink-0 items-center justify-center opacity-70">
+          <Icon name="chevron-right" size={16} />
+        </span>
+        <span class="flex-1 truncate">{String(t('reader.theme'))}</span>
+        <span class="text-sm text-base-content/60">
+          {String(t(THEME_LABEL_KEYS[readerTheme()]))}
+        </span>
+      </button>
+      <MenuItem icon="globe" onSelect={() => toggleLocale()}>
         {String(t('common.localeSwitchLabel'))}
       </MenuItem>
       <MenuDivider />
-      <MenuItem disabled={props.signingOut} onSelect={props.onSignOut}>
-        {String(t(props.signingOut ? 'auth.signingOut' : 'auth.signOut'))}
+      <MenuItem
+        icon="logout"
+        disabled={props.props.signingOut}
+        onSelect={props.props.onSignOut}
+      >
+        {String(t(props.props.signingOut ? 'auth.signingOut' : 'auth.signOut'))}
       </MenuItem>
-      <Show when={props.signOutError}>
+      <Show when={props.props.signOutError}>
         <p role="alert" class="px-3 py-1 text-xs text-error">
           {String(t('auth.signOutFailed'))}
         </p>
       </Show>
-    </Menu>
+    </>
   );
 }

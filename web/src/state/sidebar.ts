@@ -9,6 +9,7 @@ import { feedsApi, foldersApi, savedPagesApi } from '../api';
 
 /** `folders.md:16`: folder collapse state persists in `localStorage`. */
 export const COLLAPSED_FOLDERS_STORAGE_KEY = 'reader.collapsedFolders';
+export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'reader.sidebarCollapsed';
 
 const [feeds, setFeeds] = createSignal<ReadonlyArray<Feed>>([]);
 const [folders, setFolders] = createSignal<ReadonlyArray<Folder>>([]);
@@ -19,9 +20,19 @@ const [feedUnreadMap, setFeedUnreadMap] = createSignal<
 const [collapsedFolders, setCollapsedFolders] = createSignal<
   ReadonlySet<string>
 >(loadCollapsed());
+const [sidebarCollapsed, setSidebarCollapsed] = createSignal<boolean>(
+  loadSidebarCollapsed()
+);
 let snapshotGeneration = 0;
 
-export { collapsedFolders, feeds, feedUnreadMap, folders, savedUnreadCount };
+export {
+  collapsedFolders,
+  feeds,
+  feedUnreadMap,
+  folders,
+  savedUnreadCount,
+  sidebarCollapsed,
+};
 
 function loadCollapsed(): ReadonlySet<string> {
   if (typeof localStorage === 'undefined') return new Set<string>();
@@ -57,6 +68,36 @@ const persistCollapsed = (next: ReadonlySet<string>): void => {
 const applyCollapsed = (next: ReadonlySet<string>): void => {
   setCollapsedFolders(next);
   persistCollapsed(next);
+};
+
+function loadSidebarCollapsed(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+const persistSidebarCollapsed = (next: boolean): void => {
+  if (typeof localStorage === 'undefined') return;
+
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next));
+  } catch {
+    // Storage may be unavailable (private mode / quota); collapse state then stays in memory.
+  }
+};
+
+export const setSidebarCollapsedState = (collapsed: boolean): void => {
+  setSidebarCollapsed(collapsed);
+  persistSidebarCollapsed(collapsed);
+  flush();
+};
+
+export const toggleSidebarCollapse = (): void => {
+  setSidebarCollapsedState(!sidebarCollapsed());
 };
 
 // Derived helpers stay plain accessors: they read the reactive signals and are recomputed only

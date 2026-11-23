@@ -1,0 +1,120 @@
+import type { JSX } from '@solidjs/web';
+import { createEffect, onSettled, Show } from 'solid-js';
+import { t } from '../i18n';
+import { Button, Icon } from '../ui';
+
+export interface ImageLightboxProps {
+  src: string | null;
+  alt?: string;
+  onClose: () => void;
+}
+
+const useLightboxKeyboard = (
+  isOpen: () => boolean,
+  onClose: () => void,
+  getCloseButton: () => HTMLButtonElement | undefined
+): void => {
+  onSettled(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isOpen()) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        getCloseButton()?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
+};
+
+const useLightboxFocus = (
+  isOpen: () => boolean,
+  getCloseButton: () => HTMLButtonElement | undefined
+): void => {
+  let previouslyFocused: HTMLElement | null = null;
+
+  createEffect(isOpen, (open) => {
+    if (open) {
+      previouslyFocused =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      queueMicrotask(() => getCloseButton()?.focus());
+      return;
+    }
+
+    if (previouslyFocused) {
+      previouslyFocused?.focus?.();
+      previouslyFocused = null;
+    }
+  });
+};
+
+export function ImageLightbox(props: ImageLightboxProps): JSX.Element {
+  let closeButtonRef: HTMLButtonElement | undefined;
+  const isOpen = () => props.src !== null;
+
+  useLightboxKeyboard(
+    isOpen,
+    () => props.onClose(),
+    () => closeButtonRef
+  );
+  useLightboxFocus(isOpen, () => closeButtonRef);
+
+  return (
+    <Show when={props.src}>
+      {(src) => (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={String(t('reader.imagePreview'))}
+          class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) props.onClose();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') props.onClose();
+            if (e.key === 'Tab') {
+              e.preventDefault();
+              closeButtonRef?.focus();
+            }
+          }}
+        >
+          <Button
+            ref={(el) => {
+              closeButtonRef = el;
+            }}
+            variant="icon"
+            size="sm"
+            class="absolute top-4 right-4 text-white/80 hover:text-white"
+            aria-label={String(t('common.close'))}
+            onClick={(e) => {
+              e.stopPropagation();
+              props.onClose();
+            }}
+          >
+            <Icon name="close" size={20} />
+          </Button>
+          <img
+            src={src()}
+            alt={props.alt ?? ''}
+            referrerpolicy="no-referrer"
+            class="max-h-[85vh] max-w-[92vw] rounded-field object-contain shadow-2xl"
+          />
+          <Show when={props.alt && props.alt.trim().length > 0}>
+            <p class="mt-3 max-w-2xl text-center text-xs text-white/75">
+              {props.alt}
+            </p>
+          </Show>
+        </div>
+      )}
+    </Show>
+  );
+}

@@ -69,7 +69,7 @@ func (s *server) handleSavedPageList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params, err := query.params(domain.SortOrderNewest)
+	params, err := query.params(query.orderOrDefault())
 	if err != nil {
 		writeError(w, err)
 

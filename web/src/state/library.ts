@@ -23,6 +23,7 @@ import type { LibraryArticle, LibraryArticlePatch } from './library-store';
 import {
   activeScope,
   activeUnreadOnly,
+  aggregateOrder,
   cursor,
   loadError,
   loadingInitial,
@@ -34,6 +35,7 @@ import {
   setActiveOrder,
   setActiveScope,
   setActiveUnreadOnly,
+  setAggregateOrder,
   setCursor,
   setLoadError,
   setLoadingInitial,
@@ -55,6 +57,7 @@ export {
   activeOrder,
   activeScope,
   activeUnreadOnly,
+  aggregateOrder,
   cursor,
   isLibraryMounted,
   loadError,
@@ -103,7 +106,7 @@ const toRows = (
 interface PageRequest {
   scope: LibraryScope;
   unreadOnly: boolean;
-  /** `undefined` lets the server apply the feed's stored order (`FD-PREF-1`). */
+  /** `undefined` lets the server apply the single feed's stored order (`FD-PREF-1`). */
   order: SortOrder | undefined;
   cursor: string | null;
 }
@@ -117,30 +120,33 @@ const fetchPage = async (
     cursor: request.cursor,
   };
 
+  const withOrder = { ...params, order: request.order };
+
   switch (request.scope.kind) {
     case 'later':
-      return savedPagesApi.list(params);
+      return savedPagesApi.list(withOrder);
     case 'all':
-      return feedItemsApi.listAll(params);
+      return feedItemsApi.listAll(withOrder);
     case 'feed':
-      return feedsApi.listItems(request.scope.feedId, {
-        ...params,
-        order: request.order,
-      });
+      return feedsApi.listItems(request.scope.feedId, withOrder);
     case 'folder':
-      return foldersApi.listItems(request.scope.folderId, params);
+      return foldersApi.listItems(request.scope.folderId, withOrder);
   }
 };
+
+/** The default `newest` order is the server default, so only `oldest` is sent explicitly. */
+const aggregateRequestOrder = (): SortOrder | undefined =>
+  aggregateOrder() === 'oldest' ? 'oldest' : undefined;
 
 const storedFeedOrder = (feedId: string): SortOrder | undefined =>
   sidebar.feeds().find((feed) => feed.id === feedId)?.order;
 
-/** `FD-PREF-1`: an explicit order wins, then the feed's stored order, then `newest`. */
+/** `FD-PREF-1`: a feed uses an explicit order, then its stored order; other lists use the shared one. */
 const effectiveOrderOf = (
   scope: LibraryScope,
   order: SortOrder | undefined
 ): SortOrder => {
-  if (scope.kind !== 'feed') return 'newest';
+  if (scope.kind !== 'feed') return aggregateOrder();
   return order ?? storedFeedOrder(scope.feedId) ?? 'newest';
 };
 
@@ -175,8 +181,8 @@ export const loadScopeFirstPage = async (
 ): Promise<void> => {
   requestState.generation += 1;
   const requestGeneration = requestState.generation;
-  // `FD-PREF-1`: without an explicit order the server applies the feed's stored order.
-  const requestOrder = scope.kind === 'feed' ? order : undefined;
+  // `FD-PREF-1`: without an explicit order the server applies a single feed's stored order.
+  const requestOrder = scope.kind === 'feed' ? order : aggregateRequestOrder();
 
   resetListState(scope, unreadOnly, effectiveOrderOf(scope, order));
 
@@ -250,12 +256,13 @@ export const loadNextPage = async (): Promise<void> => {
 
   requestState.pageInFlight = true;
   const requestGeneration = requestState.generation;
+  const scope = activeScope();
   const request: PageRequest = {
-    scope: activeScope(),
+    scope,
     unreadOnly: activeUnreadOnly(),
-    // `FD-PREF-1`: the server applies the feed's stored order, so pagination stays consistent even
-    // when the client has not loaded the feed list yet.
-    order: undefined,
+    // `FD-PREF-1`: the server applies a single feed's stored order, so pagination stays consistent
+    // even when the client has not loaded the feed list yet.
+    order: scope.kind === 'feed' ? undefined : aggregateRequestOrder(),
     cursor: nextCursor,
   };
 
@@ -338,5 +345,16 @@ export const changeFeedOrder = async (
   const scope = activeScope();
   if (scope.kind === 'feed' && scope.feedId === feed.id) {
     await loadScopeFirstPage(scope, activeUnreadOnly(), order);
+  }
+};
+
+/** `FD-PREF-1`: flips the shared order of the all-feeds, folder, and read-later lists and reloads. */
+export const toggleAggregateOrder = async (): Promise<void> => {
+  setAggregateOrder(aggregateOrder() === 'oldest' ? 'newest' : 'oldest');
+  flush();
+
+  const scope = activeScope();
+  if (scope.kind !== 'feed') {
+    await loadScopeFirstPage(scope, activeUnreadOnly());
   }
 };

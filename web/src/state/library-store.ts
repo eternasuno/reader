@@ -38,6 +38,36 @@ const [activeScope, setActiveScope] = createSignal<LibraryScope>({
 });
 const [activeUnreadOnly, setActiveUnreadOnly] = createSignal(false);
 const [activeOrder, setActiveOrder] = createSignal<SortOrder>('newest');
+
+/** `FD-PREF-1`: order shared by the all-feeds, folder, and read-later lists; persisted locally. */
+const LIST_ORDER_STORAGE_KEY = 'reader.listOrder';
+
+const readListOrder = (): SortOrder => {
+  if (typeof localStorage === 'undefined') return 'newest';
+
+  try {
+    return localStorage.getItem(LIST_ORDER_STORAGE_KEY) === 'oldest'
+      ? 'oldest'
+      : 'newest';
+  } catch {
+    return 'newest';
+  }
+};
+
+const [aggregateOrder, setAggregateOrderSignal] = createSignal<SortOrder>(
+  readListOrder()
+);
+
+const setAggregateOrder = (next: SortOrder): void => {
+  setAggregateOrderSignal(next);
+  if (typeof localStorage === 'undefined') return;
+
+  try {
+    localStorage.setItem(LIST_ORDER_STORAGE_KEY, next);
+  } catch {
+    // Storage may be unavailable; the in-memory choice still applies.
+  }
+};
 const [rows, setRows] = createSignal<ReadonlyArray<LibraryArticle>>([]);
 const [cursor, setCursor] = createSignal<string | null>(null);
 const [loadingInitial, setLoadingInitial] = createSignal(false);
@@ -48,6 +78,7 @@ export {
   activeOrder,
   activeScope,
   activeUnreadOnly,
+  aggregateOrder,
   cursor,
   loadError,
   loadingInitial,
@@ -56,6 +87,7 @@ export {
   setActiveOrder,
   setActiveScope,
   setActiveUnreadOnly,
+  setAggregateOrder,
   setCursor,
   setLoadError,
   setLoadingInitial,

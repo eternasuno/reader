@@ -111,9 +111,6 @@ export interface ListParams {
   limit?: number;
   unread?: boolean;
   cursor?: string | null;
-}
-
-export interface FeedItemListParams extends ListParams {
   order?: SortOrder;
 }
 

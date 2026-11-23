@@ -59,8 +59,8 @@ Every scope and open article has its own URL so reloads and browser history rest
 - `CM-URL-5`: Embedded credentials (`user:pass@`) in feed or page URLs are accepted for private feeds/pages fetched by Go directly (sent as HTTP Basic auth), but are **stripped** from API responses, OPML exports, and logs, and are **never forwarded** to third-party extractors (`jina` or external `browser` CDP; attempting to extract a credentialed URL via an external provider fails `422 WebpageFetcherError`).
 
 ### CM-ID & CM-PAGE — Ordering & Keyset Paging
-- `CM-ID-1`: Feed, folder, feed item, and saved page IDs are monotonically increasing UUIDv7 strings generated on creation. Arrival order is `id DESC` (newest on top); single-feed `oldest` mode uses `id ASC`.
-- `CM-PAGE-1`: Paged list endpoints accept `limit` (integer `1..200`, default `30`), `unread` (boolean, default `false`), and optional `cursor` (valid UUIDv7 row id). Response is `{ items, cursor }` where `cursor` is the last returned row's id if more rows exist, else `null`.
+- `CM-ID-1`: Feed, folder, feed item, and saved page IDs are monotonically increasing UUIDv7 strings generated on creation. Arrival order is `id DESC` (newest on top); `order=oldest` on any item or saved page list uses `id ASC`.
+- `CM-PAGE-1`: Paged list endpoints accept `limit` (integer `1..200`, default `30`), `unread` (boolean, default `false`), `order` (`newest` default | `oldest`; invalid values fail `400 RequestFailed`; single-feed lists fall back to the feed's stored order when absent), and optional `cursor` (valid UUIDv7 row id; continues in the chosen order). Response is `{ items, cursor }` where `cursor` is the last returned row's id if more rows exist, else `null`.
 - `CM-PAGE-2`: `publishedAt` is display-only and never participates in sorting or cursor queries.
 
 ### CM-ART & CM-HTML — Article Values & Sanitization

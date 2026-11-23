@@ -190,3 +190,29 @@ describe('row labels', () => {
     expect(state.articleSource(state.rows()[0]).title).toBe('Go Blog');
   });
 });
+
+describe('shared list order', () => {
+  it('reloads the active aggregate list oldest first and persists the choice', async () => {
+    queue({ items: [], cursor: null });
+    await state.loadScopeFirstPage({ kind: 'all' }, false);
+    solid.flush();
+
+    queue({ items: [], cursor: null });
+    await state.toggleAggregateOrder();
+    solid.flush();
+
+    expect(requestUrl(1)).toBe(
+      '/api/feed-items?limit=30&unread=false&order=oldest'
+    );
+    expect(state.activeOrder()).toBe('oldest');
+    expect(state.aggregateOrder()).toBe('oldest');
+    expect(localStorage.getItem('reader.listOrder')).toBe('oldest');
+
+    queue({ items: [], cursor: null });
+    await state.loadScopeFirstPage({ kind: 'later' }, false);
+    solid.flush();
+    expect(requestUrl(2)).toBe(
+      '/api/saved-pages?limit=30&unread=false&order=oldest'
+    );
+  });
+});

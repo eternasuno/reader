@@ -20,10 +20,16 @@ export interface ArticleListBodyProps {
 
 /** `LIB-VIEW-1`: the virtualized rows plus the infinite-scroll footer. */
 export function ArticleListBody(props: ArticleListBodyProps): JSX.Element {
+  const activeIndex = (): number =>
+    props.openArticleId === null
+      ? -1
+      : props.rows.findIndex((row) => row.id === props.openArticleId);
+
   return (
     <VirtualList
       items={props.rows}
-      estimateSize={112}
+      estimateSize={136}
+      activeIndex={activeIndex()}
       onEndReached={() => void loadNextPage()}
       class="min-h-0 flex-1"
       renderItem={(row) => (

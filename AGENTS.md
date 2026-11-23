@@ -26,5 +26,6 @@ Read the relevant skill before making changes:
 
 - **Spec & code in sync**: update the matching `reader-spec` file in the same change when product behavior changes.
 - **Security**: never log or return secrets (`APP_PASSWORD`, `SESSION_SECRET`, Jina key, browser endpoint, SMTP password, or URL `user:pass@` credentials). Keep Go SSRF IP filtering enabled unless `ALLOW_PRIVATE_NETWORK=true`. Enforce parsed `Origin` (or fallback `Referer` origin when `Origin` is absent) matching `APP_URL` on every state-changing `/api/*` endpoint.
+- **UI decisions**: no thumbnails, no per-list summary-line setting (summary is fixed at 3 lines), no keyboard-shortcuts item in the user menu, no end-of-article next card, no manual refresh menu item, no "open in new page" list option; `+` beside `订阅源` opens the add-feed dialog directly and folders are created only from `移动到`. Details live in `reader-spec`.
 - **Resource bounds**: every outbound HTTP/CDP request, feed parse, image download, list `limit`, and refresh worker pool must have explicit bounds/timeouts.
 - **Verification**: run `go test ./...`, `go vet ./...`, `go tool golangci-lint run ./...`, and frontend typecheck/lint/test/build under `web/` (`pnpm --dir web check`, `pnpm --dir web test`, `pnpm --dir web build`), and verify UI changes in a browser when touching layout or iframe rendering.

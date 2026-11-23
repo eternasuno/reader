@@ -3207,3 +3207,63 @@ func TestStaticServingWithoutEmbeddedFS(t *testing.T) {
 	requireStatus(t, h.raw(http.MethodGet, "/", nil), http.StatusNotFound)
 	requireStatus(t, h.raw(http.MethodGet, "/later", nil), http.StatusNotFound)
 }
+
+func TestListEndpointsHonorOrder(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	folder := h.seedFolder("Tech")
+	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", &folder.ID)
+	firstItem := h.seedItem(feed.ID, "https://example.com/a", nil)
+	secondItem := h.seedItem(feed.ID, "https://example.com/b", nil)
+	thirdItem := h.seedItem(feed.ID, "https://example.com/c", nil)
+	firstPage := h.seedSavedPage("https://example.com/1", false)
+	secondPage := h.seedSavedPage("https://example.com/2", false)
+
+	for _, target := range []string{"/api/feed-items", "/api/folders/" + folder.ID + "/items"} {
+		var page pageResponse[feedItemJSON]
+		recorder := h.authed(http.MethodGet, target+"?order=oldest&limit=2", nil)
+		requireStatus(t, recorder, http.StatusOK)
+		decodeBody(t, recorder, &page)
+		if len(page.Items) != 2 || page.Items[0].ID != firstItem.ID || page.Items[1].ID != secondItem.ID {
+			t.Fatalf("%s oldest page = %+v", target, page.Items)
+		}
+
+		if page.Cursor == nil || *page.Cursor != secondItem.ID {
+			t.Fatalf("%s oldest cursor = %v", target, page.Cursor)
+		}
+
+		recorder = h.authed(http.MethodGet, target+"?order=oldest&limit=2&cursor="+*page.Cursor, nil)
+		requireStatus(t, recorder, http.StatusOK)
+		decodeBody(t, recorder, &page)
+		if len(page.Items) != 1 || page.Items[0].ID != thirdItem.ID || page.Cursor != nil {
+			t.Fatalf("%s oldest continuation = %+v", target, page)
+		}
+
+		recorder = h.authed(http.MethodGet, target+"?order=newest", nil)
+		requireStatus(t, recorder, http.StatusOK)
+		decodeBody(t, recorder, &page)
+		if len(page.Items) != 3 || page.Items[0].ID != thirdItem.ID {
+			t.Fatalf("%s explicit newest = %+v", target, page.Items)
+		}
+
+		recorder = h.authed(http.MethodGet, target, nil)
+		requireStatus(t, recorder, http.StatusOK)
+		decodeBody(t, recorder, &page)
+		if len(page.Items) != 3 || page.Items[0].ID != thirdItem.ID {
+			t.Fatalf("%s default order = %+v", target, page.Items)
+		}
+
+		requireAPIError(t, h.authed(http.MethodGet, target+"?order=bogus", nil), http.StatusBadRequest, "RequestFailed")
+	}
+
+	var saved pageResponse[savedPageJSON]
+	recorder := h.authed(http.MethodGet, "/api/saved-pages?order=oldest", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	decodeBody(t, recorder, &saved)
+	if len(saved.Items) != 2 || saved.Items[0].ID != firstPage.ID || saved.Items[1].ID != secondPage.ID {
+		t.Fatalf("saved pages oldest = %+v", saved.Items)
+	}
+
+	requireAPIError(t, h.authed(http.MethodGet, "/api/saved-pages?order=bogus", nil), http.StatusBadRequest, "RequestFailed")
+}

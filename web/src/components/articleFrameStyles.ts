@@ -1,5 +1,11 @@
+import {
+  DEFAULT_APPEARANCE,
+  type ReaderAppearance,
+  type ReaderFontFamily,
+} from '../state';
+
 /**
- * `RD-FRAME-1`: fixed reader typography, explicit sans stack (no bare
+ * `RD-FRAME-1`: reader typography, explicit sans and serif stacks (no bare
  * `system-ui` on Linux), dark surface and readable text. Latin fonts come
  * before CJK fonts so Western punctuation such as `’` keeps its proportional
  * glyph instead of a full-width CJK one.
@@ -7,7 +13,15 @@
 const READER_FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif';
 
-export const READER_STYLES = `
+const READER_SERIF_STACK =
+  'Georgia, "Times New Roman", "Songti SC", "STSong", "Noto Serif CJK SC", "Noto Serif SC", serif';
+
+const FONT_FAMILIES: Record<ReaderFontFamily, string> = {
+  sans: READER_FONT_STACK,
+  serif: READER_SERIF_STACK,
+};
+
+const READER_BASE_STYLES = `
 :root {
   color-scheme: dark;
 }
@@ -15,16 +29,9 @@ html,
 body {
   background: #1e1e1e;
   color: #dddddf;
-}
-body {
-  margin: 0;
-  padding: 1.5rem 0 2rem;
-  font-family: ${READER_FONT_STACK};
-  font-size: 1rem;
-  line-height: 1.75;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
+}`;
+
+const READER_ELEMENT_STYLES = `
 p {
   margin: 0 0 1rem;
 }
@@ -74,6 +81,7 @@ pre {
   margin: 1rem 0;
   padding: 0.85rem 1rem;
   overflow-x: auto;
+  border: 1px solid #343434;
   border-radius: 0.5rem;
   background: #252525;
   color: #dddddf;
@@ -93,9 +101,11 @@ pre code {
   font-size: inherit;
 }
 blockquote {
-  margin: 1rem 0;
-  padding: 0.25rem 0 0.25rem 1rem;
+  margin: 1.25rem 0;
+  padding: 0.5rem 1rem;
   border-left: 3px solid #d5a15c;
+  border-radius: 0 0.375rem 0.375rem 0;
+  background: rgba(255, 255, 255, 0.03);
   color: #c7c7cb;
 }
 img {
@@ -104,6 +114,10 @@ img {
   height: auto;
   margin: 1rem auto;
   border-radius: 0.5rem;
+  cursor: zoom-in;
+}
+a img {
+  cursor: pointer;
 }
 figure {
   margin: 1rem 0;
@@ -141,3 +155,18 @@ svg {
   max-width: 100%;
 }
 `;
+
+export const buildReaderStyles = (
+  appearance: ReaderAppearance = DEFAULT_APPEARANCE
+): string => `${READER_BASE_STYLES}
+body {
+  margin: 0;
+  padding: 1.5rem 0 2rem;
+  font-family: ${FONT_FAMILIES[appearance.fontFamily]};
+  font-size: ${appearance.fontSize}px;
+  line-height: ${appearance.lineHeight};
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}${READER_ELEMENT_STYLES}`;
+
+export const READER_STYLES = buildReaderStyles(DEFAULT_APPEARANCE);

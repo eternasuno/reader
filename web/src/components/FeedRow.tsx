@@ -1,16 +1,12 @@
 import type { JSX } from '@solidjs/web';
-import { Show } from 'solid-js';
+import { createSignal, Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
-import {
-  changeFeedOrder,
-  feedUnreadCount,
-  folders,
-  markScopeAllRead,
-} from '../state';
+import { feedUnreadCount, markScopeAllRead, triggerKindleSend } from '../state';
 import { Icon, Menu, MenuCheckbox, MenuDivider, MenuItem } from '../ui';
-import { FeedDisplayRadios } from './FeedDisplayRadios';
+import { FeedMoveSubpanel } from './FeedMoveSubpanel';
 import { hasRefreshFailures, retryRefresh } from './feedFailure';
+import { ListOrderCheckbox } from './ListOrderCheckbox';
 import { SidebarRowEnd } from './SidebarRowEnd';
 import { SiteIcon } from './SiteIcon';
 import {
@@ -126,54 +122,81 @@ function FeedRowMenu(props: {
   showMove: boolean;
   state: SidebarProps;
 }): JSX.Element {
+  const [panel, setPanel] = createSignal<'main' | 'move'>('main');
+
   return (
     <Menu
       label={String(t('library.moreActions'))}
       align="end"
       triggerClass="btn-xs"
+      onOpenChange={(open) => {
+        if (!open) setPanel('main');
+      }}
     >
-      <MenuCheckbox
-        checked={props.state.unreadOnly}
-        onSelect={() => toggleUnread(props.state)}
+      <Show
+        when={panel() === 'move'}
+        fallback={
+          <FeedRowMainItems
+            feed={props.feed}
+            showMove={props.showMove}
+            state={props.state}
+            onOpenMove={() => setPanel('move')}
+          />
+        }
       >
-        {String(t('library.unreadOnly'))}
-      </MenuCheckbox>
+        <FeedMoveSubpanel
+          feed={props.feed}
+          onBack={() => setPanel('main')}
+          onMove={props.state.onMoveFeed}
+          onRequestNewFolder={props.state.onRequestNewFolder}
+        />
+      </Show>
+    </Menu>
+  );
+}
+
+function FeedRowMainItems(props: {
+  feed: Feed;
+  showMove: boolean;
+  state: SidebarProps;
+  onOpenMove: () => void;
+}): JSX.Element {
+  return (
+    <>
       <MenuItem
+        icon="check-double"
         onSelect={() =>
           void markScopeAllRead({ kind: 'feed', feedId: props.feed.id })
         }
       >
         {String(t('library.markAllRead'))}
       </MenuItem>
+      <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
+        {String(t('reader.sendAsEbook'))}
+      </MenuItem>
       <MenuDivider />
       <MenuCheckbox
-        checked={props.feed.order === 'oldest'}
-        onSelect={() =>
-          void changeFeedOrder(
-            props.feed,
-            props.feed.order === 'oldest' ? 'newest' : 'oldest'
-          )
-        }
+        checked={props.state.unreadOnly}
+        onSelect={() => toggleUnread(props.state)}
       >
-        {String(t('feeds.oldestFirst'))}
+        {String(t('library.unreadOnly'))}
       </MenuCheckbox>
-      <FeedDisplayRadios feed={props.feed} />
-      <Show when={props.showMove && folders().length > 0}>
-        <MenuItem
-          icon="folder"
-          onSelect={() => props.state.onRequestMoveFeed(props.feed)}
-        >
-          {String(t('feeds.moveToFolder'))}
+      <ListOrderCheckbox feed={props.feed} />
+      <MenuDivider />
+      <Show when={props.showMove}>
+        <MenuItem submenu keepOpen onSelect={props.onOpenMove}>
+          {String(t('feeds.moveTo'))}
         </MenuItem>
       </Show>
-      <MenuDivider />
+      <MenuItem onSelect={() => props.state.onRequestFeedOptions?.(props.feed)}>
+        {String(t('feeds.feedOptions'))}
+      </MenuItem>
       <MenuItem
-        danger
         icon="trash"
         onSelect={() => void deleteFeed(props.state, props.feed)}
       >
         {String(t('feeds.deleteFeed'))}
       </MenuItem>
-    </Menu>
+    </>
   );
 }

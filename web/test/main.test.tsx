@@ -266,15 +266,20 @@ describe('library layout', () => {
     await settle(4);
 
     const grid = must(container, '.grid');
-    expect(grid.className).toContain('md:grid-cols-[16rem_minmax(0,1fr)]');
+    expect(grid.className).toContain('md:grid-cols-[15rem_minmax(0,1fr)]');
+    expect(grid.className).toContain(
+      'lg:grid-cols-[14rem_21rem_minmax(0,1fr)]'
+    );
     expect(grid.className).toContain(
       'xl:grid-cols-[16rem_24rem_minmax(0,1fr)]'
     );
     for (const panel of ['sidebar', 'list', 'reader']) {
       expect(container.querySelector(`[data-panel="${panel}"]`)).not.toBeNull();
     }
-    expect(container.querySelector('[aria-label="切换导航"]')).not.toBeNull();
-    expect(container.textContent).toContain('留白 / 全部订阅');
+    const navToggle = must(container, '[aria-label="切换导航"]');
+    expect(navToggle.closest('[data-panel="list"]')).not.toBeNull();
+    expect(navToggle.className).toContain('md:hidden');
+    expect(container.textContent).not.toContain('留白 / 全部订阅');
 
     const urls = requestUrls();
     expect(listPages()).toHaveLength(1);
@@ -292,7 +297,7 @@ describe('library panels', () => {
     await settle(4);
 
     expect(must(container, '[data-panel="list"]').className).toContain(
-      'hidden xl:flex'
+      'hidden lg:flex'
     );
     expect(must(container, '[data-panel="reader"]').className).toContain(
       'flex'

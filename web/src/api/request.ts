@@ -1,4 +1,4 @@
-import type { ErrorResponse, FeedItemListParams, ListParams } from './types';
+import type { ErrorResponse, ListParams } from './types';
 import { ApiError } from './types';
 
 /** Query-string value accepted by `request`; `null`/`undefined` are dropped. */
@@ -137,12 +137,6 @@ export const pageParams = (params: ListParams): Record<string, QueryValue> => ({
   limit: params.limit,
   unread: params.unread,
   cursor: params.cursor,
-});
-
-export const feedItemParams = (
-  params: FeedItemListParams
-): Record<string, QueryValue> => ({
-  ...pageParams(params),
   order: params.order,
 });
 

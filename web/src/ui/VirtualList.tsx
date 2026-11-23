@@ -1,6 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import type { VirtualItem } from '@tanstack/virtual-core';
-import { For, Show } from 'solid-js';
+import { createEffect, For, Show } from 'solid-js';
 import type { ScrollVirtualizer } from './virtual-list-core';
 import { useVirtualList } from './virtual-list-core';
 
@@ -19,6 +19,8 @@ export interface VirtualListProps<T> {
   footer?: JSX.Element;
   /** Extra classes for the scroll container. */
   class?: string;
+  /** Row index to scroll into view when changed. */
+  activeIndex?: number;
 }
 
 interface RowsProps<T> {
@@ -70,6 +72,17 @@ const StaticRows = <T,>(props: StaticRowsProps<T>): JSX.Element => (
 
 export function VirtualList<T>(props: VirtualListProps<T>): JSX.Element {
   const list = useVirtualList(props);
+
+  createEffect(
+    () => ({ index: props.activeIndex, fallback: list.fallbackVisible() }),
+    ({ index, fallback }) => {
+      if (index === undefined || index < 0 || index >= props.items.length) {
+        return;
+      }
+      if (fallback) return;
+      list.virtualizer.scrollToIndex(index, { align: 'auto' });
+    }
+  );
 
   return (
     <div

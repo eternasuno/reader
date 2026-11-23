@@ -27,7 +27,7 @@ export function ReaderArticleHeader(props: {
         <SiteIcon url={source().url} fallback="globe" size={16} />
         <span class="truncate">{source().title}</span>
       </p>
-      <h1 class="text-2xl leading-tight font-bold break-words sm:text-3xl">
+      <h1 class="text-3xl leading-tight font-bold break-words sm:text-4xl">
         <a
           href={article().url}
           target="_blank"

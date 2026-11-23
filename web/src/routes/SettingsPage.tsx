@@ -67,7 +67,7 @@ interface SettingsNavProps {
 function SettingsNav(props: SettingsNavProps): JSX.Element {
   return (
     <nav
-      class="flex shrink-0 gap-1 overflow-x-auto md:sticky md:top-6 md:w-52 md:flex-col md:self-start md:overflow-visible"
+      class="grid shrink-0 grid-cols-4 gap-1 md:sticky md:top-6 md:flex md:w-52 md:flex-col md:self-start"
       aria-label={String(t('settings.title'))}
     >
       <For each={SECTIONS}>
@@ -75,7 +75,7 @@ function SettingsNav(props: SettingsNavProps): JSX.Element {
           <button
             type="button"
             class={[
-              'flex items-center gap-2.5 rounded-field px-3 py-2 text-left text-sm whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed',
+              'flex flex-col items-center justify-center gap-1 rounded-field px-1 py-2 text-center text-xs leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed md:flex-row md:justify-start md:gap-2.5 md:px-3 md:text-left md:text-sm md:whitespace-nowrap',
               props.active === section
                 ? 'bg-neutral font-semibold text-neutral-content'
                 : 'font-medium text-base-content/80 hover:bg-base-200',
@@ -84,7 +84,7 @@ function SettingsNav(props: SettingsNavProps): JSX.Element {
             disabled={props.disabled}
             onClick={() => props.onSelect(section)}
           >
-            <Icon name={SECTION_ICONS[section]} size={16} class="opacity-70" />
+            <Icon name={SECTION_ICONS[section]} size={18} class="opacity-70" />
             {String(t(SECTION_LABEL_KEYS[section]))}
           </button>
         )}
@@ -188,9 +188,9 @@ export function SettingsPage(): JSX.Element {
   };
 
   return (
-    <div class="flex min-h-dvh flex-col bg-base-100">
+    <div class="flex min-h-dvh flex-col bg-base-100 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <SettingsHeader onLeave={() => navigate('/later')} />
-      <div class="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-4 md:flex-row md:gap-10 md:p-6">
+      <div class="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-5 px-3 py-4 md:flex-row md:gap-10 md:p-6">
         <SettingsNav
           active={activeSection()}
           disabled={isSaving()}

@@ -82,13 +82,15 @@ export const moveFeedToFolder = async (
 export const changeFeedReaderMode = async (
   feed: Feed,
   readerMode: Feed['readerMode']
-): Promise<void> => {
+): Promise<boolean> => {
   try {
     await feedsApi.setReaderMode(feed.id, readerMode);
   } catch (error) {
     showToast(translateErrorCode(codeOf(error)), 'error');
-    return;
+    return false;
   }
 
   sidebar.updateFeedLocal(feed.id, { readerMode });
+
+  return true;
 };

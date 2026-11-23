@@ -321,7 +321,7 @@ describe('EmbeddedWebpageFrame', () => {
     );
     expect(iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
     expect(iframe.getAttribute('title')).toBe('原文');
-    expect(iframe.className).toContain('min-h-[70dvh]');
+    expect(iframe.className).toContain('h-full w-full flex-1');
   });
 
   it('shows the unsafe notice instead of an iframe', () => {
