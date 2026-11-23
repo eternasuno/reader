@@ -151,8 +151,9 @@ func listSavedPagesQuery(params domain.PageParams) (string, []any) {
 		where = append(where, `read = 0`)
 	}
 
+	comparison, order := pageDirection(params.Order)
 	if params.Cursor != nil {
-		where = append(where, `id < ?`)
+		where = append(where, `id `+comparison+` ?`)
 		args = append(args, *params.Cursor)
 	}
 
@@ -160,7 +161,7 @@ func listSavedPagesQuery(params domain.PageParams) (string, []any) {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 
-	query += ` ORDER BY id DESC LIMIT ?`
+	query += ` ORDER BY id ` + order + ` LIMIT ?`
 
 	return query, append(args, params.Limit+1)
 }

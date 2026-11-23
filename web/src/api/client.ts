@@ -1,10 +1,9 @@
-import { feedItemParams, item, pageParams, request } from './request';
+import { item, pageParams, request } from './request';
 import type {
   ExtractorProvider,
   Feed,
   FeedCreateInput,
   FeedItem,
-  FeedItemListParams,
   FeedPreview,
   FeedUnreadCount,
   Folder,
@@ -113,12 +112,9 @@ export const feedsApi = {
     request<void>(`/api/feeds/${encodeURIComponent(id)}/read-all`, {
       method: 'POST',
     }),
-  listItems: (
-    id: string,
-    params: FeedItemListParams = {}
-  ): Promise<Page<FeedItem>> =>
+  listItems: (id: string, params: ListParams = {}): Promise<Page<FeedItem>> =>
     request<Page<FeedItem>>(`/api/feeds/${encodeURIComponent(id)}/items`, {
-      params: feedItemParams(params),
+      params: pageParams(params),
     }),
   importOpml: (fileOrXml: File | string): Promise<OPMLImportResult> => {
     if (typeof fileOrXml === 'string') {

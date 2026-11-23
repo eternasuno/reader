@@ -57,27 +57,24 @@ export function EmbeddedWebpageFrame(
   const safe = createMemo(() => isSafeEmbedUrl(props.url));
 
   return (
-    <div class="flex min-h-0 flex-1 flex-col gap-2">
+    <div class="flex h-full min-h-0 w-full flex-1 flex-col">
       <Show
         when={safe()}
         fallback={
           <p
             role="alert"
-            class="rounded-box border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+            class="m-4 rounded-box border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
           >
             {String(t('reader.embeddedUnsafeUrl'))}
           </p>
         }
       >
-        <p class="rounded-box border border-base-300 bg-base-200 px-3 py-2 text-sm text-base-content/70">
-          {String(t('reader.embeddedNotice'))}
-        </p>
         <iframe
           src={props.url}
           title={props.title ?? String(t('reader.embeddedWebpageView'))}
           sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
           referrerpolicy="no-referrer"
-          class="w-full flex-1 min-h-[70dvh] border-0 rounded-box bg-base-200"
+          class="h-full w-full flex-1 border-0 bg-base-100"
         />
       </Show>
     </div>

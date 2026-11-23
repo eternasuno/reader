@@ -266,7 +266,10 @@ describe('library layout', () => {
     await settle(4);
 
     const grid = must(container, '.grid');
-    expect(grid.className).toContain('md:grid-cols-[16rem_minmax(0,1fr)]');
+    expect(grid.className).toContain('md:grid-cols-[15rem_minmax(0,1fr)]');
+    expect(grid.className).toContain(
+      'lg:grid-cols-[14rem_21rem_minmax(0,1fr)]'
+    );
     expect(grid.className).toContain(
       'xl:grid-cols-[16rem_24rem_minmax(0,1fr)]'
     );
@@ -294,7 +297,7 @@ describe('library panels', () => {
     await settle(4);
 
     expect(must(container, '[data-panel="list"]').className).toContain(
-      'hidden xl:flex'
+      'hidden lg:flex'
     );
     expect(must(container, '[data-panel="reader"]').className).toContain(
       'flex'

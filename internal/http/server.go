@@ -352,6 +352,14 @@ func parseUnreadFlag(values url.Values) (bool, error) {
 	}
 }
 
+func (q pageQuery) orderOrDefault() domain.SortOrder {
+	if q.hasOrder {
+		return q.order
+	}
+
+	return domain.SortOrderNewest
+}
+
 func (q pageQuery) params(order domain.SortOrder) (domain.PageParams, error) {
 	return domain.ValidatePageParams(q.limit, q.hasLimit, q.unread, order, q.cursor)
 }

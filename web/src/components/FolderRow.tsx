@@ -5,13 +5,14 @@ import { t } from '../i18n';
 import {
   collapsedFolders,
   folderFeeds,
-  folders,
   folderUnreadCount,
   markScopeAllRead,
   toggleFolderCollapse,
+  triggerKindleSend,
 } from '../state';
 import { Icon, Menu, MenuCheckbox, MenuDivider, MenuItem } from '../ui';
 import { FeedRow } from './FeedRow';
+import { ListOrderCheckbox } from './ListOrderCheckbox';
 import { SidebarRowEnd } from './SidebarRowEnd';
 import {
   deleteFolder,
@@ -56,12 +57,7 @@ export function FolderRow(props: {
         <div class="ml-4 flex flex-col gap-0.5 border-l border-base-300 pl-1">
           <For each={folderFeeds(props.folder.id)}>
             {(feed) => (
-              <FeedRow
-                feed={feed}
-                indent
-                showMove={folders().length > 0}
-                state={props.state}
-              />
+              <FeedRow feed={feed} indent showMove state={props.state} />
             )}
           </For>
         </div>
@@ -112,7 +108,6 @@ function FolderNameButton(props: {
         })
       }
     >
-      <Icon name="folder" size={16} class="opacity-70" />
       <span class="flex-1 truncate">{props.folder.name}</span>
     </button>
   );
@@ -128,13 +123,19 @@ function FolderMenu(props: {
       align="end"
       triggerClass="btn-xs"
     >
-      <MenuCheckbox
-        checked={props.state.unreadOnly}
-        onSelect={() => toggleUnread(props.state)}
-      >
-        {String(t('library.unreadOnly'))}
-      </MenuCheckbox>
+      <FolderMainMenuItems folder={props.folder} state={props.state} />
+    </Menu>
+  );
+}
+
+function FolderMainMenuItems(props: {
+  folder: Folder;
+  state: SidebarProps;
+}): JSX.Element {
+  return (
+    <>
       <MenuItem
+        icon="check-double"
         onSelect={() =>
           void markScopeAllRead({
             kind: 'folder',
@@ -144,6 +145,17 @@ function FolderMenu(props: {
       >
         {String(t('library.markAllRead'))}
       </MenuItem>
+      <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
+        {String(t('reader.sendAsEbook'))}
+      </MenuItem>
+      <MenuDivider />
+      <MenuCheckbox
+        checked={props.state.unreadOnly}
+        onSelect={() => toggleUnread(props.state)}
+      >
+        {String(t('library.unreadOnly'))}
+      </MenuCheckbox>
+      <ListOrderCheckbox feed={null} />
       <MenuDivider />
       <MenuItem
         onSelect={() => props.state.onRequestRenameFolder(props.folder)}
@@ -151,11 +163,11 @@ function FolderMenu(props: {
         {String(t('folders.renameFolder'))}
       </MenuItem>
       <MenuItem
-        danger
+        icon="trash"
         onSelect={() => void deleteFolder(props.state, props.folder)}
       >
         {String(t('folders.deleteFolder'))}
       </MenuItem>
-    </Menu>
+    </>
   );
 }

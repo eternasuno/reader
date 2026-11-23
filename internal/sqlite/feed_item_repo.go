@@ -239,6 +239,15 @@ func qualifyColumns(table string, columns string) string {
 	return strings.Join(parts, `, `)
 }
 
+// pageDirection returns the keyset cursor comparison and ORDER BY direction.
+func pageDirection(order domain.SortOrder) (string, string) {
+	if order == domain.SortOrderOldest {
+		return `>`, `ASC`
+	}
+
+	return `<`, `DESC`
+}
+
 func listAllQuery(params domain.PageParams) feedItemQuery {
 	where := []string{}
 	args := []any{}
@@ -246,15 +255,16 @@ func listAllQuery(params domain.PageParams) feedItemQuery {
 		where = append(where, `read = 0`)
 	}
 
+	comparison, order := pageDirection(params.Order)
 	if params.Cursor != nil {
-		where = append(where, `id < ?`)
+		where = append(where, `id `+comparison+` ?`)
 		args = append(args, *params.Cursor)
 	}
 
 	return buildFeedItemsQuery(feedItemQuerySpec{
 		source: `feed_item`,
 		where:  where,
-		order:  `id DESC`,
+		order:  `id ` + order,
 		args:   args,
 		limit:  params.Limit,
 	})
@@ -267,22 +277,16 @@ func listByFeedQuery(feedID string, params domain.PageParams) feedItemQuery {
 		where = append(where, `read = 0`)
 	}
 
-	comparison := `id < ?`
-	order := `id DESC`
-	if params.Order == domain.SortOrderOldest {
-		comparison = `id > ?`
-		order = `id ASC`
-	}
-
+	comparison, order := pageDirection(params.Order)
 	if params.Cursor != nil {
-		where = append(where, comparison)
+		where = append(where, `id `+comparison+` ?`)
 		args = append(args, *params.Cursor)
 	}
 
 	return buildFeedItemsQuery(feedItemQuerySpec{
 		source: `feed_item`,
 		where:  where,
-		order:  order,
+		order:  `id ` + order,
 		args:   args,
 		limit:  params.Limit,
 	})
@@ -295,8 +299,9 @@ func listByFolderQuery(folderID string, params domain.PageParams) feedItemQuery 
 		where = append(where, `feed_item.read = 0`)
 	}
 
+	comparison, order := pageDirection(params.Order)
 	if params.Cursor != nil {
-		where = append(where, `feed_item.id < ?`)
+		where = append(where, `feed_item.id `+comparison+` ?`)
 		args = append(args, *params.Cursor)
 	}
 
@@ -304,7 +309,7 @@ func listByFolderQuery(folderID string, params domain.PageParams) feedItemQuery 
 		source: `feed_item`,
 		join:   `JOIN feed ON feed_item.feed_id = feed.id`,
 		where:  where,
-		order:  `feed_item.id DESC`,
+		order:  `feed_item.id ` + order,
 		args:   args,
 		limit:  params.Limit,
 	})

@@ -1,6 +1,7 @@
 /** Reactive domain state for the reader SPA. One module per concept; no router imports so every
  * module is directly testable under Vitest. */
 
+export * from './appearance';
 export * from './library';
 export * from './library-unsubscribe';
 export * from './reader';

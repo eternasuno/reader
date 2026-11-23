@@ -5,8 +5,10 @@ import {
   allFeedsUnreadCount,
   markScopeAllRead,
   savedUnreadCount,
+  triggerKindleSend,
 } from '../state';
-import { MenuCheckbox, MenuItem } from '../ui';
+import { MenuCheckbox, MenuDivider, MenuItem } from '../ui';
+import { ListOrderCheckbox } from './ListOrderCheckbox';
 import { ScopeRow } from './ScopeRow';
 import { isActiveScope, selectScope, toggleUnread } from './sidebarActions';
 import type { SidebarProps } from './sidebarProps';
@@ -15,33 +17,45 @@ import type { SidebarProps } from './sidebarProps';
 export function SidebarScopes(props: { state: SidebarProps }): JSX.Element {
   return (
     <nav class="flex flex-col gap-0.5">
-      <ScopeRow
-        active={isActiveScope(props.state, { kind: 'later' })}
-        icon="bookmark"
-        label={String(t('library.laterScope'))}
-        count={savedUnreadCount()}
-        onSelect={() => selectScope(props.state, { kind: 'later' })}
-      >
-        <MenuCheckbox
-          checked={props.state.unreadOnly}
-          onSelect={() => toggleUnread(props.state)}
-        >
-          {String(t('library.unreadOnly'))}
-        </MenuCheckbox>
-        <MenuItem onSelect={() => void markScopeAllRead({ kind: 'later' })}>
-          {String(t('library.markAllRead'))}
-        </MenuItem>
-        <Show when={props.state.onRequestAddLink}>
-          <MenuItem
-            icon="plus"
-            onSelect={() => props.state.onRequestAddLink?.()}
-          >
-            {String(t('later.addLinkTitle'))}
-          </MenuItem>
-        </Show>
-      </ScopeRow>
       <AllScopeRow state={props.state} />
+      <LaterScopeRow state={props.state} />
     </nav>
+  );
+}
+
+function LaterScopeRow(props: { state: SidebarProps }): JSX.Element {
+  return (
+    <ScopeRow
+      active={isActiveScope(props.state, { kind: 'later' })}
+      icon="bookmark"
+      label={String(t('library.laterScope'))}
+      count={savedUnreadCount()}
+      onSelect={() => selectScope(props.state, { kind: 'later' })}
+    >
+      <MenuItem
+        icon="check-double"
+        onSelect={() => void markScopeAllRead({ kind: 'later' })}
+      >
+        {String(t('library.markAllRead'))}
+      </MenuItem>
+      <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
+        {String(t('reader.sendAsEbook'))}
+      </MenuItem>
+      <MenuDivider />
+      <MenuCheckbox
+        checked={props.state.unreadOnly}
+        onSelect={() => toggleUnread(props.state)}
+      >
+        {String(t('library.unreadOnly'))}
+      </MenuCheckbox>
+      <ListOrderCheckbox feed={null} />
+      <Show when={props.state.onRequestAddLink}>
+        <MenuDivider />
+        <MenuItem icon="plus" onSelect={() => props.state.onRequestAddLink?.()}>
+          {String(t('later.addLinkTitle'))}
+        </MenuItem>
+      </Show>
+    </ScopeRow>
   );
 }
 
@@ -54,15 +68,23 @@ function AllScopeRow(props: { state: SidebarProps }): JSX.Element {
       count={allFeedsUnreadCount()}
       onSelect={() => selectScope(props.state, { kind: 'all' })}
     >
+      <MenuItem
+        icon="check-double"
+        onSelect={() => void markScopeAllRead({ kind: 'all' })}
+      >
+        {String(t('library.markAllRead'))}
+      </MenuItem>
+      <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
+        {String(t('reader.sendAsEbook'))}
+      </MenuItem>
+      <MenuDivider />
       <MenuCheckbox
         checked={props.state.unreadOnly}
         onSelect={() => toggleUnread(props.state)}
       >
         {String(t('library.unreadOnly'))}
       </MenuCheckbox>
-      <MenuItem onSelect={() => void markScopeAllRead({ kind: 'all' })}>
-        {String(t('library.markAllRead'))}
-      </MenuItem>
+      <ListOrderCheckbox feed={null} />
     </ScopeRow>
   );
 }

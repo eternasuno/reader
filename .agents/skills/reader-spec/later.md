@@ -8,7 +8,7 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 - `SP-ADD-1`: Adding a URL checks duplicates by normalized URL before fetching (`CM-FETCH-1`). On duplicate (`409 SavedPageAlreadyExists`), adding a link via dialog or `/save` opens the existing page instead of showing an error; saving an already-saved feed item shows toast `该文章已在稍后阅读中` and stays on the item.
 - `SP-ADD-2`: Stored `url` is the submitted normalized URL (not a redirect target). Fetch/extract failure or empty content saves nothing.
 - `SP-SAVE-1`: Saving a feed item reuses `extractedContent`, else feed `content`, and fetches (`CM-FETCH-1`) only when the item has neither. Missing item fails `404 FeedItemNotFound`.
-- `SP-LIST-1`: Listed in `id DESC` order (`CM-PAGE-1`).
+- `SP-LIST-1`: Listed in `id DESC` order by default, or `id ASC` with `order=oldest` (`CM-PAGE-1`).
 - `SP-READ-1`: Marking read/unread (`PATCH`, `POST /read`, `POST /read-all`) is idempotent; unknown IDs succeed with no change.
 - `SP-REMOVE-1`: Deleting removes the row immediately. Re-adding the same URL later creates a fresh unread page at the top.
 
@@ -23,7 +23,7 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 
 | Method | Path | Request | Success | Errors |
 | --- | --- | --- | --- | --- |
-| GET | `/api/saved-pages` | `limit`, `unread`, `cursor?` | `200 { items, cursor }` | `SavedPageRepositoryError` 500 |
+| GET | `/api/saved-pages` | `limit`, `unread`, `order?`, `cursor?` | `200 { items, cursor }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/unread-count` | — | `200 { count }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/lookup` | `url` | `200 { item \| null }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/:id` | `id` | `200 { item \| null }` | `SavedPageRepositoryError` 500 |

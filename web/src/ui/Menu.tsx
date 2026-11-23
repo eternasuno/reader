@@ -10,11 +10,11 @@ import type { IconName } from './Icon';
 import { Icon } from './Icon';
 
 const ITEM_CLASSES =
-  'flex w-full items-center gap-2 rounded-field px-3 py-2 text-left text-sm text-base-content transition-colors hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50';
+  'flex min-h-10 w-[calc(100%-1rem)] mx-2 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm leading-5 text-base-content transition-colors hover:bg-base-300/70 focus-visible:bg-base-300/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40';
 
-/** A top-layer popover anchored to its trigger, so scroll containers never clip it. */
+/** `top: anchor(bottom)` + `flip-block, flip-inline` keeps menus inside the viewport without JS coordinates. */
 const PANEL_CLASSES =
-  'inset-auto m-0 my-1 min-w-44 rounded-box border border-base-300 bg-base-100 p-1 text-base-content shadow-xl [position-try-fallbacks:flip-block,flip-inline]';
+  'inset-auto m-0 my-1 min-w-60 rounded-lg border border-base-300/80 bg-base-200 px-0 py-2 text-base-content shadow-2xl [position-try-fallbacks:flip-block,flip-inline]';
 
 const PANEL_AREA = {
   start: '[position-area:bottom_span-right]',
@@ -94,6 +94,7 @@ const handleMenuKeyDown = (
 const handleMenuClick = (event: MouseEvent, dismiss: () => void): void => {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  if (target.closest('[data-keep-open="true"]')) return;
 
   const item = target.closest('[role="menuitem"]');
   if (item && !item.hasAttribute('disabled')) dismiss();
@@ -108,9 +109,11 @@ interface DismissOptions {
 /** Closes the menu on an outside press/click or Escape (`UI-FOCUS-3`). */
 const useMenuDismiss = (options: DismissOptions): void => {
   const isOutside = (event: MouseEvent): boolean => {
-    if (!options.open()) return false;
+    const container = options.container();
+    if (!options.open() || !container) return false;
+    if (event.composedPath().includes(container)) return false;
     const target = event.target;
-    return !(target instanceof Node && options.container()?.contains(target));
+    return !(target instanceof Node && container.contains(target));
   };
 
   const onPress = (event: MouseEvent) => {
@@ -246,12 +249,29 @@ export function Menu(props: MenuProps): JSX.Element {
   );
 }
 
+const MenuTrailingIcon = (props: {
+  icon?: IconName;
+  danger?: boolean;
+}): JSX.Element => (
+  <span
+    class={[
+      'flex size-4 shrink-0 items-center justify-center',
+      props.danger ? '' : 'opacity-75',
+    ]}
+    aria-hidden="true"
+  >
+    <Show when={props.icon}>{(name) => <Icon name={name()} size={16} />}</Show>
+  </span>
+);
+
 export interface MenuItemProps {
   children?: JSX.Element;
   icon?: IconName;
   onSelect?: () => void;
   disabled?: boolean;
   danger?: boolean;
+  submenu?: boolean;
+  keepOpen?: boolean;
   class?: string;
 }
 
@@ -262,6 +282,7 @@ export function MenuItem(props: MenuItemProps): JSX.Element {
       role="menuitem"
       tabindex="-1"
       disabled={props.disabled}
+      data-keep-open={props.submenu || props.keepOpen ? 'true' : undefined}
       class={[
         ITEM_CLASSES,
         { 'text-error hover:bg-error/10': Boolean(props.danger) },
@@ -272,20 +293,22 @@ export function MenuItem(props: MenuItemProps): JSX.Element {
       }}
     >
       <span
-        class="flex size-4 shrink-0 items-center justify-center"
+        class="flex size-5 shrink-0 items-center justify-center opacity-70"
         aria-hidden="true"
       >
-        <Show when={props.icon}>
-          {(name) => <Icon name={name()} size={16} />}
+        <Show when={props.submenu}>
+          <Icon name="chevron-right" size={16} />
         </Show>
       </span>
       <span class="flex-1 truncate">{props.children}</span>
+      <MenuTrailingIcon icon={props.icon} danger={props.danger} />
     </button>
   );
 }
 
 export interface MenuCheckboxProps {
   children?: JSX.Element;
+  icon?: IconName;
   checked?: boolean;
   onSelect?: (checked: boolean) => void;
   disabled?: boolean;
@@ -306,20 +329,23 @@ export function MenuCheckbox(props: MenuCheckboxProps): JSX.Element {
       }}
     >
       <span
-        class="flex size-4 shrink-0 items-center justify-center"
+        class="flex size-5 shrink-0 items-center justify-center opacity-90"
         aria-hidden="true"
       >
-        <Show when={props.checked}>
-          <Icon name="check" size={16} />
-        </Show>
+        <Icon
+          name={props.checked ? 'checkbox-checked' : 'checkbox'}
+          size={18}
+        />
       </span>
       <span class="flex-1 truncate">{props.children}</span>
+      <MenuTrailingIcon icon={props.icon} />
     </button>
   );
 }
 
 export interface MenuRadioProps {
   children?: JSX.Element;
+  icon?: IconName;
   checked?: boolean;
   onSelect?: () => void;
   disabled?: boolean;
@@ -340,7 +366,7 @@ export function MenuRadio(props: MenuRadioProps): JSX.Element {
       }}
     >
       <span
-        class="flex size-4 shrink-0 items-center justify-center"
+        class="flex size-4 shrink-0 items-center justify-center text-primary"
         aria-hidden="true"
       >
         <Show when={props.checked}>
@@ -348,10 +374,11 @@ export function MenuRadio(props: MenuRadioProps): JSX.Element {
         </Show>
       </span>
       <span class="flex-1 truncate">{props.children}</span>
+      <MenuTrailingIcon icon={props.icon} />
     </button>
   );
 }
 
 export function MenuDivider(): JSX.Element {
-  return <hr class="my-1 h-px border-0 bg-base-300" />;
+  return <hr class="my-2 h-px border-0 bg-base-content/15" />;
 }

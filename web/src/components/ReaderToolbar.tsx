@@ -1,5 +1,6 @@
 import type { JSX } from '@solidjs/web';
-import { Show } from 'solid-js';
+import { createContext, Show, useContext } from 'solid-js';
+import type { Feed } from '../api';
 import { t } from '../i18n';
 import {
   adjacentArticleIds,
@@ -12,11 +13,17 @@ import { toggleRead } from './readerActions';
 import { extractLabel } from './readerBody';
 import type { ReaderNav } from './readerNav';
 
+export const FeedOptionsContext = createContext<
+  () => ((feed: Feed) => void) | undefined
+>(() => undefined);
+
 export interface ReaderToolbarProps {
   article: LibraryArticle;
   nav: ReaderNav;
+  scrolled?: boolean;
   onSaveToLater: () => void;
   onDelete: () => void;
+  onRequestFeedOptions?: (feed: Feed) => void;
 }
 
 const readLabel = (article: LibraryArticle): string =>
@@ -24,11 +31,16 @@ const readLabel = (article: LibraryArticle): string =>
 
 /** `RD-READ-1`, `RD-EXTRACT-1`, `RD-NAV-1`: the icon-only article action bar. */
 export function ReaderToolbar(props: ReaderToolbarProps): JSX.Element {
+  const contextFeedOptions = useContext(FeedOptionsContext);
+
   return (
     <div
       role="toolbar"
       aria-label={String(t('reader.articleActions'))}
-      class="flex min-h-13 flex-wrap items-center gap-1 border-b border-base-300 px-2 py-1.5"
+      class={[
+        'flex min-h-13 flex-wrap items-center gap-1 border-b border-base-300 px-2 py-1.5 transition-shadow',
+        props.scrolled ? 'shadow-md' : '',
+      ]}
     >
       <ReaderNavButtons nav={props.nav} />
       <span class="flex-1" />
@@ -40,6 +52,9 @@ export function ReaderToolbar(props: ReaderToolbarProps): JSX.Element {
         article={props.article}
         nav={props.nav}
         onDelete={props.onDelete}
+        onRequestFeedOptions={
+          props.onRequestFeedOptions ?? contextFeedOptions()
+        }
       />
     </div>
   );
@@ -79,10 +94,10 @@ function ReaderNavButtons(props: { nav: ReaderNav }): JSX.Element {
         label={String(t('reader.backToList'))}
         onClick={() => props.nav.onNavigate(props.nav.listUrl())}
       >
-        <span class="inline-flex xl:hidden">
+        <span class="inline-flex lg:hidden">
           <Icon name="arrow-left" size={18} />
         </span>
-        <span class="hidden xl:inline-flex">
+        <span class="hidden lg:inline-flex">
           <Icon name="close" size={18} />
         </span>
       </ToolbarButton>

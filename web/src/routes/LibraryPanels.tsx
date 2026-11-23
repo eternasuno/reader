@@ -3,14 +3,21 @@ import { Show } from 'solid-js';
 import {
   AddLinkDialog,
   ArticleListPane,
+  FeedOptionsDialog,
   FolderNameDialog,
-  MoveFeedDialog,
+  KeyboardShortcutsDialog,
   ReaderPane,
   Sidebar,
   SubscribeFeedDialog,
 } from '../components';
+import { deleteFeed } from '../components/articleListActions';
 import { t } from '../i18n';
-import { feeds as sidebarFeeds, folders as sidebarFolders } from '../state';
+import {
+  readerFullscreen,
+  sidebarCollapsed,
+  feeds as sidebarFeeds,
+  folders as sidebarFolders,
+} from '../state';
 import type { LibraryController } from './libraryController';
 
 export type PanelName = 'sidebar' | 'list' | 'reader';
@@ -21,10 +28,29 @@ export interface LibraryViewProps {
 }
 
 const GRID_CLASSES =
-  'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_24rem_minmax(0,1fr)]';
+  'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] md:grid-cols-[15rem_minmax(0,1fr)] lg:grid-cols-[14rem_21rem_minmax(0,1fr)] xl:grid-cols-[16rem_24rem_minmax(0,1fr)]';
+
+const COLLAPSED_GRID_CLASSES =
+  'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[21rem_minmax(0,1fr)] xl:grid-cols-[24rem_minmax(0,1fr)]';
+
+const FULLSCREEN_GRID_CLASSES =
+  'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)]';
+
+const isFullscreen = (props: LibraryViewProps): boolean =>
+  readerFullscreen() && props.ctl.articleId() !== null;
+
+const gridClasses = (props: LibraryViewProps): string => {
+  if (isFullscreen(props)) return FULLSCREEN_GRID_CLASSES;
+  return sidebarCollapsed() ? COLLAPSED_GRID_CLASSES : GRID_CLASSES;
+};
+
+const sidebarVisibility = (drawerOpen: boolean): string => {
+  if (drawerOpen) return DRAWER_CLASSES;
+  return sidebarCollapsed() ? 'hidden' : 'hidden md:flex';
+};
 
 const DRAWER_CLASSES =
-  'fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] bg-base-100 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-xl md:relative md:inset-auto md:z-auto md:w-auto md:max-w-none md:pt-0 md:pb-0 md:shadow-none';
+  'fixed inset-y-0 left-0 z-40 flex w-66 max-w-[85vw] bg-base-100 max-md:overflow-hidden max-md:rounded-r-2xl pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-xl md:relative md:inset-auto md:z-auto md:w-auto md:max-w-none md:pt-0 md:pb-0 md:shadow-none';
 
 interface PanelFrameProps {
   name: PanelName;
@@ -55,7 +81,11 @@ function SidebarPanel(props: LibraryViewProps): JSX.Element {
     <PanelFrame
       name="sidebar"
       panelRef={(element) => props.panelRef('sidebar', element)}
-      visible={props.ctl.drawerOpen() ? DRAWER_CLASSES : 'hidden md:flex'}
+      visible={
+        isFullscreen(props)
+          ? 'hidden'
+          : sidebarVisibility(props.ctl.drawerOpen())
+      }
     >
       <Sidebar
         scope={props.ctl.scope()}
@@ -64,7 +94,8 @@ function SidebarPanel(props: LibraryViewProps): JSX.Element {
         onRequestAddFeed={props.ctl.requestAddFeed}
         onRequestNewFolder={props.ctl.requestNewFolder}
         onRequestRenameFolder={props.ctl.requestRenameFolder}
-        onRequestMoveFeed={props.ctl.requestMoveFeed}
+        onMoveFeed={props.ctl.handleMoveFeed}
+        onRequestFeedOptions={props.ctl.requestFeedOptions}
         onRequestImportOpml={props.ctl.requestImportOpml}
         onRequestAddLink={props.ctl.requestAddLink}
       />
@@ -75,7 +106,7 @@ function SidebarPanel(props: LibraryViewProps): JSX.Element {
 function SidebarColumn(props: LibraryViewProps): JSX.Element {
   return (
     <>
-      <Show when={props.ctl.drawerOpen()}>
+      <Show when={!isFullscreen(props) && props.ctl.drawerOpen()}>
         <button
           type="button"
           class="fixed inset-0 z-30 bg-black/60 md:hidden"
@@ -89,8 +120,10 @@ function SidebarColumn(props: LibraryViewProps): JSX.Element {
 }
 
 function ListPanel(props: LibraryViewProps): JSX.Element {
-  const visible = (): string =>
-    props.ctl.articleId() === null ? 'flex' : 'hidden xl:flex';
+  const visible = (): string => {
+    if (isFullscreen(props)) return 'hidden';
+    return props.ctl.articleId() === null ? 'flex' : 'hidden lg:flex';
+  };
 
   return (
     <PanelFrame
@@ -109,7 +142,9 @@ function ListPanel(props: LibraryViewProps): JSX.Element {
         onRequestAddLink={props.ctl.requestAddLink}
         onRequestAddFeed={props.ctl.requestAddFeed}
         onRequestRenameFolder={props.ctl.requestRenameFolder}
-        onRequestMoveFeed={props.ctl.requestMoveFeed}
+        onMoveFeed={props.ctl.handleMoveFeed}
+        onRequestNewFolder={props.ctl.requestNewFolder}
+        onRequestFeedOptions={props.ctl.requestFeedOptions}
       />
     </PanelFrame>
   );
@@ -117,7 +152,7 @@ function ListPanel(props: LibraryViewProps): JSX.Element {
 
 function ReaderPanel(props: LibraryViewProps): JSX.Element {
   const visible = (): string =>
-    props.ctl.articleId() !== null ? 'flex' : 'hidden xl:flex';
+    props.ctl.articleId() !== null ? 'flex' : 'hidden lg:flex';
 
   return (
     <PanelFrame
@@ -129,6 +164,7 @@ function ReaderPanel(props: LibraryViewProps): JSX.Element {
         scope={props.ctl.scope()}
         unreadOnly={props.ctl.unreadOnly()}
         onNavigate={props.ctl.onNavigate}
+        onRequestFeedOptions={props.ctl.requestFeedOptions}
       />
     </PanelFrame>
   );
@@ -170,12 +206,26 @@ function ManageDialogs(props: LibraryViewProps): JSX.Element {
           />
         )}
       </Show>
-      <MoveFeedDialog
-        open={props.ctl.moveFeed() !== null}
-        feed={props.ctl.moveFeed()}
-        folders={sidebarFolders()}
-        onClose={props.ctl.closeMoveFeed}
-        onMove={props.ctl.handleMoveFeed}
+      <FeedOptionsDialog
+        open={props.ctl.optionsFeed() !== null}
+        feed={props.ctl.optionsFeed()}
+        onClose={props.ctl.closeFeedOptions}
+        onUnsubscribe={(feed) => {
+          const actions = {
+            scope: props.ctl.scope(),
+            unreadOnly: props.ctl.unreadOnly(),
+            onNavigate: props.ctl.onNavigate,
+          };
+          void deleteFeed(actions, feed).then(() => {
+            if (!sidebarFeeds().some((entry) => entry.id === feed.id)) {
+              props.ctl.closeFeedOptions();
+            }
+          });
+        }}
+      />
+      <KeyboardShortcutsDialog
+        open={props.ctl.shortcutsOpen()}
+        onClose={props.ctl.closeShortcuts}
       />
     </>
   );
@@ -196,7 +246,7 @@ function OpmlInput(props: LibraryViewProps): JSX.Element {
 export function LibraryLayout(props: LibraryViewProps): JSX.Element {
   return (
     <div class="flex h-dvh min-h-dvh flex-col overflow-hidden bg-base-100 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-      <div class={GRID_CLASSES}>
+      <div class={gridClasses(props)}>
         <SidebarColumn ctl={props.ctl} panelRef={props.panelRef} />
         <ListPanel ctl={props.ctl} panelRef={props.panelRef} />
         <ReaderPanel ctl={props.ctl} panelRef={props.panelRef} />

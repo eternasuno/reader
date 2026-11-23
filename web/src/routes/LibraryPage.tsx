@@ -1,6 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import { createEffect, onSettled } from 'solid-js';
-import { trackLibraryMount } from '../state';
+import { sidebarCollapsed, trackLibraryMount } from '../state';
 import type { PanelName } from './LibraryPanels';
 import { LibraryLayout } from './LibraryPanels';
 import { createLibraryController } from './libraryController';
@@ -22,8 +22,8 @@ export function LibraryPage(): JSX.Element {
 
   // `LIB-VIEW-1`: never strand keyboard focus inside a panel that CSS just hid.
   createEffect(
-    () => ctl.routeState(),
-    (state) => recoverFocus(state, panels)
+    () => ({ state: ctl.routeState(), collapsed: sidebarCollapsed() }),
+    ({ state }) => recoverFocus(state, panels)
   );
 
   // `FD-SUB-2`: a first-refresh wait stops once no library page is mounted (e.g. on /settings).

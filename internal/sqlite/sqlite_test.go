@@ -2090,6 +2090,133 @@ func TestKindleSendRepoRecordBookAcceptedRequiresRunningSend(t *testing.T) {
 	}
 }
 
+func TestListOldestOrderPaging(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	folder := createFolder(t, store, "News")
+	inside := createFeed(t, store, "Inside", &folder.ID)
+	outside := createFeed(t, store, "Outside", nil)
+	insideItems := addItems(t, store, inside, 3)
+	outsideItems := addItems(t, store, outside, 2)
+	allItems := append(slices.Clone(insideItems), outsideItems...)
+	slices.SortFunc(allItems, func(a, b domain.FeedItem) int { return strings.Compare(a.ID, b.ID) })
+
+	if err := store.FeedItems().SetRead(ctx, insideItems[1].ID, true); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		list func(params domain.PageParams) (domain.PageResult[domain.FeedItem], error)
+		all  []string
+		read string
+	}{
+		{
+			name: "all",
+			list: func(params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
+				return store.FeedItems().ListAll(ctx, params)
+			},
+			all:  itemIDs(allItems),
+			read: insideItems[1].ID,
+		},
+		{
+			name: "folder",
+			list: func(params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
+				return store.FeedItems().ListByFolder(ctx, folder.ID, params)
+			},
+			all:  itemIDs(insideItems),
+			read: insideItems[1].ID,
+		},
+	}
+
+	for _, test := range tests {
+		for _, unread := range []bool{false, true} {
+			want := slices.Clone(test.all)
+			if unread {
+				want = slices.DeleteFunc(want, func(id string) bool { return id == test.read })
+			}
+
+			var (
+				got    []string
+				cursor *string
+			)
+			for range len(want) + 1 {
+				page, err := test.list(domain.PageParams{Limit: 2, Unread: unread, Order: domain.SortOrderOldest, Cursor: cursor})
+				if err != nil {
+					t.Fatalf("%s list oldest: %v", test.name, err)
+				}
+
+				got = append(got, itemIDs(page.Items)...)
+				if page.Cursor == nil {
+					break
+				}
+
+				cursor = page.Cursor
+			}
+
+			if !slices.Equal(got, want) {
+				t.Fatalf("%s oldest unread=%v ids = %v, want %v", test.name, unread, got, want)
+			}
+		}
+	}
+}
+
+func TestSavedPageListOldestOrderPaging(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	pages := make([]domain.SavedPage, 5)
+	for i := range pages {
+		created, err := store.SavedPages().Create(ctx, domain.SavedPage{
+			ID:      domain.NewID(),
+			URL:     mustURL(t, "https://example.com/pages/"+domain.NewID()),
+			Title:   fmt.Sprintf("Page %d", i),
+			Content: "<p>body</p>",
+		})
+		if err != nil {
+			t.Fatalf("create saved page: %v", err)
+		}
+
+		pages[i] = created
+	}
+
+	if err := store.SavedPages().SetRead(ctx, pages[1].ID, true); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+
+	for _, unread := range []bool{false, true} {
+		want := []string{}
+		for _, page := range pages {
+			if !unread || page.ID != pages[1].ID {
+				want = append(want, page.ID)
+			}
+		}
+
+		var (
+			got    []string
+			cursor *string
+		)
+		for range len(want) + 1 {
+			page, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Unread: unread, Order: domain.SortOrderOldest, Cursor: cursor})
+			if err != nil {
+				t.Fatalf("list oldest saved pages: %v", err)
+			}
+
+			got = append(got, savedPageIDs(page.Items)...)
+			if page.Cursor == nil {
+				break
+			}
+
+			cursor = page.Cursor
+		}
+
+		if !slices.Equal(got, want) {
+			t.Fatalf("saved pages oldest unread=%v ids = %v, want %v", unread, got, want)
+		}
+	}
+}
+
 func TestQueryPlansUseIndexes(t *testing.T) {
 	store := newTestStore(t)
 	cursor := domain.NewID()
@@ -2116,6 +2243,11 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true}).query,
 			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true}).args,
 			index: "feed_item_read_id",
+		},
+		{
+			name:  "list all oldest with cursor",
+			query: listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}).args,
 		},
 		{
 			name:  "list all unread with cursor",
@@ -2155,6 +2287,13 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			allowTempBTree: true,
 		},
 		{
+			name:           "list folder oldest",
+			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).query,
+			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).args,
+			index:          "feed_item_feed_id",
+			allowTempBTree: true,
+		},
+		{
 			name:  "list folder unread with cursor",
 			query: listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).query,
 			args:  listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).args,
@@ -2174,7 +2313,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		t.Fatalf("unread counts plan does not use an index:\n%s", strings.Join(unreadDetails, "\n"))
 	}
 
-	for _, params := range []domain.PageParams{{Limit: 30}, {Limit: 30, Unread: true}, {Limit: 30, Unread: true, Cursor: &cursor}} {
+	for _, params := range []domain.PageParams{{Limit: 30}, {Limit: 30, Unread: true}, {Limit: 30, Unread: true, Cursor: &cursor}, {Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}, {Limit: 30, Unread: true, Order: domain.SortOrderOldest}} {
 		query, args := listSavedPagesQuery(params)
 		requireIndexedPlan(t, "list saved pages", queryPlan(t, store, query, args...), "", false)
 	}

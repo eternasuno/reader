@@ -18,6 +18,7 @@ import {
   startFirstRefreshWait,
 } from '../state';
 import { useOpmlImport } from './importOpml';
+import { useLibraryShortcuts } from './useLibraryShortcuts';
 
 export interface FolderDialogState {
   mode: 'create' | 'rename';
@@ -38,7 +39,8 @@ export interface LibraryController {
   addLinkOpen: Accessor<boolean>;
   addFeedOpen: Accessor<boolean>;
   folderDialog: Accessor<FolderDialogState | null>;
-  moveFeed: Accessor<Feed | null>;
+  optionsFeed: Accessor<Feed | null>;
+  shortcutsOpen: Accessor<boolean>;
   toggleDrawer: () => void;
   dismissDrawer: () => void;
   closeDrawer: () => void;
@@ -47,12 +49,14 @@ export interface LibraryController {
   requestAddFeed: () => void;
   requestNewFolder: () => void;
   requestRenameFolder: (folder: Folder) => void;
-  requestMoveFeed: (feed: Feed) => void;
+  requestFeedOptions: (feed: Feed) => void;
   requestImportOpml: () => void;
   closeAddLink: () => void;
   closeAddFeed: () => void;
   closeFolderDialog: () => void;
-  closeMoveFeed: () => void;
+  closeFeedOptions: () => void;
+  openShortcuts: () => void;
+  closeShortcuts: () => void;
   handleSavedPage: (page: SavedPage) => void;
   openExistingPage: (page: SavedPage) => void;
   openFeed: (feed: Feed) => void;
@@ -145,7 +149,8 @@ const useDialogs = () => {
   const [addFeedOpen, setAddFeedOpen] = createSignal(false);
   const [folderDialog, setFolderDialog] =
     createSignal<FolderDialogState | null>(null);
-  const [moveFeed, setMoveFeed] = createSignal<Feed | null>(null);
+  const [optionsFeed, setOptionsFeed] = createSignal<Feed | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
 
   const folder = (mode: 'create' | 'rename', target: Folder | null): void => {
     setFolderDialog({ mode, folder: target });
@@ -155,16 +160,19 @@ const useDialogs = () => {
     addLinkOpen,
     addFeedOpen,
     folderDialog,
-    moveFeed,
+    optionsFeed,
+    shortcutsOpen,
     requestAddLink: () => setAddLinkOpen(true),
     requestAddFeed: () => setAddFeedOpen(true),
     requestNewFolder: () => folder('create', null),
     requestRenameFolder: (target: Folder) => folder('rename', target),
-    requestMoveFeed: (feed: Feed) => setMoveFeed(feed),
+    requestFeedOptions: (feed: Feed) => setOptionsFeed(feed),
     closeAddLink: () => setAddLinkOpen(false),
     closeAddFeed: () => setAddFeedOpen(false),
     closeFolderDialog: () => setFolderDialog(null),
-    closeMoveFeed: () => setMoveFeed(null),
+    closeFeedOptions: () => setOptionsFeed(null),
+    openShortcuts: () => setShortcutsOpen(true),
+    closeShortcuts: () => setShortcutsOpen(false),
   };
 };
 
@@ -297,6 +305,19 @@ export const createLibraryController = (): LibraryController => {
     drawer.dismissDrawer();
     navigate(url);
   };
+
+  useLibraryShortcuts({
+    scope: route.scope,
+    articleId: route.articleId,
+    unreadOnly: route.unreadOnly,
+    drawerOpen: drawer.drawerOpen,
+    shortcutsOpen: dialogs.shortcutsOpen,
+    toggleShortcuts: () =>
+      dialogs.shortcutsOpen()
+        ? dialogs.closeShortcuts()
+        : dialogs.openShortcuts(),
+    onNavigate,
+  });
 
   return {
     ...route,

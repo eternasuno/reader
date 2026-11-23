@@ -1,55 +1,10 @@
+import { enErrors } from './en-errors';
 import type { zhDict } from './zh';
 
 export type Dict = typeof zhDict;
 
 export const enDict: Dict = {
-  errors: {
-    Unauthorized: 'Your session has expired. Please sign in again.',
-    Forbidden: 'Cross-site changes are not allowed.',
-    InvalidCredentials: 'Incorrect password.',
-    TooManyRequests: 'Too many requests. Please try again later.',
-    RequestFailed: 'Something went wrong. Please try again later.',
-    NetworkError:
-      'Network connection failed. Check your connection and try again.',
-    ArticleEmptyContent: 'Could not extract any article content.',
-    WebpageFetcherError: 'Failed to fetch the webpage. Please try again later.',
-    ArticleExtractorError:
-      'Failed to extract the article. Please try again later.',
-    InvalidPageUrl: 'Enter a valid http or https link.',
-    SavedPageAlreadyExists: 'This article is already in Read Later.',
-    SavedPageRepositoryError:
-      'Read Later is temporarily unavailable. Please try again later.',
-    FeedUrlInvalid: 'Enter a valid feed URL.',
-    FetchFeedError: 'Could not fetch the feed. Please try again later.',
-    FeedParserError:
-      'Could not parse the feed. Check that the address is correct.',
-    FeedAlreadyExists: 'This feed is already subscribed.',
-    FeedItemNotFound: 'This article no longer exists or was deleted.',
-    FeedRepositoryError:
-      'Feeds are temporarily unavailable. Please try again later.',
-    FeedItemRepositoryError:
-      'Feed articles are temporarily unavailable. Please try again later.',
-    InvalidOpml:
-      'Could not parse the OPML file. Check that the format is correct.',
-    InvalidFolderName: 'Enter a folder name.',
-    FolderAlreadyExists: 'This folder name already exists.',
-    FolderNotFound: 'This folder no longer exists or was deleted.',
-    FolderRepositoryError:
-      'Folders are temporarily unavailable. Please try again later.',
-    InvalidRetention: 'Retention must be a positive integer.',
-    InvalidProvider: 'Invalid extraction method.',
-    InvalidJinaKey: 'Enter a Jina key.',
-    InvalidEndpoint: 'Enter a valid browser service address.',
-    BrowserEndpointRequired: 'Enter the browser service address.',
-    InvalidSMTPSetting: 'Check the SMTP settings and try again.',
-    SMTPNotConfigured: 'Configure SMTP under External services first.',
-    InvalidKindleSetting: 'Check the Kindle settings and try again.',
-    SettingRepositoryError:
-      'Settings are temporarily unavailable. Please try again later.',
-    KindleNotConfigured: 'Configure SMTP and your Kindle email address first.',
-    KindleSendInProgress:
-      'A send is already in progress. Please try again later.',
-  },
+  errors: enErrors,
   common: {
     brand: 'Liubai',
     checkingSession: 'Checking your session…',
@@ -80,7 +35,6 @@ export const enDict: Dict = {
     settings: 'Settings',
     toggleNav: 'Toggle navigation',
     appMenu: 'App menu',
-    addMenuLabel: 'Add',
     addFeed: 'Add RSS feed',
     newFolder: 'New folder',
     importOpml: 'Import OPML',
@@ -95,6 +49,21 @@ export const enDict: Dict = {
     unreadOnly: 'Show unread only',
     markAllRead: 'Mark all as read',
     moreActions: 'More actions',
+    collapseSidebar: 'Collapse sidebar',
+    expandSidebar: 'Expand sidebar',
+    shortcuts: 'Keyboard shortcuts',
+    shortcutsHint:
+      'Press keys directly in the article list or reader to trigger actions.',
+    shortcutNext: 'Next article',
+    shortcutPrev: 'Previous article',
+    shortcutToggleRead: 'Toggle read / unread',
+    shortcutSaveToLater: 'Save to Read Later',
+    shortcutExtract: 'Toggle extracted article',
+    shortcutOpenOriginal: 'Open original link',
+    shortcutUnreadOnly: 'Toggle unread only',
+    shortcutToggleSidebar: 'Collapse / expand sidebar',
+    shortcutCloseArticle: 'Close current article',
+    shortcutHelp: 'Show keyboard shortcuts',
   },
   later: {
     addLinkTitle: 'Add article link',
@@ -126,13 +95,19 @@ export const enDict: Dict = {
     subscribedToast: 'Feed added',
     unsubscribedToast: 'Feed deleted',
     opmlImportedToast: 'Imported {{imported}} feeds, skipped {{skipped}}',
+    newestFirst: 'Newest first',
     oldestFirst: 'Oldest first',
     defaultDisplay: 'Default view',
-    modeDefault: 'Original content',
-    modeExtracted: 'Extracted article',
+    defaultDisplayHint: 'Default view when opening articles from this feed',
+    feedOptions: 'Feed options...',
+    feedOptionsTitle: 'Feed options',
+    titleLabel: 'Title',
+    websiteLabel: 'Website',
+    modeDefault: 'Feed text',
+    modeExtracted: 'Full text',
     modeEmbedded: 'Embedded webpage',
-    moveToFolder: 'Move to folder',
-    deleteFeed: 'Delete RSS feed',
+    moveTo: 'Move to',
+    deleteFeed: 'Unsubscribe',
     retryRefresh: 'Retry refresh',
     refreshingToast: 'Refresh started',
     unsubscribeConfirm:
@@ -152,7 +127,6 @@ export const enDict: Dict = {
     savingFolder: 'Saving…',
     renameFolder: 'Rename folder',
     deleteFolder: 'Delete folder',
-    moveTitle: 'Move to folder',
     createdToast: 'Folder created',
     renamedToast: 'Folder renamed',
     deletedToast: 'Folder deleted',
@@ -173,6 +147,7 @@ export const enDict: Dict = {
     backToOriginal: 'Back to original',
     extracting: 'Extracting article…',
     embeddedWebpageView: 'Embedded webpage view',
+    fullscreen: 'Fullscreen',
     embeddedNotice:
       'Some sites cannot be embedded or require sign-in. If it displays incorrectly, open the original.',
     embeddedUnsafeUrl:
@@ -186,7 +161,26 @@ export const enDict: Dict = {
     saveToLater: 'Save to Read Later',
     moreActions: 'More actions',
     openOriginal: 'Open original',
+    openOriginalInNewTab: 'Open original webpage in new tab',
     deleteArticle: 'Delete',
+    appearance: 'View options',
+    theme: 'Theme',
+    themeAuto: 'Auto',
+    themeLight: 'Light',
+    themeDark: 'Dark',
+    moreOptions: 'More options...',
+    sendAsEbook: 'Send as eBook',
+    showThumbnail: 'Show thumbnail',
+    fontSize: 'Font size',
+    fontFamily: 'Font',
+    fontSans: 'Sans-serif',
+    fontSerif: 'Serif',
+    lineWidth: 'Content width',
+    lineHeight: 'Line height',
+    decrease: 'Decrease',
+    increase: 'Increase',
+    resetAppearance: 'Reset to default',
+    imagePreview: 'Image preview',
   },
   settings: {
     title: 'Settings',

@@ -1,9 +1,9 @@
 import type { JSX } from '@solidjs/web';
 import { For } from 'solid-js';
-import type { Feed } from '../api';
+import { type Feed, feedsApi } from '../api';
 import { t } from '../i18n';
 import { folders, topLevelFeeds } from '../state';
-import { Menu, MenuItem } from '../ui';
+import { Icon, Menu, MenuItem } from '../ui';
 import { FeedRow } from './FeedRow';
 import { FolderRow } from './FolderRow';
 import type { SidebarProps } from './sidebarProps';
@@ -30,13 +30,7 @@ function TopLevelFeedRow(props: {
   feed: Feed;
   state: SidebarProps;
 }): JSX.Element {
-  return (
-    <FeedRow
-      feed={props.feed}
-      showMove={folders().length > 0}
-      state={props.state}
-    />
-  );
+  return <FeedRow feed={props.feed} showMove state={props.state} />;
 }
 
 function FeedTreeHeader(props: { state: SidebarProps }): JSX.Element {
@@ -45,22 +39,32 @@ function FeedTreeHeader(props: { state: SidebarProps }): JSX.Element {
       <h2 class="text-xs font-semibold tracking-wider text-base-content/50 uppercase">
         {String(t('library.feedsSection'))}
       </h2>
-      <Menu
-        icon="plus"
-        label={String(t('library.addMenuLabel'))}
-        align="end"
-        triggerClass="btn-xs"
-      >
-        <MenuItem icon="rss" onSelect={props.state.onRequestAddFeed}>
-          {String(t('library.addFeed'))}
-        </MenuItem>
-        <MenuItem icon="folder" onSelect={props.state.onRequestNewFolder}>
-          {String(t('library.newFolder'))}
-        </MenuItem>
-        <MenuItem icon="inbox" onSelect={props.state.onRequestImportOpml}>
-          {String(t('library.importOpml'))}
-        </MenuItem>
-      </Menu>
+      <div class="flex items-center gap-0.5">
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs btn-square"
+          aria-label={String(t('library.addFeed'))}
+          title={String(t('library.addFeed'))}
+          onClick={props.state.onRequestAddFeed}
+        >
+          <Icon name="plus" size={16} />
+        </button>
+        <Menu
+          icon="dots"
+          label={String(t('library.moreActions'))}
+          align="end"
+          triggerClass="btn-xs"
+        >
+          <MenuItem onSelect={props.state.onRequestImportOpml}>
+            {`${String(t('library.importOpml')).replace(/\s*OPML$/i, '')}...`}
+          </MenuItem>
+          <MenuItem
+            onSelect={() => window.location.assign(feedsApi.exportOpmlUrl)}
+          >
+            {`${String(t('library.exportOpml')).replace(/\s*OPML$/i, '')}...`}
+          </MenuItem>
+        </Menu>
+      </div>
     </div>
   );
 }

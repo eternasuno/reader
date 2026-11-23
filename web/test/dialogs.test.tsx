@@ -1,12 +1,11 @@
 import { type JSX, render } from '@solidjs/web';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, type Feed, type Folder, type SavedPage } from '../src/api';
+import type { Feed, Folder, SavedPage } from '../src/api';
 import {
   AddLinkDialog,
   FolderNameDialog,
   type FolderNameDialogProps,
-  MoveFeedDialog,
   SubscribeFeedDialog,
 } from '../src/components';
 import { setLocale } from '../src/i18n';
@@ -310,45 +309,5 @@ describe('FolderNameDialog', () => {
 
     expect(out.firstUrl).toBe('/api/folders/folder-1');
     expect(out.firstBody).toEqual({ name: 'Tech Blog' });
-  });
-});
-
-const moveFeed = async (
-  target: Feed | null,
-  value?: string,
-  failure?: unknown
-) => {
-  const params = { open: true, feed: target, folders: FOLDERS };
-  const out = await runDialog(MoveFeedDialog, params, undefined, []);
-  if (failure === undefined) out.onMove.mockResolvedValue(undefined);
-  else out.onMove.mockRejectedValue(failure);
-  if (value !== undefined) {
-    selectOption(value);
-    await settle();
-  }
-
-  return out;
-};
-
-describe('MoveFeedDialog', () => {
-  it('lists folders, moves the feed, and keeps the dialog open on failure', async () => {
-    await moveFeed(feed({ folderId: 'folder-1' }));
-
-    expect(element<HTMLSelectElement>('select').value).toBe('folder-1');
-
-    reset();
-    const moved = await moveFeed(feed({ folderId: 'folder-1' }), 'folder-2');
-
-    expect(moved.onMove.mock.calls[0][1]).toBe('folder-2');
-
-    reset();
-    const failed = await moveFeed(
-      feed(),
-      'folder-2',
-      new ApiError('FolderNotFound', 404)
-    );
-
-    expect(failed.onClose).not.toHaveBeenCalled();
-    expect(text()).toContain('目录不存在，可能已被删除');
   });
 });
