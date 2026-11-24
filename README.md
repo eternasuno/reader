@@ -43,7 +43,7 @@ docker build -t reader:latest .
 ```
 
 Notes:
-- **Migrations**: SQLite schema migrations are embedded in the binary and applied idempotently on startup before serving traffic. During early development, delete `reader.db` and restart whenever the schema changes. Do not run concurrent replicas against the same SQLite file.
+- **Migrations**: SQLite schema migrations are embedded in the binary and applied idempotently on startup before serving traffic. During early development, delete `reader.db` and restart whenever the schema changes. Do not run concurrent replicas against the same SQLite file (on Unix, startup holds an exclusive advisory lock on `<DATA_DIR>/lantern.lock`).
 - **Volume permissions**: the distroless container runs as non-root UID `65532`. Always mount the `/data` directory (never a single file mount, so SQLite can create `-wal`/`-shm` files) and ensure bind-mounted host directories are writable by UID `65532`.
 - **Reverse proxy**: terminate HTTPS in front of the container, set `APP_URL` to the public `https://` origin, and forward `Origin` / `Host` headers.
 - **Health check**: `GET /healthz` returns `200 OK` when the server and SQLite database are healthy.
