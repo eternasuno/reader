@@ -4,12 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"reader/internal/domain"
 )
 
-const feedColumns = `id, url, title, folder_id, updated_at, failure_count, last_error, reader_mode, sort_order`
+const (
+	feedColumns              = `id, url, title, folder_id, updated_at, failure_count, last_error, reader_mode, sort_order`
+	loadFolderIDsByNameQuery = `SELECT id, name FROM folder WHERE name IN (SELECT value FROM json_each(?))`
+)
 
 type FeedRepo struct {
 	read  *sql.DB
@@ -38,6 +42,7 @@ func (r *FeedRepo) ExportOPML(ctx context.Context) ([]domain.OPMLExportFolder, [
 	if err != nil {
 		return nil, nil, domain.NewError(domain.ErrFeedRepositoryError, err)
 	}
+
 	defer func() { _ = tx.Rollback() }()
 
 	folders, err := queryFolders(ctx, tx)
@@ -350,7 +355,7 @@ func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
 }
 
 func (i *opmlImporter) run(tx *sql.Tx, doc domain.OPMLDocument) error {
-	folderIDs, err := loadFolderIDs(i.ctx, tx)
+	folderIDs, err := loadFolderIDs(i.ctx, tx, collectOPMLFolderNames(doc))
 	if err != nil {
 		return err
 	}
@@ -373,15 +378,56 @@ func (i *opmlImporter) run(tx *sql.Tx, doc domain.OPMLDocument) error {
 	return nil
 }
 
-func loadFolderIDs(ctx context.Context, tx *sql.Tx) (map[string]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, name FROM folder`)
+func collectOPMLFolderNames(doc domain.OPMLDocument) []string {
+	seen := make(map[string]struct{}, len(doc.Folders))
+	names := make([]string, 0, len(doc.Folders))
+
+	for _, name := range doc.Folders {
+		names = appendUniqueFolderName(names, seen, name)
+	}
+
+	for _, input := range doc.Feeds {
+		if input.FolderName != nil {
+			names = appendUniqueFolderName(names, seen, *input.FolderName)
+		}
+	}
+
+	return names
+}
+
+func appendUniqueFolderName(names []string, seen map[string]struct{}, raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return names
+	}
+
+	if _, ok := seen[trimmed]; ok {
+		return names
+	}
+
+	seen[trimmed] = struct{}{}
+
+	return append(names, trimmed)
+}
+
+func loadFolderIDs(ctx context.Context, tx *sql.Tx, names []string) (map[string]string, error) {
+	if len(names) == 0 {
+		return map[string]string{}, nil
+	}
+
+	payload, err := encodeIDs(names)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.QueryContext(ctx, loadFolderIDsByNameQuery, payload)
 	if err != nil {
 		return nil, err
 	}
 
 	defer closeRows(rows)
 
-	folderIDs := map[string]string{}
+	folderIDs := make(map[string]string, len(names))
 	for rows.Next() {
 		var id string
 		var name string

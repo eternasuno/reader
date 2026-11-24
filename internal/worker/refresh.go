@@ -122,12 +122,7 @@ func (q *RefreshQueue) EnqueueAll(ctx context.Context) error {
 // RefreshOne fetches, parses, and syncs a single feed, recording a sanitized
 // failure summary when any step fails.
 func (q *RefreshQueue) RefreshOne(ctx context.Context, feedID string) error {
-	feed, err := q.feeds.GetByID(ctx, feedID)
-	if err != nil || feed == nil {
-		return err
-	}
-
-	if err := q.syncFeed(ctx, *feed); err != nil {
+	if err := q.refreshFeed(ctx, feedID); err != nil {
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 			q.recordFailure(ctx, feedID, err)
 		}
@@ -136,6 +131,15 @@ func (q *RefreshQueue) RefreshOne(ctx context.Context, feedID string) error {
 	}
 
 	return nil
+}
+
+func (q *RefreshQueue) refreshFeed(ctx context.Context, feedID string) error {
+	feed, err := q.feeds.GetByID(ctx, feedID)
+	if err != nil || feed == nil {
+		return err
+	}
+
+	return q.syncFeed(ctx, *feed)
 }
 
 func (q *RefreshQueue) syncFeed(ctx context.Context, feed domain.Feed) error {
@@ -190,9 +194,7 @@ func (q *RefreshQueue) Start(ctx context.Context) {
 		}()
 	}
 
-	if err := q.EnqueueAll(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		logFailure(slog.LevelWarn, "initial feed refresh enqueue failed", err)
-	}
+	q.enqueueAllSafely(ctx, "initial feed refresh enqueue failed")
 
 	q.wg.Add(1)
 
@@ -209,10 +211,20 @@ func (q *RefreshQueue) Wait() {
 
 func (q *RefreshQueue) runScheduler(ctx context.Context) {
 	tickLoop(ctx, q.interval, func(ctx context.Context) {
-		if err := q.EnqueueAll(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			logFailure(slog.LevelWarn, "scheduled feed refresh enqueue failed", err)
-		}
+		q.enqueueAllSafely(ctx, "scheduled feed refresh enqueue failed")
 	})
+}
+
+func (q *RefreshQueue) enqueueAllSafely(ctx context.Context, failureMessage string) {
+	defer func() {
+		if recover() != nil {
+			slog.Warn("feed refresh scheduler panicked")
+		}
+	}()
+
+	if err := q.EnqueueAll(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		logFailure(slog.LevelWarn, failureMessage, err)
+	}
 }
 
 func (q *RefreshQueue) work(ctx context.Context) {
@@ -222,11 +234,28 @@ func (q *RefreshQueue) work(ctx context.Context) {
 			return
 		}
 
-		if err := q.RefreshOne(ctx, feedID); err != nil && !errors.Is(err, context.Canceled) {
-			logFailure(slog.LevelWarn, "feed refresh failed", err, "feed_id", feedID)
-		}
+		q.runRefreshJob(ctx, feedID)
+	}
+}
 
-		q.finish(feedID)
+func (q *RefreshQueue) runRefreshJob(ctx context.Context, feedID string) {
+	defer q.finish(feedID)
+	defer func() {
+		if recover() != nil {
+			slog.Warn("feed refresh job panicked", "feed_id", feedID)
+			func() {
+				defer func() {
+					if recover() != nil {
+						slog.Warn("record feed refresh panic failed", "feed_id", feedID)
+					}
+				}()
+				q.recordFailure(ctx, feedID, errors.New("feed refresh job panicked"))
+			}()
+		}
+	}()
+
+	if err := q.RefreshOne(ctx, feedID); err != nil && !errors.Is(err, context.Canceled) {
+		logFailure(slog.LevelWarn, "feed refresh failed", err, "feed_id", feedID)
 	}
 }
 
@@ -251,6 +280,7 @@ func (q *RefreshQueue) next(ctx context.Context) (string, bool) {
 
 			return feedID, true
 		}
+
 		q.mu.Unlock()
 
 		select {

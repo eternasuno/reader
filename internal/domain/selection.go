@@ -19,7 +19,7 @@ func PlanFeedSync(feedID string, sourceEntries []ParsedFeedEntry, storedRefs []S
 
 func dedupeTopEntries(entries []ParsedFeedEntry, limit int) []ParsedFeedEntry {
 	top := make([]ParsedFeedEntry, 0, min(limit, len(entries)))
-	seen := make(map[string]struct{}, len(entries))
+	seen := make(map[string]struct{}, min(limit, len(entries)))
 	for _, entry := range entries {
 		if len(top) >= limit {
 			break
@@ -39,7 +39,7 @@ func dedupeTopEntries(entries []ParsedFeedEntry, limit int) []ParsedFeedEntry {
 
 func planRetainedItems(topEntries []ParsedFeedEntry, storedRefs []StoredRef) (map[string]struct{}, []ParsedFeedEntry) {
 	storedByURL := indexStoredByURL(storedRefs)
-	retained := make(map[string]struct{}, len(storedRefs))
+	retained := make(map[string]struct{}, min(len(topEntries), len(storedRefs)))
 	pending := make([]ParsedFeedEntry, 0, len(topEntries))
 	for _, entry := range topEntries {
 		stored, ok := storedByURL[entry.URL.Raw()]

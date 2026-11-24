@@ -11,7 +11,7 @@ import (
 
 const (
 	feedItemColumns   = `id, feed_id, url, title, description, content, extracted_content, published_at, read`
-	unreadCountsQuery = `SELECT feed_id, COUNT(*) FROM feed_item WHERE read = 0 GROUP BY feed_id HAVING COUNT(*) > 0`
+	unreadCountsQuery = `SELECT feed_id, COUNT(*) FROM feed_item WHERE read = 0 GROUP BY feed_id`
 )
 
 type FeedItemRepo struct {
@@ -110,13 +110,11 @@ func (r *FeedItemRepo) SetRead(ctx context.Context, id string, read bool) error 
 }
 
 func (r *FeedItemRepo) MarkIDsRead(ctx context.Context, ids []string) error {
-	return markIDsRead(
-		ctx,
-		r.write,
-		`UPDATE feed_item SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`,
-		ids,
-		domain.ErrFeedItemRepositoryError,
-	)
+	if err := markIDsRead(ctx, r.write, markFeedItemsReadQuery, ids); err != nil {
+		return domain.NewError(domain.ErrFeedItemRepositoryError, err)
+	}
+
+	return nil
 }
 
 func (r *FeedItemRepo) MarkAllRead(ctx context.Context) error {
@@ -261,38 +259,46 @@ func (r *FeedItemRepo) list(ctx context.Context, query feedItemQuery) (domain.Pa
 	return finalizeKeysetPage(items, query.limit, func(item domain.FeedItem) string { return item.ID }), nil
 }
 
-func scanFeedItem(row interface{ Scan(...any) error }) (domain.FeedItem, error) {
-	var (
-		id               string
-		feedID           string
-		rawURL           string
-		title            string
-		description      sql.NullString
-		content          sql.NullString
-		extractedContent sql.NullString
-		publishedAt      sql.NullInt64
-		read             int64
-	)
+type feedItemRow struct {
+	id               string
+	feedID           string
+	rawURL           string
+	title            string
+	description      sql.NullString
+	content          sql.NullString
+	extractedContent sql.NullString
+	publishedAt      sql.NullInt64
+	read             int64
+}
 
-	err := row.Scan(&id, &feedID, &rawURL, &title, &description, &content, &extractedContent, &publishedAt, &read)
-	if err != nil {
-		return domain.FeedItem{}, err
-	}
+func (r *feedItemRow) dest() []any {
+	return []any{&r.id, &r.feedID, &r.rawURL, &r.title, &r.description, &r.content, &r.extractedContent, &r.publishedAt, &r.read}
+}
 
-	parsedURL, err := domain.ParseStoredNormalizedURL(rawURL)
+func (r *feedItemRow) toDomain() (domain.FeedItem, error) {
+	parsedURL, err := domain.ParseStoredNormalizedURL(r.rawURL)
 	if err != nil {
 		return domain.FeedItem{}, errors.New("invalid stored feed item url")
 	}
 
 	return domain.FeedItem{
-		ID:               id,
-		FeedID:           feedID,
+		ID:               r.id,
+		FeedID:           r.feedID,
 		URL:              parsedURL,
-		Title:            title,
-		Description:      optionalText(description),
-		Content:          optionalText(content),
-		ExtractedContent: optionalText(extractedContent),
-		PublishedAt:      optionalMillis(publishedAt),
-		Read:             intBool(read),
+		Title:            r.title,
+		Description:      optionalText(r.description),
+		Content:          optionalText(r.content),
+		ExtractedContent: optionalText(r.extractedContent),
+		PublishedAt:      optionalMillis(r.publishedAt),
+		Read:             intBool(r.read),
 	}, nil
+}
+
+func scanFeedItem(row interface{ Scan(...any) error }) (domain.FeedItem, error) {
+	var raw feedItemRow
+	if err := row.Scan(raw.dest()...); err != nil {
+		return domain.FeedItem{}, err
+	}
+
+	return raw.toDomain()
 }

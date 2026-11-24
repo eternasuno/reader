@@ -18,26 +18,71 @@ const measureUpperBoundIndex = 987654
 // PrepareSpoolDir ensures the instance spool directory exists with 0700
 // permissions and removes any leftover files from an unclean shutdown.
 func PrepareSpoolDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
-	}
-
-	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: spool directory requires owner execute bit (0700)
-		return fmt.Errorf("chmod epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
-	}
-
-	entries, err := os.ReadDir(dir)
+	cleanDir, err := ensurePrivateSpoolDir(dir)
 	if err != nil {
-		return fmt.Errorf("read epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
+		return err
+	}
+
+	root, err := os.OpenRoot(cleanDir)
+	if err != nil {
+		return fmt.Errorf("open epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
+	}
+
+	defer func() { _ = root.Close() }()
+
+	entries, err := readRootDir(root)
+	if err != nil {
+		return err
 	}
 
 	for _, entry := range entries {
-		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+		if err := root.RemoveAll(entry.Name()); err != nil {
 			return fmt.Errorf("clean epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
 		}
 	}
 
 	return nil
+}
+
+func ensurePrivateSpoolDir(dir string) (string, error) {
+	if dir == "" {
+		return "", fmt.Errorf("create epub spool dir: empty path")
+	}
+
+	cleanDir := filepath.Clean(dir)
+	if info, err := os.Lstat(cleanDir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("open epub spool dir: symlink not allowed")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("stat epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
+	}
+
+	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
+		return "", fmt.Errorf("create epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
+	}
+
+	if err := os.Chmod(cleanDir, 0o700); err != nil { //nolint:gosec // G302: spool directory requires owner execute bit (0700)
+		return "", fmt.Errorf("chmod epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
+	}
+
+	return cleanDir, nil
+}
+
+func readRootDir(root *os.Root) ([]os.DirEntry, error) {
+	dirFile, err := root.Open(".")
+	if err != nil {
+		return nil, fmt.Errorf("open epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
+	}
+
+	defer func() { _ = dirFile.Close() }()
+
+	entries, err := dirFile.ReadDir(-1)
+	if err != nil {
+		return nil, fmt.Errorf("read epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
+	}
+
+	return entries, nil
 }
 
 type packer struct {
@@ -175,7 +220,7 @@ func (p *packer) retrySingleArticleTextOnly(
 ) error {
 	articleID := cand.chapter.article.ID
 	if !hadImages {
-		return domain.OversizeKindleArticleError(articleID, int(measured), p.builder.maxEPUBBytes, true)
+		return domain.OversizeKindleArticleError(articleID, int(measured), p.builder.maxEPUBBytes)
 	}
 
 	fitted, textBytes, _, err := p.tryAddToBook(ctx, cur, cand, true)
@@ -187,7 +232,7 @@ func (p *packer) retrySingleArticleTextOnly(
 		return nil
 	}
 
-	return domain.OversizeKindleArticleError(articleID, int(textBytes), p.builder.maxEPUBBytes, true)
+	return domain.OversizeKindleArticleError(articleID, int(textBytes), p.builder.maxEPUBBytes)
 }
 
 func (p *packer) tryAddToBook(
@@ -206,6 +251,7 @@ func (p *packer) tryAddToBook(
 	if errors.Is(err, errArchiveTooLarge) {
 		return false, int64(p.builder.maxEPUBBytes) + 1, hadImages, nil
 	}
+
 	if err != nil {
 		return false, 0, hadImages, err
 	}
@@ -239,6 +285,7 @@ func (p *packer) fitAndCommitPlan(
 	if errors.Is(err, errArchiveTooLarge) {
 		return false, measured, nil
 	}
+
 	if err != nil {
 		return false, 0, err
 	}
@@ -308,9 +355,13 @@ func (p *packer) buildCandidatePlan(book *draftBook, cand *preparedCandidate, te
 	hadImages := len(newImgs) > 0
 	maxBytes := int64(p.builder.maxEPUBBytes)
 
-	chapterTitleStr := chapterTitle(cand.chapter.article)
 	chapterName := oebpsPrefix + chapterHref(len(book.chapters))
-	chapterDoc := renderChapter(cand.chapter, rewrites)
+	chapterDoc, hasRemoteResources := renderChapter(cand.chapter, rewrites)
+	chapterMetaItem := chapterMeta{
+		title:              chapterTitle(cand.chapter.article),
+		hasRemoteResources: hasRemoteResources,
+	}
+
 	chapterEntry, err := p.compressEntry(chapterName, chapterDoc, maxBytes)
 	if err != nil {
 		return nil, hadImages, err
@@ -334,12 +385,12 @@ func (p *packer) buildCandidatePlan(book *draftBook, cand *preparedCandidate, te
 		})
 	}
 
-	return assembleCandidatePlan(len(book.chapters), chapterTitleStr, rewrites, manifest, addedImgBytes, entries), hadImages, nil
+	return assembleCandidatePlan(len(book.chapters), chapterMetaItem, rewrites, manifest, addedImgBytes, entries), hadImages, nil
 }
 
 func assembleCandidatePlan(
 	chapterIndex int,
-	title string,
+	chapter chapterMeta,
 	rewrites map[string]string,
 	manifest []imageManifestItem,
 	addedImgBytes int64,
@@ -351,13 +402,13 @@ func assembleCandidatePlan(
 	}
 
 	return &candidatePlan{
-		chapter:         chapterMeta{title: title},
+		chapter:         chapter,
 		newImages:       manifest,
 		newRewrites:     rewrites,
 		addedImgBytes:   addedImgBytes,
 		entries:         entries,
 		spooledZipBytes: spooledZipBytes,
-		navMetaBytes:    chapterNavOpfUncompressedBytes(chapterIndex, title, manifest),
+		navMetaBytes:    chapterNavOpfUncompressedBytes(chapterIndex, chapter, manifest),
 	}
 }
 
@@ -423,6 +474,7 @@ func (p *packer) commitCandidate(
 	for rawURL, rewritten := range plan.newRewrites {
 		book.imgRewrites[rawURL] = rewritten
 	}
+
 	book.imageBytesUsed += plan.addedImgBytes
 	book.articleCount++
 
@@ -480,6 +532,7 @@ func (p *packer) compressEntry(name string, raw []byte, maxBytes int64) (compres
 		if err != nil {
 			return compressedEntry{}, err
 		}
+
 		p.flateWriter = fw
 	}
 
@@ -541,15 +594,8 @@ func (p *packer) finalizeCurrentBook() error {
 	}
 
 	cur := p.current
-	if cur.spoolFile != nil {
-		if err := cur.spoolFile.Close(); err != nil {
-			if p.removeSpoolPath(cur.spoolPath) == nil {
-				cur.spoolPath = ""
-			}
-
-			return fmt.Errorf("close epub spool: %s", domain.SanitizeErrorText(err.Error()))
-		}
-		cur.spoolFile = nil
+	if err := p.closeDraftSpool(cur); err != nil {
+		return err
 	}
 
 	if cur.articleCount == 0 {
@@ -578,6 +624,24 @@ func (p *packer) finalizeCurrentBook() error {
 	return nil
 }
 
+func (p *packer) closeDraftSpool(cur *draftBook) error {
+	if cur.spoolFile == nil {
+		return nil
+	}
+
+	if err := cur.spoolFile.Close(); err != nil {
+		if p.removeSpoolPath(cur.spoolPath) == nil {
+			cur.spoolPath = ""
+		}
+
+		return fmt.Errorf("close epub spool: %s", domain.SanitizeErrorText(err.Error()))
+	}
+
+	cur.spoolFile = nil
+
+	return nil
+}
+
 func (p *packer) Finish(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -591,6 +655,7 @@ func (p *packer) Finish(ctx context.Context) (int, error) {
 		if err := p.finalizeCurrentBook(); err != nil {
 			return 0, err
 		}
+
 		p.finishedCalled = true
 	}
 

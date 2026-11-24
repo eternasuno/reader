@@ -27,18 +27,6 @@ func tickLoop(ctx context.Context, interval time.Duration, fn func(context.Conte
 	}
 }
 
-func sleepWithContext(ctx context.Context, delay time.Duration) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
 // logFailure logs err at level after removing secrets, flattening line breaks,
 // and truncating to maxLogErrorBytes on a UTF-8 boundary.
 func logFailure(level slog.Level, msg string, err error, attrs ...any) {
@@ -58,10 +46,12 @@ func boundedLogError(err error) string {
 		return clean
 	}
 
-	limit := maxLogErrorBytes
+	const truncatedSuffix = "..."
+
+	limit := maxLogErrorBytes - len(truncatedSuffix)
 	for limit > 0 && !utf8.ValidString(clean[:limit]) {
 		limit--
 	}
 
-	return clean[:limit] + "..."
+	return clean[:limit] + truncatedSuffix
 }

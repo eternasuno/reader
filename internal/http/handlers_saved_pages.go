@@ -130,13 +130,13 @@ func (s *server) createSavedPage(ctx context.Context, pageURL domain.NormalizedU
 }
 
 func (s *server) ensureSavedPageAbsent(ctx context.Context, pageURL domain.NormalizedURL) error {
-	existing, err := s.cfg.SavedPages.GetByURL(ctx, pageURL)
+	id, found, err := s.cfg.SavedPages.GetIDByURL(ctx, pageURL)
 	if err != nil {
 		return err
 	}
 
-	if existing != nil {
-		return domain.NewSavedPageConflict(existing.ID, pageURL.RedactedString())
+	if found {
+		return domain.NewSavedPageConflict(id, pageURL.RedactedString())
 	}
 
 	return nil

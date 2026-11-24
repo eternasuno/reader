@@ -46,7 +46,7 @@ var (
 )
 
 func IsBlockedIP(addr netip.Addr) bool {
-	addr = addr.Unmap()
+	addr = addr.Unmap().WithZone("")
 	if !addr.IsValid() {
 		return true
 	}
@@ -93,6 +93,32 @@ func newHTTPClient(allowPrivateNetwork bool) *http.Client {
 
 		return checkDialAddress(address)
 	})
+}
+
+func newBrowserDiscoveryClient() *http.Client {
+	client := newHTTPClient(true)
+	client.CheckRedirect = browserDiscoveryRedirectPolicy
+
+	return client
+}
+
+func browserDiscoveryRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if err := redirectPolicy(req, via); err != nil {
+		return err
+	}
+
+	if len(via) == 0 || via[0] == nil {
+		return errBadRedirectURL
+	}
+
+	origin, ok := domain.OriginFromURL(via[0].URL)
+	if !ok || breaksAuthScope(req, origin) {
+		return errBadRedirectURL
+	}
+
+	req.Header.Del("Referer")
+
+	return nil
 }
 
 func newHTTPClientWithDialCheck(check func(address string) error) *http.Client {

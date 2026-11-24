@@ -21,12 +21,14 @@ import (
 )
 
 const (
-	readPoolConnections = 4
-	sqliteConstraint    = 19
-	foreignKeyFailed    = "FOREIGN KEY constraint failed"
-	uniqueFailedPrefix  = "UNIQUE constraint failed: "
-	dataDirMode         = 0o700
-	dbFileMode          = 0o600
+	readPoolConnections     = 4
+	sqliteConstraint        = 19
+	foreignKeyFailed        = "FOREIGN KEY constraint failed"
+	uniqueFailedPrefix      = "UNIQUE constraint failed: "
+	dataDirMode             = 0o700
+	dbFileMode              = 0o600
+	markSavedPagesReadQuery = `UPDATE saved_page SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`
+	markFeedItemsReadQuery  = `UPDATE feed_item SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`
 )
 
 //go:embed migrations/*.sql
@@ -129,7 +131,11 @@ func sqliteDSN(dbPath string, txLockImmediate bool) string {
 }
 
 func applyMigrations(ctx context.Context, db *sql.DB) error {
-	names, err := fs.Glob(migrationFiles, "migrations/*.sql")
+	return applyMigrationsFromFS(ctx, db, migrationFiles)
+}
+
+func applyMigrationsFromFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
+	names, err := fs.Glob(fsys, "migrations/*.sql")
 	if err != nil {
 		return fmt.Errorf("list migrations: %w", err)
 	}
@@ -137,12 +143,17 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 	sort.Strings(names)
 
 	for _, name := range names {
-		payload, err := migrationFiles.ReadFile(name)
+		payload, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", filepath.Base(name), err)
 		}
 
-		if _, err := db.ExecContext(ctx, string(payload)); err != nil {
+		err = withTx(ctx, db, func(tx *sql.Tx) error {
+			_, execErr := tx.ExecContext(ctx, string(payload))
+
+			return execErr
+		})
+		if err != nil {
 			return fmt.Errorf("apply migration %s: %w", filepath.Base(name), err)
 		}
 	}
@@ -224,23 +235,32 @@ type rowsQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
 func withTx(ctx context.Context, db *sql.DB, apply func(tx *sql.Tx) error) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 
-	if err := apply(tx); err != nil {
-		_ = tx.Rollback()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
+	if err := apply(tx); err != nil {
 		return err
 	}
 
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
-
 		return err
 	}
+
+	committed = true
 
 	return nil
 }
@@ -340,21 +360,19 @@ func encodeIDs(ids []string) (string, error) {
 	return string(payload), nil
 }
 
-func markIDsRead(ctx context.Context, db *sql.DB, query string, ids []string, code domain.ErrorCode) error {
+func markIDsRead(ctx context.Context, exec execer, query string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
 
 	payload, err := encodeIDs(ids)
 	if err != nil {
-		return domain.NewError(code, err)
+		return err
 	}
 
-	if _, err := db.ExecContext(ctx, query, payload); err != nil {
-		return domain.NewError(code, err)
-	}
+	_, err = exec.ExecContext(ctx, query, payload)
 
-	return nil
+	return err
 }
 
 func closeRows(rows *sql.Rows) {

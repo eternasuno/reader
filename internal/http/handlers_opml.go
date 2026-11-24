@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -78,15 +79,17 @@ func (s *server) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func readOPMLUpload(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxOPMLUploadBytes)
+
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
 		return readBoundedOPML(r.Body)
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxOPMLUploadBytes)
 	if err := r.ParseMultipartForm(maxOPMLUploadBytes); err != nil {
 		return nil, domain.NewError(domain.ErrInvalidOpml, err)
 	}
+
 	defer func() {
 		if r.MultipartForm != nil {
 			_ = r.MultipartForm.RemoveAll()
@@ -97,30 +100,43 @@ func readOPMLUpload(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() { _ = file.Close() }()
 
 	return readBoundedOPML(file)
 }
 
 func openOPMLMultipartFile(r *http.Request) (io.ReadCloser, error) {
-	if file, _, err := r.FormFile("file"); err == nil {
-		return file, nil
+	header, err := selectOPMLFileHeader(r.MultipartForm.File)
+	if err != nil {
+		return nil, err
 	}
 
-	for _, headers := range r.MultipartForm.File {
-		if len(headers) == 0 {
-			continue
-		}
-
-		file, err := headers[0].Open()
-		if err != nil {
-			return nil, domain.NewError(domain.ErrInvalidOpml, err)
-		}
-
-		return file, nil
+	file, err := header.Open()
+	if err != nil {
+		return nil, domain.NewError(domain.ErrInvalidOpml, err)
 	}
 
-	return nil, domain.NewError(domain.ErrInvalidOpml, errors.New("opml upload has no file part"))
+	return file, nil
+}
+
+func selectOPMLFileHeader(files map[string][]*multipart.FileHeader) (*multipart.FileHeader, error) {
+	var selected *multipart.FileHeader
+	for _, headers := range files {
+		for _, header := range headers {
+			if selected != nil {
+				return nil, domain.NewError(domain.ErrInvalidOpml, errors.New("opml upload must contain a single file"))
+			}
+
+			selected = header
+		}
+	}
+
+	if selected == nil {
+		return nil, domain.NewError(domain.ErrInvalidOpml, errors.New("opml upload has no file part"))
+	}
+
+	return selected, nil
 }
 
 func readBoundedOPML(r io.Reader) ([]byte, error) {

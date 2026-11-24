@@ -64,17 +64,18 @@ func (r *SavedPageRepo) GetByID(ctx context.Context, id string) (*domain.SavedPa
 	return &page, nil
 }
 
-func (r *SavedPageRepo) GetByURL(ctx context.Context, url domain.NormalizedURL) (*domain.SavedPage, error) {
-	page, err := scanSavedPage(r.read.QueryRowContext(ctx, `SELECT `+savedPageColumns+` FROM saved_page WHERE url = ?`, url.Raw()))
+func (r *SavedPageRepo) GetIDByURL(ctx context.Context, url domain.NormalizedURL) (string, bool, error) {
+	var id string
+	err := r.read.QueryRowContext(ctx, `SELECT id FROM saved_page WHERE url = ?`, url.Raw()).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return "", false, nil
 	}
 
 	if err != nil {
-		return nil, domain.NewError(domain.ErrSavedPageRepositoryError, err)
+		return "", false, domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 
-	return &page, nil
+	return id, true, nil
 }
 
 func (r *SavedPageRepo) Create(ctx context.Context, page domain.SavedPage) (domain.SavedPage, error) {
@@ -125,13 +126,11 @@ func (r *SavedPageRepo) SetRead(ctx context.Context, id string, read bool) error
 }
 
 func (r *SavedPageRepo) MarkIDsRead(ctx context.Context, ids []string) error {
-	return markIDsRead(
-		ctx,
-		r.write,
-		`UPDATE saved_page SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`,
-		ids,
-		domain.ErrSavedPageRepositoryError,
-	)
+	if err := markIDsRead(ctx, r.write, markSavedPagesReadQuery, ids); err != nil {
+		return domain.NewError(domain.ErrSavedPageRepositoryError, err)
+	}
+
+	return nil
 }
 
 func (r *SavedPageRepo) MarkAllRead(ctx context.Context) error {

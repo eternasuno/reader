@@ -17,6 +17,7 @@ import (
 	"github.com/mmcdole/gofeed/atom"
 	gofeedjson "github.com/mmcdole/gofeed/json"
 	"github.com/mmcdole/gofeed/rss"
+	"golang.org/x/net/html/charset"
 
 	"reader/internal/domain"
 )
@@ -26,6 +27,7 @@ const (
 	maxFeedItems       = 1000
 	maxFeedOutputBytes = maxSanitizedHTMLBytes
 	maxFeedXMLDepth    = 64
+	maxFeedJSONDepth   = 64
 )
 
 var (
@@ -77,16 +79,12 @@ func (p *Parser) parseFeedWithLimits(body []byte, baseURL string, limits feedLim
 
 	switch payload[0] {
 	case '{':
-		return p.parseJSONFeed(payload, base, limits)
+		return p.parseJSONFeedReader(bytes.NewReader(payload), base, limits)
 	case '<':
 		return p.parseXMLFeed(payload, base, limits)
 	default:
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, errors.New("unsupported feed payload"))
 	}
-}
-
-func (p *Parser) parseJSONFeed(payload []byte, base *url.URL, limits feedLimits) (domain.ParsedFeed, error) {
-	return p.parseJSONFeedReader(bytes.NewReader(payload), base, limits)
 }
 
 func (p *Parser) parseJSONFeedReader(r io.Reader, base *url.URL, limits feedLimits) (domain.ParsedFeed, error) {
@@ -642,6 +640,11 @@ func parseDate(raw string) *time.Time {
 	return nil
 }
 
+type jsonFeedDecodeState struct {
+	feed      gofeedjson.Feed
+	seenItems bool
+}
+
 func decodeJSONFeed(r io.Reader, maxItems int) (gofeedjson.Feed, error) {
 	decoder := json.NewDecoder(r)
 
@@ -649,14 +652,14 @@ func decodeJSONFeed(r io.Reader, maxItems int) (gofeedjson.Feed, error) {
 		return gofeedjson.Feed{}, err
 	}
 
-	feed := gofeedjson.Feed{}
+	var state jsonFeedDecodeState
 	for decoder.More() {
 		key, err := readJSONObjectKey(decoder)
 		if err != nil {
 			return gofeedjson.Feed{}, err
 		}
 
-		if err := decodeJSONFeedField(decoder, &feed, key, maxItems); err != nil {
+		if err := decodeJSONFeedField(decoder, &state, key, maxItems); err != nil {
 			return gofeedjson.Feed{}, err
 		}
 	}
@@ -665,11 +668,11 @@ func decodeJSONFeed(r io.Reader, maxItems int) (gofeedjson.Feed, error) {
 		return gofeedjson.Feed{}, err
 	}
 
-	if err := validateJSONFeedTrailer(decoder, feed.Version); err != nil {
+	if err := validateJSONFeedTrailer(decoder, state.feed.Version); err != nil {
 		return gofeedjson.Feed{}, err
 	}
 
-	return feed, nil
+	return state.feed, nil
 }
 
 func expectJSONDelimiter(decoder *json.Decoder, want json.Delim, mismatchMsg string) error {
@@ -704,30 +707,48 @@ func validateJSONFeedTrailer(decoder *json.Decoder, version string) error {
 		return errors.New("trailing data after json feed")
 	}
 
-	if !strings.Contains(strings.ToLower(version), "jsonfeed.org/version/") {
+	if !isSupportedJSONFeedVersion(version) {
 		return errors.New("unsupported json feed version")
 	}
 
 	return nil
 }
 
-func decodeJSONFeedField(decoder *json.Decoder, feed *gofeedjson.Feed, key string, maxItems int) error {
+func isSupportedJSONFeedVersion(version string) bool {
+	switch strings.ToLower(version) {
+	case "https://jsonfeed.org/version/1",
+		"https://jsonfeed.org/version/1.1",
+		"http://jsonfeed.org/version/1",
+		"http://jsonfeed.org/version/1.1":
+		return true
+	default:
+		return false
+	}
+}
+
+func decodeJSONFeedField(decoder *json.Decoder, state *jsonFeedDecodeState, key string, maxItems int) error {
 	switch key {
 	case "version":
-		return decoder.Decode(&feed.Version)
+		return decoder.Decode(&state.feed.Version)
 	case "title":
-		return decoder.Decode(&feed.Title)
+		return decoder.Decode(&state.feed.Title)
 	case "description":
-		return decoder.Decode(&feed.Description)
+		return decoder.Decode(&state.feed.Description)
 	case "authors":
-		return decodeJSONAuthors(decoder, &feed.Authors)
+		return validateJSONAuthors(decoder)
 	case "items":
+		if state.seenItems {
+			return errors.New("duplicate json feed items key")
+		}
+
+		state.seenItems = true
+
 		items, err := decodeJSONFeedItems(decoder, maxItems)
 		if err != nil {
 			return err
 		}
 
-		feed.Items = items
+		state.feed.Items = items
 
 		return nil
 	default:
@@ -735,21 +756,32 @@ func decodeJSONFeedField(decoder *json.Decoder, feed *gofeedjson.Feed, key strin
 	}
 }
 
-func decodeJSONAuthors(decoder *json.Decoder, dst *[]*gofeedjson.Author) error {
-	var authors []*gofeedjson.Author
-	if err := decoder.Decode(&authors); err != nil {
+func validateJSONAuthors(decoder *json.Decoder) error {
+	tok, err := decoder.Token()
+	if err != nil {
 		return err
 	}
 
-	for i, author := range authors {
+	if tok == nil {
+		return nil
+	}
+
+	if tok != json.Delim('[') {
+		return errors.New("json feed authors must be an array")
+	}
+
+	for i := 0; decoder.More(); i++ {
+		var author *gofeedjson.Author
+		if err := decoder.Decode(&author); err != nil {
+			return err
+		}
+
 		if author == nil {
 			return fmt.Errorf("gofeed: JSON feed authors[%d] must not be null", i)
 		}
 	}
 
-	*dst = authors
-
-	return nil
+	return expectJSONDelimiter(decoder, ']', "unexpected end of json feed authors")
 }
 
 func decodeJSONFeedItems(decoder *json.Decoder, maxItems int) ([]*gofeedjson.Item, error) {
@@ -807,43 +839,45 @@ func decodeJSONItem(decoder *json.Decoder, index int) (*gofeedjson.Item, error) 
 }
 
 func skipJSONValue(decoder *json.Decoder) error {
-	tok, err := decoder.Token()
-	if err != nil {
-		return err
-	}
+	depth := 0
 
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+
+		done, err := advanceJSONSkipDepth(tok, &depth)
+		if err != nil || done {
+			return err
+		}
+	}
+}
+
+func advanceJSONSkipDepth(tok json.Token, depth *int) (bool, error) {
 	delim, ok := tok.(json.Delim)
 	if !ok {
-		return nil
+		return *depth == 0, nil
 	}
 
-	return skipJSONComposite(decoder, delim)
-}
-
-func skipJSONComposite(decoder *json.Decoder, openDelim json.Delim) error {
-	isObject := openDelim == '{'
-	closeDelim := json.Delim(']')
-	if isObject {
-		closeDelim = '}'
-	}
-
-	for decoder.More() {
-		if err := skipJSONElement(decoder, isObject); err != nil {
-			return err
+	switch delim {
+	case '{', '[':
+		*depth++
+		if *depth > maxFeedJSONDepth {
+			return false, fmt.Errorf("json nesting depth exceeds limit %d", maxFeedJSONDepth)
 		}
-	}
 
-	return expectJSONDelimiter(decoder, closeDelim, "unexpected json delimiter")
-}
-
-func skipJSONElement(decoder *json.Decoder, isObject bool) error {
-	if isObject {
-		if _, err := decoder.Token(); err != nil {
-			return err
+		return false, nil
+	case '}', ']':
+		*depth--
+		if *depth < 0 {
+			return false, errors.New("unexpected json delimiter")
 		}
-	}
 
-	return skipJSONValue(decoder)
+		return *depth == 0, nil
+	default:
+		return false, errors.New("unexpected json delimiter")
+	}
 }
 
 type xmlPayloadValidator struct {
@@ -859,6 +893,7 @@ type xmlPayloadValidator struct {
 
 func validateXMLPayload(payload []byte, maxItems int) (payloadScan, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(payload))
+	decoder.CharsetReader = charset.NewReaderLabel
 	validator := xmlPayloadValidator{maxItems: maxItems}
 
 	for {
@@ -866,6 +901,7 @@ func validateXMLPayload(payload []byte, maxItems int) (payloadScan, error) {
 		if errors.Is(err, io.EOF) {
 			return validator.finish()
 		}
+
 		if err != nil {
 			return payloadScan{}, err
 		}

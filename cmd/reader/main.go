@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	_ "time/tzdata"
 
 	"reader/internal/content"
+	"reader/internal/domain"
 	"reader/internal/epub"
 	"reader/internal/fetcher"
 	httpserver "reader/internal/http"
@@ -86,10 +88,22 @@ func run() (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	lockFile, err := acquireDataDirLock(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if closeErr := lockFile.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close data directory lock: %w", closeErr)
+		}
+	}()
+
 	store, err := sqlite.Open(ctx, filepath.Join(cfg.DataDir, databaseFileName))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
+
 	defer func() {
 		if closeErr := store.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close database: %w", closeErr)
@@ -101,6 +115,10 @@ func run() (err error) {
 		return err
 	}
 
+	return serveApp(ctx, cfg, store)
+}
+
+func serveApp(ctx context.Context, cfg envConfig, store *sqlite.Store) error {
 	// Workers use an application-owned context so a canceled HTTP request can
 	// never abort a background job.
 	appCtx, cancelApp := context.WithCancel(context.Background())
@@ -300,13 +318,34 @@ func serveUntilExitWithTimeout(ctx context.Context, listener net.Listener, handl
 
 	shutdownErr := drainHTTPServer(server, timeout, trackedHandler.closeAdmission)
 	trackedHandler.active.Wait()
+	extractionErr := waitExtractions(handler, timeout)
+	if extractionErr != nil {
+		slog.Error("extraction shutdown failed", "error", extractionErr)
+	}
+
+	shutdownErr = errors.Join(shutdownErr, extractionErr)
 	stopWorkers()
 
 	if serveErr != nil {
-		return fmt.Errorf("serve http: %w", serveErr)
+		return errors.Join(fmt.Errorf("serve http: %w", serveErr), shutdownErr)
 	}
 
 	return shutdownErr
+}
+
+func waitExtractions(handler http.Handler, timeout time.Duration) error {
+	extractor, ok := handler.(interface{ WaitExtractions(context.Context) error })
+	if !ok {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := extractor.WaitExtractions(ctx); err != nil {
+		return fmt.Errorf("wait for extractions: %w", err)
+	}
+
+	return nil
 }
 
 func drainHTTPServer(server *http.Server, timeout time.Duration, closeAdmission func()) error {
@@ -339,15 +378,14 @@ func loadConfig(getenv func(string) string) (envConfig, error) {
 		return envConfig{}, err
 	}
 
-	sessionSecret := []byte(getenv("SESSION_SECRET"))
-	switch {
-	case len(sessionSecret) == 0:
-		sessionSecret = make([]byte, sessionSecretBytes)
-		if _, err := rand.Read(sessionSecret); err != nil {
-			return envConfig{}, fmt.Errorf("generate session secret: %w", err)
-		}
-	case len(sessionSecret) < sessionSecretBytes:
-		return envConfig{}, fmt.Errorf("SESSION_SECRET must be at least %d bytes", sessionSecretBytes)
+	appURL := envOrDefault(getenv, "APP_URL", defaultAppURL)
+	if err := validateAppURL(appURL); err != nil {
+		return envConfig{}, err
+	}
+
+	sessionSecret, err := loadSessionSecret(getenv)
+	if err != nil {
+		return envConfig{}, err
 	}
 
 	location := time.Local
@@ -362,13 +400,48 @@ func loadConfig(getenv func(string) string) (envConfig, error) {
 
 	return envConfig{
 		AppPassword:         appPassword,
-		AppURL:              envOrDefault(getenv, "APP_URL", defaultAppURL),
+		AppURL:              appURL,
 		Port:                envOrDefault(getenv, "PORT", defaultPort),
 		DataDir:             envOrDefault(getenv, "DATA_DIR", defaultDataDir),
 		SessionSecret:       sessionSecret,
 		Location:            location,
 		AllowPrivateNetwork: isTruthy(getenv("ALLOW_PRIVATE_NETWORK")),
 	}, nil
+}
+
+func loadSessionSecret(getenv func(string) string) ([]byte, error) {
+	sessionSecret := []byte(getenv("SESSION_SECRET"))
+	switch {
+	case len(sessionSecret) == 0:
+		sessionSecret = make([]byte, sessionSecretBytes)
+		if _, err := rand.Read(sessionSecret); err != nil {
+			return nil, fmt.Errorf("generate session secret: %w", err)
+		}
+	case len(sessionSecret) < sessionSecretBytes:
+		return nil, fmt.Errorf("SESSION_SECRET must be at least %d bytes", sessionSecretBytes)
+	}
+
+	return sessionSecret, nil
+}
+
+func validateAppURL(rawAppURL string) error {
+	appURL, err := url.Parse(strings.TrimSpace(rawAppURL))
+	if err != nil || appURL.User != nil || appURL.Host == "" {
+		// The raw URL may embed credentials, so never echo it or the parse error.
+		return errors.New("invalid APP_URL")
+	}
+
+	appOrigin, ok := domain.OriginFromURL(appURL)
+	if !ok {
+		return errors.New("invalid APP_URL")
+	}
+
+	switch appOrigin.Scheme {
+	case "http", "https":
+		return nil
+	default:
+		return errors.New("invalid APP_URL")
+	}
 }
 
 func envOrDefault(getenv func(string) string, key string, fallback string) string {

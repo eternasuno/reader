@@ -127,24 +127,34 @@ func nodeAttr(node *html.Node, key string) string {
 	return ""
 }
 
-func renderChapter(ch chapterInput, rewrites map[string]string) []byte {
+func renderChapter(ch chapterInput, rewrites map[string]string) ([]byte, bool) {
 	title := chapterTitle(ch.article)
 
-	var out strings.Builder
-	out.WriteString(xmlDeclaration)
-	out.WriteString("<!DOCTYPE html>\n")
-	out.WriteString(xhtmlOpenTag)
-	out.WriteString("<head>\n<title>")
-	writeEscapedText(&out, title)
-	out.WriteString("</title>\n<link rel=\"stylesheet\" type=\"text/css\" href=\"../styles.css\"/>\n</head>\n<body>\n<h1>")
-	writeEscapedText(&out, title)
-	out.WriteString("</h1>\n")
-	writeChapterMeta(&out, ch.article)
-	out.WriteString("<div class=\"article-content\">")
-	writeChildren(&out, ch.root, ch.nodeURLs, rewrites)
-	out.WriteString("</div>\n</body>\n</html>\n")
+	cw := chapterWriter{
+		nodeURLs: ch.nodeURLs,
+		rewrites: rewrites,
+	}
+	cw.out.WriteString(xmlDeclaration)
+	cw.out.WriteString("<!DOCTYPE html>\n")
+	cw.out.WriteString(xhtmlOpenTag)
+	cw.out.WriteString("<head>\n<title>")
+	writeEscapedText(builderXMLWriter{sb: &cw.out}, title)
+	cw.out.WriteString("</title>\n<link rel=\"stylesheet\" type=\"text/css\" href=\"../styles.css\"/>\n</head>\n<body>\n<h1>")
+	writeEscapedText(builderXMLWriter{sb: &cw.out}, title)
+	cw.out.WriteString("</h1>\n")
+	writeChapterMeta(&cw.out, ch.article)
+	cw.out.WriteString("<div class=\"article-content\">")
+	cw.writeChildren(ch.root)
+	cw.out.WriteString("</div>\n</body>\n</html>\n")
 
-	return []byte(out.String())
+	return []byte(cw.out.String()), cw.hasRemoteResources
+}
+
+type chapterWriter struct {
+	out                strings.Builder
+	nodeURLs           map[*html.Node]string
+	rewrites           map[string]string
+	hasRemoteResources bool
 }
 
 func writeChapterMeta(out *strings.Builder, article domain.KindleArticle) {
@@ -177,61 +187,64 @@ func chapterTitle(article domain.KindleArticle) string {
 	return untitledArticle
 }
 
-func writeChildren(out *strings.Builder, parent *html.Node, nodeURLs map[*html.Node]string, rewrites map[string]string) {
+func (cw *chapterWriter) writeChildren(parent *html.Node) {
 	for child := parent.FirstChild; child != nil; child = child.NextSibling {
-		writeNode(out, child, nodeURLs, rewrites)
+		cw.writeNode(child)
 	}
 }
 
-func writeNode(out *strings.Builder, node *html.Node, nodeURLs map[*html.Node]string, rewrites map[string]string) {
+func (cw *chapterWriter) writeNode(node *html.Node) {
 	switch node.Type {
 	case html.TextNode:
-		writeEscapedText(out, node.Data)
+		writeEscapedText(builderXMLWriter{sb: &cw.out}, node.Data)
 	case html.ElementNode:
-		writeElement(out, node, nodeURLs, rewrites)
+		cw.writeElement(node)
 	}
 }
 
-func writeElement(out *strings.Builder, node *html.Node, nodeURLs map[*html.Node]string, rewrites map[string]string) {
+func (cw *chapterWriter) writeElement(node *html.Node) {
 	if node.Data == "img" {
-		writeImageElement(out, node, nodeURLs, rewrites)
+		cw.writeImageElement(node)
+
 		return
 	}
 
 	if !isXMLName(node.Data) {
-		writeChildren(out, node, nodeURLs, rewrites)
+		cw.writeChildren(node)
+
 		return
 	}
 
-	out.WriteString("<" + node.Data)
-	writeAttributes(out, node.Attr)
+	cw.out.WriteString("<" + node.Data)
+	cw.writeAttributes(node.Data, node.Attr)
 
 	if _, ok := voidElements[node.Data]; ok {
-		out.WriteString("/>")
+		cw.out.WriteString("/>")
+
 		return
 	}
 
-	out.WriteString(">")
-	writeChildren(out, node, nodeURLs, rewrites)
-	out.WriteString("</" + node.Data + ">")
+	cw.out.WriteString(">")
+	cw.writeChildren(node)
+	cw.out.WriteString("</" + node.Data + ">")
 }
 
-func writeImageElement(out *strings.Builder, node *html.Node, nodeURLs map[*html.Node]string, rewrites map[string]string) {
-	if len(rewrites) == 0 {
+func (cw *chapterWriter) writeImageElement(node *html.Node) {
+	if len(cw.rewrites) == 0 {
 		return
 	}
 
-	rewritten, ok := rewrites[nodeURLs[node]]
+	rewritten, ok := cw.rewrites[cw.nodeURLs[node]]
 	if !ok {
 		return
 	}
 
-	out.WriteString("<img")
-	writeImageAttributes(out, node.Attr, rewritten)
-	out.WriteString("/>")
+	cw.out.WriteString("<img")
+	cw.writeImageAttributes(node.Attr, rewritten)
+	cw.out.WriteString("/>")
 }
 
-func writeImageAttributes(out *strings.Builder, attrs []html.Attribute, src string) {
+func (cw *chapterWriter) writeImageAttributes(attrs []html.Attribute, src string) {
 	wroteSrc := false
 	for _, attr := range attrs {
 		if !isXMLName(attr.Key) {
@@ -242,69 +255,151 @@ func writeImageAttributes(out *strings.Builder, attrs []html.Attribute, src stri
 		if attr.Key == "src" {
 			val = src
 			wroteSrc = true
+		} else if isRemoteResourceAttr("img", attr.Key, val) {
+			cw.hasRemoteResources = true
 		}
 
-		writeXMLAttr(out, attr.Key, val)
+		writeXMLAttr(&cw.out, attr.Key, val)
 	}
 
 	if !wroteSrc {
-		writeXMLAttr(out, "src", src)
+		writeXMLAttr(&cw.out, "src", src)
 	}
 }
 
-func writeAttributes(out *strings.Builder, attrs []html.Attribute) {
+func (cw *chapterWriter) writeAttributes(tag string, attrs []html.Attribute) {
 	for _, attr := range attrs {
 		if !isXMLName(attr.Key) {
 			continue
 		}
 
-		writeXMLAttr(out, attr.Key, attr.Val)
+		if isRemoteResourceAttr(tag, attr.Key, attr.Val) {
+			cw.hasRemoteResources = true
+		}
+
+		writeXMLAttr(&cw.out, attr.Key, attr.Val)
 	}
+}
+
+func isRemoteResourceAttr(tag string, key string, val string) bool {
+	switch {
+	case key == "src":
+		return isRemoteResourceURL(val)
+	case key == "poster" && tag == "video":
+		return isRemoteResourceURL(val)
+	case key == "data" && tag == "object":
+		return isRemoteResourceURL(val)
+	case key == "href" && tag == "link":
+		return isRemoteResourceURL(val)
+	case key == "srcset":
+		return hasRemoteSrcsetURL(val)
+	default:
+		return false
+	}
+}
+
+func hasRemoteSrcsetURL(val string) bool {
+	for candidate := range strings.SplitSeq(val, ",") {
+		fields := strings.Fields(candidate)
+		if len(fields) > 0 && isRemoteResourceURL(fields[0]) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isRemoteResourceURL(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+
+	if strings.HasPrefix(trimmed, "//") {
+		return true
+	}
+
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return false
+	}
+
+	return strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")
 }
 
 func writeXMLAttr(out *strings.Builder, key string, val string) {
 	out.WriteString(" " + key + "=\"")
-	writeEscapedAttr(out, val)
+	writeEscapedAttr(builderXMLWriter{sb: out}, val)
 	out.WriteString("\"")
 }
 
-func writeEscapedText(out *strings.Builder, text string) {
+type xmlWriter interface {
+	ok() bool
+	writeString(string)
+	writeRune(rune)
+}
+
+type builderXMLWriter struct {
+	sb *strings.Builder
+}
+
+func (w builderXMLWriter) ok() bool {
+	return true
+}
+
+func (w builderXMLWriter) writeString(s string) {
+	w.sb.WriteString(s)
+}
+
+func (w builderXMLWriter) writeRune(r rune) {
+	w.sb.WriteRune(r)
+}
+
+func writeEscapedText(out xmlWriter, text string) {
 	for _, r := range text {
+		if !out.ok() {
+			return
+		}
+
 		switch r {
 		case '&':
-			out.WriteString("&amp;")
+			out.writeString("&amp;")
 		case '<':
-			out.WriteString("&lt;")
+			out.writeString("&lt;")
 		case '>':
-			out.WriteString("&gt;")
+			out.writeString("&gt;")
 		default:
 			if isXMLChar(r) {
-				out.WriteRune(r)
+				out.writeRune(r)
 			}
 		}
 	}
 }
 
-func writeEscapedAttr(out *strings.Builder, text string) {
+func writeEscapedAttr(out xmlWriter, text string) {
 	for _, r := range text {
+		if !out.ok() {
+			return
+		}
+
 		switch r {
 		case '&':
-			out.WriteString("&amp;")
+			out.writeString("&amp;")
 		case '<':
-			out.WriteString("&lt;")
+			out.writeString("&lt;")
 		case '>':
-			out.WriteString("&gt;")
+			out.writeString("&gt;")
 		case '"':
-			out.WriteString("&quot;")
+			out.writeString("&quot;")
 		case '\t':
-			out.WriteString("&#9;")
+			out.writeString("&#9;")
 		case '\n':
-			out.WriteString("&#10;")
+			out.writeString("&#10;")
 		case '\r':
-			out.WriteString("&#13;")
+			out.writeString("&#13;")
 		default:
 			if isXMLChar(r) {
-				out.WriteRune(r)
+				out.writeRune(r)
 			}
 		}
 	}
@@ -312,14 +407,14 @@ func writeEscapedAttr(out *strings.Builder, text string) {
 
 func escapeXMLText(text string) string {
 	var out strings.Builder
-	writeEscapedText(&out, text)
+	writeEscapedText(builderXMLWriter{sb: &out}, text)
 
 	return out.String()
 }
 
 func escapeXMLAttr(text string) string {
 	var out strings.Builder
-	writeEscapedAttr(&out, text)
+	writeEscapedAttr(builderXMLWriter{sb: &out}, text)
 
 	return out.String()
 }

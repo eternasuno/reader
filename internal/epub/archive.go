@@ -2,6 +2,7 @@ package epub
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"compress/flate"
 	"context"
@@ -11,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -23,11 +23,12 @@ import (
 const (
 	epubMimetype        = "application/epub+zip"
 	bookCreator         = "Lantern"
+	bookLanguage        = "zh"
 	chapterSourcePrefix = "chapters/"
 	oebpsPrefix         = "OEBPS/"
 	imagesPrefix        = "OEBPS/images/"
 	xmlDeclaration      = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
-	xhtmlOpenTag        = "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"zh-CN\" lang=\"zh-CN\">\n"
+	xhtmlOpenTag        = "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"" + bookLanguage + "\" lang=\"" + bookLanguage + "\">\n"
 	containerXML        = `<?xml version="1.0" encoding="utf-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles>
@@ -95,6 +96,8 @@ img {
 	zipStaticEntryCount      = 6
 	maxMeasurementMargin     = 8 << 10
 	minMeasurementMargin     = 1 << 10
+	zipDeflateReaderVersion  = 20
+	remoteResourcesAttr      = " properties=\"remote-resources\""
 )
 
 var (
@@ -103,7 +106,8 @@ var (
 )
 
 type chapterMeta struct {
-	title string
+	title              string
+	hasRemoteResources bool
 }
 
 type imageManifestItem struct {
@@ -155,16 +159,19 @@ func (l *limitCountWriter) Write(p []byte) (int, error) {
 	next := l.count + int64(len(p))
 	if next > l.limit {
 		l.count = next
+
 		return 0, errArchiveTooLarge
 	}
 
 	if l.w != nil {
 		n, err := l.w.Write(p)
 		l.count += int64(n)
+
 		return n, err
 	}
 
 	l.count = next
+
 	return len(p), nil
 }
 
@@ -188,6 +195,7 @@ func compressDeflateBoundedWith(fw *flate.Writer, name string, raw []byte, maxBy
 
 	if _, err := fw.Write(raw); err != nil {
 		_ = fw.Close()
+
 		return compressedEntry{}, err
 	}
 
@@ -231,7 +239,9 @@ func measureArchiveSize(
 		return lw.count, err
 	}
 
-	if err := writeZipEntry(writer, "OEBPS/content.opf", zip.Deflate, renderOPF(meta)); err != nil {
+	if err := writeStreamedZipEntry(writer, "OEBPS/content.opf", zip.Deflate, func(w io.Writer) error {
+		return writeOPF(w, meta)
+	}); err != nil {
 		return lw.count, err
 	}
 
@@ -261,7 +271,9 @@ func writeFinalArchive(
 		return nil, err
 	}
 
-	if err := writeZipEntry(writer, "OEBPS/content.opf", zip.Deflate, renderOPF(meta)); err != nil {
+	if err := writeStreamedZipEntry(writer, "OEBPS/content.opf", zip.Deflate, func(w io.Writer) error {
+		return writeOPF(w, meta)
+	}); err != nil {
 		return nil, err
 	}
 
@@ -276,15 +288,18 @@ func spooledEntryZipBytes(entry spooledEntry) int64 {
 	return zipLocalFileHeaderLen + zipCentralDirHeaderLen + 2*int64(len(entry.name)) + int64(entry.compressedSize)
 }
 
-func chapterNavOpfUncompressedBytes(chapterIndex int, title string, newImages []imageManifestItem) int64 {
+func chapterNavOpfUncompressedBytes(chapterIndex int, chapter chapterMeta, newImages []imageManifestItem) int64 {
 	hrefLen := int64(len(chapterHref(chapterIndex)))
-	escapedTitleLen := int64(escapedXMLTextLen(title))
+	escapedTitleLen := int64(escapedXMLTextLen(chapter.title))
 	plainDigits := int64(decimalDigits(chapterIndex + 1))
 	paddedDigits := max(int64(4), plainDigits)
 
 	navLine := int64(27) + hrefLen + escapedTitleLen
 	ncxBlock := int64(102) + paddedDigits + plainDigits + escapedTitleLen + hrefLen
 	opfChapter := int64(93) + 2*paddedDigits + hrefLen
+	if chapter.hasRemoteResources {
+		opfChapter += int64(len(remoteResourcesAttr))
+	}
 
 	var opfImages int64
 	for _, img := range newImages {
@@ -347,20 +362,37 @@ func escapedXMLTextLen(text string) int {
 
 func writeStaticAndNavEntries(ctx context.Context, writer *zip.Writer, meta archiveMeta) error {
 	staticEntries := []struct {
-		name   string
-		method uint16
-		body   []byte
+		name    string
+		method  uint16
+		body    []byte
+		writeFn func(io.Writer) error
 	}{
 		{name: "mimetype", method: zip.Store, body: []byte(epubMimetype)},
 		{name: "META-INF/container.xml", method: zip.Deflate, body: []byte(containerXML)},
 		{name: "OEBPS/styles.css", method: zip.Deflate, body: []byte(stylesCSS)},
-		{name: "OEBPS/nav.xhtml", method: zip.Deflate, body: renderNav(meta.title, meta.chapters)},
-		{name: "OEBPS/toc.ncx", method: zip.Deflate, body: renderNCX(meta)},
+		{
+			name:    "OEBPS/nav.xhtml",
+			method:  zip.Deflate,
+			writeFn: func(w io.Writer) error { return writeNav(w, meta.title, meta.chapters) },
+		},
+		{
+			name:    "OEBPS/toc.ncx",
+			method:  zip.Deflate,
+			writeFn: func(w io.Writer) error { return writeNCX(w, meta) },
+		},
 	}
 
 	for _, entry := range staticEntries {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+
+		if entry.writeFn != nil {
+			if err := writeStreamedZipEntry(writer, entry.name, entry.method, entry.writeFn); err != nil {
+				return err
+			}
+
+			continue
 		}
 
 		if err := writeZipEntry(writer, entry.name, entry.method, entry.body); err != nil {
@@ -399,12 +431,14 @@ func copySpooledEntries(ctx context.Context, writer *zip.Writer, spoolPath strin
 	if err != nil {
 		return fmt.Errorf("open epub spool dir: %s", domain.SanitizeErrorText(err.Error()))
 	}
+
 	defer func() { _ = root.Close() }()
 
 	spoolFile, err := root.Open(filepath.Base(spoolPath))
 	if err != nil {
 		return fmt.Errorf("open epub spool: %s", domain.SanitizeErrorText(err.Error()))
 	}
+
 	defer func() { _ = spoolFile.Close() }()
 
 	for _, entry := range entries {
@@ -430,6 +464,7 @@ func createRawEntry(writer *zip.Writer, entry spooledEntry) (io.Writer, error) {
 	fh := &zip.FileHeader{
 		Name:               entry.name,
 		Method:             entry.method,
+		ReaderVersion:      zipDeflateReaderVersion,
 		CRC32:              entry.crc32,
 		CompressedSize64:   entry.compressedSize,
 		UncompressedSize64: entry.uncompressedSize,
@@ -469,6 +504,19 @@ func writeZipEntry(writer *zip.Writer, name string, method uint16, body []byte) 
 	return nil
 }
 
+func writeStreamedZipEntry(writer *zip.Writer, name string, method uint16, writeFn func(io.Writer) error) error {
+	entry, err := writer.CreateHeader(&zip.FileHeader{Name: name, Method: method})
+	if err != nil {
+		return wrapArchiveWriteError(err)
+	}
+
+	if err := writeFn(entry); err != nil {
+		return wrapArchiveWriteError(err)
+	}
+
+	return nil
+}
+
 func wrapArchiveWriteError(err error) error {
 	if errors.Is(err, errArchiveTooLarge) {
 		return errArchiveTooLarge
@@ -477,77 +525,170 @@ func wrapArchiveWriteError(err error) error {
 	return fmt.Errorf("write epub archive: %s", domain.SanitizeErrorText(err.Error()))
 }
 
-func renderNav(title string, chapters []chapterMeta) []byte {
-	var out strings.Builder
-	out.WriteString(xmlDeclaration)
-	out.WriteString("<!DOCTYPE html>\n")
-	out.WriteString(xhtmlOpenTag)
-	out.WriteString("<head>\n<meta charset=\"utf-8\"/>\n<title>")
-	writeEscapedText(&out, title)
-	out.WriteString("</title>\n</head>\n<body>\n<nav epub:type=\"toc\" id=\"toc\">\n<h1>目录</h1>\n<ol>\n")
+type stickyXMLWriter struct {
+	bw  *bufio.Writer
+	err error
+}
+
+func newStickyXMLWriter(w io.Writer) *stickyXMLWriter {
+	return &stickyXMLWriter{bw: bufio.NewWriter(w)}
+}
+
+func (w *stickyXMLWriter) ok() bool {
+	return w.err == nil
+}
+
+func (w *stickyXMLWriter) writeString(s string) {
+	if w.err != nil {
+		return
+	}
+
+	if _, err := w.bw.WriteString(s); err != nil {
+		w.err = err
+	}
+}
+
+func (w *stickyXMLWriter) writeRune(r rune) {
+	if w.err != nil {
+		return
+	}
+
+	if _, err := w.bw.WriteRune(r); err != nil {
+		w.err = err
+	}
+}
+
+func (w *stickyXMLWriter) printf(format string, args ...any) {
+	if w.err != nil {
+		return
+	}
+
+	if _, err := fmt.Fprintf(w.bw, format, args...); err != nil {
+		w.err = err
+	}
+}
+
+func (w *stickyXMLWriter) flush() error {
+	if w.err != nil {
+		return w.err
+	}
+
+	return w.bw.Flush()
+}
+
+func writeNav(w io.Writer, title string, chapters []chapterMeta) error {
+	sw := newStickyXMLWriter(w)
+	sw.writeString(xmlDeclaration)
+	sw.writeString("<!DOCTYPE html>\n")
+	sw.writeString(xhtmlOpenTag)
+	sw.writeString("<head>\n<meta charset=\"utf-8\"/>\n<title>")
+	writeEscapedText(sw, title)
+	sw.writeString("</title>\n</head>\n<body>\n<nav epub:type=\"toc\" id=\"toc\">\n<h1>目录</h1>\n<ol>\n")
 
 	for i, ch := range chapters {
-		out.WriteString("<li><a href=\"" + chapterHref(i) + "\">" + escapeXMLText(ch.title) + "</a></li>\n")
+		if !sw.ok() {
+			break
+		}
+
+		sw.printf("<li><a href=\"%s\">", chapterHref(i))
+		writeEscapedText(sw, ch.title)
+		sw.writeString("</a></li>\n")
 	}
 
-	out.WriteString("</ol>\n</nav>\n</body>\n</html>\n")
+	sw.writeString("</ol>\n</nav>\n</body>\n</html>\n")
 
-	return []byte(out.String())
+	return sw.flush()
 }
 
-func renderNCX(meta archiveMeta) []byte {
-	var out strings.Builder
-	out.WriteString(xmlDeclaration)
-	out.WriteString("<ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\">\n")
-	out.WriteString("<head>\n<meta name=\"dtb:uid\" content=\"" + escapeXMLAttr(meta.identity.identifier) + "\"/>\n")
-	out.WriteString("<meta name=\"dtb:depth\" content=\"1\"/>\n")
-	out.WriteString("<meta name=\"dtb:totalPageCount\" content=\"0\"/>\n")
-	out.WriteString("<meta name=\"dtb:maxPageNumber\" content=\"0\"/>\n</head>\n")
-	out.WriteString("<docTitle><text>" + escapeXMLText(meta.title) + "</text></docTitle>\n<navMap>\n")
+func writeNCX(w io.Writer, meta archiveMeta) error {
+	sw := newStickyXMLWriter(w)
+	sw.writeString(xmlDeclaration)
+	sw.writeString("<ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\">\n")
+	sw.writeString("<head>\n<meta name=\"dtb:uid\" content=\"")
+	writeEscapedAttr(sw, meta.identity.identifier)
+	sw.writeString("\"/>\n<meta name=\"dtb:depth\" content=\"1\"/>\n")
+	sw.writeString("<meta name=\"dtb:totalPageCount\" content=\"0\"/>\n")
+	sw.writeString("<meta name=\"dtb:maxPageNumber\" content=\"0\"/>\n</head>\n")
+	sw.writeString("<docTitle><text>")
+	writeEscapedText(sw, meta.title)
+	sw.writeString("</text></docTitle>\n<navMap>\n")
 
 	for i, ch := range meta.chapters {
-		_, _ = fmt.Fprintf(&out, "<navPoint id=\"navPoint-%04d\" playOrder=\"%d\">\n", i+1, i+1)
-		out.WriteString("<navLabel><text>" + escapeXMLText(ch.title) + "</text></navLabel>\n")
-		out.WriteString("<content src=\"" + chapterHref(i) + "\"/>\n</navPoint>\n")
+		if !sw.ok() {
+			break
+		}
+
+		sw.printf("<navPoint id=\"navPoint-%04d\" playOrder=\"%d\">\n<navLabel><text>", i+1, i+1)
+		writeEscapedText(sw, ch.title)
+		sw.printf("</text></navLabel>\n<content src=\"%s\"/>\n</navPoint>\n", chapterHref(i))
 	}
 
-	out.WriteString("</navMap>\n</ncx>\n")
+	sw.writeString("</navMap>\n</ncx>\n")
 
-	return []byte(out.String())
+	return sw.flush()
 }
 
-func renderOPF(meta archiveMeta) []byte {
-	var out strings.Builder
-	out.WriteString(xmlDeclaration)
-	out.WriteString("<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"book-id\">\n")
-	out.WriteString("<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n")
-	out.WriteString("<dc:identifier id=\"book-id\">" + escapeXMLText(meta.identity.identifier) + "</dc:identifier>\n")
-	out.WriteString("<dc:title>" + escapeXMLText(meta.title) + "</dc:title>\n")
-	out.WriteString("<dc:language>zh-CN</dc:language>\n")
-	out.WriteString("<dc:creator>" + escapeXMLText(bookCreator) + "</dc:creator>\n")
-	out.WriteString("<meta property=\"dcterms:modified\">" + meta.identity.modifiedAt.UTC().Format("2006-01-02T15:04:05Z") + "</meta>\n")
-	out.WriteString("</metadata>\n<manifest>\n")
-	out.WriteString("<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n")
-	out.WriteString("<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n")
-	out.WriteString("<item id=\"css\" href=\"styles.css\" media-type=\"text/css\"/>\n")
+func writeOPF(w io.Writer, meta archiveMeta) error {
+	sw := newStickyXMLWriter(w)
+	sw.writeString(xmlDeclaration)
+	sw.writeString("<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"book-id\">\n")
+	sw.writeString("<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n")
+	sw.writeString("<dc:identifier id=\"book-id\">")
+	writeEscapedText(sw, meta.identity.identifier)
+	sw.writeString("</dc:identifier>\n<dc:title>")
+	writeEscapedText(sw, meta.title)
+	sw.writeString("</dc:title>\n<dc:language>" + bookLanguage + "</dc:language>\n<dc:creator>")
+	writeEscapedText(sw, bookCreator)
+	sw.writeString("</dc:creator>\n<meta property=\"dcterms:modified\">" + meta.identity.modifiedAt.UTC().Format("2006-01-02T15:04:05Z") + "</meta>\n")
+	sw.writeString("</metadata>\n<manifest>\n")
+	sw.writeString("<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n")
+	sw.writeString("<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n")
+	sw.writeString("<item id=\"css\" href=\"styles.css\" media-type=\"text/css\"/>\n")
 
-	for i := range meta.chapters {
-		_, _ = fmt.Fprintf(&out, "<item id=\"chapter-%04d\" href=\"%s\" media-type=\"application/xhtml+xml\"/>\n", i+1, chapterHref(i))
+	writeOPFManifest(sw, meta)
+	writeOPFSpine(sw, meta.chapters)
+	sw.writeString("</package>\n")
+
+	return sw.flush()
+}
+
+func writeOPFManifest(sw *stickyXMLWriter, meta archiveMeta) {
+	for i, ch := range meta.chapters {
+		if !sw.ok() {
+			return
+		}
+
+		props := ""
+		if ch.hasRemoteResources {
+			props = remoteResourcesAttr
+		}
+
+		sw.printf("<item id=\"chapter-%04d\" href=\"%s\" media-type=\"application/xhtml+xml\"%s/>\n", i+1, chapterHref(i), props)
 	}
 
 	for _, img := range meta.images {
-		_, _ = fmt.Fprintf(&out, "<item id=\"img-%04d\" href=\"images/%s\" media-type=\"%s\"/>\n", img.number, img.fileName, img.mediaType)
+		if !sw.ok() {
+			return
+		}
+
+		sw.printf("<item id=\"img-%04d\" href=\"images/%s\" media-type=\"%s\"/>\n", img.number, img.fileName, img.mediaType)
 	}
 
-	out.WriteString("</manifest>\n<spine toc=\"ncx\">\n")
+	sw.writeString("</manifest>\n")
+}
 
-	for i := range meta.chapters {
-		_, _ = fmt.Fprintf(&out, "<itemref idref=\"chapter-%04d\"/>\n", i+1)
+func writeOPFSpine(sw *stickyXMLWriter, chapters []chapterMeta) {
+	sw.writeString("<spine toc=\"ncx\">\n")
+
+	for i := range chapters {
+		if !sw.ok() {
+			return
+		}
+
+		sw.printf("<itemref idref=\"chapter-%04d\"/>\n", i+1)
 	}
 
-	out.WriteString("</spine>\n</package>\n")
-
-	return []byte(out.String())
+	sw.writeString("</spine>\n")
 }
 
 func chapterHref(index int) string {

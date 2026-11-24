@@ -15,9 +15,14 @@ const (
 	defaultKindleTickInterval  = 5 * time.Minute
 	kindleDateLayout           = "2006-01-02"
 	detachedWriteTimeout       = 5 * time.Second
+	recordAcceptedTimeout      = 15 * time.Second
+	defaultCompleteRetryBudget = 5 * time.Minute
 	defaultCompleteBaseBackoff = 100 * time.Millisecond
 	defaultCompleteMaxBackoff  = 30 * time.Second
 	completeLogIntervalAttempt = 10
+	recordAcceptedMaxAttempts  = 3
+	defaultRecordBaseBackoff   = 50 * time.Millisecond
+	defaultRecordMaxBackoff    = 200 * time.Millisecond
 )
 
 type KindleConfig struct {
@@ -48,6 +53,9 @@ type KindleSender struct {
 	now                 func() time.Time
 	completeBaseBackoff time.Duration
 	completeMaxBackoff  time.Duration
+	completeRetryBudget time.Duration
+	recordBaseBackoff   time.Duration
+	recordMaxBackoff    time.Duration
 
 	mu      sync.Mutex
 	running bool
@@ -88,6 +96,9 @@ func NewKindleSender(cfg KindleConfig) *KindleSender {
 		now:                 now,
 		completeBaseBackoff: defaultCompleteBaseBackoff,
 		completeMaxBackoff:  defaultCompleteMaxBackoff,
+		completeRetryBudget: defaultCompleteRetryBudget,
+		recordBaseBackoff:   defaultRecordBaseBackoff,
+		recordMaxBackoff:    defaultRecordMaxBackoff,
 	}
 }
 
@@ -107,12 +118,14 @@ func (s *KindleSender) EnqueueManual(ctx context.Context) (domain.KindleSendReco
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
+
 		return domain.KindleSendRecord{}, domain.NewError(domain.ErrKindleSendInProgress, nil)
 	}
 
 	claimed, err := s.kindleSends.ClaimManualSend(ctx, domain.NewID(), s.now().UTC())
 	if err != nil {
 		s.mu.Unlock()
+
 		return domain.KindleSendRecord{}, err
 	}
 
@@ -129,6 +142,7 @@ func (s *KindleSender) CheckSchedule(ctx context.Context) error {
 	claimed, err := s.kindleSends.ClaimDueSend(ctx, domain.NewID(), s.now().UTC(), s.loc, s.running)
 	if err != nil || !claimed.Claimed {
 		s.mu.Unlock()
+
 		return err
 	}
 
@@ -169,7 +183,7 @@ func (s *KindleSender) runJob(sendID string, snapshot domain.KindleDelivery) {
 
 	ctx := s.baseCtx
 	status, sendErr := s.executeJob(ctx, sendID, snapshot)
-	s.persistTerminalStatus(ctx, sendID, status, sendErr)
+	s.persistTerminalStatus(ctx, sendID, status, sendErr, s.now().UTC())
 }
 
 func (s *KindleSender) executeJob(ctx context.Context, sendID string, snapshot domain.KindleDelivery) (domain.KindleStatus, error) {
@@ -196,6 +210,7 @@ func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot
 	if err != nil {
 		return err
 	}
+
 	defer func() {
 		if closeErr := packer.Close(); closeErr != nil {
 			logFailure(slog.LevelError, "close kindle epub packer failed", closeErr, "send_id", sendID)
@@ -254,7 +269,7 @@ func (s *KindleSender) sendPackedBooks(
 			return err
 		}
 
-		if err := s.recordBookAccepted(ctx, sendID, book); err != nil {
+		if err := s.recordBookAccepted(ctx, sendID, i, book); err != nil {
 			return err
 		}
 	}
@@ -262,11 +277,28 @@ func (s *KindleSender) sendPackedBooks(
 	return nil
 }
 
-func (s *KindleSender) recordBookAccepted(ctx context.Context, sendID string, book domain.EPUBBook) error {
-	writeCtx, cancel := detachedWriteContext(ctx)
+func (s *KindleSender) recordBookAccepted(ctx context.Context, sendID string, bookIndex int, book domain.EPUBBook) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordAcceptedTimeout)
 	defer cancel()
+	backoff := s.recordBaseBackoff
 
-	return s.kindleSends.RecordBookAccepted(writeCtx, sendID, book.SavedPageIDs, book.FeedItemIDs, book.ArticleCount)
+	for attempt := 1; ; attempt++ {
+		err := s.kindleSends.RecordBookAccepted(writeCtx, sendID, bookIndex, book.SavedPageIDs, book.FeedItemIDs, book.ArticleCount)
+		if err == nil {
+			return nil
+		}
+
+		logFailure(slog.LevelWarn, "record kindle book accepted failed", err, "send_id", sendID, "book_index", bookIndex, "attempt", attempt)
+		if attempt >= recordAcceptedMaxAttempts {
+			return err
+		}
+
+		if !sleepWithContext(writeCtx, backoff) {
+			return err
+		}
+
+		backoff = min(backoff*2, s.recordMaxBackoff)
+	}
 }
 
 func (s *KindleSender) loadArticle(ctx context.Context, ref domain.KindleArticleRef) (domain.KindleArticle, bool, error) {
@@ -376,35 +408,58 @@ func (s *KindleSender) extractFeedItem(ctx context.Context, item domain.FeedItem
 // persistTerminalStatus is the sole owner of terminal status persistence. It
 // retries with bounded exponential backoff while ctx lives and makes one
 // final detached attempt if ctx was already canceled.
-func (s *KindleSender) persistTerminalStatus(ctx context.Context, sendID string, status domain.KindleStatus, sendErr error) {
+func (s *KindleSender) persistTerminalStatus(ctx context.Context, sendID string, status domain.KindleStatus, sendErr error, finishedAt time.Time) {
+	budgetCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.completeRetryBudget)
+	defer cancel()
 	summary := sanitizedSummary(sendErr)
 	backoff := s.completeBaseBackoff
 
 	for attempt := 1; ; attempt++ {
 		wasCanceled := ctx.Err() != nil
-		if s.tryCompleteSend(ctx, sendID, status, summary, attempt) {
+		if s.tryCompleteSend(budgetCtx, sendID, status, summary, finishedAt, attempt) {
 			return
 		}
 
-		if wasCanceled {
-			return
+		if wasCanceled || budgetCtx.Err() != nil {
+			break
 		}
 
-		if !sleepWithContext(ctx, backoff) {
-			s.tryCompleteSend(ctx, sendID, status, summary, attempt+1)
-			return
+		if sleepUntilShutdownOrBudget(ctx, budgetCtx, backoff) {
+			backoff = min(backoff*2, s.completeMaxBackoff)
+
+			continue
 		}
 
-		backoff = min(backoff*2, s.completeMaxBackoff)
+		if budgetCtx.Err() != nil {
+			break
+		}
+
+		s.tryCompleteSend(budgetCtx, sendID, status, summary, finishedAt, attempt+1)
+
+		return
+	}
+
+	logCompleteBudgetExhausted(budgetCtx, sendID)
+}
+
+func logCompleteBudgetExhausted(ctx context.Context, sendID string) {
+	if ctx.Err() != nil {
+		slog.Error("kindle terminal status retry budget exhausted", "send_id", sendID)
 	}
 }
 
-func (s *KindleSender) tryCompleteSend(ctx context.Context, sendID string, status domain.KindleStatus, summary *string, attempt int) bool {
-	completeCtx, cancel := detachedWriteContext(ctx)
+func (s *KindleSender) tryCompleteSend(ctx context.Context, sendID string, status domain.KindleStatus, summary *string, finishedAt time.Time, attempt int) bool {
+	completeCtx, cancel := context.WithTimeout(ctx, detachedWriteTimeout)
 	defer cancel()
 
-	err := s.kindleSends.CompleteSend(completeCtx, sendID, status, summary, s.now().UTC())
+	err := s.kindleSends.CompleteSend(completeCtx, sendID, status, summary, finishedAt)
 	if err == nil {
+		return true
+	}
+
+	if errors.Is(err, domain.ErrKindleSendNotFound) {
+		slog.Error("kindle send missing during terminal status update", "send_id", sendID)
+
 		return true
 	}
 
@@ -415,6 +470,27 @@ func (s *KindleSender) tryCompleteSend(ctx context.Context, sendID string, statu
 	return false
 }
 
+func sleepUntilShutdownOrBudget(ctx context.Context, budgetCtx context.Context, delay time.Duration) bool {
+	waitCtx, cancel := context.WithCancel(budgetCtx)
+	defer cancel()
+	stop := context.AfterFunc(ctx, cancel)
+	defer stop()
+
+	return sleepWithContext(waitCtx, delay)
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func sanitizedSummary(sendErr error) *string {
 	if sendErr == nil {
 		return nil
@@ -423,8 +499,4 @@ func sanitizedSummary(sendErr error) *string {
 	sanitized := domain.SanitizeErrorText(sendErr.Error())
 
 	return &sanitized
-}
-
-func detachedWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), detachedWriteTimeout)
 }

@@ -1,11 +1,14 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
 const MaxKindleEPUBBytes = 20 * 1024 * 1024
+
+var ErrKindleSendNotFound = errors.New("kindle send not found")
 
 // IsKindleDeliveryUsable reports whether both SMTP and Kindle delivery settings
 // have the required non-blank fields and valid port to send mail.
@@ -44,12 +47,8 @@ func cloneStringPtr(value *string) *string {
 
 // OversizeKindleArticleError formats the user-facing error when a single article
 // exceeds the EPUB size limit.
-func OversizeKindleArticleError(id string, size int, maxBytes int, textOnly bool) error {
-	if textOnly {
-		return fmt.Errorf("kindle article %q is %d bytes even without images, exceeding the %d byte limit", id, size, maxBytes)
-	}
-
-	return fmt.Errorf("kindle article %q is %d bytes, exceeding the %d byte limit", id, size, maxBytes)
+func OversizeKindleArticleError(id string, size int, maxBytes int) error {
+	return fmt.Errorf("kindle article %q is %d bytes even without images, exceeding the %d byte limit", id, size, maxBytes)
 }
 
 func FormatKindleBookMeta(dateStr string, index int, total int) (title string, filename string) {

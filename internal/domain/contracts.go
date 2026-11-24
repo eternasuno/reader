@@ -247,13 +247,6 @@ type ParsedFeed struct {
 	Entries     []ParsedFeedEntry
 }
 
-type FeedPreview struct {
-	URL         string
-	Title       string
-	Description *string
-	Titles      []string
-}
-
 type OPMLFeedInput struct {
 	URL        NormalizedURL
 	Title      string
@@ -390,7 +383,7 @@ type SavedPageRepository interface {
 	List(ctx context.Context, params PageParams) (PageResult[SavedPage], error)
 	UnreadCount(ctx context.Context) (int, error)
 	GetByID(ctx context.Context, id string) (*SavedPage, error)
-	GetByURL(ctx context.Context, url NormalizedURL) (*SavedPage, error)
+	GetIDByURL(ctx context.Context, url NormalizedURL) (string, bool, error)
 	Create(ctx context.Context, page SavedPage) (SavedPage, error)
 	SetRead(ctx context.Context, id string, read bool) error
 	MarkIDsRead(ctx context.Context, ids []string) error
@@ -419,7 +412,9 @@ type KindleSendRepository interface {
 	ClaimDueSend(ctx context.Context, sendID string, now time.Time, loc *time.Location, slotBusy bool) (ClaimedKindleSend, error)
 	ListUnreadForKindle(ctx context.Context) ([]KindleArticleRef, error)
 	GetKindleArticle(ctx context.Context, ref KindleArticleRef) (*SavedPage, *Feed, *FeedItem, error)
-	RecordBookAccepted(ctx context.Context, sendID string, savedPageIDs []string, feedItemIDs []string, articleDelta int) error
+	// RecordBookAccepted records book read marks and send counters idempotently
+	// per (sendID, bookIndex) while the send is running.
+	RecordBookAccepted(ctx context.Context, sendID string, bookIndex int, savedPageIDs []string, feedItemIDs []string, articleDelta int) error
 	CompleteSend(ctx context.Context, sendID string, status KindleStatus, errSummary *string, finishedAt time.Time) error
 }
 

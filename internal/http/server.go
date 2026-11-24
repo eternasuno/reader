@@ -24,6 +24,7 @@ const (
 	maxLoginBodyBytes              = 4 << 10
 	maxConcurrentForegroundFetches = 4
 	defaultForegroundFetchTimeout  = 30 * time.Second
+	extractionCancelGrace          = 2 * time.Second
 	minSessionSecretBytes          = 32
 
 	apiCacheControl       = "no-store"
@@ -73,18 +74,23 @@ type Config struct {
 	Kindle    KindleDispatcher
 }
 
-type server struct {
-	cfg       Config
-	appOrigin domain.Origin
-	secure    bool
-	limiter   *loginLimiter
-	fetchSem  slotSemaphore
-	extracts  *extractGroup
-	mux       *http.ServeMux
+var errExtractionsStillRunning = errors.New("extractions still running after cancellation grace")
+
+type Server struct {
+	extractionCancelGrace time.Duration
+	cfg                   Config
+	appOrigin             domain.Origin
+	secure                bool
+	limiter               *loginLimiter
+	fetchSem              slotSemaphore
+	extracts              *extractGroup
+	mux                   *http.ServeMux
 }
 
+type server = Server
+
 // NewServer validates the static configuration and wires the route table.
-func NewServer(cfg Config) (http.Handler, error) {
+func NewServer(cfg Config) (*Server, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -121,6 +127,49 @@ func NewServer(cfg Config) (http.Handler, error) {
 	return s, nil
 }
 
+func (s *Server) WaitExtractions(ctx context.Context) error {
+	g := s.extracts
+	g.mu.Lock()
+	if !g.closed {
+		g.closed = true
+		g.drained = make(chan struct{})
+		go func() {
+			g.active.Wait()
+			close(g.drained)
+		}()
+	}
+
+	drained := g.drained
+	g.mu.Unlock()
+
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+	}
+
+	g.mu.Lock()
+	for call := range g.inflight {
+		call.cancel()
+	}
+	g.mu.Unlock()
+
+	grace := s.extractionCancelGrace
+	if grace <= 0 {
+		grace = extractionCancelGrace
+	}
+
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+
+	select {
+	case <-drained:
+		return fmt.Errorf("extractions canceled and drained: %w", ctx.Err())
+	case <-timer.C:
+		return fmt.Errorf("%w: %w", errExtractionsStillRunning, ctx.Err())
+	}
+}
+
 func parseAppOrigin(rawAppURL string) (domain.Origin, error) {
 	appURL, err := url.Parse(strings.TrimSpace(rawAppURL))
 	if err != nil {
@@ -128,12 +177,12 @@ func parseAppOrigin(rawAppURL string) (domain.Origin, error) {
 		return domain.Origin{}, errors.New("http: invalid APP_URL")
 	}
 
-	if appURL.User != nil || appURL.Host == "" {
+	if appURL.User != nil || appURL.Host == "" || appURL.Opaque != "" || strings.HasSuffix(appURL.Host, ":") {
 		return domain.Origin{}, errors.New("http: invalid APP_URL")
 	}
 
 	appOrigin, ok := domain.OriginFromURL(appURL)
-	if !ok {
+	if !ok || (appOrigin.Scheme != "http" && appOrigin.Scheme != "https") {
 		return domain.Origin{}, errors.New("http: invalid APP_URL")
 	}
 
@@ -333,6 +382,7 @@ func (s *server) extractWebpage(ctx context.Context, pageURL domain.NormalizedUR
 	if !s.fetchSem.tryAcquire() {
 		return domain.ExtractedArticle{}, domain.NewError(domain.ErrTooManyRequests, nil)
 	}
+
 	defer s.fetchSem.release()
 
 	fetchCtx, cancel := s.withForegroundFetchTimeout(ctx)
@@ -390,6 +440,12 @@ func handleMarkIDsRead(repo readStateRepository) http.HandlerFunc {
 			return
 		}
 
+		if req.IDs == nil {
+			writeError(w, domain.NewError(domain.ErrRequestFailed, nil))
+
+			return
+		}
+
 		if err := repo.MarkIDsRead(r.Context(), req.IDs); err != nil {
 			writeError(w, err)
 
@@ -441,7 +497,15 @@ type pageQuery struct {
 }
 
 func parsePageQuery(r *http.Request) (pageQuery, error) {
-	values := r.URL.Query()
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return pageQuery{}, domain.NewError(domain.ErrRequestFailed, err)
+	}
+
+	if hasMultipleQueryValues(values, "limit", "unread", "order", "cursor") {
+		return pageQuery{}, domain.NewError(domain.ErrRequestFailed, nil)
+	}
+
 	parsed := pageQuery{}
 
 	if values.Has("limit") {
@@ -466,11 +530,22 @@ func parsePageQuery(r *http.Request) (pageQuery, error) {
 		parsed.order = domain.SortOrder(strings.ToLower(queryOrder))
 	}
 
-	if cursor := strings.TrimSpace(values.Get("cursor")); cursor != "" {
+	if values.Has("cursor") {
+		cursor := values.Get("cursor")
 		parsed.cursor = &cursor
 	}
 
 	return parsed, nil
+}
+
+func hasMultipleQueryValues(values url.Values, keys ...string) bool {
+	for _, key := range keys {
+		if len(values[key]) > 1 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func parseUnreadFlag(values url.Values) (bool, error) {
@@ -637,19 +712,6 @@ func decodeJSONWithLimit(w http.ResponseWriter, r *http.Request, maxBytes int64,
 	}
 
 	return nil
-}
-
-func trimOptional(value *string) *string {
-	if value == nil {
-		return nil
-	}
-
-	trimmed := strings.TrimSpace(*value)
-	if trimmed == "" {
-		return nil
-	}
-
-	return &trimmed
 }
 
 func formatTimestamp(value time.Time) string {

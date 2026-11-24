@@ -28,7 +28,7 @@ func (e *Extractor) ExtractArticle(htmlBody string, pageURL string) (domain.Extr
 		return domain.ExtractedArticle{}, err
 	}
 
-	sanitized, err := e.renderSanitizedArticle(article, pageURL)
+	sanitized, err := e.renderSanitizedArticleWithLimit(article, pageURL, maxExtractedHTMLBytes)
 	if err != nil {
 		return domain.ExtractedArticle{}, err
 	}
@@ -71,10 +71,6 @@ func extractReadableArticle(htmlBody string, pageURL string) (readability.Articl
 	}
 
 	return article, nil
-}
-
-func (e *Extractor) renderSanitizedArticle(article readability.Article, pageURL string) (string, error) {
-	return e.renderSanitizedArticleWithLimit(article, pageURL, maxExtractedHTMLBytes)
 }
 
 func (e *Extractor) renderSanitizedArticleWithLimit(article readability.Article, pageURL string, maxBytes int) (string, error) {

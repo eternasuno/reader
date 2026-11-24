@@ -173,6 +173,7 @@ func (s *server) fetchAndParseFeed(ctx context.Context, feedURL domain.Normalize
 	if !s.fetchSem.tryAcquire() {
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrTooManyRequests, nil)
 	}
+
 	defer s.fetchSem.release()
 
 	fetchCtx, cancel := s.withForegroundFetchTimeout(ctx)
@@ -201,32 +202,48 @@ func (s *server) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	title := feedURL.Host()
-	if req.Title != nil && strings.TrimSpace(*req.Title) != "" {
-		title = strings.TrimSpace(*req.Title)
-	}
-
-	created, err := s.cfg.Feeds.Create(r.Context(), domain.Feed{
-		ID:         domain.NewID(),
-		URL:        feedURL,
-		Title:      title,
-		FolderID:   trimOptional(req.FolderID),
-		ReaderMode: domain.ReaderModeDefault,
-		Order:      domain.SortOrderNewest,
-	})
+	folderID, err := normalizeFolderID(req.FolderID)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	if s.cfg.Refresher != nil {
-		s.cfg.Refresher.Enqueue(created.ID)
+	created, err := s.createFeedSubscription(r.Context(), feedURL, req.Title, folderID)
+	if err != nil {
+		writeError(w, err)
+
+		return
 	}
 
 	converted := toFeedJSON(created)
 
 	writeJSON(w, http.StatusCreated, itemResponse[feedJSON]{Item: &converted})
+}
+
+func (s *server) createFeedSubscription(ctx context.Context, feedURL domain.NormalizedURL, rawTitle *string, folderID *string) (domain.Feed, error) {
+	title := feedURL.Host()
+	if rawTitle != nil && strings.TrimSpace(*rawTitle) != "" {
+		title = strings.TrimSpace(*rawTitle)
+	}
+
+	created, err := s.cfg.Feeds.Create(ctx, domain.Feed{
+		ID:         domain.NewID(),
+		URL:        feedURL,
+		Title:      title,
+		FolderID:   folderID,
+		ReaderMode: domain.ReaderModeDefault,
+		Order:      domain.SortOrderNewest,
+	})
+	if err != nil {
+		return domain.Feed{}, err
+	}
+
+	if s.cfg.Refresher != nil {
+		s.cfg.Refresher.Enqueue(created.ID)
+	}
+
+	return created, nil
 }
 
 func (s *server) handleFeedDelete(w http.ResponseWriter, r *http.Request) {
@@ -317,20 +334,40 @@ func (s *server) handleFeedMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var folderID *string
-	if err := json.Unmarshal(value, &folderID); err != nil {
+	var rawFolderID *string
+	if err := json.Unmarshal(value, &rawFolderID); err != nil {
 		writeError(w, domain.NewError(domain.ErrRequestFailed, err))
 
 		return
 	}
 
-	if err := s.cfg.Feeds.MoveToFolder(r.Context(), r.PathValue("id"), trimOptional(folderID)); err != nil {
+	folderID, err := normalizeFolderID(rawFolderID)
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	if err := s.cfg.Feeds.MoveToFolder(r.Context(), r.PathValue("id"), folderID); err != nil {
 		writeError(w, err)
 
 		return
 	}
 
 	writeNoContent(w)
+}
+
+func normalizeFolderID(raw *string) (*string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+
+	trimmed := strings.TrimSpace(*raw)
+	if trimmed == "" {
+		return nil, domain.NewError(domain.ErrFolderNotFound, nil)
+	}
+
+	return &trimmed, nil
 }
 
 func (s *server) handleFeedUnreadCounts(w http.ResponseWriter, r *http.Request) {
@@ -442,9 +479,8 @@ func (s *server) handleFeedItemExtract(w http.ResponseWriter, r *http.Request) {
 
 	extracted := *item
 	if !hasText(item.ExtractedContent) {
-		pending := *item
-		updated, err := s.extracts.do(r.Context(), pending.ID, func(ctx context.Context) (*domain.FeedItem, error) {
-			return s.extractFeedItem(ctx, pending)
+		updated, err := s.extracts.do(r.Context(), item.ID, func(ctx context.Context) (*domain.FeedItem, error) {
+			return s.extractFeedItem(ctx, item.ID)
 		})
 		if err != nil {
 			writeError(w, err)
@@ -460,13 +496,30 @@ func (s *server) handleFeedItemExtract(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, itemResponse[feedItemJSON]{Item: &converted})
 }
 
-func (s *server) extractFeedItem(ctx context.Context, item domain.FeedItem) (*domain.FeedItem, error) {
-	article, err := s.extractWebpageWithSlot(ctx, item.URL)
+func (s *server) extractFeedItem(ctx context.Context, itemID string) (*domain.FeedItem, error) {
+	latest, err := s.cfg.FeedItems.GetByID(ctx, itemID)
 	if err != nil {
 		return nil, err
 	}
 
-	updated, _, err := s.cfg.FeedItems.SaveExtractedContentIfEmpty(ctx, item.ID, article.Content)
+	if latest == nil {
+		return nil, domain.NewError(domain.ErrFeedItemNotFound, nil)
+	}
+
+	if hasText(latest.ExtractedContent) {
+		return latest, nil
+	}
+
+	article, err := s.extractWebpageWithSlot(ctx, latest.URL)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	updated, _, err := s.cfg.FeedItems.SaveExtractedContentIfEmpty(ctx, latest.ID, article.Content)
 	if err != nil {
 		return nil, err
 	}
@@ -487,23 +540,33 @@ type extractCall struct {
 }
 
 type extractGroup struct {
-	mu      sync.Mutex
-	calls   map[string]*extractCall
-	sem     slotSemaphore
-	timeout time.Duration
+	mu         sync.Mutex
+	closed     bool
+	active     sync.WaitGroup
+	drained    chan struct{}
+	calls      map[string]*extractCall
+	inflight   map[*extractCall]struct{}
+	sem        slotSemaphore
+	timeout    time.Duration
+	beforeJoin func(key string)
 }
 
 func newExtractGroup(sem slotSemaphore, timeout time.Duration) *extractGroup {
 	return &extractGroup{
-		calls:   make(map[string]*extractCall),
-		sem:     sem,
-		timeout: timeout,
+		calls:    make(map[string]*extractCall),
+		inflight: make(map[*extractCall]struct{}),
+		sem:      sem,
+		timeout:  timeout,
 	}
 }
 
 func (g *extractGroup) do(ctx context.Context, key string, fn func(context.Context) (*domain.FeedItem, error)) (*domain.FeedItem, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+
+	if g.beforeJoin != nil {
+		g.beforeJoin(key)
 	}
 
 	call, err := g.joinOrStart(ctx, key, fn)
@@ -523,6 +586,12 @@ func (g *extractGroup) do(ctx context.Context, key string, fn func(context.Conte
 
 func (g *extractGroup) joinOrStart(ctx context.Context, key string, fn func(context.Context) (*domain.FeedItem, error)) (*extractCall, error) {
 	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+
+		return nil, domain.NewError(domain.ErrTooManyRequests, nil)
+	}
+
 	if call, ok := g.calls[key]; ok {
 		call.waiters++
 		g.mu.Unlock()
@@ -539,6 +608,8 @@ func (g *extractGroup) joinOrStart(ctx context.Context, key string, fn func(cont
 	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), g.timeout)
 	call := &extractCall{done: make(chan struct{}), cancel: cancel, waiters: 1}
 	g.calls[key] = call
+	g.inflight[call] = struct{}{}
+	g.active.Add(1)
 	g.mu.Unlock()
 
 	go g.run(callCtx, key, call, fn)
@@ -547,6 +618,8 @@ func (g *extractGroup) joinOrStart(ctx context.Context, key string, fn func(cont
 }
 
 func (g *extractGroup) run(callCtx context.Context, key string, call *extractCall, fn func(context.Context) (*domain.FeedItem, error)) {
+	defer g.active.Done()
+
 	item, err := runContained(callCtx, fn)
 	call.cancel()
 	g.sem.release()
@@ -554,9 +627,11 @@ func (g *extractGroup) run(callCtx context.Context, key string, call *extractCal
 	g.mu.Lock()
 	call.item = item
 	call.err = err
+	delete(g.inflight, call)
 	if g.calls[key] == call {
 		delete(g.calls, key)
 	}
+
 	close(call.done)
 	g.mu.Unlock()
 }
@@ -578,6 +653,7 @@ func (g *extractGroup) abandon(key string, call *extractCall) {
 	if shouldCancel && g.calls[key] == call {
 		delete(g.calls, key)
 	}
+
 	g.mu.Unlock()
 
 	if shouldCancel {

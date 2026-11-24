@@ -18,7 +18,12 @@ const (
 type opmlXMLDocument struct {
 	XMLName xml.Name     `xml:"opml"`
 	Version string       `xml:"version,attr"`
+	Head    *opmlXMLHead `xml:"head,omitempty"`
 	Body    *opmlXMLBody `xml:"body"`
+}
+
+type opmlXMLHead struct {
+	Title string `xml:"title,omitempty"`
 }
 
 type opmlXMLBody struct {
@@ -73,6 +78,7 @@ type opmlTokenValidator struct {
 	maxOutlines int
 	outlines    int
 	depth       int
+	seenToken   bool
 }
 
 func validateOPMLPayload(payload []byte, maxOutlines int) error {
@@ -96,24 +102,69 @@ func validateOPMLPayload(payload []byte, maxOutlines int) error {
 }
 
 func (v *opmlTokenValidator) handleToken(tok xml.Token) error {
-	switch typed := tok.(type) {
-	case xml.StartElement:
-		v.depth++
-		if v.depth > maxOPMLDepth {
-			return NewError(ErrInvalidOpml, errors.New("opml nesting depth exceeds limit"))
-		}
+	isFirst := !v.seenToken
+	v.seenToken = true
 
-		if strings.EqualFold(typed.Name.Local, "outline") {
-			v.outlines++
-			if v.outlines > v.maxOutlines {
-				return NewError(ErrInvalidOpml, errors.New("opml outline count exceeds limit"))
-			}
+	switch typed := tok.(type) {
+	case xml.ProcInst:
+		if !isFirst {
+			return NewError(ErrInvalidOpml, errors.New("unexpected processing instruction in opml"))
 		}
+	case xml.Directive:
+		return NewError(ErrInvalidOpml, errors.New("xml directives are not allowed in opml"))
+	case xml.StartElement:
+		return v.handleStartElement(typed)
 	case xml.EndElement:
 		v.depth--
 	}
 
 	return nil
+}
+
+func (v *opmlTokenValidator) handleStartElement(start xml.StartElement) error {
+	if opmlHasDuplicateAttr(start.Attr) {
+		return NewError(ErrInvalidOpml, errors.New("opml element has duplicate attribute"))
+	}
+
+	v.depth++
+	if v.depth > maxOPMLDepth {
+		return NewError(ErrInvalidOpml, errors.New("opml nesting depth exceeds limit"))
+	}
+
+	if strings.EqualFold(start.Name.Local, "outline") {
+		v.outlines++
+		if v.outlines > v.maxOutlines {
+			return NewError(ErrInvalidOpml, errors.New("opml outline count exceeds limit"))
+		}
+	}
+
+	return nil
+}
+
+func opmlHasDuplicateAttr(attrs []xml.Attr) bool {
+	if len(attrs) < 2 {
+		return false
+	}
+
+	type attrKey struct {
+		space string
+		local string
+	}
+
+	seen := make(map[attrKey]struct{}, len(attrs))
+	for _, attr := range attrs {
+		key := attrKey{
+			space: attr.Name.Space,
+			local: strings.ToLower(attr.Name.Local),
+		}
+		if _, exists := seen[key]; exists {
+			return true
+		}
+
+		seen[key] = struct{}{}
+	}
+
+	return false
 }
 
 func (s *opmlWalkState) walk(outlines []opmlXMLOutline, folder *string) {
@@ -190,12 +241,13 @@ func opmlDecodeRoot(decoder *xml.Decoder, payload []byte, parsed *opmlXMLDocumen
 
 func opmlHandleRootToken(decoder *xml.Decoder, tok xml.Token, raw []byte, parsed *opmlXMLDocument) (bool, error) {
 	switch typed := tok.(type) {
-	case xml.Comment, xml.ProcInst, xml.Directive:
+	case xml.Comment, xml.ProcInst:
 		return false, nil
 	case xml.CharData:
 		if !isXMLWhitespacePair(typed, raw) {
 			return false, NewError(ErrInvalidOpml, errors.New("unexpected content before the opml root element"))
 		}
+
 		return false, nil
 	case xml.StartElement:
 		return true, opmlDecodeStartElement(decoder, typed, parsed)
@@ -237,12 +289,13 @@ func opmlCheckTrailing(decoder *xml.Decoder, payload []byte) error {
 
 func opmlValidateTrailingToken(tok xml.Token, raw []byte) error {
 	switch typed := tok.(type) {
-	case xml.Comment, xml.ProcInst:
+	case xml.Comment:
 		return nil
 	case xml.CharData:
 		if !isXMLWhitespacePair(typed, raw) {
 			return NewError(ErrInvalidOpml, errors.New("unexpected content after the opml root element"))
 		}
+
 		return nil
 	default:
 		return NewError(ErrInvalidOpml, errors.New("unexpected element after the opml root element"))
@@ -264,7 +317,11 @@ func isXMLWhitespace(data []byte) bool {
 }
 
 func ExportOPML(folders []OPMLExportFolder, topFeeds []Feed) ([]byte, error) {
-	document := opmlXMLDocument{Version: "2.0", Body: &opmlXMLBody{}}
+	document := opmlXMLDocument{
+		Version: "2.0",
+		Head:    &opmlXMLHead{Title: "Lantern"},
+		Body:    &opmlXMLBody{},
+	}
 	for _, folder := range opmlSortedFolders(folders) {
 		outline := opmlXMLOutline{Attrs: []xml.Attr{
 			{Name: xml.Name{Local: "text"}, Value: folder.Name},

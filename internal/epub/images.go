@@ -5,7 +5,7 @@ import (
 	"context"
 	"image"
 	"image/color"
-	_ "image/gif"
+	"image/gif"
 	"image/jpeg"
 	_ "image/png"
 	"strings"
@@ -20,10 +20,22 @@ const (
 	imageReencodeMinBytes    = 128 << 10
 	maxImageDecodeDimension  = 6144
 	maxImageDecodePixels     = 12_000_000
+	maxGIFFrames             = 128
+	maxGIFDecodePixels       = 24_000_000
 	bytesPerRGBAPixel        = 4
 	bytesPerRGBA64Pixel      = 8
 	pngDecoderOverheadBytes  = 512 << 10
 	jpegDecoderOverheadBytes = 512 << 10
+	gifDecoderOverheadBytes  = 512 << 10
+	gifFrameOverheadBytes    = 1024
+	gifHeaderBytes           = 13
+	gifBlockExtension        = 0x21
+	gifBlockImage            = 0x2c
+	gifBlockTrailer          = 0x3b
+	gifExtPlainText          = 0x01
+	gifExtGraphicControl     = 0xf9
+	gifExtComment            = 0xfe
+	gifExtApplication        = 0xff
 	// A progressive JPEG keeps one [64]int32 block (256 bytes) per 8x8 samples
 	// of every component until the last scan, i.e. 4 bytes per component pixel.
 	jpegCoefficientBytesPerPixel = 4
@@ -211,9 +223,33 @@ func (b *Builder) prepareImageWorker(
 
 		attempted[idx] = true
 		img := b.prepareOneImage(ctx, urls[idx], budget)
-		if img.valid() {
-			results[idx] = img
-			collectedBytes.Add(int64(len(img.data)))
+		if !img.valid() {
+			continue
+		}
+
+		if !tryReserveBookImageBytes(collectedBytes, byteBudget, int64(len(img.data))) {
+			attempted[idx] = int64(len(img.data)) > b.maxBookImageBytes
+
+			continue
+		}
+
+		results[idx] = img
+	}
+}
+
+func tryReserveBookImageBytes(collectedBytes *atomic.Int64, byteBudget int64, size int64) bool {
+	if size <= 0 || size > byteBudget {
+		return false
+	}
+
+	for {
+		cur := collectedBytes.Load()
+		if cur > byteBudget || size > byteBudget-cur {
+			return false
+		}
+
+		if collectedBytes.CompareAndSwap(cur, cur+size) {
+			return true
 		}
 	}
 }
@@ -259,19 +295,23 @@ func validateImageConfig(data []byte, fmtInfo imageFormat) (image.Config, bool) 
 }
 
 func (b *Builder) optimizeOrKeepImage(ctx context.Context, data []byte, fmtInfo imageFormat, cfg image.Config, budget *decodeBudget) preparedImage {
-	if !fmtInfo.optimizable || !needsOptimization(cfg, len(data)) {
+	if !fmtInfo.optimizable {
+		return b.validateGIFImage(ctx, data, fmtInfo, cfg, budget)
+	}
+
+	if !needsOptimization(cfg, len(data)) {
+		needed := estimateDecodeBytes(fmtInfo, data, cfg, 0, 0)
+		if _, ok := decodeWithBudget(ctx, budget, needed, data); !ok {
+			return preparedImage{}
+		}
+
 		return b.acceptIfWithinBookLimit(preparedImage{format: fmtInfo, data: data})
 	}
 
 	targetW, targetH := fitImageDimensions(cfg.Width, cfg.Height)
 	needed := estimateDecodeBytes(fmtInfo, data, cfg, targetW, targetH)
-	if !budget.acquire(ctx, needed) {
-		return preparedImage{}
-	}
-	defer budget.release(needed)
-
-	src, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
+	src, ok := decodeWithBudget(ctx, budget, needed, data)
+	if !ok {
 		return preparedImage{}
 	}
 
@@ -283,8 +323,194 @@ func (b *Builder) optimizeOrKeepImage(ctx context.Context, data []byte, fmtInfo 
 	return b.acceptIfWithinBookLimit(preparedImage{format: fmtInfo, data: data})
 }
 
+func decodeWithBudget(ctx context.Context, budget *decodeBudget, needed int64, data []byte) (image.Image, bool) {
+	if !budget.acquire(ctx, needed) {
+		return nil, false
+	}
+
+	defer budget.release(needed)
+
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, false
+	}
+
+	return src, true
+}
+
+func (b *Builder) validateGIFImage(ctx context.Context, data []byte, fmtInfo imageFormat, cfg image.Config, budget *decodeBudget) preparedImage {
+	frames, totalPixels, ok := inspectGIF(data, cfg.Width, cfg.Height)
+	if !ok {
+		return preparedImage{}
+	}
+
+	needed := estimateGIFDecodeBytes(frames, totalPixels)
+	if !budget.acquire(ctx, needed) {
+		return preparedImage{}
+	}
+
+	defer budget.release(needed)
+
+	decoded, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil || len(decoded.Image) == 0 {
+		return preparedImage{}
+	}
+
+	return b.acceptIfWithinBookLimit(preparedImage{format: fmtInfo, data: data})
+}
+
+func estimateGIFDecodeBytes(frames int, totalPixels int64) int64 {
+	return totalPixels + int64(frames)*gifFrameOverheadBytes + gifDecoderOverheadBytes
+}
+
+func inspectGIF(data []byte, screenW int, screenH int) (int, int64, bool) {
+	pos, ok := skipGIFHeaderAndGlobalTable(data)
+	if !ok {
+		return 0, 0, false
+	}
+
+	var frames int
+	var totalPixels int64
+
+	for pos < len(data) {
+		block := data[pos]
+		pos++
+
+		switch block {
+		case gifBlockTrailer:
+			return frames, totalPixels, frames > 0
+		case gifBlockExtension:
+			pos, ok = skipGIFExtension(data, pos)
+		case gifBlockImage:
+			var framePixels int64
+			pos, framePixels, ok = inspectGIFFrame(data, pos, screenW, screenH)
+			frames++
+			totalPixels += framePixels
+			if frames > maxGIFFrames || totalPixels > maxGIFDecodePixels {
+				return 0, 0, false
+			}
+		default:
+			return 0, 0, false
+		}
+
+		if !ok {
+			return 0, 0, false
+		}
+	}
+
+	return 0, 0, false
+}
+
+func skipGIFHeaderAndGlobalTable(data []byte) (int, bool) {
+	if len(data) < gifHeaderBytes {
+		return 0, false
+	}
+
+	pos := gifHeaderBytes
+	if fields := data[10]; fields&0x80 != 0 {
+		pos += 3 * (1 << (1 + uint(fields&0x07)))
+	}
+
+	if pos > len(data) {
+		return 0, false
+	}
+
+	return pos, true
+}
+
+func skipGIFExtension(data []byte, pos int) (int, bool) {
+	if pos >= len(data) {
+		return 0, false
+	}
+
+	ext := data[pos]
+	pos++
+
+	switch ext {
+	case gifExtGraphicControl:
+		if pos+6 > len(data) || data[pos] != 4 || data[pos+5] != 0 {
+			return 0, false
+		}
+
+		return pos + 6, true
+	case gifExtPlainText:
+		if pos+13 > len(data) {
+			return 0, false
+		}
+
+		return skipGIFSubBlocks(data, pos+13)
+	case gifExtApplication:
+		return skipGIFApplicationExtension(data, pos)
+	case gifExtComment:
+		return skipGIFSubBlocks(data, pos)
+	default:
+		return 0, false
+	}
+}
+
+func skipGIFApplicationExtension(data []byte, pos int) (int, bool) {
+	if pos >= len(data) {
+		return 0, false
+	}
+
+	appLen := int(data[pos])
+	pos++
+	if pos+appLen > len(data) {
+		return 0, false
+	}
+
+	return skipGIFSubBlocks(data, pos+appLen)
+}
+
+func inspectGIFFrame(data []byte, pos int, screenW int, screenH int) (int, int64, bool) {
+	if pos+9 > len(data) {
+		return 0, 0, false
+	}
+
+	left := int(data[pos]) | int(data[pos+1])<<8
+	top := int(data[pos+2]) | int(data[pos+3])<<8
+	fw := int(data[pos+4]) | int(data[pos+5])<<8
+	fh := int(data[pos+6]) | int(data[pos+7])<<8
+	fields := data[pos+8]
+	pos += 9
+
+	if fw <= 0 || fh <= 0 || left+fw > screenW || top+fh > screenH {
+		return 0, 0, false
+	}
+
+	if fields&0x80 != 0 {
+		pos += 3 * (1 << (1 + uint(fields&0x07)))
+	}
+
+	if pos >= len(data) || data[pos] < 2 || data[pos] > 8 {
+		return 0, 0, false
+	}
+
+	nextPos, ok := skipGIFSubBlocks(data, pos+1)
+
+	return nextPos, int64(fw) * int64(fh), ok
+}
+
+func skipGIFSubBlocks(data []byte, pos int) (int, bool) {
+	for pos < len(data) {
+		blockLen := int(data[pos])
+		pos++
+		if blockLen == 0 {
+			return pos, true
+		}
+
+		if pos+blockLen > len(data) {
+			return 0, false
+		}
+
+		pos += blockLen
+	}
+
+	return 0, false
+}
+
 func (b *Builder) acceptIfWithinBookLimit(img preparedImage) preparedImage {
-	if len(img.data) > b.maxEPUBBytes {
+	if len(img.data) > b.maxEPUBBytes || (b.maxBookImageBytes > 0 && int64(len(img.data)) > b.maxBookImageBytes) {
 		return preparedImage{}
 	}
 
@@ -292,13 +518,30 @@ func (b *Builder) acceptIfWithinBookLimit(img preparedImage) preparedImage {
 }
 
 func encodeDownscaledJPEG(src image.Image, targetW int, targetH int) ([]byte, bool) {
-	dst := resampleOntoWhite(src, targetW, targetH)
+	encodedSrc := src
+	bounds := src.Bounds()
+	if bounds.Dx() != targetW || bounds.Dy() != targetH || !imageIsOpaque(src) {
+		encodedSrc = resampleOntoWhite(src, targetW, targetH)
+	}
+
 	var encoded bytes.Buffer
-	if err := jpeg.Encode(&encoded, dst, &jpeg.Options{Quality: epubJPEGQuality}); err != nil {
+	if err := jpeg.Encode(&encoded, encodedSrc, &jpeg.Options{Quality: epubJPEGQuality}); err != nil {
 		return nil, false
 	}
 
 	return encoded.Bytes(), true
+}
+
+func imageIsOpaque(src image.Image) bool {
+	type opaquer interface {
+		Opaque() bool
+	}
+
+	if o, ok := src.(opaquer); ok {
+		return o.Opaque()
+	}
+
+	return false
 }
 
 func needsOptimization(cfg image.Config, byteLen int) bool {
@@ -306,8 +549,8 @@ func needsOptimization(cfg image.Config, byteLen int) bool {
 }
 
 // estimateDecodeBytes is a conservative upper bound on the heap the standard
-// library holds while decoding data, plus the downscaled RGBA target. Only the
-// optimizable formats (PNG and JPEG) are ever decoded.
+// library holds while decoding PNG/JPEG data, plus the downscaled RGBA target
+// when dstW/dstH are non-zero.
 func estimateDecodeBytes(fmtInfo imageFormat, data []byte, cfg image.Config, dstW int, dstH int) int64 {
 	pixels := int64(cfg.Width) * int64(cfg.Height)
 	dstBytes := int64(dstW) * int64(dstH) * bytesPerRGBAPixel
@@ -435,11 +678,20 @@ func jpegProgressive(data []byte) bool {
 		case marker == markerSOF2:
 			return true
 		default:
-			i += 2 + (int(data[i+2])<<8 | int(data[i+3]))
+			i = nextJPEGSegmentOffset(data, i)
 		}
 	}
 
 	return true
+}
+
+func nextJPEGSegmentOffset(data []byte, offset int) int {
+	segLen := int(data[offset+2])<<8 | int(data[offset+3])
+	if segLen < 2 {
+		return len(data)
+	}
+
+	return offset + 2 + segLen
 }
 
 func fitImageDimensions(width int, height int) (int, int) {

@@ -192,7 +192,7 @@ func (s *server) originAllowed(r *http.Request) bool {
 		return s.validateOriginHeader(originValues)
 	}
 
-	return s.validateRefererHeader(r.Header.Get("Referer"))
+	return s.validateRefererHeader(r.Header.Values("Referer"))
 }
 
 func (s *server) validateOriginHeader(values []string) bool {
@@ -212,7 +212,7 @@ func (s *server) validateOriginHeader(values []string) bool {
 
 	// A serialized origin is scheme://host[:port] only, so any userinfo,
 	// path, query, fragment, or opaque part means the header is forged.
-	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+	if !isSerializedOriginURL(parsed, rawOrigin) {
 		return false
 	}
 
@@ -221,14 +221,30 @@ func (s *server) validateOriginHeader(values []string) bool {
 	return ok && origin == s.appOrigin
 }
 
-func (s *server) validateRefererHeader(raw string) bool {
-	rawReferer := strings.TrimSpace(raw)
-	if rawReferer == "" {
+func isSerializedOriginURL(parsed *url.URL, rawOrigin string) bool {
+	if parsed.User != nil || parsed.Opaque != "" || strings.HasSuffix(parsed.Host, ":") {
+		return false
+	}
+
+	if parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return false
+	}
+
+	return !strings.ContainsAny(rawOrigin, "?#")
+}
+
+func (s *server) validateRefererHeader(values []string) bool {
+	if len(values) != 1 {
+		return false
+	}
+
+	rawReferer := strings.TrimSpace(values[0])
+	if rawReferer == "" || strings.EqualFold(rawReferer, "null") {
 		return false
 	}
 
 	parsed, err := url.Parse(rawReferer)
-	if err != nil || parsed.User != nil {
+	if err != nil || parsed.User != nil || parsed.Opaque != "" || strings.HasSuffix(parsed.Host, ":") {
 		return false
 	}
 

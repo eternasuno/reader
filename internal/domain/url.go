@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -61,6 +62,13 @@ func ParseNormalizedURL(raw string, invalidCode ErrorCode) (NormalizedURL, error
 		return NormalizedURL{}, err
 	}
 
+	port, ok := normalizePort(parsed.Port())
+	if !ok {
+		return NormalizedURL{}, NewError(invalidCode, nil)
+	}
+
+	parsed.Host = buildHost(host, port, parsed.Scheme)
+
 	return buildNormalizedURL(parsed, host), nil
 }
 
@@ -86,7 +94,6 @@ func parseHTTPURL(raw string, invalidCode ErrorCode) (*url.URL, string, error) {
 	}
 
 	parsed.Scheme = scheme
-	parsed.Host = buildHost(host, parsed.Port(), scheme)
 
 	return parsed, host, nil
 }
@@ -158,7 +165,19 @@ func OriginFromURL(parsed *url.URL) (Origin, bool) {
 }
 
 func ParseStoredNormalizedURL(raw string) (NormalizedURL, error) {
-	return ParseNormalizedURL(raw, ErrFeedUrlInvalid)
+	parsed, host, err := parseHTTPURL(raw, ErrFeedUrlInvalid)
+	if err != nil {
+		return NormalizedURL{}, err
+	}
+
+	port := parsed.Port()
+	if canonical, ok := normalizePort(port); ok {
+		port = canonical
+	}
+
+	parsed.Host = buildHost(host, port, parsed.Scheme)
+
+	return buildNormalizedURL(parsed, host), nil
 }
 
 func SanitizeErrorText(msg string) string {
@@ -275,18 +294,9 @@ func isSchemeChar(b byte) bool {
 
 func scanAuthorityEnd(s string, start int) int {
 	for i := start; i < len(s); {
-		b := s[i]
-		if b < utf8.RuneSelf {
-			if isAuthorityDelimiter(b) {
-				return i
-			}
-
-			i++
-			continue
-		}
-
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if unicode.IsSpace(r) {
+		delim, size := authorityStep(s, i)
+		// ')' is legal in userinfo; only keep scanning if '@' follows before the authority ends.
+		if delim && (s[i] != ')' || !hasUserinfoAtAfter(s, i+1)) {
 			return i
 		}
 
@@ -296,6 +306,34 @@ func scanAuthorityEnd(s string, start int) int {
 	return len(s)
 }
 
+func hasUserinfoAtAfter(s string, start int) bool {
+	for i := start; i < len(s); {
+		if s[i] == '@' {
+			return true
+		}
+
+		delim, size := authorityStep(s, i)
+		if delim && s[i] != ')' {
+			return false
+		}
+
+		i += size
+	}
+
+	return false
+}
+
+func authorityStep(s string, i int) (delimiter bool, size int) {
+	b := s[i]
+	if b < utf8.RuneSelf {
+		return isAuthorityDelimiter(b), 1
+	}
+
+	r, size := utf8.DecodeRuneInString(s[i:])
+
+	return unicode.IsSpace(r), size
+}
+
 func isAuthorityDelimiter(b byte) bool {
 	switch b {
 	case '/', '?', '#', '"', '`', ')', ']', '>', '}', ' ', '\t', '\r', '\n', '\v', '\f':
@@ -303,6 +341,19 @@ func isAuthorityDelimiter(b byte) bool {
 	default:
 		return false
 	}
+}
+
+func normalizePort(port string) (string, bool) {
+	if port == "" {
+		return "", true
+	}
+
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || n == 0 {
+		return "", false
+	}
+
+	return strconv.FormatUint(n, 10), true
 }
 
 func buildHost(host string, port string, scheme string) string {
