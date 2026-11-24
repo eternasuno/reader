@@ -1,29 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAppHarness, json } from './support/app-harness';
 
-const loadHarness = async () => {
-  vi.resetModules();
-
-  return {
-    solid: await import('solid-js'),
-    web: await import('@solidjs/web'),
-    router: await import('@solidjs/router'),
-    state: await import('../src/state'),
-    i18n: await import('../src/i18n'),
-    ui: await import('../src/ui'),
-    routes: await import('../src/routes'),
-    app: await import('../src/App'),
-  };
-};
-
-type Harness = Awaited<ReturnType<typeof loadHarness>>;
-
-let h: Harness;
-let fetchMock: ReturnType<typeof vi.fn>;
-let disposers: Array<() => void> = [];
+const harness = createAppHarness();
+const { settle } = harness;
+harness.installHarnessLifecycle();
 let sendsState = { running: false, items: [] as Array<unknown> };
-
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status });
 
 const SETTINGS = {
   retention: 50,
@@ -34,37 +15,14 @@ const SETTINGS = {
   kindle: { kindleEmail: 'k@b', sendTime: '' },
 };
 
-const settle = async (times = 3): Promise<void> => {
-  for (let i = 0; i < times; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    h.solid.flush();
-  }
-};
-
 const mountSettings = async () => {
-  fetchMock.mockImplementation((input: unknown) => {
-    const url = String(input);
-    if (url.includes('/api/auth/session')) return json({ authenticated: true });
+  harness.respond((url) => {
     if (url === '/api/settings') return json(SETTINGS);
     if (url === '/api/kindle/sends') return json(sendsState);
-
-    return json({ items: [], cursor: null, item: null });
   });
-
-  const history = h.router.memoryHistory('/settings');
-  const router = h.routes.createAppRouter(history);
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(
-    h.web.render(
-      () => h.solid.createComponent(h.app.App, { router }),
-      container
-    )
-  );
-  h.solid.flush();
+  const result = harness.mountApp('/settings');
   await settle(4);
-
-  return { container, history };
+  return result;
 };
 
 const navBtn = (root: ParentNode, index: number): HTMLButtonElement => {
@@ -95,28 +53,35 @@ const setInput = (
   if (el === undefined) throw new Error(`missing input ${selector}`);
   el.value = value;
   el.dispatchEvent(new Event('input', { bubbles: true }));
-  h.solid.flush();
+  harness.modules.solid.flush();
 };
 
 const sendsCalls = (): number =>
-  fetchMock.mock.calls.filter(([u]) => String(u) === '/api/kindle/sends')
-    .length;
+  harness.fetchMock.mock.calls.filter(
+    ([u]) => String(u) === '/api/kindle/sends'
+  ).length;
 
-beforeEach(async () => {
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
-  localStorage.clear();
+beforeEach(() => {
   sendsState = { running: false, items: [] };
-  h = await loadHarness();
-  h.i18n.setLocale('zh-CN');
 });
 
-afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  h?.ui.dismissToast();
-  document.body.innerHTML = '';
-  vi.restoreAllMocks();
+it('marks exactly one settings section as current when navigating', async () => {
+  const { container } = await mountSettings();
+  const names = ['文章与订阅', '提取', 'Kindle', '外部服务'];
+  for (const [index, name] of names.entries()) {
+    if (index > 0) {
+      navBtn(container, index).click();
+      await settle();
+    }
+    const current = container.querySelectorAll(
+      'nav button[aria-current="page"]'
+    );
+    expect(current).toHaveLength(1);
+    expect(current[0]?.textContent).toContain(name);
+    expect(
+      container.querySelector(`section[aria-label="${name}"]`)
+    ).not.toBeNull();
+  }
 });
 
 describe('kindle history refresh on section entry', () => {
@@ -131,7 +96,7 @@ describe('kindle history refresh on section entry', () => {
     expect(findButton(container, '正在发送中…').disabled).toBe(true);
 
     navBtn(container, 0).click();
-    h.solid.flush();
+    harness.modules.solid.flush();
     expect(sendsCalls()).toBe(initialCalls + 1);
 
     sendsState = { running: false, items: [] };
@@ -188,7 +153,7 @@ describe('settings secret disposal', () => {
   it('disposes secret drafts on exit so secrets never persist across visits', async () => {
     const { container, history } = await mountSettings();
     navBtn(container, 3).click();
-    h.solid.flush();
+    harness.modules.solid.flush();
 
     const svc = container.querySelector('section[aria-label="外部服务"]');
     if (svc === null) throw new Error('missing services section');
@@ -208,7 +173,7 @@ describe('settings secret disposal', () => {
     history.set({ value: '/settings' });
     await settle(4);
     navBtn(container, 3).click();
-    h.solid.flush();
+    harness.modules.solid.flush();
 
     const nextSvc = container.querySelector('section[aria-label="外部服务"]');
     const nextPasswords = nextSvc?.querySelectorAll<HTMLInputElement>(
@@ -230,24 +195,11 @@ describe('settings secret disposal', () => {
 });
 
 const mountPendingSettings = async (res: Promise<Response>) => {
-  fetchMock.mockImplementation((input: unknown) => {
-    const url = String(input);
-    if (url.includes('/api/auth/session'))
-      return Promise.resolve(json({ authenticated: true }));
+  harness.respond((url) => {
     if (url === '/api/settings') return res;
-    return Promise.resolve(json(sendsState));
+    if (url === '/api/kindle/sends') return json(sendsState);
   });
-  const history = h.router.memoryHistory('/settings');
-  const router = h.routes.createAppRouter(history);
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(
-    h.web.render(
-      () => h.solid.createComponent(h.app.App, { router }),
-      container
-    )
-  );
-  h.solid.flush();
+  const { container } = harness.mountApp('/settings');
   await settle(3);
   return container;
 };
@@ -296,6 +248,6 @@ describe('cold-visit editing gate', () => {
     );
     expect(retentionInput?.disabled).toBe(true);
     expect(findButton(container, '保存文章设置').disabled).toBe(true);
-    expect(h.state.settings()).toBeNull();
+    expect(harness.modules.state.settings()).toBeNull();
   });
 });

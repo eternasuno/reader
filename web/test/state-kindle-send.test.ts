@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings } from '../src/api';
+import { makeKindleSettings as makeSettings } from './support/state-fixture';
 
 type StateModule = typeof import('../src/state');
 type I18nModule = typeof import('../src/i18n');
@@ -55,27 +56,6 @@ const pending = (): { resolve: (response: Response) => void } => {
   fetchMock.mockImplementationOnce(() => promise);
   return { resolve: resolveFn };
 };
-const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
-  retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
-  smtp: {
-    senderEmail: 'sender@example.com',
-    host: 'smtp.example.com',
-    port: 587,
-    security: 'starttls',
-    user: 'smtp-user',
-    passwordConfigured: true,
-  },
-  kindle: {
-    kindleEmail: 'kindle@example.com',
-    sendTime: '08:00',
-    nextSendAt: '2026-11-20T08:00:00Z',
-  },
-  ...overrides,
-});
-
 const load = async (loaded: Settings = makeSettings()): Promise<void> => {
   queue(loaded);
   queue({ running: false, items: [] });

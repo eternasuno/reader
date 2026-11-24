@@ -34,7 +34,7 @@ const makeFeed = (overrides: Partial<Feed> = {}): Feed => ({
 });
 
 const selectElement = (): HTMLSelectElement =>
-  document.querySelector('#feed-default-display') as HTMLSelectElement;
+  document.querySelector('[role="dialog"] select') as HTMLSelectElement;
 
 const changeMode = async (value: Feed['readerMode']): Promise<void> => {
   const select = selectElement();
@@ -114,5 +114,57 @@ describe('FeedOptionsDialog error & reopen', () => {
     flush();
 
     expect(selectElement().value).toBe('extracted');
+  });
+});
+
+describe('FeedOptionsDialog accessibility and focus', () => {
+  it('uses aria-hidden backdrop, traps focus, closes on Escape, and returns focus', async () => {
+    const trigger = document.createElement('button');
+    trigger.textContent = 'Open options';
+    document.body.append(trigger);
+    trigger.focus();
+
+    const [open, setOpen] = createSignal(false);
+    mount(() => (
+      <FeedOptionsDialog
+        open={open()}
+        feed={makeFeed()}
+        onClose={() => setOpen(false)}
+      />
+    ));
+
+    setOpen(true);
+    flush();
+    await Promise.resolve();
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(document.activeElement).toBe(selectElement());
+    expect(
+      document.querySelector('.fixed.inset-0[aria-hidden="true"]')?.tagName
+    ).toBe('DIV');
+    expect(dialog?.querySelector('svg[data-icon="edit"]')).toBeNull();
+
+    // Tabbing when focus is outside the drawer moves focus into the drawer.
+    trigger.focus();
+    const tab = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(dialog?.contains(document.activeElement)).toBe(true);
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    flush();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 });

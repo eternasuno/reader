@@ -1,14 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
 import { createOrFindSavedPage } from '../src/state/saved-page-create';
+import { jsonResponse as json } from './support/state-fixture';
 
 let fetchMock: ReturnType<typeof vi.fn>;
-
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 
 const page = {
   id: 'page-42',

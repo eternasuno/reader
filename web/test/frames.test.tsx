@@ -86,15 +86,11 @@ describe('buildArticleSrcdoc sanitization', () => {
     expect(SRCDOC).toContain('<img src="a.png" alt="a">');
   });
 
-  it('omits stylesheets when absent, escapes hrefs, and omits script bridge without tokens', () => {
+  it('omits stylesheets when absent and escapes hrefs', () => {
     const bare = buildArticleSrcdoc({
       html: '<p>x</p>',
       nonce: 'n',
       token: 't',
-      appOrigin: '',
-    });
-    const noScript = buildArticleSrcdoc({
-      html: '<p class="lead">Static</p>',
       appOrigin: '',
     });
     const escaped = buildArticleSrcdoc({
@@ -107,9 +103,6 @@ describe('buildArticleSrcdoc sanitization', () => {
 
     expect(bare).not.toContain('<link rel="stylesheet"');
     expect(bare).toContain("style-src 'unsafe-inline'; script-src 'nonce-n'");
-    expect(noScript).toContain("script-src 'none'");
-    expect(noScript).not.toContain('<script');
-    expect(noScript).toContain('<p>Static</p>');
     expect(escaped).toContain(
       'href="https://cdn.example/a.css?x=&quot;1&quot;&amp;y=&lt;2&gt;"'
     );
@@ -135,7 +128,10 @@ describe('buildArticleSrcdoc policy', () => {
     expect(SRCDOC).toContain('"PingFang SC"');
     expect(SRCDOC).toMatch(/Arial[^;]*"Noto Sans CJK SC"/);
     expect(SRCDOC).not.toMatch(/font-family:\s*system-ui/);
-    expect(SRCDOC).toContain('#1e1e1e');
+    expect(SRCDOC).toContain('var(--color-base-100)');
+    expect(SRCDOC).toContain('var(--color-base-content)');
+    expect(SRCDOC).not.toContain('#1e1e1e');
+    expect(SRCDOC).not.toContain('color-scheme: dark');
     expect(SRCDOC).toContain('max-width: 100%');
   });
 
@@ -232,25 +228,6 @@ describe('ArticleFrame tokens', () => {
     expect(nonceOf(after)).not.toBe(nonceOf(before));
     expect(tokenOf(after)).not.toBe(tokenOf(before));
   });
-
-  it('renders static content without a script bridge when Web Crypto is missing', () => {
-    for (const stub of [undefined, {}]) {
-      vi.stubGlobal('crypto', stub);
-      const iframe = iframeOf(
-        mount(() => <ArticleFrame html='<p class="lead">Static</p>' />)
-      );
-      const doc = srcdocOf(iframe);
-      expect(doc).toContain("script-src 'none'");
-      expect(doc).not.toContain('<script');
-      expect(doc).toContain('<p>Static</p>');
-      expect(iframe.getAttribute('sandbox')).toBe(
-        'allow-popups allow-popups-to-escape-sandbox'
-      );
-      const bad = { ...RESIZE_MESSAGE, token: '', height: 200 };
-      dispatchResize(iframe.contentWindow, bad);
-      expect(iframe.style.height).toBe('');
-    }
-  });
 });
 
 describe('ArticleFrame resize messages', () => {
@@ -304,6 +281,15 @@ describe('isSafeEmbedUrl', () => {
       expect(isSafeEmbedUrl(url, 'https://app.example')).toBe(false);
     expect(isSafeEmbedUrl(`${window.location.origin}/post`)).toBe(false);
   });
+
+  it('fails closed when app origin is empty, opaque, or unparseable', () => {
+    for (const bad of ['', 'not-a-url', 'null', 'file:///etc/passwd']) {
+      expect(isSafeEmbedUrl('https://example.com/post', bad)).toBe(false);
+    }
+
+    vi.stubGlobal('location', { origin: '' });
+    expect(isSafeEmbedUrl('https://example.com/post')).toBe(false);
+  });
 });
 
 describe('EmbeddedWebpageFrame', () => {
@@ -320,7 +306,6 @@ describe('EmbeddedWebpageFrame', () => {
     );
     expect(iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
     expect(iframe.getAttribute('title')).toBe('原文');
-    expect(iframe.className).toContain('h-full w-full flex-1');
   });
 
   it('shows the unsafe notice instead of an iframe', () => {

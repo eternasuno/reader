@@ -1,76 +1,25 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { createAppHarness, json } from './support/app-harness';
 
-type FetchHandler = (url: string, init: RequestInit) => Response | undefined;
-
-const load = async () => {
-  vi.resetModules();
-  return {
-    solid: await import('solid-js'),
-    web: await import('@solidjs/web'),
-    router: await import('@solidjs/router'),
-    i18n: await import('../src/i18n'),
-    routes: await import('../src/routes'),
-    app: await import('../src/App'),
-  };
-};
-
-type Harness = Awaited<ReturnType<typeof load>>;
-
-let h: Harness;
-let fetchMock: ReturnType<typeof vi.fn>;
-const disposers: Array<() => void> = [];
-
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status });
-
-const respond = (handler: FetchHandler = () => undefined): void => {
-  fetchMock.mockImplementation((input: unknown, init: unknown) => {
-    const url = String(input);
-    const custom = handler(url, (init ?? {}) as RequestInit);
-    if (custom !== undefined) return Promise.resolve(custom);
-    if (url.includes('/api/auth/session')) {
-      return Promise.resolve(json({ authenticated: true }));
-    }
-    return Promise.resolve(json({ items: [], cursor: null, item: null }));
-  });
-};
-
-const settle = async (times = 4): Promise<void> => {
-  for (let i = 0; i < times; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    h.solid.flush();
-  }
-};
-
-const mountApp = (path: string) => {
-  for (const dispose of disposers.splice(0)) dispose();
-  const history = h.router.memoryHistory(path);
-  const router = h.routes.createAppRouter(history);
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(
-    h.web.render(
-      () => h.solid.createComponent(h.app.App, { router }),
-      container
-    )
-  );
-  h.solid.flush();
-  return { container, history };
-};
+const SAVE_PATH = '/save#url=https%3A%2F%2Fexample.com%2Fpost';
+const harness = createAppHarness({ settleTimes: 4 });
+const { respond, settle, mountApp: mount } = harness;
+harness.installHarnessLifecycle();
+const mountApp = mount;
 
 const setField = (root: ParentNode, selector: string, value: string): void => {
   const el = root.querySelector<HTMLInputElement>(selector);
   if (el === null) throw new Error(`missing ${selector}`);
   el.value = value;
   el.dispatchEvent(new Event('input', { bubbles: true }));
-  h.solid.flush();
+  harness.modules.solid.flush();
 };
 
 const submitForm = (root: ParentNode): void => {
   const form = root.querySelector<HTMLFormElement>('form');
   if (form === null) throw new Error('missing form');
   form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-  h.solid.flush();
+  harness.modules.solid.flush();
 };
 
 const savedPage = () => ({
@@ -79,21 +28,6 @@ const savedPage = () => ({
   title: 'Post',
   content: 'Body',
   read: false,
-});
-
-beforeEach(async () => {
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
-  localStorage.clear();
-  respond();
-  h = await load();
-  h.i18n.setLocale('zh-CN');
-});
-
-afterEach(() => {
-  for (const dispose of disposers.splice(0)) dispose();
-  document.body.innerHTML = '';
-  vi.restoreAllMocks();
 });
 
 describe('settings bookmarklet', () => {
@@ -138,7 +72,7 @@ describe('legacy ?url= quick-save links', () => {
       container.querySelector<HTMLInputElement>('input[type="url"]')?.value
     ).toBe('https://example.com/post');
     expect(
-      fetchMock.mock.calls.filter(
+      harness.fetchMock.mock.calls.filter(
         (c) => (c[1] as RequestInit | undefined)?.method === 'POST'
       )
     ).toHaveLength(0);
@@ -244,5 +178,104 @@ describe('quick save errors and cancel cleanup', () => {
     expect(
       container.querySelector<HTMLInputElement>('input[type="url"]')?.value
     ).toBe('');
+  });
+});
+
+const requestUrls = (): Array<string> =>
+  harness.fetchMock.mock.calls.map((call) => String(call[0]));
+
+const hasUrl = (prefix: string): boolean =>
+  requestUrls().some((url) => url.startsWith(prefix));
+
+/** `later.md:54-58`: the confirmation form performs exactly one mutating request. */
+const posts = (): ReadonlyArray<unknown> =>
+  harness.fetchMock.mock.calls.filter(
+    (call) => (call[1] as RequestInit | undefined)?.method === 'POST'
+  );
+
+const must = <T extends Element>(root: ParentNode, selector: string): T => {
+  const found = root.querySelector<T>(selector);
+  if (found === null) throw new Error(`missing ${selector}`);
+
+  return found;
+};
+
+const inputValue = (root: ParentNode, selector: string): string =>
+  must<HTMLInputElement>(root, selector).value;
+
+const submitFragmentForm = (root: ParentNode): void => {
+  const form = must<HTMLFormElement>(root, 'form');
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  harness.modules.solid.flush();
+};
+
+describe('quick save page', () => {
+  it('never mutates on GET and posts once from the focused form', async () => {
+    respond((url, init) =>
+      url === '/api/saved-pages' && init.method === 'POST'
+        ? json({ item: savedPage() }, 201)
+        : undefined
+    );
+
+    const { container, history } = mountApp(SAVE_PATH);
+    await settle(4);
+
+    expect(posts()).toHaveLength(0);
+    expect(history.get()).toBe('/save');
+    expect(inputValue(container, 'input[type="url"]')).toBe(
+      'https://example.com/post'
+    );
+    expect(document.activeElement).toBe(
+      must(container, 'button[type="submit"]')
+    );
+
+    submitFragmentForm(container);
+    await settle(4);
+
+    expect(posts()).toHaveLength(1);
+    expect(history.get()).toBe('/later/page-1');
+  });
+
+  it('opens the existing page by conflict id when the URL is already saved', async () => {
+    respond((url, init) => {
+      if (url === '/api/saved-pages' && init.method === 'POST')
+        return json({ error: 'SavedPageAlreadyExists', id: 'page-1' }, 409);
+      if (url === '/api/saved-pages/page-1' && (init.method ?? 'GET') === 'GET')
+        return json({ item: savedPage() });
+
+      return undefined;
+    });
+
+    const { container, history } = mountApp(SAVE_PATH);
+    await settle(4);
+    submitFragmentForm(container);
+    await settle(4);
+
+    expect(hasUrl('/api/saved-pages/page-1')).toBe(true);
+    expect(history.get()).toBe('/later/page-1');
+    expect(harness.modules.ui.currentToast()).toBeNull();
+  });
+});
+
+describe('QuickSavePage missing conflict id', () => {
+  it('shows inline error without lookup when 409 omits id', async () => {
+    const savePath = '/save#url=https%3A%2F%2Fexample.com%2Fpost';
+    respond((url, init) =>
+      url === '/api/saved-pages' && init.method === 'POST'
+        ? json({ error: 'SavedPageAlreadyExists' }, 409)
+        : undefined
+    );
+
+    const { container, history } = mountApp(savePath);
+    await settle(4);
+    const form = container.querySelector('form');
+    form?.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true })
+    );
+    harness.modules.solid.flush();
+    await settle(4);
+
+    expect(container.textContent).toContain('该文章已在稍后阅读中');
+    expect(history.get()).toBe('/save');
   });
 });

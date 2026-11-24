@@ -1,53 +1,19 @@
-import type { JSX } from '@solidjs/web';
-import { render } from '@solidjs/web';
-import { flush } from 'solid-js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Feed } from '../src/api';
-import { ArticleFrame, KeyboardShortcutsDialog } from '../src/components';
+import { KeyboardShortcutsDialog } from '../src/components';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
 import { FeedMoveSubpanel } from '../src/components/FeedMoveSubpanel';
 import { ReaderMoreMenu } from '../src/components/ReaderMoreMenu';
-import { setLocale } from '../src/i18n';
 import * as state from '../src/state';
-import { dismissToast } from '../src/ui';
+import {
+  ariaBtn,
+  clickAria,
+  clickButton,
+  mount,
+  setupInteractions,
+} from './support/list-helpers';
 
-let disposers: Array<() => void> = [];
-let fetchMock: ReturnType<typeof vi.fn>;
-
-const mount = (component: () => JSX.Element): HTMLElement => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(render(component, container));
-  flush();
-  return container;
-};
-
-const frameToken = (iframe: HTMLIFrameElement): string =>
-  /var token = "([^"]+)"/.exec(iframe.getAttribute('srcdoc') ?? '')?.[1] ?? '';
-
-const sendFrameMessage = (iframe: HTMLIFrameElement, data: unknown): void => {
-  window.dispatchEvent(
-    new MessageEvent('message', { data, source: iframe.contentWindow })
-  );
-  flush();
-};
-
-const mountFrame = () => {
-  const container = mount(() => <ArticleFrame html="<p>Post</p>" />);
-  const iframe = container.querySelector('iframe') as HTMLIFrameElement;
-  return { iframe, token: frameToken(iframe) };
-};
-
-const openLightbox = () => {
-  const frame = mountFrame();
-  sendFrameMessage(frame.iframe, {
-    type: 'article-frame-image',
-    token: frame.token,
-    src: 'https://example.com/photo.jpg',
-    alt: 'Sample photo',
-  });
-  return frame;
-};
+setupInteractions();
 
 const makeNav = (onNavigate = vi.fn()) => ({
   listUrl: () => '/later',
@@ -55,25 +21,6 @@ const makeNav = (onNavigate = vi.fn()) => ({
   articleUrl: (id: string) => `/later/${id}`,
   onNavigate,
 });
-
-const ariaBtn = (root: ParentNode, label: string): HTMLButtonElement | null =>
-  root.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-
-const clickAria = (root: ParentNode, label: string): void => {
-  ariaBtn(root, label)?.click();
-  flush();
-};
-
-const lightbox = (): Element | null =>
-  document.querySelector('[role="dialog"][aria-label="图片预览"]');
-
-const clickButton = (root: ParentNode, text: string): void => {
-  const match = Array.from(root.querySelectorAll('button')).find((btn) =>
-    btn.textContent?.includes(text)
-  );
-  match?.click();
-  flush();
-};
 
 const makeFeedArticle = (id: string): state.LibraryArticle => ({
   kind: 'feed',
@@ -100,67 +47,6 @@ const mountHeader = (unreadOnly: boolean, onToggleUnread = vi.fn()) =>
       onDeleteFeed={vi.fn()}
     />
   ));
-
-beforeEach(() => {
-  localStorage.clear();
-  setLocale('zh-CN');
-  state.resetReaderAppearance();
-  state.setSidebarCollapsedState(false);
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
-  if (typeof HTMLElement.prototype.showPopover !== 'function') {
-    HTMLElement.prototype.showPopover = () => undefined;
-  }
-});
-
-afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  document.body.innerHTML = '';
-  dismissToast();
-  vi.restoreAllMocks();
-});
-
-describe('ArticleFrame lightbox', () => {
-  it('opens ImageLightbox on valid image message and closes on Escape', () => {
-    openLightbox();
-    expect(lightbox()?.querySelector('img')?.getAttribute('src')).toBe(
-      'https://example.com/photo.jpg'
-    );
-
-    window.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
-    );
-    flush();
-    expect(lightbox()).toBeNull();
-  });
-
-  it('closes ImageLightbox when clicking the close button', () => {
-    openLightbox();
-    clickAria(document, '关闭');
-    expect(lightbox()).toBeNull();
-  });
-});
-
-describe('ArticleFrame key forwarding', () => {
-  it('forwards valid article-frame-key as window keydown when lightbox is closed', () => {
-    const { iframe, token } = mountFrame();
-    const seen: Array<string> = [];
-    const onKeyDown = (e: KeyboardEvent) => seen.push(e.key);
-    window.addEventListener('keydown', onKeyDown);
-    sendFrameMessage(iframe, { type: 'article-frame-key', token, key: 'j' });
-    expect(seen).toEqual(['j']);
-
-    sendFrameMessage(iframe, {
-      type: 'article-frame-image',
-      token,
-      src: 'https://example.com/photo.jpg',
-    });
-    sendFrameMessage(iframe, { type: 'article-frame-key', token, key: 'k' });
-    window.removeEventListener('keydown', onKeyDown);
-    expect(seen).toEqual(['j']);
-  });
-});
 
 describe('ArticleListHeader', () => {
   it('toggles unread filter and offers 从旧到新 at the top level of the header menu', () => {
@@ -199,7 +85,18 @@ describe('KeyboardShortcutsDialog', () => {
       document.querySelectorAll('[role="dialog"] kbd'),
       (node) => node.textContent
     );
-    expect(keys).toEqual(['j', 'k', 'm', 's', 'f', 'v', 'u', '[', 'Esc', '?']);
+    expect(keys).toEqual([
+      'j',
+      'k',
+      'm',
+      's',
+      'f',
+      'v / o',
+      'u',
+      '[',
+      'Esc',
+      '?',
+    ]);
   });
 });
 
@@ -210,6 +107,7 @@ describe('ReaderMoreMenu 视图选项 sub-panel', () => {
         article={makeFeedArticle('i1')}
         nav={makeNav()}
         onDelete={vi.fn()}
+        onRequestFeedOptions={vi.fn()}
       />
     ));
     clickAria(container, '更多操作');
@@ -255,5 +153,8 @@ describe('FeedMoveSubpanel', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
     clickButton(container, '新建目录');
     expect(onRequestNewFolder).toHaveBeenCalledTimes(1);
+    expect(onRequestNewFolder).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'f1' })
+    );
   });
 });

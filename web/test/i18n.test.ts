@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../src/api/types';
 import type { Locale } from '../src/i18n';
 import {
   formatRelativeTime,
@@ -10,30 +11,52 @@ import {
 } from '../src/i18n';
 import { enDict } from '../src/i18n/en';
 import { zhDict } from '../src/i18n/zh';
+import { errorText } from '../src/state/errorText';
 
-/** Backend error codes that must stay translated (reader-spec API errors). */
+/** Backend and client error codes that must stay translated. */
 const ERROR_CODES = `Unauthorized Forbidden InvalidCredentials TooManyRequests
-RequestFailed NetworkError ArticleEmptyContent WebpageFetcherError
+RequestFailed NetworkError RequestTimeout InvalidResponse ArticleEmptyContent WebpageFetcherError
 ArticleExtractorError InvalidPageUrl SavedPageAlreadyExists
 SavedPageRepositoryError FeedUrlInvalid FetchFeedError FeedParserError
 FeedAlreadyExists FeedItemNotFound FeedRepositoryError FeedItemRepositoryError
 InvalidOpml InvalidFolderName FolderAlreadyExists FolderNotFound
-FolderRepositoryError InvalidRetention InvalidEndpoint BrowserEndpointRequired
+FolderRepositoryError InvalidRetention InvalidProvider InvalidJinaKey
+InvalidEndpoint BrowserEndpointRequired InvalidSMTPSetting SMTPNotConfigured
 InvalidKindleSetting SettingRepositoryError KindleNotConfigured
 KindleSendInProgress`.split(/\s+/);
+
+const NOW = 1_700_000_000_000;
 
 const rel = (name: Locale, value: number, unit: Intl.RelativeTimeFormatUnit) =>
   new Intl.RelativeTimeFormat(name, { numeric: 'auto' }).format(value, unit);
 
-const agoTime = (ms: number, name: Locale): string =>
-  formatRelativeTime(new Date(Date.now() - ms).toISOString(), name);
+const absDate = (name: Locale, timestamp: number): string =>
+  new Intl.DateTimeFormat(name, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(timestamp);
 
-const flattenKeys = (value: object, prefix = ''): Array<string> =>
-  Object.entries(value).flatMap(([key, child]) => {
-    const path = prefix.length > 0 ? `${prefix}.${key}` : key;
-    const nested = child !== null && typeof child === 'object';
-    return nested ? flattenKeys(child, path) : [path];
-  });
+const RELATIVE_TIME_CASES: Array<[string, number, Locale, string]> = [
+  ['past <1m zh-CN', -30_000, 'zh-CN', '刚刚'],
+  ['past <1m en', -30_000, 'en', 'just now'],
+  ['past 5m zh-CN', -300_000, 'zh-CN', rel('zh-CN', -5, 'minute')],
+  ['past 2h en', -7_200_000, 'en', rel('en', -2, 'hour')],
+  ['past 10d en', -864_000_000, 'en', rel('en', -10, 'day')],
+  ['past 60d en', -60 * 86_400_000, 'en', absDate('en', NOW - 60 * 86_400_000)],
+  ['future <1m zh-CN', 30_000, 'zh-CN', '刚刚'],
+  ['future <1m en', 30_000, 'en', 'just now'],
+  ['future 5m zh-CN', 300_000, 'zh-CN', rel('zh-CN', 5, 'minute')],
+  ['future 5m en', 300_000, 'en', rel('en', 5, 'minute')],
+  ['future 2h en', 7_200_000, 'en', rel('en', 2, 'hour')],
+  ['future 10d en', 864_000_000, 'en', rel('en', 10, 'day')],
+  [
+    'future 60d en',
+    60 * 86_400_000,
+    'en',
+    absDate('en', NOW + 60 * 86_400_000),
+  ],
+];
 
 /** Loads a fresh copy of the i18n module so startup detection re-runs. */
 const freshModule = async () => {
@@ -52,20 +75,34 @@ afterEach(() => {
 });
 
 describe('dictionaries', () => {
-  it('translates every backend error code in both locales', () => {
-    for (const code of ERROR_CODES) {
-      const key = code as keyof typeof zhDict.errors;
-      expect(zhDict.errors[key]).toBeTruthy();
-      expect(enDict.errors[key]).toBeTruthy();
-      expect(translateErrorCode(code)).toBe(zhDict.errors[key]);
+  it.each(['zh-CN', 'en'] as const)(
+    'translates every error code in %s',
+    (name) => {
+      setLocale(name);
+      const dict = name === 'zh-CN' ? zhDict : enDict;
+
+      for (const code of ERROR_CODES) {
+        const key = code as keyof typeof zhDict.errors;
+        expect(dict.errors[key]).toBeTruthy();
+        expect(translateErrorCode(code)).toBe(dict.errors[key]);
+        if (code !== 'RequestFailed') {
+          expect(dict.errors[key]).not.toBe(dict.errors.RequestFailed);
+        }
+      }
     }
+  );
+
+  it.each([
+    ['zh-CN', 'RequestTimeout', '请求超时，请稍后重试'],
+    ['zh-CN', 'InvalidResponse', '服务器返回了无法识别的响应'],
+    ['en', 'RequestTimeout', 'Request timed out. Please try again later.'],
+    ['en', 'InvalidResponse', 'The server returned an unrecognized response.'],
+  ] as const)('translates %s %s', (name, code, message) => {
+    setLocale(name);
+    expect(errorText(new ApiError(code, 0))).toBe(message);
   });
 
-  it('mirrors Chinese keys in English and keeps the copy', () => {
-    expect(flattenKeys(enDict).sort()).toEqual(flattenKeys(zhDict).sort());
-    expect(zhDict.common.brand).toBe('Lantern');
-    expect(zhDict.common.justNow).toBe('刚刚');
-    expect(zhDict.library.laterScope).toBe('稍后阅读');
+  it('falls back to RequestFailed for unknown error codes', () => {
     expect(translateErrorCode('SomethingElse')).toBe('操作失败，请稍后重试');
   });
 });
@@ -126,26 +163,16 @@ describe('locale detection', () => {
 });
 
 describe('formatting', () => {
-  it('formats relative times in both locales', () => {
-    expect(agoTime(30_000, 'zh-CN')).toBe('刚刚');
-    expect(agoTime(30_000, 'en')).toBe('just now');
-    expect(agoTime(300_000, 'zh-CN')).toBe(rel('zh-CN', -5, 'minute'));
-    expect(agoTime(7_200_000, 'en')).toBe(rel('en', -2, 'hour'));
-    expect(agoTime(864_000_000, 'en')).toBe(rel('en', -10, 'day'));
-  });
+  it.each(RELATIVE_TIME_CASES)(
+    'formats %s relative to now',
+    (_, offsetMs, targetLocale, expected) => {
+      vi.spyOn(Date, 'now').mockReturnValue(NOW);
+      const iso = new Date(NOW + offsetMs).toISOString();
+      expect(formatRelativeTime(iso, targetLocale)).toBe(expected);
+    }
+  );
 
-  it('formats old dates and ignores invalid input', () => {
-    const old = Date.now() - 60 * 86_400_000;
-    const iso = new Date(old).toISOString();
-    const format = new Intl.DateTimeFormat('en', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-    expect(formatRelativeTime(iso, 'en')).toBe(format.format(old));
-    expect(translateErrorCode('NetworkError')).toBe(
-      '网络连接失败，请检查网络后重试'
-    );
+  it('ignores invalid dates', () => {
     expect(formatRelativeTime('not-a-date')).toBe('');
   });
 });

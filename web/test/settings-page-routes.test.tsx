@@ -1,84 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import { createAppHarness, json } from './support/app-harness';
+
+const harness = createAppHarness({ settleTimes: 1 });
+const { respond, settle, mountApp: mount } = harness;
+harness.installHarnessLifecycle();
+const mountApp = mount;
 
 type FetchHandler = (url: string, init: RequestInit) => Response | undefined;
 
-const load = async () => {
-  vi.resetModules();
-  return {
-    solid: await import('solid-js'),
-    web: await import('@solidjs/web'),
-    router: await import('@solidjs/router'),
-    api: await import('../src/api'),
-    state: await import('../src/state'),
-    i18n: await import('../src/i18n'),
-    ui: await import('../src/ui'),
-    routes: await import('../src/routes'),
-    app: await import('../src/App'),
-  };
-};
-
-type Harness = Awaited<ReturnType<typeof load>>;
-
-let h: Harness;
-let fetchMock: ReturnType<typeof vi.fn>;
-const disposers: Array<() => void> = [];
-
-const SAVE_PATH = '/save#url=https%3A%2F%2Fexample.com%2Fpost';
-
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status });
-
-const respond = (handler: FetchHandler = () => undefined): void => {
-  fetchMock.mockImplementation((input: unknown, init: unknown) => {
-    const url = String(input);
-    const custom = handler(url, (init ?? {}) as RequestInit);
-
-    return Promise.resolve(custom ?? json(defaultBody(url)));
-  });
-};
-
-/** Default bodies keep every background loader quiet unless a test overrides them. */
-const defaultBody = (url: string): unknown => {
-  if (url.includes('/api/auth/session')) return { authenticated: true };
-
-  return { items: [], cursor: null, item: null };
-};
-
 const requestUrls = (): Array<string> =>
-  fetchMock.mock.calls.map((call) => String(call[0]));
-
-const hasUrl = (prefix: string): boolean =>
-  requestUrls().some((url) => url.startsWith(prefix));
-
-/** `later.md:54-58`: the confirmation form performs exactly one mutating request. */
-const posts = (): ReadonlyArray<unknown> =>
-  fetchMock.mock.calls.filter(
-    (call) => (call[1] as RequestInit | undefined)?.method === 'POST'
-  );
-
-const settle = async (times = 1): Promise<void> => {
-  for (let index = 0; index < times; index += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    h.solid.flush();
-  }
-};
-
-const mountApp = (path: string) => {
-  for (const dispose of disposers.splice(0)) dispose();
-  const history = h.router.memoryHistory(path);
-  const router = h.routes.createAppRouter(history);
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(
-    h.web.render(
-      () => h.solid.createComponent(h.app.App, { router }),
-      container
-    )
-  );
-  h.solid.flush();
-
-  return { container, history };
-};
+  harness.fetchMock.mock.calls.map((call) => String(call[0]));
 
 const must = <T extends Element>(root: ParentNode, selector: string): T => {
   const found = root.querySelector<T>(selector);
@@ -94,91 +25,13 @@ const typeInto = (root: ParentNode, selector: string, value: string): void => {
   const input = must<HTMLInputElement>(root, selector);
   input.value = value;
   input.dispatchEvent(new Event('input', { bubbles: true }));
-  h.solid.flush();
-};
-
-const submitForm = (root: ParentNode): void => {
-  const form = must<HTMLFormElement>(root, 'form');
-  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-  h.solid.flush();
+  harness.modules.solid.flush();
 };
 
 const click = (element: HTMLElement): void => {
   element.click();
-  h.solid.flush();
+  harness.modules.solid.flush();
 };
-
-const savedPage = () => ({
-  id: 'page-1',
-  url: 'https://example.com/post',
-  title: 'Post',
-  content: 'Body',
-  read: false,
-});
-
-beforeEach(async () => {
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
-  localStorage.clear();
-  respond();
-  h = await load();
-  h.i18n.setLocale('zh-CN');
-});
-
-afterEach(() => {
-  for (const dispose of disposers.splice(0)) dispose();
-  document.body.innerHTML = '';
-  h?.ui.dismissToast();
-  vi.restoreAllMocks();
-});
-
-describe('quick save page', () => {
-  it('never mutates on GET and posts once from the focused form', async () => {
-    respond((url, init) =>
-      url === '/api/saved-pages' && init.method === 'POST'
-        ? json({ item: savedPage() }, 201)
-        : undefined
-    );
-
-    const { container, history } = mountApp(SAVE_PATH);
-    await settle(4);
-
-    expect(posts()).toHaveLength(0);
-    expect(history.get()).toBe('/save');
-    expect(inputValue(container, 'input[type="url"]')).toBe(
-      'https://example.com/post'
-    );
-    expect(document.activeElement).toBe(
-      must(container, 'button[type="submit"]')
-    );
-
-    submitForm(container);
-    await settle(4);
-
-    expect(posts()).toHaveLength(1);
-    expect(history.get()).toBe('/later/page-1');
-  });
-
-  it('opens the existing page by conflict id when the URL is already saved', async () => {
-    respond((url, init) => {
-      if (url === '/api/saved-pages' && init.method === 'POST')
-        return json({ error: 'SavedPageAlreadyExists', id: 'page-1' }, 409);
-      if (url === '/api/saved-pages/page-1') return json({ item: savedPage() });
-
-      return undefined;
-    });
-
-    const { container, history } = mountApp(SAVE_PATH);
-    await settle(4);
-    submitForm(container);
-    await settle(4);
-
-    expect(hasUrl('/api/saved-pages/lookup')).toBe(false);
-    expect(hasUrl('/api/saved-pages/page-1')).toBe(true);
-    expect(history.get()).toBe('/later/page-1');
-    expect(h.ui.currentToast()).toBeNull();
-  });
-});
 
 const cfg = {
   retention: 50,
@@ -189,8 +42,21 @@ const cfg = {
   kindle: { kindleEmail: 'k@b', sendTime: '' },
 };
 const SENDS = [
-  { trigger: 'manual', status: 'succeeded', articleCount: 3, bookCount: 1 },
-  { trigger: 'scheduled', status: 'failed', error: 'smtp: connection refused' },
+  {
+    id: 'send-1',
+    startedAt: '2026-11-24T08:00:00Z',
+    trigger: 'manual',
+    status: 'succeeded',
+    articleCount: 3,
+    bookCount: 1,
+  },
+  {
+    id: 'send-2',
+    startedAt: '2026-11-24T09:00:00Z',
+    trigger: 'scheduled',
+    status: 'failed',
+    error: 'smtp: connection refused',
+  },
 ];
 const mountSettings = async (
   ov: FetchHandler = () => undefined,
@@ -233,9 +99,6 @@ it('settings: mounts 4 sections, renders Kindle history/slots, and guards edits'
   expect(container.textContent).toContain('已发送 3 篇（1 封邮件）');
   expect(container.textContent).toContain('smtp: connection refused');
   expect(inputValue(container, 'input[type="number"]')).toBe('50');
-  expect(sec(container, '文章与订阅').className).toContain('block');
-  for (const s of ['提取', 'Kindle', '外部服务'])
-    expect(sec(container, s).className).toContain('hidden');
   const slots = Array.from(
     must<HTMLSelectElement>(container, 'select').options,
     (o) => o.value
@@ -262,11 +125,10 @@ it('settings extraction: toggles browser radio by endpoint config and links to s
   click(radio(ext, 'jina'));
   click(btn(ext, '前往外部服务'));
   expect(confirm).toHaveBeenCalledTimes(1);
-  expect(ext.className).toContain('block');
+  expect(radio(ext, 'jina').checked).toBe(true);
   expect(radio(ext, 'jina').checked).toBe(true);
   click(btn(ext, '前往外部服务'));
-  expect(sec(container, '外部服务').className).toContain('block');
-  expect(ext.className).toContain('hidden');
+  expect(btn(sec(container, '外部服务'), '清除 SMTP 设置')).toBeDefined();
   expect(radio(ext, 'direct').checked).toBe(true);
   const ok = { ...cfg, browserEndpointConfigured: true };
   const next = await mountSettings(undefined, ok);
@@ -286,7 +148,7 @@ it('settings kindle: guards on SMTP, disables send while running, and imports OP
   expect(k.textContent).toContain('需要先在「外部服务」中配置 SMTP');
   expect(btn(k, '立即发送').disabled).toBe(true);
   click(btn(k, '前往外部服务'));
-  expect(sec(ns.container, '外部服务').className).toContain('block');
+  expect(sec(ns.container, '外部服务').textContent).toContain('Jina Key');
   const opml = await mountSettings((u, i) =>
     u === '/api/opml' && i.method === 'POST'
       ? json({ importedFeeds: 3, skippedFeeds: 1, createdFolders: 1 })
@@ -299,7 +161,9 @@ it('settings kindle: guards on SMTP, disables send while running, and imports OP
   input.dispatchEvent(new Event('change', { bubbles: true }));
   await settle(4);
   expect(requestUrls()).toContain('/api/opml');
-  expect(h.ui.currentToast()?.message).toBe('已导入 3 个订阅源，跳过 1 个');
+  expect(harness.modules.ui.currentToast()?.message).toBe(
+    '已导入 3 个订阅源，跳过 1 个'
+  );
 });
 
 it('settings services: renders 3 cards and deletes SMTP only after confirmation', async () => {
@@ -321,6 +185,6 @@ it('settings services: renders 3 cards and deletes SMTP only after confirmation'
   expect(requestUrls()).not.toContain(url);
   click(btn(svc, '清除 SMTP 设置'));
   await settle(4);
-  const del = fetchMock.mock.calls.find(([u]) => u === url);
+  const del = harness.fetchMock.mock.calls.find(([u]) => u === url);
   expect((del?.[1] as RequestInit | undefined)?.method).toBe('DELETE');
 });

@@ -350,7 +350,7 @@ describe('removeSmtp', () => {
     await expect(state.removeSmtp(setDrafts)).resolves.toBe(false);
     solid.flush();
 
-    expect(state.settings()?.smtp).toBeDefined();
+    expect(state.settings()?.smtp).toEqual(SMTP_VIEW);
     toastIs(i18n.translateErrorCode('SettingRepositoryError'));
   });
 });

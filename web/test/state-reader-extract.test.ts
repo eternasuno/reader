@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createStateTestContext,
+  jsonResponse,
   makeFeed,
   makeItem,
   makePage,
@@ -33,6 +34,85 @@ describe('extraction failure', () => {
     expect(ui.currentToast()?.message).toBe(
       i18n.translateErrorCode('ArticleEmptyContent')
     );
+  });
+});
+
+describe('extraction deduplication', () => {
+  it('does not start a second POST when toggling back to original and back', async () => {
+    const { state, solid } = ctx;
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'feed', feedId: 'f1' },
+      items: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
+      feeds: [makeFeed({ id: 'f1' })],
+    });
+    ctx.queue({ item: makeItem({ id: 'i1', feedId: 'f1', read: true }) });
+    await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i1');
+    solid.flush();
+
+    const extractPending = ctx.pending();
+    const first = state.toggleExtractedMode();
+    const callsAfterStart = ctx.fetchCount();
+    expect(state.extracting()).toBe(true);
+    await state.toggleExtractedMode();
+    expect(state.displayMode()).toBe('default');
+
+    const second = state.toggleExtractedMode();
+    expect(state.displayMode()).toBe('extracted');
+    expect(ctx.fetchCount()).toBe(callsAfterStart);
+
+    const extractedItem = makeItem({
+      id: 'i1',
+      feedId: 'f1',
+      read: true,
+      extractedContent: '<p>extracted</p>',
+    });
+    extractPending.resolve(jsonResponse({ item: extractedItem }));
+    await Promise.all([first, second]);
+    solid.flush();
+
+    expect(state.extracting()).toBe(false);
+    const opened = state.openArticle();
+    expect(opened?.kind === 'feed' ? opened.extractedContent : undefined).toBe(
+      '<p>extracted</p>'
+    );
+  });
+});
+
+describe('extraction stale request guard', () => {
+  it('does not let a stale extraction finally clear a newer extraction flag', async () => {
+    const { state, solid } = ctx;
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'feed', feedId: 'f1' },
+      items: [
+        makeItem({ id: 'i1', feedId: 'f1', read: true }),
+        makeItem({ id: 'i2', feedId: 'f1', read: true }),
+      ],
+      feeds: [makeFeed({ id: 'f1' })],
+    });
+
+    ctx.queue({ item: makeItem({ id: 'i1', feedId: 'f1', read: true }) });
+    await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i1');
+    const extractA = ctx.pending();
+    const runningA = state.toggleExtractedMode();
+    expect(state.extracting()).toBe(true);
+
+    ctx.queue({ item: makeItem({ id: 'i2', feedId: 'f1', read: true }) });
+    await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i2');
+    const extractB = ctx.pending();
+    const runningB = state.toggleExtractedMode();
+    expect(state.extracting()).toBe(true);
+
+    const itemA = makeItem({ id: 'i1', feedId: 'f1', read: true });
+    extractA.resolve(jsonResponse({ item: itemA }));
+    await runningA;
+    solid.flush();
+    expect(state.extracting()).toBe(true);
+
+    const itemB = makeItem({ id: 'i2', feedId: 'f1', read: true });
+    extractB.resolve(jsonResponse({ item: itemB }));
+    await runningB;
+    solid.flush();
+    expect(state.extracting()).toBe(false);
   });
 });
 

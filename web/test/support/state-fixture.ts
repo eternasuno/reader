@@ -5,6 +5,7 @@ import type {
   FeedUnreadCount,
   Folder,
   SavedPage,
+  Settings,
 } from '../../src/api';
 
 export type StateModule = typeof import('../../src/state');
@@ -37,6 +38,29 @@ export const jsonResponse = (body: unknown, status = 200): Response =>
 
 export const noContentResponse = (): Response =>
   new Response(null, { status: 204 });
+
+export const makeKindleSettings = (
+  overrides: Partial<Settings> = {}
+): Settings => ({
+  retention: 100,
+  provider: 'direct',
+  jinaKeyConfigured: false,
+  browserEndpointConfigured: false,
+  smtp: {
+    senderEmail: 'sender@example.com',
+    host: 'smtp.example.com',
+    port: 587,
+    security: 'starttls',
+    user: 'smtp-user',
+    passwordConfigured: true,
+  },
+  kindle: {
+    kindleEmail: 'kindle@example.com',
+    sendTime: '08:00',
+    nextSendAt: '2026-11-20T08:00:00Z',
+  },
+  ...overrides,
+});
 
 export const makeFeed = (overrides: Partial<Feed> & { id: string }): Feed => ({
   url: `https://example.com/${overrides.id}/feed.xml`,
