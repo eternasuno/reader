@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"reader/internal/domain"
 )
@@ -18,7 +17,6 @@ const (
 	detachedWriteTimeout       = 5 * time.Second
 	defaultCompleteBaseBackoff = 100 * time.Millisecond
 	defaultCompleteMaxBackoff  = 30 * time.Second
-	maxLoggedErrorBytes        = 256
 	completeLogIntervalAttempt = 10
 )
 
@@ -151,22 +149,12 @@ func (s *KindleSender) startClaimedLocked(claimed domain.ClaimedKindleSend) {
 func (s *KindleSender) StartScheduler(ctx context.Context) {
 	s.checkScheduleLogged(ctx)
 
-	ticker := time.NewTicker(s.tickInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.checkScheduleLogged(ctx)
-		}
-	}
+	tickLoop(ctx, s.tickInterval, s.checkScheduleLogged)
 }
 
 func (s *KindleSender) checkScheduleLogged(ctx context.Context) {
 	if err := s.CheckSchedule(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		logBoundedError("check kindle schedule failed", err)
+		logFailure(slog.LevelError, "check kindle schedule failed", err)
 	}
 }
 
@@ -210,7 +198,7 @@ func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot
 	}
 	defer func() {
 		if closeErr := packer.Close(); closeErr != nil {
-			logBoundedError("close kindle epub packer failed", closeErr, "send_id", sendID)
+			logFailure(slog.LevelError, "close kindle epub packer failed", closeErr, "send_id", sendID)
 		}
 	}()
 
@@ -376,7 +364,7 @@ func (s *KindleSender) extractFeedItem(ctx context.Context, item domain.FeedItem
 	if s.feedItems != nil {
 		stored, _, err := s.feedItems.SaveExtractedContentIfEmpty(ctx, item.ID, extracted.Content)
 		if err != nil {
-			logBoundedError("save kindle extracted content failed", err, "item_id", item.ID)
+			logFailure(slog.LevelError, "save kindle extracted content failed", err, "item_id", item.ID)
 		} else if stored != nil && stored.ExtractedContent != nil && strings.TrimSpace(*stored.ExtractedContent) != "" {
 			return *stored.ExtractedContent
 		}
@@ -421,7 +409,7 @@ func (s *KindleSender) tryCompleteSend(ctx context.Context, sendID string, statu
 	}
 
 	if attempt == 1 || attempt%completeLogIntervalAttempt == 0 {
-		logBoundedError("persist kindle send terminal status failed", err, "send_id", sendID, "status", string(status), "attempt", attempt)
+		logFailure(slog.LevelError, "persist kindle send terminal status failed", err, "send_id", sendID, "status", string(status), "attempt", attempt)
 	}
 
 	return false
@@ -439,41 +427,4 @@ func sanitizedSummary(sendErr error) *string {
 
 func detachedWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), detachedWriteTimeout)
-}
-
-func sleepWithContext(ctx context.Context, delay time.Duration) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
-func logBoundedError(msg string, err error, attrs ...any) {
-	args := make([]any, 0, len(attrs)+2)
-	args = append(args, attrs...)
-	args = append(args, "error", boundedSanitizedError(err))
-	slog.Error(msg, args...)
-}
-
-func boundedSanitizedError(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	clean := domain.SanitizeErrorText(err.Error())
-	if len(clean) <= maxLoggedErrorBytes {
-		return clean
-	}
-
-	limit := maxLoggedErrorBytes
-	for limit > 0 && !utf8.ValidString(clean[:limit]) {
-		limit--
-	}
-
-	return clean[:limit] + "..."
 }

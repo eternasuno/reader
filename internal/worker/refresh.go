@@ -14,7 +14,6 @@ import (
 const (
 	defaultRefreshConcurrency = 5
 	defaultRefreshInterval    = 30 * time.Minute
-	maxLogErrorBytes          = 512
 )
 
 type RefreshConfig struct {
@@ -192,7 +191,7 @@ func (q *RefreshQueue) Start(ctx context.Context) {
 	}
 
 	if err := q.EnqueueAll(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Warn("initial feed refresh enqueue failed", "error", sanitizeLogError(err))
+		logFailure(slog.LevelWarn, "initial feed refresh enqueue failed", err)
 	}
 
 	q.wg.Add(1)
@@ -209,19 +208,11 @@ func (q *RefreshQueue) Wait() {
 }
 
 func (q *RefreshQueue) runScheduler(ctx context.Context) {
-	ticker := time.NewTicker(q.interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := q.EnqueueAll(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Warn("scheduled feed refresh enqueue failed", "error", sanitizeLogError(err))
-			}
+	tickLoop(ctx, q.interval, func(ctx context.Context) {
+		if err := q.EnqueueAll(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logFailure(slog.LevelWarn, "scheduled feed refresh enqueue failed", err)
 		}
-	}
+	})
 }
 
 func (q *RefreshQueue) work(ctx context.Context) {
@@ -232,7 +223,7 @@ func (q *RefreshQueue) work(ctx context.Context) {
 		}
 
 		if err := q.RefreshOne(ctx, feedID); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Warn("feed refresh failed", "feed_id", feedID, "error", sanitizeLogError(err))
+			logFailure(slog.LevelWarn, "feed refresh failed", err, "feed_id", feedID)
 		}
 
 		q.finish(feedID)
@@ -285,15 +276,6 @@ func (q *RefreshQueue) signal() {
 
 func (q *RefreshQueue) recordFailure(ctx context.Context, feedID string, err error) {
 	if recErr := q.feeds.RecordRefreshFailure(ctx, feedID, domain.SanitizeErrorText(err.Error())); recErr != nil && !errors.Is(recErr, context.Canceled) {
-		slog.Warn("record feed refresh failure failed", "feed_id", feedID, "error", sanitizeLogError(recErr))
+		logFailure(slog.LevelWarn, "record feed refresh failure failed", recErr, "feed_id", feedID)
 	}
-}
-
-func sanitizeLogError(err error) string {
-	sanitized := strings.NewReplacer("\r", " ", "\n", " ").Replace(domain.SanitizeErrorText(err.Error()))
-	if len(sanitized) <= maxLogErrorBytes {
-		return sanitized
-	}
-
-	return sanitized[:maxLogErrorBytes] + "..."
 }
