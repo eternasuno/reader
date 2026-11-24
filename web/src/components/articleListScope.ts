@@ -21,12 +21,14 @@ export interface EmptyCopy {
 /** The feed the current scope points at, when it points at a single feed. */
 export const activeFeed = (scope: LibraryScope): Feed | null => {
   if (scope.kind !== 'feed') return null;
+
   return feeds().find((feed) => feed.id === scope.feedId) ?? null;
 };
 
 /** `FD-SCHED-3`: only repeat offenders escalate to the heading warning. */
 export const failingFeed = (scope: LibraryScope): Feed | null => {
   const feed = activeFeed(scope);
+
   return feed !== null && hasRefreshFailures(feed) ? feed : null;
 };
 
@@ -37,7 +39,7 @@ export const scopeTitle = (scope: LibraryScope): string => {
     case 'all':
       return String(t('library.allFeedsScope'));
     case 'feed':
-      return feeds().find((feed) => feed.id === scope.feedId)?.title ?? '';
+      return activeFeed(scope)?.title ?? '';
     case 'folder':
       return (
         folders().find((folder) => folder.id === scope.folderId)?.name ?? ''

@@ -2,6 +2,7 @@ import type { JSX } from '@solidjs/web';
 import { Portal } from '@solidjs/web';
 import { createEffect, createUniqueId, Show } from 'solid-js';
 import { Icon } from './Icon';
+import { takeMenuTrigger } from './menu-focus';
 
 export interface DialogProps {
   open: boolean;
@@ -10,15 +11,11 @@ export interface DialogProps {
   footer?: JSX.Element;
   /** Extra classes for the dialog panel. */
   class?: string;
-  /** While busy, the dialog cannot be dismissed by Escape or a backdrop click. */
+  /** While busy, the dialog cannot be dismissed by Escape, close button, or a backdrop click. */
   busy?: boolean;
-  /** While disabled, the dialog cannot be dismissed by Escape or a backdrop click. */
-  disabled?: boolean;
   onClose?: () => void;
   /** Accessible label for the close button. */
-  closeLabel?: string;
-  /** Set to false to hide the header close button. */
-  showClose?: boolean;
+  closeLabel: string;
 }
 
 const FOCUSABLE_SELECTOR = [
@@ -40,38 +37,53 @@ const PANEL_CLASSES =
 const CLOSE_CLASSES =
   'ml-auto -mr-2 btn btn-ghost btn-sm btn-square focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
 
-const focusableIn = (panel: HTMLDivElement): Array<HTMLElement> =>
+const focusableIn = (panel: HTMLElement): Array<HTMLElement> =>
   Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
 
+const wrappedFocusTarget = (
+  shiftKey: boolean,
+  panel: HTMLElement,
+  focusable: ReadonlyArray<HTMLElement>
+): HTMLElement | undefined => {
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (!(active instanceof Node && panel.contains(active))) {
+    return shiftKey ? last : first;
+  }
+
+  if (shiftKey && (active === first || active === panel)) return last;
+  if (!shiftKey && active === last) return first;
+
+  return undefined;
+};
+
 /** `UI-FOCUS-2`: Tab and Shift+Tab wrap inside the dialog panel. */
-const trapTab = (event: KeyboardEvent, panel: HTMLDivElement): void => {
+const trapTab = (event: KeyboardEvent, panel: HTMLElement): void => {
   const focusable = focusableIn(panel);
   if (focusable.length === 0) {
     event.preventDefault();
     panel.focus();
+
     return;
   }
 
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  const active = document.activeElement;
-  const wrapBack = event.shiftKey && (active === first || active === panel);
-  const wrapForward = !event.shiftKey && active === last;
-  if (!wrapBack && !wrapForward) return;
+  const target = wrappedFocusTarget(event.shiftKey, panel, focusable);
+  if (target === undefined) return;
 
   event.preventDefault();
-  (wrapBack ? last : first)?.focus();
+  target.focus();
 };
 
-interface FocusOptions {
+export interface DialogFocusOptions {
   open: () => boolean;
-  panel: () => HTMLDivElement | undefined;
+  panel: () => HTMLElement | undefined;
   dismissable: () => boolean;
   onClose: () => void;
 }
 
 /** Focuses the first field (or the panel) on open, traps Tab, and restores focus on close. */
-const useDialogFocus = (options: FocusOptions): void => {
+export const useDialogFocus = (options: DialogFocusOptions): void => {
   createEffect(options.open, (open) => {
     if (!open) return;
 
@@ -80,13 +92,22 @@ const useDialogFocus = (options: FocusOptions): void => {
         ? document.activeElement
         : null;
 
+    const menuTrigger = takeMenuTrigger();
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && options.dismissable()) {
+      if (
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        options.dismissable()
+      ) {
         event.preventDefault();
         options.onClose();
+
         return;
       }
+
       if (event.key !== 'Tab') return;
+
       const panel = options.panel();
       if (panel) trapTab(event, panel);
     };
@@ -100,7 +121,18 @@ const useDialogFocus = (options: FocusOptions): void => {
 
     return () => {
       document.removeEventListener('keydown', onKeyDown);
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+      if (
+        previouslyFocused?.isConnected &&
+        previouslyFocused !== document.body
+      ) {
+        previouslyFocused.focus();
+      } else if (menuTrigger?.isConnected) {
+        menuTrigger.focus();
+      } else {
+        const mainLandmark = document.querySelector<HTMLElement>('main');
+        mainLandmark?.setAttribute('tabindex', '-1');
+        mainLandmark?.focus();
+      }
     };
   });
 };
@@ -108,39 +140,36 @@ const useDialogFocus = (options: FocusOptions): void => {
 interface DialogHeaderProps {
   title?: string;
   titleId: string;
-  closeLabel?: string;
-  showClose?: boolean;
+  closeLabel: string;
+  disabled?: boolean;
   onClose: () => void;
 }
 
 const DialogHeader = (props: DialogHeaderProps): JSX.Element => (
-  <Show when={props.title || props.showClose !== false}>
-    <div class="flex items-center justify-between gap-3 px-5 pt-5 pb-1">
-      <Show when={props.title}>
-        {(title) => (
-          <h2 id={props.titleId} class="text-lg font-semibold">
-            {title()}
-          </h2>
-        )}
-      </Show>
-      <Show when={props.showClose !== false}>
-        <button
-          type="button"
-          class={CLOSE_CLASSES}
-          aria-label={props.closeLabel ?? '关闭'}
-          onClick={() => props.onClose()}
-        >
-          <Icon name="close" size={18} />
-        </button>
-      </Show>
-    </div>
-  </Show>
+  <div class="flex items-center justify-between gap-3 px-5 pt-5 pb-1">
+    <Show when={props.title}>
+      {(title) => (
+        <h2 id={props.titleId} class="text-lg font-semibold">
+          {title()}
+        </h2>
+      )}
+    </Show>
+    <button
+      type="button"
+      class={CLOSE_CLASSES}
+      aria-label={props.closeLabel}
+      disabled={props.disabled}
+      onClick={() => props.onClose()}
+    >
+      <Icon name="close" size={18} />
+    </button>
+  </div>
 );
 
 export function Dialog(props: DialogProps): JSX.Element {
   let panel: HTMLDivElement | undefined;
   const titleId = createUniqueId();
-  const dismissable = () => !props.busy && !props.disabled;
+  const dismissable = () => !props.busy;
   const requestClose = () => {
     if (dismissable()) props.onClose?.();
   };
@@ -180,7 +209,7 @@ export function Dialog(props: DialogProps): JSX.Element {
               title={props.title}
               titleId={titleId}
               closeLabel={props.closeLabel}
-              showClose={props.showClose}
+              disabled={props.busy}
               onClose={requestClose}
             />
             <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">

@@ -94,19 +94,21 @@ export const formatRelativeTime = (
   if (Number.isNaN(timestamp)) return '';
 
   const elapsed = Date.now() - timestamp;
-  if (elapsed < 60_000) return dicts[currentLocale].common.justNow;
+  const absElapsed = Math.abs(elapsed);
+  if (absElapsed < 60_000) return dicts[currentLocale].common.justNow;
 
+  const sign = elapsed > 0 ? -1 : 1;
   const relative = new Intl.RelativeTimeFormat(currentLocale, {
     numeric: 'auto',
   });
-  const minutes = Math.floor(elapsed / 60_000);
-  if (minutes < 60) return relative.format(-minutes, 'minute');
+  const minutes = Math.floor(absElapsed / 60_000);
+  if (minutes < 60) return relative.format(sign * minutes, 'minute');
 
-  const hours = Math.floor(elapsed / 3_600_000);
-  if (hours < 24) return relative.format(-hours, 'hour');
+  const hours = Math.floor(absElapsed / 3_600_000);
+  if (hours < 24) return relative.format(sign * hours, 'hour');
 
-  const days = Math.floor(elapsed / 86_400_000);
-  if (days <= 30) return relative.format(-days, 'day');
+  const days = Math.floor(absElapsed / 86_400_000);
+  if (days <= 30) return relative.format(sign * days, 'day');
 
   return new Intl.DateTimeFormat(currentLocale, {
     year: 'numeric',

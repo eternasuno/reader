@@ -1,6 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import { Show } from 'solid-js';
-import type { Feed, Folder } from '../api';
+import type { Feed } from '../api';
 import {
   buildLibraryUrl,
   type LibraryScope,
@@ -28,9 +28,8 @@ export interface ArticleListPaneProps {
   onNavigate: (url: string) => void;
   onRequestAddLink: () => void;
   onRequestAddFeed: () => void;
-  onRequestRenameFolder: (folder: Folder) => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
-  onRequestNewFolder: () => void;
+  onRequestNewFolder: (feed: Feed) => void;
   onRequestFeedOptions?: (feed: Feed) => void;
 }
 
@@ -77,8 +76,7 @@ export function ArticleListPane(props: ArticleListPaneProps): JSX.Element {
   const removeFeed = (feed: Feed): void => {
     void deleteFeed(
       {
-        scope: props.scope,
-        unreadOnly: props.unreadOnly,
+        unreadOnly: () => props.unreadOnly,
         onNavigate: props.onNavigate,
       },
       feed

@@ -1,5 +1,5 @@
 import type { JSX } from '@solidjs/web';
-import { For, Show } from 'solid-js';
+import { createEffect, For, onSettled, Show } from 'solid-js';
 import type { FeedPreview, Folder } from '../api';
 import { t } from '../i18n';
 import { Select } from '../ui';
@@ -23,10 +23,26 @@ export interface SubscribePreviewFormProps {
 export function SubscribePreviewForm(
   props: SubscribePreviewFormProps
 ): JSX.Element {
+  let selectEl: HTMLSelectElement | undefined;
+
+  onSettled(() => {
+    queueMicrotask(() => selectEl?.focus());
+  });
+
+  createEffect(
+    () => ({ error: props.error, busy: props.busy }),
+    ({ error, busy }) => {
+      if (error && !busy) queueMicrotask(() => selectEl?.focus());
+    }
+  );
+
   return (
     <form class="flex flex-col gap-4" onSubmit={props.onSubmit}>
       <PreviewSummary preview={props.preview} />
       <Select
+        ref={(el) => {
+          selectEl = el;
+        }}
         label={String(t('feeds.folderLabel'))}
         value={props.folderId}
         disabled={props.busy}

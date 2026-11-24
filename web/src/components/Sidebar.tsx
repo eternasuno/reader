@@ -8,8 +8,8 @@ import type { SidebarProps } from './sidebarProps';
 export type { SidebarProps } from './sidebarProps';
 
 /**
- * Sidebar scopes (`LIB-SCOPE-1`, `LIB-COUNT-1`), brand menu (`auth.md:16`), and the
- * feeds tree (`folders.md:16-17`).
+ * Sidebar scopes (`LIB-SCOPE-1`, `LIB-COUNT-1`), brand menu (`AC-AUTH-3`, `CM-I18N-1`), and the
+ * feeds tree (`FD-FOLDER-5`, `FD-OPML-1`, `FD-OPML-2`).
  */
 export function Sidebar(props: SidebarProps): JSX.Element {
   return (

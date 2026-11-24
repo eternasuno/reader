@@ -20,11 +20,12 @@ export interface ReaderMoreMenuProps {
   article: LibraryArticle;
   nav: ReaderNav;
   onDelete: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 const articleFeed = (article: LibraryArticle): Feed | null => {
   if (article.kind !== 'feed') return null;
+
   return feeds().find((f) => f.id === article.feedId) ?? null;
 };
 
@@ -32,7 +33,7 @@ const MoreMainPanel = (props: {
   article: LibraryArticle;
   onDelete: () => void;
   onOpenView: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onRequestFeedOptions: (feed: Feed) => void;
 }): JSX.Element => (
   <>
     <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
@@ -68,7 +69,7 @@ const MoreMainPanel = (props: {
       {(feed) => (
         <>
           <MenuDivider />
-          <MenuItem onSelect={() => props.onRequestFeedOptions?.(feed())}>
+          <MenuItem onSelect={() => props.onRequestFeedOptions(feed())}>
             {String(t('feeds.feedOptions'))}
           </MenuItem>
         </>

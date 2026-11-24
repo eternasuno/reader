@@ -70,6 +70,7 @@ export const articleSource = (article: LibraryArticle): ArticleSource => {
     return { title: hostnameOf(article.url), url: article.url };
 
   const feed = sidebar.feeds().find((entry) => entry.id === article.feedId);
+
   return { title: feed?.title ?? '', url: feed?.url ?? article.url };
 };
 
@@ -130,6 +131,7 @@ const effectiveOrderOf = (
   order: SortOrder | undefined
 ): SortOrder => {
   if (scope.kind !== 'feed') return store.aggregateOrder();
+
   return order ?? storedFeedOrder(scope.feedId) ?? 'newest';
 };
 
@@ -184,6 +186,7 @@ export const loadScopeFirstPage = async (
     store.setCursor(page.cursor);
   } catch (error) {
     if (requestGeneration !== store.requestState.generation) return;
+
     store.setLoadError(errorCodeOf(error));
   } finally {
     finishInitialLoad(requestGeneration);
@@ -199,6 +202,7 @@ export const reloadAfterFirstRefresh = async (
   signal: AbortSignal
 ): Promise<void> => {
   if (!(await waitForFirstRefresh(feedId, signal))) return;
+
   if (signal.aborted || !isShowingEmptyFeed(feedId)) return;
 
   await sidebar.invalidateSidebar();
@@ -263,6 +267,7 @@ export const loadNextPage = async (): Promise<void> => {
     store.setCursor(page.cursor);
   } catch (error) {
     if (requestGeneration !== store.requestState.generation) return;
+
     store.setLoadError(errorCodeOf(error));
   } finally {
     finishNextPage(requestGeneration);
@@ -272,6 +277,7 @@ export const loadNextPage = async (): Promise<void> => {
 export const retryLoad = async (): Promise<void> => {
   if (store.rows().length === 0) {
     await loadScopeFirstPage(store.activeScope(), store.activeUnreadOnly());
+
     return;
   }
 
@@ -300,16 +306,18 @@ export const insertSavedPageLocal = (page: SavedPage): void => {
   }
 
   if (!page.read) sidebar.adjustSavedUnread(1);
+
   flush();
 };
 
-/** `later.md:18`: drops a deleted saved page from the loaded `/later` rows and its unread count. */
+/** `SP-REMOVE-1`: drops a deleted saved page from the loaded `/later` rows and its unread count. */
 export const removeSavedPageLocal = (pageId: string): void => {
   const target = store.articleById(pageId);
   if (target === null || !store.hasRow(pageId)) return;
 
   store.removeRow(pageId);
   if (!target.read) sidebar.adjustSavedUnread(-1);
+
   flush();
 };
 
@@ -335,6 +343,7 @@ export const changeFeedOrder = async (
     if (feedOrderTokens.isCurrent(feed.id, token)) {
       showToast(errorText(error), 'error');
     }
+
     return;
   } finally {
     feedOrderTokens.release(feed.id, token);

@@ -1,226 +1,159 @@
-import { item, pageParams, request } from './request';
+import { FETCH_TIMEOUT_MS } from './deadline';
+import {
+  decodeCount,
+  decodeItems,
+  decodePage,
+  decodeWith,
+  isFeedItem,
+  isFolder,
+  isNullable,
+  isSavedPage,
+  isSession,
+} from './decoders';
+import { item, pageParams, request, requestNoContent } from './request';
 import type {
-  ExtractorProvider,
-  Feed,
-  FeedCreateInput,
   FeedItem,
-  FeedPreview,
-  FeedUnreadCount,
   Folder,
-  KindleSendRecord,
-  KindleSends,
-  KindleSettings,
   ListParams,
-  OPMLImportResult,
   Page,
+  RequestCallOptions,
   SavedPage,
   Session,
-  Settings,
-  SmtpSettingsInput,
-  SortOrder,
 } from './types';
 
 export { onUnauthorized } from './request';
 
 export const authApi = {
-  getSession: (): Promise<Session> => request<Session>('/api/auth/session'),
-  login: (password: string): Promise<void> =>
-    request<void>('/api/auth/login', {
+  getSession: (options?: RequestCallOptions): Promise<Session> =>
+    request('/api/auth/session', decodeWith(isSession), options),
+  login: (password: string, options?: RequestCallOptions): Promise<void> =>
+    requestNoContent('/api/auth/login', {
+      ...options,
       method: 'POST',
       body: { password },
       login: true,
     }),
-  logout: (): Promise<void> =>
-    request<void>('/api/auth/logout', { method: 'POST' }),
+  logout: (options?: RequestCallOptions): Promise<void> =>
+    requestNoContent('/api/auth/logout', { ...options, method: 'POST' }),
 };
 
 export const savedPagesApi = {
-  list: (params: ListParams = {}): Promise<Page<SavedPage>> =>
-    request<Page<SavedPage>>('/api/saved-pages', {
+  list: (
+    params: ListParams = {},
+    options?: RequestCallOptions
+  ): Promise<Page<SavedPage>> =>
+    request('/api/saved-pages', decodePage(isSavedPage), {
+      ...options,
       params: pageParams(params),
     }),
-  unreadCount: (): Promise<number> =>
-    request<{ count: number }>('/api/saved-pages/unread-count').then(
-      (response) => response.count
-    ),
-  getById: (id: string): Promise<SavedPage | null> =>
-    item<SavedPage | null>(`/api/saved-pages/${encodeURIComponent(id)}`),
-  create: (url: string): Promise<SavedPage> =>
-    item<SavedPage>('/api/saved-pages', { method: 'POST', body: { url } }),
-  saveFeedItem: (id: string): Promise<SavedPage> =>
-    item<SavedPage>(`/api/feed-items/${encodeURIComponent(id)}/save`, {
-      method: 'POST',
-    }),
-  setRead: (id: string, read: boolean): Promise<void> =>
-    request<void>(`/api/saved-pages/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: { read },
-    }),
-  markIdsRead: (ids: ReadonlyArray<string>): Promise<void> =>
-    request<void>('/api/saved-pages/read', { method: 'POST', body: { ids } }),
-  markAllRead: (): Promise<void> =>
-    request<void>('/api/saved-pages/read-all', { method: 'POST' }),
-  remove: (id: string): Promise<void> =>
-    request<void>(`/api/saved-pages/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }),
-};
+  unreadCount: async (options?: RequestCallOptions): Promise<number> => {
+    const count = await request(
+      '/api/saved-pages/unread-count',
+      decodeCount,
+      options
+    );
 
-export const feedsApi = {
-  exportOpmlUrl: '/api/opml',
-  list: (): Promise<Array<Feed>> =>
-    request<{ items: Array<Feed> }>('/api/feeds').then(
-      (response) => response.items
+    return count;
+  },
+  getById: (
+    id: string,
+    options?: RequestCallOptions
+  ): Promise<SavedPage | null> =>
+    item(
+      `/api/saved-pages/${encodeURIComponent(id)}`,
+      isNullable(isSavedPage),
+      options
     ),
-  preview: (url: string): Promise<FeedPreview> =>
-    request<{ preview: FeedPreview }>('/api/feeds/preview', {
+  create: (url: string, options?: RequestCallOptions): Promise<SavedPage> =>
+    item('/api/saved-pages', isSavedPage, {
+      timeoutMs: FETCH_TIMEOUT_MS,
+      ...options,
       method: 'POST',
       body: { url },
-    }).then((response) => response.preview),
-  create: (input: FeedCreateInput): Promise<Feed> =>
-    item<Feed>('/api/feeds', { method: 'POST', body: input }),
-  remove: (id: string): Promise<void> =>
-    request<void>(`/api/feeds/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  refresh: (id: string): Promise<void> =>
-    request<void>(`/api/feeds/${encodeURIComponent(id)}/refresh`, {
+    }),
+  saveFeedItem: (
+    id: string,
+    options?: RequestCallOptions
+  ): Promise<SavedPage> =>
+    item(`/api/feed-items/${encodeURIComponent(id)}/save`, isSavedPage, {
+      timeoutMs: FETCH_TIMEOUT_MS,
+      ...options,
       method: 'POST',
     }),
-  setReaderMode: (id: string, readerMode: Feed['readerMode']): Promise<void> =>
-    request<void>(`/api/feeds/${encodeURIComponent(id)}/reader-mode`, {
-      method: 'PUT',
-      body: { readerMode },
-    }),
-  setOrder: (id: string, order: SortOrder): Promise<void> =>
-    request<void>(`/api/feeds/${encodeURIComponent(id)}/order`, {
-      method: 'PUT',
-      body: { order },
-    }),
-  moveToFolder: (id: string, folderId: string | null): Promise<void> =>
-    request<void>(`/api/feeds/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: { folderId },
-    }),
-  unreadCounts: (): Promise<Array<FeedUnreadCount>> =>
-    request<{ items: Array<FeedUnreadCount> }>('/api/feeds/unread-counts').then(
-      (response) => response.items
-    ),
-  markAllRead: (id: string): Promise<void> =>
-    request<void>(`/api/feeds/${encodeURIComponent(id)}/read-all`, {
-      method: 'POST',
-    }),
-  listItems: (id: string, params: ListParams = {}): Promise<Page<FeedItem>> =>
-    request<Page<FeedItem>>(`/api/feeds/${encodeURIComponent(id)}/items`, {
-      params: pageParams(params),
-    }),
-  importOpml: (fileOrXml: File | string): Promise<OPMLImportResult> => {
-    if (typeof fileOrXml === 'string') {
-      return request<OPMLImportResult>('/api/opml', {
-        method: 'POST',
-        rawBody: fileOrXml,
-        headers: { 'Content-Type': 'application/xml' },
-      });
-    }
-
-    const form = new FormData();
-    form.append('file', fileOrXml);
-
-    return request<OPMLImportResult>('/api/opml', {
-      method: 'POST',
-      rawBody: form,
-    });
-  },
-};
-
-export const feedItemsApi = {
-  listAll: (params: ListParams = {}): Promise<Page<FeedItem>> =>
-    request<Page<FeedItem>>('/api/feed-items', { params: pageParams(params) }),
-  getById: (id: string): Promise<FeedItem | null> =>
-    item<FeedItem | null>(`/api/feed-items/${encodeURIComponent(id)}`),
-  setRead: (id: string, read: boolean): Promise<void> =>
-    request<void>(`/api/feed-items/${encodeURIComponent(id)}`, {
+  setRead: (
+    id: string,
+    read: boolean,
+    options?: RequestCallOptions
+  ): Promise<void> =>
+    requestNoContent(`/api/saved-pages/${encodeURIComponent(id)}`, {
+      ...options,
       method: 'PATCH',
       body: { read },
     }),
-  markIdsRead: (ids: ReadonlyArray<string>): Promise<void> =>
-    request<void>('/api/feed-items/read', { method: 'POST', body: { ids } }),
-  markAllRead: (): Promise<void> =>
-    request<void>('/api/feed-items/read-all', { method: 'POST' }),
-  extract: (id: string): Promise<FeedItem> =>
-    item<FeedItem>(`/api/feed-items/${encodeURIComponent(id)}/extract`, {
+  markIdsRead: (
+    ids: ReadonlyArray<string>,
+    options?: RequestCallOptions
+  ): Promise<void> =>
+    requestNoContent('/api/saved-pages/read', {
+      ...options,
       method: 'POST',
+      body: { ids },
+    }),
+  markAllRead: (options?: RequestCallOptions): Promise<void> =>
+    requestNoContent('/api/saved-pages/read-all', {
+      ...options,
+      method: 'POST',
+    }),
+  remove: (id: string, options?: RequestCallOptions): Promise<void> =>
+    requestNoContent(`/api/saved-pages/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'DELETE',
     }),
 };
 
 export const foldersApi = {
-  list: (): Promise<Array<Folder>> =>
-    request<{ items: Array<Folder> }>('/api/folders').then(
-      (response) => response.items
-    ),
-  create: (name: string): Promise<Folder> =>
-    item<Folder>('/api/folders', { method: 'POST', body: { name } }),
-  rename: (id: string, name: string): Promise<void> =>
-    request<void>(`/api/folders/${encodeURIComponent(id)}`, {
+  list: async (options?: RequestCallOptions): Promise<Array<Folder>> => {
+    const items = await request('/api/folders', decodeItems(isFolder), options);
+
+    return items;
+  },
+  create: (name: string, options?: RequestCallOptions): Promise<Folder> =>
+    item('/api/folders', isFolder, {
+      ...options,
+      method: 'POST',
+      body: { name },
+    }),
+  rename: (
+    id: string,
+    name: string,
+    options?: RequestCallOptions
+  ): Promise<void> =>
+    requestNoContent(`/api/folders/${encodeURIComponent(id)}`, {
+      ...options,
       method: 'PATCH',
       body: { name },
     }),
-  remove: (id: string): Promise<void> =>
-    request<void>(`/api/folders/${encodeURIComponent(id)}`, {
+  remove: (id: string, options?: RequestCallOptions): Promise<void> =>
+    requestNoContent(`/api/folders/${encodeURIComponent(id)}`, {
+      ...options,
       method: 'DELETE',
     }),
-  markAllRead: (id: string): Promise<void> =>
-    request<void>(`/api/folders/${encodeURIComponent(id)}/read-all`, {
+  markAllRead: (id: string, options?: RequestCallOptions): Promise<void> =>
+    requestNoContent(`/api/folders/${encodeURIComponent(id)}/read-all`, {
+      ...options,
       method: 'POST',
     }),
-  listItems: (id: string, params: ListParams = {}): Promise<Page<FeedItem>> =>
-    request<Page<FeedItem>>(`/api/folders/${encodeURIComponent(id)}/items`, {
-      params: pageParams(params),
-    }),
-};
-
-export const settingsApi = {
-  get: (): Promise<Settings> => request<Settings>('/api/settings'),
-  updateRetention: (retention: number): Promise<void> =>
-    request<void>('/api/settings/retention', {
-      method: 'PUT',
-      body: { retention },
-    }),
-  updateProvider: (provider: ExtractorProvider): Promise<void> =>
-    request<void>('/api/settings/provider', {
-      method: 'PUT',
-      body: { provider },
-    }),
-  saveJinaKey: (key: string): Promise<void> =>
-    request<void>('/api/settings/services/jina', {
-      method: 'PUT',
-      body: { key },
-    }),
-  deleteJinaKey: (): Promise<void> =>
-    request<void>('/api/settings/services/jina', { method: 'DELETE' }),
-  saveBrowserEndpoint: (endpoint: string): Promise<void> =>
-    request<void>('/api/settings/services/browser', {
-      method: 'PUT',
-      body: { endpoint },
-    }),
-  deleteBrowserEndpoint: (): Promise<void> =>
-    request<void>('/api/settings/services/browser', { method: 'DELETE' }),
-  saveSmtp: (input: SmtpSettingsInput): Promise<void> =>
-    request<void>('/api/settings/services/smtp', {
-      method: 'PUT',
-      body: input,
-    }),
-  deleteSmtp: (): Promise<void> =>
-    request<void>('/api/settings/services/smtp', { method: 'DELETE' }),
-  deleteSmtpPassword: (): Promise<void> =>
-    request<void>('/api/settings/services/smtp/password', {
-      method: 'DELETE',
-    }),
-  updateKindle: (input: KindleSettings): Promise<void> =>
-    request<void>('/api/settings/kindle', { method: 'PUT', body: input }),
-};
-
-export const kindleApi = {
-  sendNow: (): Promise<KindleSendRecord> =>
-    item<KindleSendRecord>('/api/kindle/send', { method: 'POST' }),
-  listSends: (): Promise<KindleSends> =>
-    request<KindleSends>('/api/kindle/sends'),
+  listItems: (
+    id: string,
+    params: ListParams = {},
+    options?: RequestCallOptions
+  ): Promise<Page<FeedItem>> =>
+    request(
+      `/api/folders/${encodeURIComponent(id)}/items`,
+      decodePage(isFeedItem),
+      {
+        ...options,
+        params: pageParams(params),
+      }
+    ),
 };

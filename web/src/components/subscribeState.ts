@@ -2,10 +2,7 @@ import { type Accessor, createSignal, type Setter } from 'solid-js';
 import type { FeedPreview } from '../api';
 import { createOpenReset } from './createOpenReset';
 
-export type Step = 'url' | 'preview';
-
 export interface SubscribeState {
-  step: Accessor<Step>;
   url: Accessor<string>;
   preview: Accessor<FeedPreview | null>;
   folderId: Accessor<string>;
@@ -13,7 +10,6 @@ export interface SubscribeState {
   submitting: Accessor<boolean>;
   error: Accessor<string | undefined>;
   busy: Accessor<boolean>;
-  setStep: Setter<Step>;
   setUrl: Setter<string>;
   setPreview: Setter<FeedPreview | null>;
   setFolderId: Setter<string>;
@@ -30,7 +26,6 @@ export interface SubscribeStateProps {
 export const createSubscribeState = (
   props: SubscribeStateProps
 ): SubscribeState => {
-  const [step, setStep] = createSignal<Step>('url');
   const [url, setUrl] = createSignal('');
   const [preview, setPreview] = createSignal<FeedPreview | null>(null);
   const [folderId, setFolderId] = createSignal('');
@@ -42,7 +37,6 @@ export const createSubscribeState = (
   createOpenReset(
     () => props.open,
     () => {
-      setStep('url');
       setUrl('');
       setPreview(null);
       setFolderId('');
@@ -53,7 +47,6 @@ export const createSubscribeState = (
   );
 
   return {
-    step,
     url,
     preview,
     folderId,
@@ -61,7 +54,6 @@ export const createSubscribeState = (
     submitting,
     error,
     busy,
-    setStep,
     setUrl,
     setPreview,
     setFolderId,

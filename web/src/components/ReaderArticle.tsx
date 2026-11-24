@@ -9,7 +9,6 @@ import {
   type LibraryArticle,
 } from '../state';
 import { ArticleFrame } from './ArticleFrame';
-import { EmbeddedWebpageFrame } from './EmbeddedWebpageFrame';
 import { bodyHtml } from './readerBody';
 import { SiteIcon } from './SiteIcon';
 
@@ -60,27 +59,13 @@ export function ReaderArticleHeader(props: {
   );
 }
 
-/** `RD-WEBPAGE-1`: embedded, extracting, extracted, or plain stored body. */
-export function ReaderArticleBody(props: {
+/** `RD-EXTRACT-1`: extracting indicator or stored/extracted article body. */
+export function ReaderStoredBody(props: {
   article: LibraryArticle;
 }): JSX.Element {
   return (
     <Show
-      when={displayMode() === 'embedded'}
-      fallback={<ReaderStoredBody article={props.article} />}
-    >
-      <EmbeddedWebpageFrame
-        url={props.article.url}
-        title={props.article.title}
-      />
-    </Show>
-  );
-}
-
-function ReaderStoredBody(props: { article: LibraryArticle }): JSX.Element {
-  return (
-    <Show
-      when={extracting()}
+      when={displayMode() === 'extracted' && extracting()}
       fallback={<ReaderContent article={props.article} />}
     >
       <p

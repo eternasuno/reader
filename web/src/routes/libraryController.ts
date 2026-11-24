@@ -24,6 +24,7 @@ import { useLibraryShortcuts } from './useLibraryShortcuts';
 export interface FolderDialogState {
   mode: 'create' | 'rename';
   folder: Folder | null;
+  moveFeed?: Feed;
 }
 
 /**
@@ -48,7 +49,7 @@ export interface LibraryController {
   onNavigate: (url: string) => void;
   requestAddLink: () => void;
   requestAddFeed: () => void;
-  requestNewFolder: () => void;
+  requestNewFolder: (feed?: Feed) => void;
   requestRenameFolder: (folder: Folder) => void;
   requestFeedOptions: (feed: Feed) => void;
   requestImportOpml: () => void;
@@ -63,6 +64,7 @@ export interface LibraryController {
   openFeed: (feed: Feed) => void;
   openSubscribedFeed: (feed: Feed) => void;
   handleMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
+  handleFolderSaved: (folder?: Folder, moveFeed?: Feed) => void;
   navToggle: (element: HTMLButtonElement) => void;
   opmlInput: (element: HTMLInputElement) => void;
   handleOpmlChange: (event: Event) => void;
@@ -153,8 +155,12 @@ const useDialogs = () => {
   const [optionsFeed, setOptionsFeed] = createSignal<Feed | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
 
-  const folder = (mode: 'create' | 'rename', target: Folder | null): void => {
-    setFolderDialog({ mode, folder: target });
+  const folder = (
+    mode: 'create' | 'rename',
+    target: Folder | null,
+    moveFeed?: Feed
+  ): void => {
+    setFolderDialog({ mode, folder: target, moveFeed });
   };
 
   return {
@@ -165,7 +171,7 @@ const useDialogs = () => {
     shortcutsOpen,
     requestAddLink: () => setAddLinkOpen(true),
     requestAddFeed: () => setAddFeedOpen(true),
-    requestNewFolder: () => folder('create', null),
+    requestNewFolder: (feed?: Feed) => folder('create', null, feed),
     requestRenameFolder: (target: Folder) => folder('rename', target),
     requestFeedOptions: (feed: Feed) => setOptionsFeed(feed),
     closeAddLink: () => setAddLinkOpen(false),
@@ -193,6 +199,7 @@ const useLibraryEffects = (routeState: () => RouteState | null): void => {
 
       const key = `${scopeKey(state.scope)}|${state.unreadOnly}`;
       if (key === loadedKey) return;
+
       loadedKey = key;
 
       queueMicrotask(() => {
@@ -209,6 +216,7 @@ const useLibraryEffects = (routeState: () => RouteState | null): void => {
 
       const key = `${scopeKey(state.scope)}|${state.articleId ?? ''}`;
       if (key === openedKey) return;
+
       openedKey = key;
 
       queueMicrotask(() => {
@@ -319,6 +327,11 @@ export const createLibraryController = (): LibraryController => {
     onNavigate,
   });
 
+  const handleFolderSaved = (folder?: Folder, moveFeed?: Feed): void => {
+    void invalidateSidebar();
+    if (folder && moveFeed) void articles.handleMoveFeed(moveFeed, folder.id);
+  };
+
   return {
     ...route,
     ...drawer,
@@ -329,6 +342,7 @@ export const createLibraryController = (): LibraryController => {
     requestImportOpml: opml.openPicker,
     opmlInput: opml.inputRef,
     handleOpmlChange: opml.onChange,
+    handleFolderSaved,
     refreshSidebar: () => void invalidateSidebar(),
   };
 };

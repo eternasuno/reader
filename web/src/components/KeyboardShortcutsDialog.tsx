@@ -14,14 +14,14 @@ const SHORTCUTS = [
   { key: 'm', label: 'library.shortcutToggleRead' },
   { key: 's', label: 'library.shortcutSaveToLater' },
   { key: 'f', label: 'library.shortcutExtract' },
-  { key: 'v', label: 'library.shortcutOpenOriginal' },
+  { key: 'v / o', label: 'library.shortcutOpenOriginal' },
   { key: 'u', label: 'library.shortcutUnreadOnly' },
   { key: '[', label: 'library.shortcutToggleSidebar' },
   { key: 'Esc', label: 'library.shortcutCloseArticle' },
   { key: '?', label: 'library.shortcutHelp' },
 ] as const;
 
-/** Keyboard shortcuts reference dialog opened with `?` or from the brand menu. */
+/** `LIB-KEY-1`: keyboard shortcuts reference dialog opened with `?`. */
 export function KeyboardShortcutsDialog(
   props: KeyboardShortcutsDialogProps
 ): JSX.Element {

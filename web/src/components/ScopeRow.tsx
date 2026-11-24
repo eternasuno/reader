@@ -1,6 +1,20 @@
 import type { JSX } from '@solidjs/web';
+import type { Feed } from '../api';
 import { t } from '../i18n';
-import { Icon, type IconName, Menu } from '../ui';
+import {
+  type LibraryScope,
+  markScopeAllRead,
+  triggerKindleSend,
+} from '../state';
+import {
+  Icon,
+  type IconName,
+  Menu,
+  MenuCheckbox,
+  MenuDivider,
+  MenuItem,
+} from '../ui';
+import { ListOrderCheckbox } from './ListOrderCheckbox';
 import { SidebarRowEnd } from './SidebarRowEnd';
 import {
   ROW_BUTTON_CLASSES,
@@ -41,5 +55,34 @@ export function ScopeRow(props: ScopeRowProps): JSX.Element {
         </Menu>
       </SidebarRowEnd>
     </div>
+  );
+}
+
+export interface ScopeMenuItemsProps {
+  scope: LibraryScope;
+  feed?: Feed | null;
+  unreadOnly: boolean;
+  onToggleUnread: () => void;
+}
+
+/** Shared mark-all-read, Kindle send, unread filter, and sort order menu items. */
+export function ScopeMenuItems(props: ScopeMenuItemsProps): JSX.Element {
+  return (
+    <>
+      <MenuItem
+        icon="check-double"
+        onSelect={() => void markScopeAllRead(props.scope)}
+      >
+        {String(t('library.markAllRead'))}
+      </MenuItem>
+      <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
+        {String(t('reader.sendAsEbook'))}
+      </MenuItem>
+      <MenuDivider />
+      <MenuCheckbox checked={props.unreadOnly} onSelect={props.onToggleUnread}>
+        {String(t('library.unreadOnly'))}
+      </MenuCheckbox>
+      <ListOrderCheckbox feed={props.feed ?? null} />
+    </>
   );
 }

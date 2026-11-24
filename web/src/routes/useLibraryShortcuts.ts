@@ -1,6 +1,7 @@
-import { type Accessor, createSignal, onSettled, type Setter } from 'solid-js';
+import { type Accessor, onSettled } from 'solid-js';
 import { openInNewTab } from '../components/openInNewTab';
 import { saveOpenArticle, toggleRead } from '../components/readerActions';
+import type { LibraryShortcutKey } from '../components/readerShortcutKeys';
 import {
   adjacentArticleIds,
   buildLibraryUrl,
@@ -30,7 +31,9 @@ const isIgnoredEvent = (event: KeyboardEvent): boolean =>
 const isEditableTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
+
   const tag = target.tagName;
+
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 };
 
@@ -58,10 +61,8 @@ const openCurrentOriginal = (): void => {
 };
 
 const createKeyHandlers = (
-  options: LibraryShortcutsOptions,
-  saving: Accessor<boolean>,
-  setSaving: Setter<boolean>
-): Record<string, () => void> => ({
+  options: LibraryShortcutsOptions
+): Record<LibraryShortcutKey, () => void> => ({
   '?': () => options.toggleShortcuts(),
   j: () => navigateAdjacent(options, 'nextId'),
   k: () => navigateAdjacent(options, 'prevId'),
@@ -71,9 +72,7 @@ const createKeyHandlers = (
   },
   s: () => {
     const current = openArticle();
-    if (current?.kind === 'feed') {
-      void saveOpenArticle(current, saving, setSaving);
-    }
+    if (current?.kind === 'feed') void saveOpenArticle(current);
   },
   f: () => {
     if (openArticle()?.kind === 'feed') void toggleExtractedMode();
@@ -99,6 +98,7 @@ const handleOverlayKey = (
     event.preventDefault();
     options.toggleShortcuts();
   }
+
   return true;
 };
 
@@ -107,6 +107,7 @@ const handleEscapeKey = (
   options: LibraryShortcutsOptions
 ): void => {
   if (options.articleId() === null || options.drawerOpen()) return;
+
   event.preventDefault();
   options.onNavigate(
     buildLibraryUrl(options.scope(), { unreadOnly: options.unreadOnly() })
@@ -116,17 +117,18 @@ const handleEscapeKey = (
 const handleKeyDown = (
   event: KeyboardEvent,
   options: LibraryShortcutsOptions,
-  handlers: Record<string, () => void>
+  handlers: Record<LibraryShortcutKey, () => void>
 ): void => {
   if (isIgnoredEvent(event) || isEditableTarget(event.target)) return;
   if (handleOverlayKey(event, options)) return;
   if (event.key === 'Escape') {
     handleEscapeKey(event, options);
+
     return;
   }
 
   const handler = Object.hasOwn(handlers, event.key)
-    ? handlers[event.key]
+    ? handlers[event.key as LibraryShortcutKey]
     : undefined;
   if (handler === undefined) return;
 
@@ -136,14 +138,15 @@ const handleKeyDown = (
 
 /** Global library & reader keyboard shortcuts (`?`, `j`/`k`, `m`, `s`, `f`, `v`/`o`, `u`, `[`, `Esc`). */
 export const useLibraryShortcuts = (options: LibraryShortcutsOptions): void => {
-  const [saving, setSaving] = createSignal(false);
-  const handlers = createKeyHandlers(options, saving, setSaving);
+  const handlers = createKeyHandlers(options);
 
   onSettled(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       handleKeyDown(event, options, handlers);
     };
+
     window.addEventListener('keydown', onKeyDown);
+
     return () => window.removeEventListener('keydown', onKeyDown);
   });
 };

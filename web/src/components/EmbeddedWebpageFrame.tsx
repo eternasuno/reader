@@ -7,20 +7,7 @@ export interface EmbeddedWebpageFrameProps {
   title?: string;
 }
 
-const defaultAppOrigin = (): string | undefined => {
-  if (typeof window === 'undefined') return undefined;
-
-  return window.location?.origin;
-};
-
-/**
- * `RD-WEBPAGE-1`: only absolute `http`/`https` URLs without credentials that
- * are not same-origin with the app may be embedded. The iframe keeps
- * `allow-same-origin`, so a same-origin URL would expose the app origin.
- */
 export const isSafeEmbedUrl = (rawUrl: string, appOrigin?: string): boolean => {
-  if (typeof rawUrl !== 'string') return false;
-
   const trimmed = rawUrl.trim();
   if (trimmed.length === 0) return false;
 
@@ -34,15 +21,17 @@ export const isSafeEmbedUrl = (rawUrl: string, appOrigin?: string): boolean => {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   if (parsed.username !== '' || parsed.password !== '') return false;
 
-  const origin = appOrigin ?? defaultAppOrigin();
-  if (!origin) return true;
+  const origin = appOrigin ?? window.location.origin;
+  if (!origin) return false;
 
   let normalizedOrigin: string;
   try {
     normalizedOrigin = new URL(origin).origin;
   } catch {
-    return true;
+    return false;
   }
+
+  if (normalizedOrigin === 'null') return false;
 
   return parsed.origin !== normalizedOrigin;
 };

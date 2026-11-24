@@ -19,6 +19,7 @@ export function ListOrderCheckbox(props: { feed: Feed | null }): JSX.Element {
     const feed = props.feed;
     if (feed) {
       void changeFeedOrder(feed, feed.order === 'oldest' ? 'newest' : 'oldest');
+
       return;
     }
 

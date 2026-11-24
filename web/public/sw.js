@@ -39,7 +39,11 @@ const cacheFirst = async (request) => {
     redirect: 'error',
   });
   if (isCacheableBasic(response)) {
-    await cache.put(request, response.clone());
+    try {
+      await cache.put(request, response.clone());
+    } catch {
+      // Runtime cache writes are best-effort; still serve the fetched response on quota failure.
+    }
   }
   return response;
 };

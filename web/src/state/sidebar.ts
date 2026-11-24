@@ -9,7 +9,7 @@ import { feedsApi, foldersApi, savedPagesApi } from '../api';
 import { onSessionCleared } from './session';
 import { getItem, setItem } from './storage';
 
-/** `folders.md:16`: folder collapse state persists in `localStorage`. */
+/** `FD-FOLDER-2`: folder collapse state persists in `localStorage`. */
 export const COLLAPSED_FOLDERS_STORAGE_KEY = 'reader.collapsedFolders';
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'reader.sidebarCollapsed';
 
@@ -184,6 +184,7 @@ const runRefreshRound = async (owner: ActiveRefresh): Promise<void> => {
     ]);
 
     if (activeRefresh !== owner) return;
+
     applySidebarSnapshot(results, current.startEpochs);
     if (!current.rerunNeeded) return;
   }
@@ -194,6 +195,7 @@ const startOrJoinRefresh = (invalidate: boolean): Promise<void> => {
     if (invalidate || hasEpochChanged(activeRefresh.startEpochs)) {
       activeRefresh.rerunNeeded = true;
     }
+
     return activeRefresh.promise;
   }
 
@@ -206,6 +208,7 @@ const startOrJoinRefresh = (invalidate: boolean): Promise<void> => {
   state.promise = runRefreshRound(state).finally(() => {
     if (activeRefresh === state) activeRefresh = null;
   });
+
   return state.promise;
 };
 
@@ -224,9 +227,12 @@ export const invalidateSidebar = (): Promise<void> => startOrJoinRefresh(true);
 export const ensureFeeds = async (): Promise<void> => {
   if (activeRefresh !== null) {
     await activeRefresh.promise;
+
     return;
   }
+
   if (feedsLoaded) return;
+
   await refreshSidebar();
 };
 
@@ -239,7 +245,7 @@ export const toggleFolderCollapse = (folderId: string): void => {
   flush();
 };
 
-/** Selecting a feed inside a collapsed folder auto-expands it (`folders.md:16`). */
+/** Selecting a feed inside a collapsed folder auto-expands it (`FD-FOLDER-2`). */
 export const expandFolder = (folderId: string): void => {
   if (!collapsedFolders().has(folderId)) return;
 
@@ -279,8 +285,10 @@ export const adjustFeedUnread = (feedId: string, delta: number): void => {
 export const clearFeedUnread = (feedId: string): void => {
   updateUnreadMap((map) => {
     if (!(feedId in map)) return { ...map };
+
     const copy = { ...map };
     delete copy[feedId];
+
     return copy;
   });
 };
@@ -308,6 +316,7 @@ export const updateFeedLocal = (feedId: string, patch: Partial<Feed>): void => {
 export const removeFeedLocal = (feedId: string): void => {
   fieldEpochs.feeds += 1;
   if (activeRefresh !== null) activeRefresh.rerunNeeded = true;
+
   setFeeds((current) => current.filter((feed) => feed.id !== feedId));
   clearFeedUnread(feedId);
 };
@@ -317,6 +326,7 @@ export const removeFolderLocal = (folderId: string): void => {
   fieldEpochs.folders += 1;
   fieldEpochs.feeds += 1;
   if (activeRefresh !== null) activeRefresh.rerunNeeded = true;
+
   setFolders((current) => current.filter((folder) => folder.id !== folderId));
   setFeeds((current) =>
     current.map((feed) =>

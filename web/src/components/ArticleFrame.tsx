@@ -1,12 +1,15 @@
 import type { JSX } from '@solidjs/web';
-import { createMemo, createSignal, onSettled } from 'solid-js';
+import { createEffect, createMemo, createSignal, onSettled } from 'solid-js';
+import { t } from '../i18n';
 import {
   DEFAULT_APPEARANCE,
-  type ReaderAppearance,
+  type ReaderTheme,
   readerAppearance,
+  readerTheme,
 } from '../state';
-import { buildReaderStyles } from './articleFrameStyles';
+import { buildReaderStyles, type ReaderTypography } from './articleFrameStyles';
 import { ImageLightbox } from './ImageLightbox';
+import { BRIDGED_FRAME_KEYS } from './readerShortcutKeys';
 
 export interface ArticleFrameProps {
   html: string;
@@ -34,11 +37,13 @@ export interface ArticleFrameKeyMessage {
 
 export interface ArticleSrcdocOptions {
   html: string;
-  nonce?: string | null;
-  token?: string | null;
+  nonce: string;
+  token: string;
   appOrigin: string;
   stylesheetHrefs?: ReadonlyArray<string>;
-  appearance?: ReaderAppearance;
+  appearance?: ReaderTypography;
+  theme?: ReaderTheme;
+  imageLabel?: string;
 }
 
 interface LightboxState {
@@ -46,19 +51,11 @@ interface LightboxState {
   alt?: string;
 }
 
-const BRIDGED_KEYS: ReadonlyArray<string> = [
-  'j',
-  'k',
-  'm',
-  's',
-  'f',
-  'v',
-  'o',
-  'u',
-  '[',
-  'Escape',
-  '?',
-];
+interface FrameMessageHandlers {
+  onResize: (height: number) => void;
+  onImage: (image: LightboxState) => void;
+  onKey: (key: string) => void;
+}
 
 const escapeAttribute = (value: string): string =>
   value
@@ -73,31 +70,18 @@ const jsStringLiteral = (value: string): string =>
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
 
-/** Fresh unguessable value for the CSP nonce and the resize-message token, or `null` without Web Crypto. */
-const randomToken = (): string | null => {
-  const source =
-    typeof globalThis.crypto === 'undefined' ? undefined : globalThis.crypto;
-  if (!source || typeof source.getRandomValues !== 'function') return null;
-
+/** Fresh unguessable value for the CSP nonce and the `postMessage` bridge token. */
+const randomToken = (): string => {
   const bytes = new Uint8Array(16);
-  source.getRandomValues(bytes);
+  crypto.getRandomValues(bytes);
 
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
     ''
   );
 };
 
-const currentOrigin = (): string => {
-  if (typeof window === 'undefined') return '';
-  return window.location?.origin ?? '';
-};
-
 /** `RD-FRAME-1`: stored source classes must not leak into the isolated document. */
 export const stripSourceClasses = (html: string): string => {
-  if (typeof DOMParser === 'undefined') {
-    return html.replace(/\sclass\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-  }
-
   const doc = new DOMParser().parseFromString(html, 'text/html');
   for (const element of Array.from(doc.querySelectorAll('[class]'))) {
     element.removeAttribute('class');
@@ -107,8 +91,6 @@ export const stripSourceClasses = (html: string): string => {
 };
 
 const activeStylesheetHrefs = (): Array<string> => {
-  if (typeof document === 'undefined') return [];
-
   const hrefs = new Set<string>();
   for (const link of Array.from(
     document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')
@@ -128,7 +110,6 @@ const activeStylesheetHrefs = (): Array<string> => {
 
 const RESIZE_OBSERVER_SCRIPT = `
   function measure() {
-    var root = document.documentElement;
     var body = document.body;
     var height = Math.max(
       body ? body.scrollHeight : 0,
@@ -160,7 +141,7 @@ const RESIZE_OBSERVER_SCRIPT = `
   schedule();`;
 
 const FRAME_INTERACTION_SCRIPT = `
-  var keys = ${JSON.stringify(BRIDGED_KEYS)};
+  var keys = ${JSON.stringify(BRIDGED_FRAME_KEYS)};
   function postImage(img) {
     var src = img.currentSrc || img.getAttribute('src') || '';
     if (!/^https?:\\/\\//i.test(src)) return false;
@@ -176,6 +157,9 @@ const FRAME_INTERACTION_SCRIPT = `
       if (/^https?:\\/\\//i.test(src) && !img.hasAttribute('tabindex')) {
         img.tabIndex = 0;
         img.setAttribute('role', 'button');
+        if (!(img.getAttribute('alt') || '').trim() && !img.hasAttribute('aria-label')) {
+          img.setAttribute('aria-label', imageLabel);
+        }
       }
     }
   }
@@ -200,8 +184,12 @@ const FRAME_INTERACTION_SCRIPT = `
     }
   });`;
 
-const buildResizeScript = (token: string): string => `(function () {
-  var token = ${jsStringLiteral(token)};${RESIZE_OBSERVER_SCRIPT}${FRAME_INTERACTION_SCRIPT}
+const buildFrameScript = (
+  token: string,
+  imageLabel: string
+): string => `(function () {
+  var token = ${jsStringLiteral(token)};
+  var imageLabel = ${jsStringLiteral(imageLabel)};${RESIZE_OBSERVER_SCRIPT}${FRAME_INTERACTION_SCRIPT}
 })();`;
 
 const messageRecord = (
@@ -209,13 +197,16 @@ const messageRecord = (
   expectedToken: string,
   expectedType: string
 ): Record<string, unknown> | null => {
-  if (typeof expectedToken !== 'string' || expectedToken.length === 0)
+  if (typeof expectedToken !== 'string' || expectedToken.length === 0) {
     return null;
+  }
+
   if (data === null || typeof data !== 'object') return null;
 
   const record = data as Record<string, unknown>;
-  if (record.type !== expectedType || record.token !== expectedToken)
+  if (record.type !== expectedType || record.token !== expectedToken) {
     return null;
+  }
 
   return record;
 };
@@ -249,31 +240,29 @@ export const isValidKeyMessage = (
   const record = messageRecord(data, expectedToken, 'article-frame-key');
   if (!record || typeof record.key !== 'string') return false;
 
-  return BRIDGED_KEYS.includes(record.key);
+  return BRIDGED_FRAME_KEYS.includes(record.key);
 };
 
 export const buildArticleSrcdoc = (options: ArticleSrcdocOptions): string => {
   const appOrigin = options.appOrigin ? ` ${options.appOrigin}` : '';
-  const nonce = options.nonce ?? '';
-  const token = options.token ?? '';
-  const hasBridge = nonce.length > 0 && token.length > 0;
-  const scriptSrc = hasBridge ? `'nonce-${nonce}'` : "'none'";
   const csp =
     `default-src 'none'; img-src https: http:; style-src 'unsafe-inline'${appOrigin}; ` +
-    `script-src ${scriptSrc}; base-uri 'none'; form-action 'none'`;
+    `script-src 'nonce-${options.nonce}'; base-uri 'none'; form-action 'none'`;
 
   const stylesheets = (options.stylesheetHrefs ?? [])
     .map((href) => `<link rel="stylesheet" href="${escapeAttribute(href)}">`)
     .join('');
 
   const styles = buildReaderStyles(options.appearance ?? DEFAULT_APPEARANCE);
-  const scriptTag = hasBridge
-    ? `<script nonce="${escapeAttribute(nonce)}">${buildResizeScript(token)}</script>`
-    : '';
+  const imageLabel = options.imageLabel ?? String(t('reader.imagePreview'));
+  const htmlTag =
+    options.theme && options.theme !== 'auto'
+      ? `<html data-theme="${escapeAttribute(options.theme)}">`
+      : '<html>';
 
   return [
     '<!DOCTYPE html>',
-    '<html>',
+    htmlTag,
     '<head>',
     '<meta charset="utf-8">',
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(csp)}">`,
@@ -283,7 +272,7 @@ export const buildArticleSrcdoc = (options: ArticleSrcdocOptions): string => {
     `<style>${styles}</style>`,
     '</head>',
     `<body>${stripSourceClasses(options.html)}`,
-    scriptTag,
+    `<script nonce="${escapeAttribute(options.nonce)}">${buildFrameScript(options.token, imageLabel)}</script>`,
     '</body>',
     '</html>',
   ].join('');
@@ -292,20 +281,20 @@ export const buildArticleSrcdoc = (options: ArticleSrcdocOptions): string => {
 const dispatchFrameMessage = (
   data: unknown,
   token: string,
-  handlers: {
-    onResize: (height: number) => void;
-    onImage: (image: LightboxState) => void;
-    onKey: (key: string) => void;
-  }
+  handlers: FrameMessageHandlers
 ): void => {
   if (isValidResizeMessage(data, token)) {
     handlers.onResize(Math.ceil(data.height));
+
     return;
   }
+
   if (isValidImageMessage(data, token)) {
     handlers.onImage({ src: data.src, alt: data.alt });
+
     return;
   }
+
   if (isValidKeyMessage(data, token)) {
     handlers.onKey(data.key);
   }
@@ -313,47 +302,51 @@ const dispatchFrameMessage = (
 
 const useFrameMessages = (
   getIframe: () => HTMLIFrameElement | undefined,
-  getToken: () => string | null,
-  handlers: {
-    onResize: (height: number) => void;
-    onImage: (image: LightboxState) => void;
-    onKey: (key: string) => void;
-  }
+  getToken: () => string,
+  handlers: FrameMessageHandlers
 ): void => {
   onSettled(() => {
     const onMessage = (event: MessageEvent) => {
-      const token = getToken();
-      if (token === null) return;
-
       const iframe = getIframe();
       if (!iframe || event.source !== iframe.contentWindow) return;
 
-      dispatchFrameMessage(event.data, token, handlers);
+      dispatchFrameMessage(event.data, getToken(), handlers);
     };
 
     window.addEventListener('message', onMessage);
+
     return () => window.removeEventListener('message', onMessage);
   });
 };
 
-const createFrameContent = (html: () => string) =>
-  createMemo(() => {
+const createFrameContent = (html: () => string) => {
+  const fontSize = createMemo(() => readerAppearance().fontSize);
+  const fontFamily = createMemo(() => readerAppearance().fontFamily);
+  const lineHeight = createMemo(() => readerAppearance().lineHeight);
+
+  return createMemo(() => {
     const nonce = randomToken();
     const token = randomToken();
-    const hasBridge = nonce !== null && token !== null;
 
     return {
-      token: hasBridge ? token : null,
+      token,
       srcdoc: buildArticleSrcdoc({
         html: html(),
-        nonce: hasBridge ? nonce : null,
-        token: hasBridge ? token : null,
-        appOrigin: currentOrigin(),
+        nonce,
+        token,
+        appOrigin: window.location.origin,
         stylesheetHrefs: activeStylesheetHrefs(),
-        appearance: readerAppearance(),
+        appearance: {
+          fontSize: fontSize(),
+          fontFamily: fontFamily(),
+          lineHeight: lineHeight(),
+        },
+        theme: readerTheme(),
+        imageLabel: String(t('reader.imagePreview')),
       }),
     };
   });
+};
 
 const dispatchWindowKey = (key: string): void => {
   window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
@@ -370,6 +363,14 @@ export function ArticleFrame(props: ArticleFrameProps): JSX.Element {
   const [lightbox, setLightbox] = createSignal<LightboxState | null>(null);
   const frame = createFrameContent(() => props.html);
 
+  createEffect(
+    () => props.html,
+    () => {
+      setLightbox(null);
+      setHeight(undefined);
+    }
+  );
+
   useFrameMessages(
     () => iframeRef,
     () => frame().token,
@@ -379,8 +380,10 @@ export function ArticleFrame(props: ArticleFrameProps): JSX.Element {
       onKey: (key) => {
         if (lightbox() !== null) {
           if (key === 'Escape') setLightbox(null);
+
           return;
         }
+
         dispatchWindowKey(key);
       },
     }
@@ -393,15 +396,15 @@ export function ArticleFrame(props: ArticleFrameProps): JSX.Element {
           iframeRef = element;
         }}
         title={props.title ?? ''}
-        sandbox={
-          frame().token === null
-            ? 'allow-popups allow-popups-to-escape-sandbox'
-            : 'allow-scripts allow-popups allow-popups-to-escape-sandbox'
-        }
+        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
         referrerpolicy="no-referrer"
         srcdoc={frame().srcdoc}
         style={height() === undefined ? undefined : `height: ${height()}px`}
-        class="w-full min-h-[200px] border-0 bg-base-100"
+        class={
+          height() === undefined
+            ? 'w-full min-h-[200px] border-0 bg-base-100'
+            : 'w-full border-0 bg-base-100'
+        }
       />
       <ImageLightbox
         src={lightbox()?.src ?? null}

@@ -50,6 +50,7 @@ export function AddLinkDialog(props: AddLinkDialogProps): JSX.Element {
     <Dialog
       open={props.open}
       title={String(t('later.addLinkTitle'))}
+      closeLabel={String(t('common.close'))}
       busy={submitting()}
       onClose={props.onClose}
     >
@@ -80,6 +81,7 @@ const submitAddLink = async (
   try {
     const { page, created } = await createOrFindSavedPage(target);
     if (created) showToast(String(t('later.addedToast')), 'success');
+
     props.onClose();
     if (created) props.onSaved(page);
     else props.onDuplicateFound(page);

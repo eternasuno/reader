@@ -1,5 +1,5 @@
 import type { JSX } from '@solidjs/web';
-import { createContext, Show, useContext } from 'solid-js';
+import { Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
 import {
@@ -13,17 +13,13 @@ import { toggleRead } from './readerActions';
 import { extractLabel } from './readerBody';
 import type { ReaderNav } from './readerNav';
 
-export const FeedOptionsContext = createContext<
-  () => ((feed: Feed) => void) | undefined
->(() => undefined);
-
 export interface ReaderToolbarProps {
   article: LibraryArticle;
   nav: ReaderNav;
   scrolled?: boolean;
   onSaveToLater: () => void;
   onDelete: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 const readLabel = (article: LibraryArticle): string =>
@@ -31,8 +27,6 @@ const readLabel = (article: LibraryArticle): string =>
 
 /** `RD-READ-1`, `RD-EXTRACT-1`, `RD-NAV-1`: the icon-only article action bar. */
 export function ReaderToolbar(props: ReaderToolbarProps): JSX.Element {
-  const contextFeedOptions = useContext(FeedOptionsContext);
-
   return (
     <div
       role="toolbar"
@@ -52,9 +46,7 @@ export function ReaderToolbar(props: ReaderToolbarProps): JSX.Element {
         article={props.article}
         nav={props.nav}
         onDelete={props.onDelete}
-        onRequestFeedOptions={
-          props.onRequestFeedOptions ?? contextFeedOptions()
-        }
+        onRequestFeedOptions={props.onRequestFeedOptions}
       />
     </div>
   );

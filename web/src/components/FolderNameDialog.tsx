@@ -55,6 +55,7 @@ export function FolderNameDialog(props: FolderNameDialogProps): JSX.Element {
     <Dialog
       open={props.open}
       title={dialogTitle(props.mode)}
+      closeLabel={String(t('common.close'))}
       busy={submitting()}
       onClose={props.onClose}
     >
@@ -120,10 +121,13 @@ const submitFolderName = async (
   const trimmedName = form.name().trim();
   if (trimmedName.length === 0) {
     form.setError(String(t('errors.InvalidFolderName')));
+
     return;
   }
+
   if (props.mode === 'rename' && !props.folderId) {
     form.setError(String(t('errors.FolderNotFound')));
+
     return;
   }
 
@@ -148,6 +152,7 @@ const persistFolder = async (
     showToast(String(t('folders.createdToast')), 'success');
     props.onClose();
     props.onSaved(folder);
+
     return;
   }
 

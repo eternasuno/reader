@@ -1,7 +1,7 @@
 export type { ButtonProps, ButtonSize, ButtonVariant } from './Button';
 export { Button } from './Button';
-export type { DialogProps } from './Dialog';
-export { Dialog } from './Dialog';
+export type { DialogFocusOptions, DialogProps } from './Dialog';
+export { Dialog, useDialogFocus } from './Dialog';
 export type { IconName, IconProps } from './Icon';
 export { Icon } from './Icon';
 export type { InputProps, SelectProps } from './Input';

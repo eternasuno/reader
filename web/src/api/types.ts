@@ -5,6 +5,11 @@ export type SMTPSecurity = 'tls' | 'starttls';
 type KindleTrigger = 'manual' | 'scheduled';
 type KindleStatus = 'running' | 'succeeded' | 'failed';
 
+export type RequestCallOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
 export interface ErrorResponse {
   error: string;
   url?: string;
@@ -155,6 +160,39 @@ export class ApiError extends Error {
     this.id = id;
   }
 }
+
+export class RequestAbortedError extends Error {
+  constructor(cause?: unknown) {
+    super('The operation was aborted.');
+    this.name = 'AbortError';
+    if (cause !== undefined) {
+      Object.defineProperty(this, 'cause', {
+        value: cause,
+        configurable: true,
+      });
+    }
+  }
+}
+
+export class RequestTimeoutError extends ApiError {
+  constructor() {
+    super('RequestTimeout', 0);
+    this.name = 'RequestTimeoutError';
+  }
+}
+
+export const isAbortError = (error: unknown): error is Error =>
+  error !== null &&
+  typeof error === 'object' &&
+  'name' in error &&
+  error.name === 'AbortError' &&
+  (error instanceof Error ||
+    (typeof DOMException !== 'undefined' && error instanceof DOMException) ||
+    Object.prototype.toString.call(error) === '[object DOMException]');
+
+export const isTimeoutError = (error: unknown): error is RequestTimeoutError =>
+  error instanceof RequestTimeoutError ||
+  (error instanceof ApiError && error.code === 'RequestTimeout');
 
 export const errorCodeOf = (error: unknown): string =>
   error instanceof ApiError ? error.code : 'RequestFailed';

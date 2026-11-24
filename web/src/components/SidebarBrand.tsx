@@ -13,17 +13,13 @@ import { Button, Icon, Menu, MenuDivider, MenuItem, MenuRadio } from '../ui';
 const handleCollapseSidebar = (): void => {
   toggleSidebarCollapse();
   queueMicrotask(() =>
-    document
-      .querySelector<HTMLButtonElement>(
-        `button[aria-label="${String(t('library.expandSidebar'))}"]`
-      )
-      ?.focus()
+    document.querySelector<HTMLButtonElement>('[data-sidebar-expand]')?.focus()
   );
 };
 
 /**
- * `auth.md:16`: the brand row hosts the nav menu — settings, locale switch, and
- * sign-out, which stays on the page and reports failures inline.
+ * `AC-AUTH-3`, `CM-I18N-1`, `LIB-VIEW-1`: the brand row hosts sidebar collapse and
+ * the nav menu (settings, theme, locale switch, and sign-out with inline failure alert).
  */
 export function SidebarBrand(props: {
   onNavigate: (url: string) => void;
@@ -59,6 +55,7 @@ export function SidebarBrand(props: {
             variant="icon"
             size="sm"
             class="hidden btn-xs md:inline-flex"
+            data-sidebar-collapse=""
             aria-label={String(t('library.collapseSidebar'))}
             title={String(t('library.collapseSidebar'))}
             onClick={handleCollapseSidebar}
@@ -67,7 +64,6 @@ export function SidebarBrand(props: {
           </Button>
           <BrandMenu
             signingOut={signingOut()}
-            signOutError={signOutError()}
             onNavigate={props.onNavigate}
             onSignOut={handleSignOut}
           />
@@ -84,7 +80,6 @@ export function SidebarBrand(props: {
 
 interface BrandMenuProps {
   signingOut: boolean;
-  signOutError: boolean;
   onNavigate: (url: string) => void;
   onSignOut: () => void;
 }
@@ -152,7 +147,9 @@ function BrandMenu(props: BrandMenuProps): JSX.Element {
         when={panel() === 'theme'}
         fallback={
           <BrandMainMenuItems
-            props={props}
+            signingOut={props.signingOut}
+            onNavigate={props.onNavigate}
+            onSignOut={props.onSignOut}
             onOpenTheme={() => setPanel('theme')}
           />
         }
@@ -164,15 +161,14 @@ function BrandMenu(props: BrandMenuProps): JSX.Element {
 }
 
 function BrandMainMenuItems(props: {
-  props: BrandMenuProps;
+  signingOut: boolean;
+  onNavigate: (url: string) => void;
+  onSignOut: () => void;
   onOpenTheme: () => void;
 }): JSX.Element {
   return (
     <>
-      <MenuItem
-        icon="settings"
-        onSelect={() => props.props.onNavigate('/settings')}
-      >
+      <MenuItem icon="settings" onSelect={() => props.onNavigate('/settings')}>
         {String(t('library.settings'))}
       </MenuItem>
       <button
@@ -196,16 +192,11 @@ function BrandMainMenuItems(props: {
       <MenuDivider />
       <MenuItem
         icon="logout"
-        disabled={props.props.signingOut}
-        onSelect={props.props.onSignOut}
+        disabled={props.signingOut}
+        onSelect={props.onSignOut}
       >
-        {String(t(props.props.signingOut ? 'auth.signingOut' : 'auth.signOut'))}
+        {String(t(props.signingOut ? 'auth.signingOut' : 'auth.signOut'))}
       </MenuItem>
-      <Show when={props.props.signOutError}>
-        <p role="alert" class="px-3 py-1 text-xs text-error">
-          {String(t('auth.signOutFailed'))}
-        </p>
-      </Show>
     </>
   );
 }

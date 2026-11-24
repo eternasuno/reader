@@ -1,4 +1,5 @@
 import type { JSX } from '@solidjs/web';
+import { createEffect, onSettled } from 'solid-js';
 import { t } from '../i18n';
 import { Input } from '../ui';
 import { DialogActions } from './DialogActions';
@@ -15,9 +16,25 @@ export interface SubscribeUrlFormProps {
 
 /** `FD-PREVIEW-1`: step one asks for the feed URL and previews it. */
 export function SubscribeUrlForm(props: SubscribeUrlFormProps): JSX.Element {
+  let inputEl: HTMLInputElement | undefined;
+
+  onSettled(() => {
+    queueMicrotask(() => inputEl?.focus());
+  });
+
+  createEffect(
+    () => ({ error: props.error, busy: props.busy }),
+    ({ error, busy }) => {
+      if (error && !busy) queueMicrotask(() => inputEl?.focus());
+    }
+  );
+
   return (
     <form class="flex flex-col gap-4" onSubmit={props.onSubmit}>
       <Input
+        ref={(el) => {
+          inputEl = el;
+        }}
         type="url"
         required
         label={String(t('feeds.feedUrlLabel'))}

@@ -6,7 +6,8 @@
 
 import { createSignal, flush } from 'solid-js';
 import type { FeedItem, ReaderMode, SavedPage } from '../api';
-import { feedItemsApi, savedPagesApi } from '../api';
+import { ApiError, feedItemsApi, savedPagesApi } from '../api';
+import { t } from '../i18n';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
 import type { LibraryArticle } from './library';
@@ -35,6 +36,14 @@ export const openArticle = (): LibraryArticle | null => {
 let generation = 0;
 /** Preserves manual mode changes made while initial feed preferences are still resolving. */
 let modeTouched = false;
+let extractToken = 0;
+let inFlightExtract: {
+  articleId: string;
+  generation: number;
+  token: number;
+} | null = null;
+const savingToLaterIds = new Set<string>();
+let saveEpoch = 0;
 
 const isStale = (requestGeneration: number): boolean =>
   requestGeneration !== generation;
@@ -70,6 +79,7 @@ const startingMode = (
 
 const clearOpenArticle = (): void => {
   modeTouched = false;
+  inFlightExtract = null;
   setOpenArticleId(null);
   setArticleMissing(false);
   setLoadingArticle(false);
@@ -85,6 +95,7 @@ const showOpeningState = (
   cached: LibraryArticle | null,
   canCommitCached: boolean
 ): void => {
+  inFlightExtract = null;
   setOpenArticleId(articleId);
   setArticleMissing(false);
   setExtracting(false);
@@ -125,14 +136,22 @@ const loadArticle = async (
   }
 };
 
-const markOpenedRead = async (article: LibraryArticle): Promise<void> => {
-  if (article.read) return;
-
-  await library.toggleArticleRead(article.id, true, {
+/** `RD-READ-1`: toggles or sets read state with the article's kind/feed fallback. */
+export const toggleOpenArticleRead = async (
+  article: LibraryArticle,
+  nextRead: boolean
+): Promise<void> => {
+  await library.toggleArticleRead(article.id, nextRead, {
     kind: article.kind,
     feedId: article.kind === 'feed' ? article.feedId : null,
     read: article.read,
   });
+};
+
+const markOpenedRead = async (article: LibraryArticle): Promise<void> => {
+  if (article.read) return;
+
+  await toggleOpenArticleRead(article, true);
 };
 
 const resolveInitialMode = async (
@@ -221,12 +240,45 @@ export const openArticleByRoute = async (
 const shouldExtractCurrent = (article: LibraryArticle | null): boolean =>
   article !== null && article.kind === 'feed' && !article.extractedContent;
 
+export const isSavingToLater = (articleId: string): boolean =>
+  savingToLaterIds.has(articleId);
+
+const showSaveError = (error: unknown): void => {
+  if (error instanceof ApiError && error.code === 'SavedPageAlreadyExists') {
+    showToast(String(t('errors.SavedPageAlreadyExists')), 'info');
+
+    return;
+  }
+
+  showToast(errorText(error), 'error');
+};
+
+/** `later.md:17` / `SP-ADD-1`: saves a feed item to Read Later once per concurrent request. */
+export const saveFeedItemToLater = async (articleId: string): Promise<void> => {
+  if (savingToLaterIds.has(articleId)) return;
+
+  const requestEpoch = saveEpoch;
+  savingToLaterIds.add(articleId);
+  try {
+    await savedPagesApi.saveFeedItem(articleId);
+    if (requestEpoch !== saveEpoch) return;
+
+    showToast(String(t('later.savedFromFeedToast')), 'success');
+    void sidebar.refreshSidebar();
+  } catch (error) {
+    if (requestEpoch === saveEpoch) showSaveError(error);
+  } finally {
+    if (requestEpoch === saveEpoch) savingToLaterIds.delete(articleId);
+  }
+};
+
 /** `RD-EXTRACT-1`: toggles the extracted view, extracting the open feed item when needed. */
 export const toggleExtractedMode = async (): Promise<void> => {
   modeTouched = true;
   if (displayMode() === 'extracted') {
     setDisplayMode('default');
     flush();
+
     return;
   }
 
@@ -243,31 +295,60 @@ export const toggleEmbeddedMode = (): void => {
   flush();
 };
 
+const isActiveExtraction = (
+  requestGeneration: number,
+  token: number
+): boolean =>
+  requestGeneration === generation && inFlightExtract?.token === token;
+
+const beginExtraction = (articleId: string): number | null => {
+  if (
+    inFlightExtract?.articleId === articleId &&
+    inFlightExtract.generation === generation
+  ) {
+    return null;
+  }
+
+  extractToken += 1;
+  inFlightExtract = { articleId, generation, token: extractToken };
+  setExtracting(true);
+  flush();
+
+  return extractToken;
+};
+
+const finishExtraction = (requestGeneration: number, token: number): void => {
+  if (inFlightExtract?.token !== token) return;
+
+  inFlightExtract = null;
+  if (requestGeneration === generation) {
+    setExtracting(false);
+    flush();
+  }
+};
+
 export const extractCurrentFeedItem = async (): Promise<void> => {
   const article = openArticle();
   if (article === null || article.kind !== 'feed') return;
 
   const requestGeneration = generation;
-  setExtracting(true);
-  flush();
+  const token = beginExtraction(article.id);
+  if (token === null) return;
 
   try {
     const updated = await feedItemsApi.extract(article.id);
-    if (requestGeneration !== generation) return;
+    if (!isActiveExtraction(requestGeneration, token)) return;
 
     library.patchArticleLocal(article.id, {
       extractedContent: updated.extractedContent,
     });
   } catch (error) {
-    if (requestGeneration !== generation) return;
+    if (!isActiveExtraction(requestGeneration, token)) return;
 
-    setDisplayMode('default');
+    if (displayMode() === 'extracted') setDisplayMode('default');
     showToast(errorText(error), 'error');
   } finally {
-    if (requestGeneration === generation) {
-      setExtracting(false);
-      flush();
-    }
+    finishExtraction(requestGeneration, token);
   }
 };
 
@@ -289,6 +370,8 @@ export const adjacentArticleIds = (): {
 
 export const clearReaderState = (): void => {
   generation += 1;
+  saveEpoch += 1;
+  savingToLaterIds.clear();
   clearOpenArticle();
 };
 

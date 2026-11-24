@@ -41,11 +41,13 @@ const isFullscreen = (props: LibraryViewProps): boolean =>
 
 const gridClasses = (props: LibraryViewProps): string => {
   if (isFullscreen(props)) return FULLSCREEN_GRID_CLASSES;
+
   return sidebarCollapsed() ? COLLAPSED_GRID_CLASSES : GRID_CLASSES;
 };
 
 const sidebarVisibility = (drawerOpen: boolean): string => {
   if (drawerOpen) return DRAWER_CLASSES;
+
   return sidebarCollapsed() ? 'hidden' : 'hidden md:flex';
 };
 
@@ -122,6 +124,7 @@ function SidebarColumn(props: LibraryViewProps): JSX.Element {
 function ListPanel(props: LibraryViewProps): JSX.Element {
   const visible = (): string => {
     if (isFullscreen(props)) return 'hidden';
+
     return props.ctl.articleId() === null ? 'flex' : 'hidden lg:flex';
   };
 
@@ -141,7 +144,6 @@ function ListPanel(props: LibraryViewProps): JSX.Element {
         onNavigate={props.ctl.onNavigate}
         onRequestAddLink={props.ctl.requestAddLink}
         onRequestAddFeed={props.ctl.requestAddFeed}
-        onRequestRenameFolder={props.ctl.requestRenameFolder}
         onMoveFeed={props.ctl.handleMoveFeed}
         onRequestNewFolder={props.ctl.requestNewFolder}
         onRequestFeedOptions={props.ctl.requestFeedOptions}
@@ -194,15 +196,17 @@ function AddDialogs(props: LibraryViewProps): JSX.Element {
 function ManageDialogs(props: LibraryViewProps): JSX.Element {
   return (
     <>
-      <Show when={props.ctl.folderDialog()}>
+      <Show when={props.ctl.folderDialog()} keyed>
         {(dialog) => (
           <FolderNameDialog
             open={true}
-            mode={dialog().mode}
-            initialName={dialog().folder?.name}
-            folderId={dialog().folder?.id}
+            mode={dialog.mode}
+            initialName={dialog.folder?.name}
+            folderId={dialog.folder?.id}
             onClose={props.ctl.closeFolderDialog}
-            onSaved={props.ctl.refreshSidebar}
+            onSaved={(folder) =>
+              props.ctl.handleFolderSaved(folder, dialog.moveFeed)
+            }
           />
         )}
       </Show>
@@ -210,17 +214,20 @@ function ManageDialogs(props: LibraryViewProps): JSX.Element {
         open={props.ctl.optionsFeed() !== null}
         feed={props.ctl.optionsFeed()}
         onClose={props.ctl.closeFeedOptions}
-        onUnsubscribe={(feed) => {
-          const actions = {
-            scope: props.ctl.scope(),
-            unreadOnly: props.ctl.unreadOnly(),
-            onNavigate: props.ctl.onNavigate,
-          };
-          void deleteFeed(actions, feed).then(() => {
-            if (!sidebarFeeds().some((entry) => entry.id === feed.id)) {
-              props.ctl.closeFeedOptions();
-            }
-          });
+        onUnsubscribe={async (feed) => {
+          await deleteFeed(
+            {
+              unreadOnly: props.ctl.unreadOnly,
+              onNavigate: props.ctl.onNavigate,
+            },
+            feed
+          );
+          if (
+            props.ctl.optionsFeed()?.id === feed.id &&
+            !sidebarFeeds().some((entry) => entry.id === feed.id)
+          ) {
+            props.ctl.closeFeedOptions();
+          }
         }}
       />
       <KeyboardShortcutsDialog
