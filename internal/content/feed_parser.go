@@ -21,11 +21,17 @@ import (
 	"reader/internal/domain"
 )
 
-const untitledFeedTitle = "Untitled"
+const (
+	untitledFeedTitle  = "Untitled"
+	maxFeedItems       = 1000
+	maxFeedOutputBytes = maxSanitizedHTMLBytes
+	maxFeedXMLDepth    = 64
+)
 
 var (
-	utf8BOM     = []byte{0xEF, 0xBB, 0xBF}
-	dateLayouts = []string{
+	utf8BOM               = []byte{0xEF, 0xBB, 0xBF}
+	errFeedBudgetExceeded = errors.New("feed parse budget exceeded")
+	dateLayouts           = []string{
 		time.RFC3339,
 		time.RFC3339Nano,
 		"2006-01-02T15:04:05Z0700",
@@ -39,6 +45,11 @@ type Parser struct {
 	sanitizer domain.HTMLSanitizer
 }
 
+type feedLimits struct {
+	maxItems       int
+	maxOutputBytes int
+}
+
 type payloadScan struct {
 	root         string
 	summaryTypes []string
@@ -50,6 +61,13 @@ func NewFeedParser(sanitizer domain.HTMLSanitizer) *Parser {
 }
 
 func (p *Parser) ParseFeed(body []byte, baseURL string) (domain.ParsedFeed, error) {
+	return p.parseFeedWithLimits(body, baseURL, feedLimits{
+		maxItems:       maxFeedItems,
+		maxOutputBytes: maxFeedOutputBytes,
+	})
+}
+
+func (p *Parser) parseFeedWithLimits(body []byte, baseURL string, limits feedLimits) (domain.ParsedFeed, error) {
 	payload := bytes.TrimSpace(bytes.TrimPrefix(body, utf8BOM))
 	if len(payload) == 0 {
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, nil)
@@ -59,62 +77,111 @@ func (p *Parser) ParseFeed(body []byte, baseURL string) (domain.ParsedFeed, erro
 
 	switch payload[0] {
 	case '{':
-		return p.parseJSONFeed(payload, base)
+		return p.parseJSONFeed(payload, base, limits)
 	case '<':
-		return p.parseXMLFeed(payload, base)
+		return p.parseXMLFeed(payload, base, limits)
 	default:
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, errors.New("unsupported feed payload"))
 	}
 }
 
-func (p *Parser) parseJSONFeed(payload []byte, base *url.URL) (domain.ParsedFeed, error) {
-	feed, err := decodeJSONFeed(payload)
+func (p *Parser) parseJSONFeed(payload []byte, base *url.URL, limits feedLimits) (domain.ParsedFeed, error) {
+	return p.parseJSONFeedReader(bytes.NewReader(payload), base, limits)
+}
+
+func (p *Parser) parseJSONFeedReader(r io.Reader, base *url.URL, limits feedLimits) (domain.ParsedFeed, error) {
+	feed, err := decodeJSONFeed(r, limits.maxItems)
+	if err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	budget := byteBudget{remaining: limits.maxOutputBytes}
+	title := feedTitle(feed.Title, base)
+	description := optionalText(feed.Description)
+
+	if err := consumeFeedHeader(title, description, &budget); err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	entries, err := p.parseJSONItems(feed.Items, base, &budget)
 	if err != nil {
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
 	}
 
 	return domain.ParsedFeed{
-		Title:       feedTitle(feed.Title, base),
-		Description: optionalText(feed.Description),
-		Entries:     p.parseJSONItems(feed.Items, base),
+		Title:       title,
+		Description: description,
+		Entries:     entries,
 	}, nil
 }
 
-func (p *Parser) parseXMLFeed(payload []byte, base *url.URL) (domain.ParsedFeed, error) {
+func (p *Parser) parseXMLFeed(payload []byte, base *url.URL, limits feedLimits) (domain.ParsedFeed, error) {
 	feedType := gofeed.DetectFeedType(bytes.NewReader(payload))
 	if feedType != gofeed.FeedTypeRSS && feedType != gofeed.FeedTypeAtom {
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, errors.New("unsupported feed format"))
 	}
 
-	scan, err := validateXMLPayload(payload)
+	scan, err := validateXMLPayload(payload, limits.maxItems)
 	if err != nil {
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
 	}
 
+	budget := byteBudget{remaining: limits.maxOutputBytes}
 	if feedType == gofeed.FeedTypeRSS {
-		feed, err := (&rss.Parser{}).Parse(bytes.NewReader(payload))
-		if err != nil {
-			return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
-		}
-
-		isRDF := strings.EqualFold(scan.root, "RDF") || feed.Version == "1.0"
-
-		return domain.ParsedFeed{
-			Title:       feedTitle(rssFeedTitle(feed), base),
-			Description: optionalText(feed.Description),
-			Entries:     p.parseRSSItems(feed.Items, base, isRDF),
-		}, nil
+		return p.parseRSSFeed(payload, base, scan.root, &budget)
 	}
 
-	feed, err := (&atom.Parser{}).Parse(bytes.NewReader(payload))
+	return p.parseAtomFeed(payload, base, scan, &budget)
+}
+
+func (p *Parser) parseRSSFeed(payload []byte, base *url.URL, root string, budget *byteBudget) (domain.ParsedFeed, error) {
+	feed, err := (&rss.Parser{}).Parse(bytes.NewReader(payload))
+	if err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	isRDF := strings.EqualFold(root, "RDF") || feed.Version == "1.0"
+	title := feedTitle(rssFeedTitle(feed), base)
+	description := optionalText(feed.Description)
+
+	if err := consumeFeedHeader(title, description, budget); err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	entries, err := p.parseRSSItems(feed.Items, base, isRDF, budget)
 	if err != nil {
 		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
 	}
 
 	return domain.ParsedFeed{
-		Title:       feedTitle(feed.Title, base),
-		Description: optionalText(feed.Subtitle),
-		Entries:     p.parseAtomEntries(feed.Entries, scan, base),
+		Title:       title,
+		Description: description,
+		Entries:     entries,
+	}, nil
+}
+
+func (p *Parser) parseAtomFeed(payload []byte, base *url.URL, scan payloadScan, budget *byteBudget) (domain.ParsedFeed, error) {
+	feed, err := (&atom.Parser{}).Parse(bytes.NewReader(payload))
+	if err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	title := feedTitle(feed.Title, base)
+	description := optionalText(feed.Subtitle)
+
+	if err := consumeFeedHeader(title, description, budget); err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	entries, err := p.parseAtomEntries(feed.Entries, scan, base, budget)
+	if err != nil {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrFeedParserError, err)
+	}
+
+	return domain.ParsedFeed{
+		Title:       title,
+		Description: description,
+		Entries:     entries,
 	}, nil
 }
 
@@ -122,7 +189,8 @@ func (p *Parser) parseRSSItems(
 	items []*rss.Item,
 	base *url.URL,
 	isRDF bool,
-) []domain.ParsedFeedEntry {
+	budget *byteBudget,
+) ([]domain.ParsedFeedEntry, error) {
 	entries := make([]domain.ParsedFeedEntry, 0, len(items))
 
 	for _, item := range items {
@@ -135,33 +203,36 @@ func (p *Parser) parseRSSItems(
 			continue
 		}
 
-		description, err := p.sanitizeOptional(item.Description, entryURL.RedactedString())
+		entry, keep, err := buildBudgetedEntry(
+			entryURL,
+			rssItemTitle(item),
+			rssPublishedAt(item, isRDF),
+			func() (*string, error) {
+				return p.sanitizeOptional(item.Description, entryURL.RedactedString(), budget)
+			},
+			func() (*string, error) {
+				return p.sanitizeOptional(item.Content, entryURL.RedactedString(), budget)
+			},
+			budget,
+		)
 		if err != nil {
-			logSkippedEntry(entryURL, err)
-
-			continue
+			return nil, err
 		}
 
-		content, err := p.sanitizeOptional(item.Content, entryURL.RedactedString())
-		if err != nil {
-			logSkippedEntry(entryURL, err)
-
-			continue
+		if keep {
+			entries = append(entries, entry)
 		}
-
-		publishedAt := rssPublishedAt(item, isRDF)
-
-		entries = append(entries, buildEntry(rssItemTitle(item), description, content, entryURL, publishedAt))
 	}
 
-	return entries
+	return entries, nil
 }
 
 func (p *Parser) parseAtomEntries(
 	entries []*atom.Entry,
 	scan payloadScan,
 	base *url.URL,
-) []domain.ParsedFeedEntry {
+	budget *byteBudget,
+) ([]domain.ParsedFeedEntry, error) {
 	parsed := make([]domain.ParsedFeedEntry, 0, len(entries))
 
 	for index, entry := range entries {
@@ -174,32 +245,35 @@ func (p *Parser) parseAtomEntries(
 			continue
 		}
 
-		description, err := p.atomSummary(entry.Summary, attrTypeAt(scan.summaryTypes, index), entryURL.RedactedString())
+		item, keep, err := buildBudgetedEntry(
+			entryURL,
+			entry.Title,
+			utcOptional(entry.PublishedParsed),
+			func() (*string, error) {
+				return p.atomSummary(entry.Summary, attrTypeAt(scan.summaryTypes, index), entryURL.RedactedString(), budget)
+			},
+			func() (*string, error) {
+				return p.atomContent(entry.Content, attrTypeAt(scan.contentTypes, index), entryURL.RedactedString(), budget)
+			},
+			budget,
+		)
 		if err != nil {
-			logSkippedEntry(entryURL, err)
-
-			continue
+			return nil, err
 		}
 
-		content, err := p.atomContent(entry.Content, attrTypeAt(scan.contentTypes, index), entryURL.RedactedString())
-		if err != nil {
-			logSkippedEntry(entryURL, err)
-
-			continue
+		if keep {
+			parsed = append(parsed, item)
 		}
-
-		publishedAt := utcOptional(entry.PublishedParsed)
-
-		parsed = append(parsed, buildEntry(entry.Title, description, content, entryURL, publishedAt))
 	}
 
-	return parsed
+	return parsed, nil
 }
 
 func (p *Parser) parseJSONItems(
 	items []*gofeedjson.Item,
 	base *url.URL,
-) []domain.ParsedFeedEntry {
+	budget *byteBudget,
+) ([]domain.ParsedFeedEntry, error) {
 	entries := make([]domain.ParsedFeedEntry, 0, len(items))
 
 	for _, item := range items {
@@ -212,29 +286,31 @@ func (p *Parser) parseJSONItems(
 			continue
 		}
 
-		description, err := p.jsonItemDescription(item, entryURL.RedactedString())
+		entry, keep, err := buildBudgetedEntry(
+			entryURL,
+			item.Title,
+			parseDate(item.DatePublished),
+			func() (*string, error) {
+				return p.jsonItemDescription(item, entryURL.RedactedString(), budget)
+			},
+			func() (*string, error) {
+				return p.jsonItemContent(item, entryURL.RedactedString(), budget)
+			},
+			budget,
+		)
 		if err != nil {
-			logSkippedEntry(entryURL, err)
-
-			continue
+			return nil, err
 		}
 
-		content, err := p.jsonItemContent(item, entryURL.RedactedString())
-		if err != nil {
-			logSkippedEntry(entryURL, err)
-
-			continue
+		if keep {
+			entries = append(entries, entry)
 		}
-
-		publishedAt := parseDate(item.DatePublished)
-
-		entries = append(entries, buildEntry(item.Title, description, content, entryURL, publishedAt))
 	}
 
-	return entries
+	return entries, nil
 }
 
-func (p *Parser) atomSummary(summary string, summaryType string, baseURL string) (*string, error) {
+func (p *Parser) atomSummary(summary string, summaryType string, baseURL string, budget *byteBudget) (*string, error) {
 	if strings.TrimSpace(summary) == "" {
 		return nil, nil
 	}
@@ -245,10 +321,10 @@ func (p *Parser) atomSummary(summary string, summaryType string, baseURL string)
 		value = html.EscapeString(summary)
 	}
 
-	return p.sanitizeOptional(value, baseURL)
+	return p.sanitizeOptional(value, baseURL, budget)
 }
 
-func (p *Parser) atomContent(content *atom.Content, contentType string, baseURL string) (*string, error) {
+func (p *Parser) atomContent(content *atom.Content, contentType string, baseURL string, budget *byteBudget) (*string, error) {
 	if content == nil || strings.TrimSpace(content.Src) != "" {
 		return nil, nil
 	}
@@ -263,44 +339,129 @@ func (p *Parser) atomContent(content *atom.Content, contentType string, baseURL 
 		value = html.EscapeString(value)
 	}
 
-	return p.sanitizeOptional(value, baseURL)
+	return p.sanitizeOptional(value, baseURL, budget)
 }
 
-func (p *Parser) jsonItemDescription(item *gofeedjson.Item, baseURL string) (*string, error) {
+func (p *Parser) jsonItemDescription(item *gofeedjson.Item, baseURL string, budget *byteBudget) (*string, error) {
 	if strings.TrimSpace(item.Summary) == "" {
 		return nil, nil
 	}
 
-	return p.sanitizeOptional(html.EscapeString(item.Summary), baseURL)
+	return p.sanitizeOptional(html.EscapeString(item.Summary), baseURL, budget)
 }
 
-func (p *Parser) jsonItemContent(item *gofeedjson.Item, baseURL string) (*string, error) {
+func (p *Parser) jsonItemContent(item *gofeedjson.Item, baseURL string, budget *byteBudget) (*string, error) {
 	if strings.TrimSpace(item.ContentHTML) != "" {
-		return p.sanitizeOptional(item.ContentHTML, baseURL)
+		return p.sanitizeOptional(item.ContentHTML, baseURL, budget)
 	}
 
 	if strings.TrimSpace(item.ContentText) != "" {
-		return p.sanitizeOptional(html.EscapeString(item.ContentText), baseURL)
+		return p.sanitizeOptional(html.EscapeString(item.ContentText), baseURL, budget)
 	}
 
 	return nil, nil
 }
 
-func (p *Parser) sanitizeOptional(rawHTML string, baseURL string) (*string, error) {
+func (p *Parser) sanitizeOptional(rawHTML string, baseURL string, budget *byteBudget) (*string, error) {
 	if strings.TrimSpace(rawHTML) == "" {
 		return nil, nil
 	}
 
-	sanitized, err := p.sanitizer.SanitizeHTML(rawHTML, baseURL)
+	if budget.remaining <= 0 {
+		return nil, errFeedBudgetExceeded
+	}
+
+	var (
+		sanitized string
+		err       error
+	)
+
+	if concrete, ok := p.sanitizer.(*Sanitizer); ok {
+		sanitized, err = concrete.sanitizeHTMLWithBudget(rawHTML, baseURL, budget.remaining)
+		if errors.Is(err, errHTMLBudgetExceeded) {
+			return nil, errFeedBudgetExceeded
+		}
+	} else {
+		sanitized, err = p.sanitizer.SanitizeHTML(rawHTML, baseURL)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	if strings.TrimSpace(sanitized) == "" {
+	trimmed := strings.TrimSpace(sanitized)
+	if trimmed == "" {
 		return nil, nil
 	}
 
-	return &sanitized, nil
+	if !budget.consume(len(trimmed)) {
+		return nil, errFeedBudgetExceeded
+	}
+
+	return &trimmed, nil
+}
+
+func sanitizeEntryFields(
+	entryURL domain.NormalizedURL,
+	sanitizeDesc func() (*string, error),
+	sanitizeContent func() (*string, error),
+) (description *string, content *string, keep bool, err error) {
+	description, err = sanitizeDesc()
+	if err != nil {
+		if errors.Is(err, errFeedBudgetExceeded) {
+			return nil, nil, false, err
+		}
+
+		logSkippedEntry(entryURL, err)
+
+		return nil, nil, false, nil
+	}
+
+	content, err = sanitizeContent()
+	if err != nil {
+		if errors.Is(err, errFeedBudgetExceeded) {
+			return nil, nil, false, err
+		}
+
+		logSkippedEntry(entryURL, err)
+
+		return nil, nil, false, nil
+	}
+
+	return description, content, true, nil
+}
+
+func consumeFeedHeader(title string, description *string, budget *byteBudget) error {
+	if !budget.consume(len(title)) {
+		return errFeedBudgetExceeded
+	}
+
+	if description != nil && !budget.consume(len(*description)) {
+		return errFeedBudgetExceeded
+	}
+
+	return nil
+}
+
+func buildBudgetedEntry(
+	entryURL domain.NormalizedURL,
+	rawTitle string,
+	publishedAt *time.Time,
+	sanitizeDesc func() (*string, error),
+	sanitizeContent func() (*string, error),
+	budget *byteBudget,
+) (domain.ParsedFeedEntry, bool, error) {
+	description, content, keep, err := sanitizeEntryFields(entryURL, sanitizeDesc, sanitizeContent)
+	if err != nil || !keep {
+		return domain.ParsedFeedEntry{}, false, err
+	}
+
+	entry := buildEntry(rawTitle, description, content, entryURL, publishedAt)
+	if !budget.consume(len(entry.Title)) || !budget.consume(len(entry.URL.Raw())) {
+		return domain.ParsedFeedEntry{}, false, errFeedBudgetExceeded
+	}
+
+	return entry, true, nil
 }
 
 func buildEntry(
@@ -481,36 +642,224 @@ func parseDate(raw string) *time.Time {
 	return nil
 }
 
-func decodeJSONFeed(payload []byte) (gofeedjson.Feed, error) {
-	feed := gofeedjson.Feed{}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
+func decodeJSONFeed(r io.Reader, maxItems int) (gofeedjson.Feed, error) {
+	decoder := json.NewDecoder(r)
 
-	if err := decoder.Decode(&feed); err != nil {
+	if err := expectJSONDelimiter(decoder, '{', "json feed must be an object"); err != nil {
 		return gofeedjson.Feed{}, err
 	}
 
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return gofeedjson.Feed{}, errors.New("trailing data after json feed")
+	feed := gofeedjson.Feed{}
+	for decoder.More() {
+		key, err := readJSONObjectKey(decoder)
+		if err != nil {
+			return gofeedjson.Feed{}, err
+		}
+
+		if err := decodeJSONFeedField(decoder, &feed, key, maxItems); err != nil {
+			return gofeedjson.Feed{}, err
+		}
 	}
 
-	if !strings.Contains(strings.ToLower(feed.Version), "jsonfeed.org/version/") {
-		return gofeedjson.Feed{}, errors.New("unsupported json feed version")
+	if err := expectJSONDelimiter(decoder, '}', "unexpected end of json feed object"); err != nil {
+		return gofeedjson.Feed{}, err
+	}
+
+	if err := validateJSONFeedTrailer(decoder, feed.Version); err != nil {
+		return gofeedjson.Feed{}, err
 	}
 
 	return feed, nil
 }
 
+func expectJSONDelimiter(decoder *json.Decoder, want json.Delim, mismatchMsg string) error {
+	tok, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+
+	if tok != want {
+		return errors.New(mismatchMsg)
+	}
+
+	return nil
+}
+
+func readJSONObjectKey(decoder *json.Decoder) (string, error) {
+	tok, err := decoder.Token()
+	if err != nil {
+		return "", err
+	}
+
+	key, ok := tok.(string)
+	if !ok {
+		return "", errors.New("json feed key must be a string")
+	}
+
+	return key, nil
+}
+
+func validateJSONFeedTrailer(decoder *json.Decoder, version string) error {
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("trailing data after json feed")
+	}
+
+	if !strings.Contains(strings.ToLower(version), "jsonfeed.org/version/") {
+		return errors.New("unsupported json feed version")
+	}
+
+	return nil
+}
+
+func decodeJSONFeedField(decoder *json.Decoder, feed *gofeedjson.Feed, key string, maxItems int) error {
+	switch key {
+	case "version":
+		return decoder.Decode(&feed.Version)
+	case "title":
+		return decoder.Decode(&feed.Title)
+	case "description":
+		return decoder.Decode(&feed.Description)
+	case "authors":
+		return decodeJSONAuthors(decoder, &feed.Authors)
+	case "items":
+		items, err := decodeJSONFeedItems(decoder, maxItems)
+		if err != nil {
+			return err
+		}
+
+		feed.Items = items
+
+		return nil
+	default:
+		return skipJSONValue(decoder)
+	}
+}
+
+func decodeJSONAuthors(decoder *json.Decoder, dst *[]*gofeedjson.Author) error {
+	var authors []*gofeedjson.Author
+	if err := decoder.Decode(&authors); err != nil {
+		return err
+	}
+
+	for i, author := range authors {
+		if author == nil {
+			return fmt.Errorf("gofeed: JSON feed authors[%d] must not be null", i)
+		}
+	}
+
+	*dst = authors
+
+	return nil
+}
+
+func decodeJSONFeedItems(decoder *json.Decoder, maxItems int) ([]*gofeedjson.Item, error) {
+	tok, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+
+	if tok == nil {
+		return nil, nil
+	}
+
+	if tok != json.Delim('[') {
+		return nil, errors.New("json feed items must be an array")
+	}
+
+	var items []*gofeedjson.Item
+	for decoder.More() {
+		if len(items) >= maxItems {
+			return nil, fmt.Errorf("feed item count exceeds limit %d", maxItems)
+		}
+
+		item, err := decodeJSONItem(decoder, len(items))
+		if err != nil {
+			return nil, err
+		}
+
+		items = append(items, item)
+	}
+
+	if err := expectJSONDelimiter(decoder, ']', "unexpected end of json feed items"); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func decodeJSONItem(decoder *json.Decoder, index int) (*gofeedjson.Item, error) {
+	var item *gofeedjson.Item
+	if err := decoder.Decode(&item); err != nil {
+		return nil, err
+	}
+
+	if item == nil {
+		return nil, fmt.Errorf("gofeed: JSON feed items[%d] must not be null", index)
+	}
+
+	for j, author := range item.Authors {
+		if author == nil {
+			return nil, fmt.Errorf("gofeed: JSON feed items[%d].authors[%d] must not be null", index, j)
+		}
+	}
+
+	return item, nil
+}
+
+func skipJSONValue(decoder *json.Decoder) error {
+	tok, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	return skipJSONComposite(decoder, delim)
+}
+
+func skipJSONComposite(decoder *json.Decoder, openDelim json.Delim) error {
+	isObject := openDelim == '{'
+	closeDelim := json.Delim(']')
+	if isObject {
+		closeDelim = '}'
+	}
+
+	for decoder.More() {
+		if err := skipJSONElement(decoder, isObject); err != nil {
+			return err
+		}
+	}
+
+	return expectJSONDelimiter(decoder, closeDelim, "unexpected json delimiter")
+}
+
+func skipJSONElement(decoder *json.Decoder, isObject bool) error {
+	if isObject {
+		if _, err := decoder.Token(); err != nil {
+			return err
+		}
+	}
+
+	return skipJSONValue(decoder)
+}
+
 type xmlPayloadValidator struct {
 	scan         payloadScan
+	maxItems     int
+	itemCount    int
 	depth        int
+	inChannel    bool
 	entryDepth   int
 	summaryFound bool
 	contentFound bool
 }
 
-func validateXMLPayload(payload []byte) (payloadScan, error) {
+func validateXMLPayload(payload []byte, maxItems int) (payloadScan, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(payload))
-	validator := xmlPayloadValidator{}
+	validator := xmlPayloadValidator{maxItems: maxItems}
 
 	for {
 		token, err := decoder.Token()
@@ -562,9 +911,50 @@ func (v *xmlPayloadValidator) handleStart(element xml.StartElement) error {
 	}
 
 	v.depth++
+	if v.depth > maxFeedXMLDepth {
+		return fmt.Errorf("xml nesting depth exceeds limit %d", maxFeedXMLDepth)
+	}
+
+	if err := v.countFeedItem(element); err != nil {
+		return err
+	}
+
+	if v.isRSSChannel(element) {
+		v.inChannel = true
+	}
+
 	v.trackAtomEntry(element)
 
 	return nil
+}
+
+func (v *xmlPayloadValidator) countFeedItem(element xml.StartElement) error {
+	if !v.isFeedItem(element) {
+		return nil
+	}
+
+	v.itemCount++
+	if v.itemCount > v.maxItems {
+		return fmt.Errorf("feed item count exceeds limit %d", v.maxItems)
+	}
+
+	return nil
+}
+
+func (v *xmlPayloadValidator) isFeedItem(element xml.StartElement) bool {
+	if strings.EqualFold(v.scan.root, "feed") {
+		return v.isNewAtomEntry(element)
+	}
+
+	if !strings.EqualFold(element.Name.Local, "item") {
+		return false
+	}
+
+	return v.depth == 2 || (v.depth == 3 && v.inChannel)
+}
+
+func (v *xmlPayloadValidator) isRSSChannel(element xml.StartElement) bool {
+	return !strings.EqualFold(v.scan.root, "feed") && v.depth == 2 && strings.EqualFold(element.Name.Local, "channel")
 }
 
 func (v *xmlPayloadValidator) setRoot(name string) error {
@@ -620,6 +1010,10 @@ func (v *xmlPayloadValidator) isEntryContent(element xml.StartElement) bool {
 func (v *xmlPayloadValidator) handleEnd() error {
 	if v.depth == 0 {
 		return errors.New("unexpected closing element")
+	}
+
+	if v.depth == 2 {
+		v.inChannel = false
 	}
 
 	if v.depth == v.entryDepth {

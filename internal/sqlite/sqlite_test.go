@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -194,6 +195,123 @@ func TestOpenResolvesRelativePaths(t *testing.T) {
 				t.Fatalf("folder after reopen = %+v, want Relative", got)
 			}
 		})
+	}
+}
+
+func TestOpenEnforcesDataAtRestPermissions(t *testing.T) {
+	cases := []struct {
+		name  string
+		umask int
+	}{
+		{name: "umask 022", umask: 0o022},
+		{name: "umask 0", umask: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oldMask := syscall.Umask(tc.umask)
+			t.Cleanup(func() {
+				syscall.Umask(oldMask)
+			})
+
+			dataDir := filepath.Join(t.TempDir(), "data")
+			dbPath := filepath.Join(dataDir, "reader.db")
+			ctx := context.Background()
+
+			store, err := Open(ctx, dbPath)
+			if err != nil {
+				t.Fatalf("open store: %v", err)
+			}
+			defer store.Close()
+
+			requireFileMode(t, dataDir, 0o700)
+			requireFileMode(t, dbPath, 0o600)
+
+			if err := store.Settings().UpdateJinaKey(ctx, "secret-key"); err != nil {
+				t.Fatalf("write setting in WAL mode: %v", err)
+			}
+
+			requireFileMode(t, dbPath+"-wal", 0o600)
+			requireFileMode(t, dbPath+"-shm", 0o600)
+		})
+	}
+}
+
+func TestOpenTightensExistingFilesButLeavesSharedDirectory(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "existing")
+	dbPath := filepath.Join(dataDir, "reader.db")
+	ctx := context.Background()
+
+	initial, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open initial store: %v", err)
+	}
+
+	if err := initial.Close(); err != nil {
+		t.Fatalf("close initial store: %v", err)
+	}
+
+	if err := os.Chmod(dataDir, 0o755); err != nil {
+		t.Fatalf("loosen data dir mode: %v", err)
+	}
+
+	if err := os.Chmod(dbPath, 0o644); err != nil {
+		t.Fatalf("loosen db file mode: %v", err)
+	}
+
+	reopenedNoSidecars, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("reopen store without sidecars: %v", err)
+	}
+
+	requireFileMode(t, dataDir, 0o755)
+	requireFileMode(t, dbPath, 0o600)
+
+	if err := reopenedNoSidecars.Close(); err != nil {
+		t.Fatalf("close reopened store: %v", err)
+	}
+
+	if err := os.Chmod(dataDir, 0o755); err != nil {
+		t.Fatalf("loosen data dir mode: %v", err)
+	}
+
+	if err := os.Chmod(dbPath, 0o644); err != nil {
+		t.Fatalf("loosen db file mode: %v", err)
+	}
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecar := dbPath + suffix
+		if err := os.WriteFile(sidecar, nil, 0o644); err != nil {
+			t.Fatalf("create loose sidecar %s: %v", suffix, err)
+		}
+
+		if err := os.Chmod(sidecar, 0o644); err != nil {
+			t.Fatalf("loosen sidecar %s: %v", suffix, err)
+		}
+	}
+
+	reopenedWithSidecars, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("reopen store with loose sidecars: %v", err)
+	}
+	defer reopenedWithSidecars.Close()
+
+	requireFileMode(t, dataDir, 0o755)
+	requireFileMode(t, dbPath, 0o600)
+	requireFileMode(t, dbPath+"-wal", 0o600)
+	requireFileMode(t, dbPath+"-shm", 0o600)
+}
+
+func requireFileMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %04o, want %04o", path, got, want)
 	}
 }
 
@@ -536,24 +654,6 @@ func TestFeedRepoLookupAndList(t *testing.T) {
 
 	if want := []string{"Alpha", "Folder Feed", "alpha", "beta"}; !slices.Equal(titles, want) {
 		t.Fatalf("feed titles = %v, want %v", titles, want)
-	}
-
-	byURL, err := store.Feeds().GetByURL(ctx, folderFeed.URL)
-	if err != nil {
-		t.Fatalf("get feed by url: %v", err)
-	}
-
-	if byURL == nil || byURL.ID != folderFeed.ID {
-		t.Fatalf("feed by url = %+v, want %s", byURL, folderFeed.ID)
-	}
-
-	unknown, err := store.Feeds().GetByURL(ctx, mustURL(t, "https://example.com/unknown.xml"))
-	if err != nil {
-		t.Fatalf("get unknown feed by url: %v", err)
-	}
-
-	if unknown != nil {
-		t.Fatalf("unknown feed = %+v, want nil", unknown)
 	}
 
 	missing, err := store.Feeds().GetByID(ctx, "missing")
@@ -2242,7 +2342,7 @@ func TestKindleSendRepoListUnreadForKindle(t *testing.T) {
 		t.Fatalf("mark read feed read: %v", err)
 	}
 
-	unreadPages, feeds, items, err := store.KindleSends().ListUnreadForKindle(ctx)
+	refs, err := store.KindleSends().ListUnreadForKindle(ctx)
 	if err != nil {
 		t.Fatalf("list unread for kindle: %v", err)
 	}
@@ -2250,41 +2350,49 @@ func TestKindleSendRepoListUnreadForKindle(t *testing.T) {
 	wantPages := []string{savedPages[0].ID, savedPages[2].ID}
 	slices.Sort(wantPages)
 
-	if got := savedPageIDs(unreadPages); !slices.Equal(got, wantPages) {
-		t.Fatalf("unread saved page ids = %v, want %v in id ASC order", got, wantPages)
+	wantRefs := []domain.KindleArticleRef{
+		{ID: wantPages[0], IsSavedPage: true},
+		{ID: wantPages[1], IsSavedPage: true},
+		{ID: alphaItems[0].ID},
+		{ID: alphaItems[1].ID},
+		{ID: alphaItems[2].ID},
+		{ID: zetaItems[1].ID},
+		{ID: zetaItems[0].ID},
 	}
 
-	feedTitles := make([]string, len(feeds))
-	for i, feed := range feeds {
-		feedTitles[i] = feed.Title
+	if !slices.Equal(refs, wantRefs) {
+		t.Fatalf("unread refs = %+v, want %+v", refs, wantRefs)
 	}
 
-	if want := []string{"Alpha", "Zeta"}; !slices.Equal(feedTitles, want) {
-		t.Fatalf("unread feed titles = %v, want %v", feedTitles, want)
-	}
-
-	if len(items) != 2 {
-		t.Fatalf("grouped feed items = %d groups, want 2", len(items))
-	}
-
-	if got := itemIDs(items[alpha.ID]); !slices.Equal(got, []string{alphaItems[0].ID, alphaItems[1].ID, alphaItems[2].ID}) {
-		t.Fatalf("alpha unread item ids = %v", got)
-	}
-
-	if got := itemIDs(items[zeta.ID]); !slices.Equal(got, []string{zetaItems[1].ID, zetaItems[0].ID}) {
-		t.Fatalf("zeta unread item ids = %v", got)
-	}
-
-	if _, ok := items[empty.ID]; ok {
-		t.Fatal("empty feed should not be listed")
-	}
-
-	if _, ok := items[readFeed.ID]; ok {
-		t.Fatal("fully read feed should not be listed")
-	}
-
+	_ = empty
 	if len(readItems) != 2 {
 		t.Fatalf("read feed items = %d, want 2", len(readItems))
+	}
+
+	gotPage, gotFeed, gotItem, err := store.KindleSends().GetKindleArticle(ctx, wantRefs[0])
+	if err != nil {
+		t.Fatalf("get saved page article: %v", err)
+	}
+	if gotPage == nil || gotPage.ID != wantPages[0] || gotPage.Content != "<p>body</p>" || gotFeed != nil || gotItem != nil {
+		t.Fatalf("get saved page article = (%+v, %+v, %+v)", gotPage, gotFeed, gotItem)
+	}
+
+	gotPage, gotFeed, gotItem, err = store.KindleSends().GetKindleArticle(ctx, wantRefs[2])
+	if err != nil {
+		t.Fatalf("get feed item article: %v", err)
+	}
+	if gotPage != nil || gotFeed == nil || gotFeed.Title != "Alpha" || gotItem == nil || gotItem.ID != alphaItems[0].ID {
+		t.Fatalf("get feed item article = (%+v, %+v, %+v)", gotPage, gotFeed, gotItem)
+	}
+
+	missingPage, missingFeed, missingItem, err := store.KindleSends().GetKindleArticle(ctx, domain.KindleArticleRef{ID: domain.NewID(), IsSavedPage: true})
+	if err != nil || missingPage != nil || missingFeed != nil || missingItem != nil {
+		t.Fatalf("missing saved page = (%+v, %+v, %+v, %v), want all nil", missingPage, missingFeed, missingItem, err)
+	}
+
+	missingPage, missingFeed, missingItem, err = store.KindleSends().GetKindleArticle(ctx, domain.KindleArticleRef{ID: domain.NewID()})
+	if err != nil || missingPage != nil || missingFeed != nil || missingItem != nil {
+		t.Fatalf("missing feed item = (%+v, %+v, %+v, %v), want all nil", missingPage, missingFeed, missingItem, err)
 	}
 }
 

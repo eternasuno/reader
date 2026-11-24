@@ -21,6 +21,11 @@ const maxSanitizedHTMLBytes = 40 << 20
 
 var (
 	loadingAttribute      = regexp.MustCompile(`(?i)^(auto|eager|lazy)$`)
+	linkHrefAttribute     = regexp.MustCompile(`(?i)^(https?://|mailto:)`)
+	mediaSrcAttribute     = regexp.MustCompile(`(?i)^https?://`)
+	imageSrcAttribute     = regexp.MustCompile(`(?i)^(https?://|data:image/)`)
+	openAttribute         = regexp.MustCompile(`(?i)^(|open)$`)
+	targetBlankAttribute  = regexp.MustCompile(`^_blank$`)
 	errHTMLBudgetExceeded = errors.New("sanitized html exceeds byte budget")
 )
 
@@ -29,19 +34,59 @@ type Sanitizer struct {
 }
 
 func NewSanitizer() *Sanitizer {
-	policy := bluemonday.UGCPolicy()
-	policy.RequireNoFollowOnLinks(false)
+	return &Sanitizer{policy: buildHTMLPolicy()}
+}
+
+func buildHTMLPolicy() *bluemonday.Policy {
+	policy := bluemonday.NewPolicy()
+	policy.AllowStandardAttributes()
+	policy.RequireParseableURLs(true)
+	policy.AllowURLSchemes("mailto", "http", "https")
 	policy.AllowURLSchemeWithCustomPolicy("data", isImageDataURL)
 
-	policy.AllowElements("picture", "source", "video", "audio")
-	policy.AllowAttrs("target").Matching(regexp.MustCompile(`^_blank$`)).OnElements("a")
-	policy.AllowAttrs("rel").Matching(bluemonday.SpaceSeparatedTokens).OnElements("a")
-	policy.AllowAttrs("loading").Matching(loadingAttribute).OnElements("img")
-	policy.AllowAttrs("type", "media").OnElements("source")
-	policy.AllowAttrs("src").OnElements("source", "video", "audio")
-	policy.AllowAttrs("controls", "loop", "muted", "autoplay", "playsinline").OnElements("video", "audio")
+	allowContentElements(policy)
+	allowMediaElements(policy)
+	allowLinkElements(policy)
 
-	return &Sanitizer{policy: policy}
+	return policy
+}
+
+func allowContentElements(policy *bluemonday.Policy) {
+	policy.AllowElements(
+		"article", "aside", "figure", "figcaption", "section", "summary",
+		"h1", "h2", "h3", "h4", "h5", "h6", "hgroup",
+		"blockquote", "br", "div", "hr", "p", "span", "wbr",
+		"abbr", "acronym", "cite", "code", "dfn", "em", "mark", "q",
+		"s", "samp", "strong", "sub", "sup", "var",
+		"b", "i", "pre", "small", "strike", "tt", "u",
+		"del", "ins", "rp", "rt", "ruby",
+	)
+	policy.AllowAttrs("open").Matching(openAttribute).OnElements("details")
+	policy.AllowAttrs("datetime").Matching(bluemonday.ISO8601).OnElements("time", "del", "ins")
+	policy.AllowAttrs("dir").Matching(bluemonday.Direction).OnElements("bdi", "bdo")
+	policy.AllowAttrs("value", "min", "max", "low", "high", "optimum").Matching(bluemonday.Number).OnElements("meter")
+	policy.AllowAttrs("value", "max").Matching(bluemonday.Number).OnElements("progress")
+	policy.AllowLists()
+	policy.AllowTables()
+}
+
+func allowMediaElements(policy *bluemonday.Policy) {
+	policy.AllowAttrs("align").Matching(bluemonday.ImageAlign).OnElements("img")
+	policy.AllowAttrs("alt").Matching(bluemonday.Paragraph).OnElements("img")
+	policy.AllowAttrs("height", "width").Matching(bluemonday.NumberOrPercent).OnElements("img")
+	policy.AllowAttrs("loading").Matching(loadingAttribute).OnElements("img")
+	policy.AllowAttrs("src").Matching(imageSrcAttribute).OnElements("img")
+
+	policy.AllowElements("picture")
+	policy.AllowAttrs("type", "media").OnElements("source")
+	policy.AllowAttrs("src").Matching(mediaSrcAttribute).OnElements("source", "video", "audio")
+	policy.AllowAttrs("controls", "loop", "muted", "autoplay", "playsinline").OnElements("video", "audio")
+}
+
+func allowLinkElements(policy *bluemonday.Policy) {
+	policy.AllowAttrs("href").Matching(linkHrefAttribute).OnElements("a")
+	policy.AllowAttrs("target").Matching(targetBlankAttribute).OnElements("a")
+	policy.AllowAttrs("rel").Matching(bluemonday.SpaceSeparatedTokens).OnElements("a")
 }
 
 func (s *Sanitizer) SanitizeHTML(rawHTML string, baseURL string) (string, error) {
@@ -53,6 +98,10 @@ func (s *Sanitizer) sanitizeHTMLWithBudget(rawHTML string, baseURL string, maxBy
 		return "", nil
 	}
 
+	if maxBytes <= 0 {
+		return "", sanitizerError(errHTMLBudgetExceeded)
+	}
+
 	if len(rawHTML) > maxBytes {
 		return "", sanitizerError(errHTMLBudgetExceeded)
 	}
@@ -62,13 +111,8 @@ func (s *Sanitizer) sanitizeHTMLWithBudget(rawHTML string, baseURL string, maxBy
 		return "", sanitizerError(err)
 	}
 
-	base := parsePublicBaseURL(baseURL)
-	budget := rewriteBudget{remaining: maxBytes - len(rawHTML)}
-
-	for _, node := range nodes {
-		if !rewriteURLs(node, base, &budget) {
-			return "", sanitizerError(errHTMLBudgetExceeded)
-		}
+	if err := rewriteFragmentURLs(nodes, parsePublicBaseURL(baseURL), maxBytes-len(rawHTML)); err != nil {
+		return "", err
 	}
 
 	rendered := boundedBuffer{limit: maxBytes}
@@ -88,6 +132,18 @@ func (s *Sanitizer) sanitizeHTMLWithBudget(rawHTML string, baseURL string, maxBy
 	return strings.TrimSpace(sanitized.buf.String()), nil
 }
 
+func rewriteFragmentURLs(nodes []*html.Node, base *url.URL, remaining int) error {
+	budget := byteBudget{remaining: remaining}
+
+	for _, node := range nodes {
+		if !rewriteURLs(node, base, &budget) {
+			return sanitizerError(errHTMLBudgetExceeded)
+		}
+	}
+
+	return nil
+}
+
 type boundedBuffer struct {
 	buf   bytes.Buffer
 	limit int
@@ -101,11 +157,11 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
-type rewriteBudget struct {
+type byteBudget struct {
 	remaining int
 }
 
-func (b *rewriteBudget) consume(delta int) bool {
+func (b *byteBudget) consume(delta int) bool {
 	if delta <= 0 {
 		return true
 	}
@@ -125,7 +181,7 @@ func fragmentContainer() *html.Node {
 	return &html.Node{Type: html.ElementNode, Data: "div", DataAtom: atom.Div}
 }
 
-func rewriteURLs(node *html.Node, base *url.URL, budget *rewriteBudget) bool {
+func rewriteURLs(node *html.Node, base *url.URL, budget *byteBudget) bool {
 	if node.Type == html.ElementNode && !rewriteElementURL(node, base, budget) {
 		return false
 	}
@@ -139,7 +195,7 @@ func rewriteURLs(node *html.Node, base *url.URL, budget *rewriteBudget) bool {
 	return true
 }
 
-func rewriteElementURL(node *html.Node, base *url.URL, budget *rewriteBudget) bool {
+func rewriteElementURL(node *html.Node, base *url.URL, budget *byteBudget) bool {
 	switch node.Data {
 	case "a":
 		return rewriteLink(node, base, budget)
@@ -152,7 +208,7 @@ func rewriteElementURL(node *html.Node, base *url.URL, budget *rewriteBudget) bo
 	}
 }
 
-func rewriteLink(node *html.Node, base *url.URL, budget *rewriteBudget) bool {
+func rewriteLink(node *html.Node, base *url.URL, budget *byteBudget) bool {
 	href, ok := attributeValue(node, "href")
 	if !ok {
 		return true
@@ -170,7 +226,7 @@ func rewriteLink(node *html.Node, base *url.URL, budget *rewriteBudget) bool {
 		setAttributeBudgeted(node, "rel", "noopener noreferrer", budget)
 }
 
-func rewriteMediaSource(node *html.Node, base *url.URL, allowDataImage bool, budget *rewriteBudget) bool {
+func rewriteMediaSource(node *html.Node, base *url.URL, allowDataImage bool, budget *byteBudget) bool {
 	src, ok := attributeValue(node, "src")
 	if !ok {
 		return true
@@ -192,8 +248,10 @@ func isAllowedLinkURL(parsed *url.URL) bool {
 	}
 
 	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https", "mailto":
+	case "http", "https":
 		return true
+	case "mailto":
+		return parsed.User == nil && parsed.Host == ""
 	}
 
 	return false
@@ -277,8 +335,7 @@ func resolvePublicURL(base *url.URL, rawURL string) (*url.URL, bool) {
 }
 
 func redactURLCredentials(parsed *url.URL) {
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
+	if parsed != nil {
 		parsed.User = nil
 	}
 }
@@ -293,7 +350,7 @@ func attributeValue(node *html.Node, key string) (string, bool) {
 	return "", false
 }
 
-func setAttributeBudgeted(node *html.Node, key string, value string, budget *rewriteBudget) bool {
+func setAttributeBudgeted(node *html.Node, key string, value string, budget *byteBudget) bool {
 	for index := range node.Attr {
 		if node.Attr[index].Key == key {
 			if !budget.consume(len(value) - len(node.Attr[index].Val)) {
@@ -329,5 +386,9 @@ func removeAttribute(node *html.Node, key string) {
 }
 
 func sanitizerError(err error) error {
+	if errors.Is(err, errHTMLBudgetExceeded) {
+		return fmt.Errorf("html sanitizer: %w", errHTMLBudgetExceeded)
+	}
+
 	return fmt.Errorf("html sanitizer: %s", domain.SanitizeErrorText(err.Error()))
 }

@@ -1,15 +1,21 @@
 package fetcher
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha1" //nolint:gosec // RFC 6455 WebSocket handshake requires SHA-1.
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -73,6 +79,10 @@ func TestIsBlockedIP(t *testing.T) {
 		"fe80::1",
 		"fc00::1",
 		"ff02::1",
+		"64:ff9b::127.0.0.1",
+		"64:ff9b::192.0.2.1",
+		"64:ff9b:1::1",
+		"64:ff9b:1:ffff::1",
 		"::ffff:127.0.0.1",
 		"::ffff:10.0.0.1",
 	}
@@ -93,6 +103,7 @@ func TestIsBlockedIP(t *testing.T) {
 	allowed := []string{
 		"93.184.216.34",
 		"2606:2800:220:1:248:1893:25c8:1946",
+		"64:ff9c::1",
 		"8.8.8.8",
 		"1.1.1.1",
 	}
@@ -1034,4 +1045,263 @@ func TestDetectImageType(t *testing.T) {
 	if _, _, ok := detectImageType([]byte("<html>")); ok {
 		t.Fatal("expected html to be rejected")
 	}
+}
+
+func TestClassifyBrowserError(t *testing.T) {
+	if err := classifyBrowserError(fmt.Errorf("wrapped: %w", context.DeadlineExceeded)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+
+	if err := classifyBrowserError(fmt.Errorf("wrapped: %w", context.Canceled)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected Canceled, got %v", err)
+	}
+
+	if err := classifyBrowserError(fmt.Errorf("wrapped: %w", errResponseTooLarge)); !errors.Is(err, errResponseTooLarge) {
+		t.Fatalf("expected errResponseTooLarge, got %v", err)
+	}
+
+	if err := classifyBrowserError(errors.New("ws://secret:pw@internal:9222 failed")); !errors.Is(err, errBrowserFetchFailed) {
+		t.Fatalf("expected errBrowserFetchFailed, got %v", err)
+	}
+}
+
+func TestRunBrowserFetchCreatesAndDisposesBrowserContext(t *testing.T) {
+	type cdpCall struct {
+		Method string
+		Params map[string]any
+	}
+
+	var (
+		mu    sync.Mutex
+		calls []cdpCall
+	)
+
+	recordCall := func(method string, params map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, cdpCall{Method: method, Params: params})
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("Sec-WebSocket-Key")
+		sum := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")) //nolint:gosec // RFC 6455 WebSocket accept hash.
+		accept := base64.StdEncoding.EncodeToString(sum[:])
+
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		conn, rw, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		_, _ = fmt.Fprintf(
+			rw,
+			"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n",
+			accept,
+		)
+		_ = rw.Flush()
+
+		for {
+			payload, ok := readWSFrame(rw.Reader)
+			if !ok {
+				return
+			}
+
+			var req struct {
+				ID        int64          `json:"id"`
+				Method    string         `json:"method"`
+				Params    map[string]any `json:"params"`
+				SessionID string         `json:"sessionId"`
+			}
+			if err := json.Unmarshal(payload, &req); err != nil {
+				return
+			}
+
+			recordCall(req.Method, req.Params)
+
+			resp := map[string]any{"id": req.ID, "result": map[string]any{}}
+			if req.SessionID != "" {
+				resp["sessionId"] = req.SessionID
+			}
+
+			switch req.Method {
+			case "Target.createBrowserContext":
+				resp["result"] = map[string]any{"browserContextId": "bc-isolated-1"}
+			case "Target.createTarget":
+				resp["result"] = map[string]any{"targetId": "target-1"}
+			case "Target.attachToTarget":
+				resp["result"] = map[string]any{"sessionId": "session-1"}
+			case "Runtime.evaluate":
+				resp["result"] = map[string]any{"result": map[string]any{"type": "object", "className": "Window"}}
+			case "Page.getFrameTree":
+				resp["result"] = map[string]any{"frameTree": map[string]any{"frame": map[string]any{"id": "frame-1"}}}
+			case "Target.getTargets":
+				resp["result"] = map[string]any{"targetInfos": []any{}}
+			case "Page.navigate":
+				if urlParam, _ := req.Params["url"].(string); strings.Contains(urlParam, "hang") {
+					select {
+					case <-r.Context().Done():
+						return
+					case <-time.After(100 * time.Millisecond):
+					}
+				}
+				delete(resp, "result")
+				resp["error"] = map[string]any{"code": -32000, "message": "simulated navigation stop"}
+			}
+
+			encoded, err := json.Marshal(resp)
+			if err != nil {
+				return
+			}
+
+			if !writeWSFrame(rw.Writer, encoded) {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	wsEndpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/devtools/browser/test"
+
+	checkIsolation := func(t *testing.T, run func() error) {
+		t.Helper()
+
+		mu.Lock()
+		calls = nil
+		mu.Unlock()
+
+		if err := run(); err == nil {
+			t.Fatal("expected error from simulated CDP server")
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		var createdIsolated, targetedIsolated, disposedIsolated bool
+		for _, call := range calls {
+			switch call.Method {
+			case "Target.createBrowserContext":
+				if disposeOnDetach, _ := call.Params["disposeOnDetach"].(bool); disposeOnDetach {
+					createdIsolated = true
+				}
+			case "Target.createTarget":
+				if call.Params["browserContextId"] == "bc-isolated-1" {
+					targetedIsolated = true
+				}
+			case "Target.disposeBrowserContext":
+				if call.Params["browserContextId"] == "bc-isolated-1" {
+					disposedIsolated = true
+				}
+			}
+		}
+
+		if !createdIsolated {
+			t.Fatalf("expected Target.createBrowserContext with disposeOnDetach=true; calls=%+v", calls)
+		}
+
+		if !targetedIsolated {
+			t.Fatalf("expected Target.createTarget with isolated browserContextId; calls=%+v", calls)
+		}
+
+		if !disposedIsolated {
+			t.Fatalf("expected Target.disposeBrowserContext on exit; calls=%+v", calls)
+		}
+	}
+
+	t.Run("completion", func(t *testing.T) {
+		checkIsolation(t, func() error {
+			_, _, err := runBrowserFetch(context.Background(), wsEndpoint, "https://example.com/page", 5*time.Second, 1024)
+			if !errors.Is(err, errBrowserFetchFailed) {
+				t.Fatalf("expected errBrowserFetchFailed, got %v", err)
+			}
+
+			return err
+		})
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		checkIsolation(t, func() error {
+			_, _, err := runBrowserFetch(context.Background(), wsEndpoint, "https://example.com/hang", 20*time.Millisecond, 1024)
+			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected timeout/cancel error, got %v", err)
+			}
+
+			return err
+		})
+	})
+}
+
+func readWSFrame(r *bufio.Reader) ([]byte, bool) {
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, false
+	}
+
+	opcode := header[0] & 0x0f
+	if opcode == 8 {
+		return nil, false
+	}
+
+	masked := header[1]&0x80 != 0
+	length := int(header[1] & 0x7f)
+
+	switch length {
+	case 126:
+		ext := make([]byte, 2)
+		if _, err := io.ReadFull(r, ext); err != nil {
+			return nil, false
+		}
+		length = int(binary.BigEndian.Uint16(ext))
+	case 127:
+		ext := make([]byte, 8)
+		if _, err := io.ReadFull(r, ext); err != nil {
+			return nil, false
+		}
+		length = int(binary.BigEndian.Uint64(ext))
+	}
+
+	var mask [4]byte
+	if masked {
+		if _, err := io.ReadFull(r, mask[:]); err != nil {
+			return nil, false
+		}
+	}
+
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return nil, false
+	}
+
+	if masked {
+		for i := range payload {
+			payload[i] ^= mask[i%4]
+		}
+	}
+
+	return payload, true
+}
+
+func writeWSFrame(w *bufio.Writer, payload []byte) bool {
+	if len(payload) < 126 {
+		_ = w.WriteByte(0x81)
+		_ = w.WriteByte(byte(len(payload)))
+	} else {
+		_ = w.WriteByte(0x81)
+		_ = w.WriteByte(126)
+		var ext [2]byte
+		binary.BigEndian.PutUint16(ext[:], uint16(len(payload)))
+		_, _ = w.Write(ext[:])
+	}
+
+	_, err := w.Write(payload)
+	if err != nil {
+		return false
+	}
+
+	return w.Flush() == nil
 }

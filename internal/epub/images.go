@@ -10,6 +10,8 @@ import (
 	_ "image/png"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 const (
@@ -26,6 +28,11 @@ const (
 	// of every component until the last scan, i.e. 4 bytes per component pixel.
 	jpegCoefficientBytesPerPixel = 4
 	epubJPEGQuality              = 75
+	pngSignature                 = "\x89PNG\r\n\x1a\n"
+	pngIHDRMinBytes              = 29
+	pngIHDRTypeOffset            = 12
+	pngIHDRInterlaceAt           = 28
+	maxCachedFailedImages        = 4096
 )
 
 type imageFormat struct {
@@ -95,55 +102,77 @@ func (d *decodeBudget) release(amount int64) {
 	d.mu.Unlock()
 }
 
-func (b *Builder) prepareImages(ctx context.Context, chapters []chapterInput) (map[string]preparedImage, error) {
-	orderedURLs := collectOrderedImageURLs(chapters)
-	if len(orderedURLs) == 0 || b.imageFetcher == nil {
-		return nil, ctx.Err()
+func (b *Builder) prepareChapterImages(
+	ctx context.Context,
+	deadline time.Time,
+	urls []string,
+	remainingBudget int64,
+	failed map[string]struct{},
+	prepared map[string]preparedImage,
+) error {
+	if b.imageFetcher == nil || remainingBudget <= 0 || !time.Now().Before(deadline) {
+		return ctx.Err()
 	}
 
-	prepCtx, cancelPrep := context.WithTimeout(ctx, b.imagePrepTimeout)
+	pending := collectPendingImageURLs(urls, failed, prepared)
+	if len(pending) == 0 {
+		return ctx.Err()
+	}
+
+	prepCtx, cancelPrep := context.WithDeadline(ctx, deadline)
 	defer cancelPrep()
 
-	results := b.fetchAndPrepareImages(prepCtx, orderedURLs)
+	results, attempted := b.fetchAndPrepareImages(prepCtx, pending, remainingBudget)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
 
-	assets := make(map[string]preparedImage, len(orderedURLs))
-	for i, rawURL := range orderedURLs {
+	recordPreparedImages(pending, results, attempted, prepCtx.Err() == nil, failed, prepared)
+
+	return nil
+}
+
+func collectPendingImageURLs(urls []string, failed map[string]struct{}, prepared map[string]preparedImage) []string {
+	pending := make([]string, 0, len(urls))
+	for _, rawURL := range urls {
+		if _, isFailed := failed[rawURL]; isFailed {
+			continue
+		}
+		if _, isPrepared := prepared[rawURL]; isPrepared {
+			continue
+		}
+
+		pending = append(pending, rawURL)
+	}
+
+	return pending
+}
+
+func recordPreparedImages(
+	urls []string,
+	results []preparedImage,
+	attempted []bool,
+	prepCompleted bool,
+	failed map[string]struct{},
+	prepared map[string]preparedImage,
+) {
+	for i, rawURL := range urls {
 		if results[i].valid() {
-			assets[rawURL] = results[i]
+			prepared[rawURL] = results[i]
+			continue
+		}
+
+		if attempted[i] && prepCompleted && len(failed) < maxCachedFailedImages {
+			failed[rawURL] = struct{}{}
 		}
 	}
-
-	return assets, nil
 }
 
-func collectOrderedImageURLs(chapters []chapterInput) []string {
-	ordered := make([]string, 0)
-	seen := make(map[string]struct{})
-
-	for _, ch := range chapters {
-		for _, rawURL := range ch.imgURLs {
-			if _, ok := seen[rawURL]; ok {
-				continue
-			}
-
-			seen[rawURL] = struct{}{}
-			ordered = append(ordered, rawURL)
-		}
-	}
-
-	return ordered
-}
-
-func (b *Builder) fetchAndPrepareImages(ctx context.Context, urls []string) []preparedImage {
+func (b *Builder) fetchAndPrepareImages(ctx context.Context, urls []string, byteBudget int64) ([]preparedImage, []bool) {
 	results := make([]preparedImage, len(urls))
-	queue := make(chan int, len(urls))
-	for i := range urls {
-		queue <- i
-	}
-	close(queue)
+	attempted := make([]bool, len(urls))
+	var nextIdx atomic.Int64
+	var collectedBytes atomic.Int64
 
 	budget := newDecodeBudget(b.decodeMemoryBudget)
 	var waitGroup sync.WaitGroup
@@ -151,19 +180,42 @@ func (b *Builder) fetchAndPrepareImages(ctx context.Context, urls []string) []pr
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
-			for idx := range queue {
-				if ctx.Err() != nil {
-					return
-				}
-
-				results[idx] = b.prepareOneImage(ctx, urls[idx], budget)
-			}
+			b.prepareImageWorker(ctx, urls, results, attempted, &nextIdx, &collectedBytes, byteBudget, budget)
 		}()
 	}
 
 	waitGroup.Wait()
 
-	return results
+	return results, attempted
+}
+
+func (b *Builder) prepareImageWorker(
+	ctx context.Context,
+	urls []string,
+	results []preparedImage,
+	attempted []bool,
+	nextIdx *atomic.Int64,
+	collectedBytes *atomic.Int64,
+	byteBudget int64,
+	budget *decodeBudget,
+) {
+	for {
+		if ctx.Err() != nil || collectedBytes.Load() >= byteBudget {
+			return
+		}
+
+		idx := int(nextIdx.Add(1) - 1)
+		if idx >= len(urls) {
+			return
+		}
+
+		attempted[idx] = true
+		img := b.prepareOneImage(ctx, urls[idx], budget)
+		if img.valid() {
+			results[idx] = img
+			collectedBytes.Add(int64(len(img.data)))
+		}
+	}
 }
 
 func (b *Builder) prepareOneImage(ctx context.Context, rawURL string, budget *decodeBudget) preparedImage {
@@ -265,9 +317,56 @@ func estimateDecodeBytes(fmtInfo imageFormat, data []byte, cfg image.Config, dst
 	}
 
 	srcBPP := pngBytesPerPixel(cfg.ColorModel)
+	srcPixels := pixels
+	if pngInterlaced(data) {
+		srcPixels += maxAdam7PassPixels(cfg.Width, cfg.Height)
+	}
 
 	// image/png also keeps two scanline filter buffers plus inflate window/reader state.
-	return pixels*srcBPP + dstBytes + 2*(int64(cfg.Width)*srcBPP+1) + pngDecoderOverheadBytes
+	return srcPixels*srcBPP + dstBytes + 2*(int64(cfg.Width)*srcBPP+1) + pngDecoderOverheadBytes
+}
+
+func pngInterlaced(data []byte) bool {
+	if len(data) < pngIHDRMinBytes || string(data[:len(pngSignature)]) != pngSignature {
+		return true
+	}
+
+	if string(data[pngIHDRTypeOffset:pngIHDRTypeOffset+4]) != "IHDR" {
+		return true
+	}
+
+	return data[pngIHDRInterlaceAt] != 0
+}
+
+func maxAdam7PassPixels(width int, height int) int64 {
+	type adam7Pass struct {
+		xFactor, yFactor, xOffset, yOffset int
+	}
+
+	passes := [7]adam7Pass{
+		{8, 8, 0, 0},
+		{8, 8, 4, 0},
+		{4, 8, 0, 4},
+		{4, 4, 2, 0},
+		{2, 4, 0, 2},
+		{2, 2, 1, 0},
+		{1, 2, 0, 1},
+	}
+
+	var maxPixels int64
+	for _, p := range passes {
+		pw := (width - p.xOffset + p.xFactor - 1) / p.xFactor
+		ph := (height - p.yOffset + p.yFactor - 1) / p.yFactor
+		if pw <= 0 || ph <= 0 {
+			continue
+		}
+
+		if n := int64(pw) * int64(ph); n > maxPixels {
+			maxPixels = n
+		}
+	}
+
+	return maxPixels
 }
 
 func pngBytesPerPixel(model color.Model) int64 {

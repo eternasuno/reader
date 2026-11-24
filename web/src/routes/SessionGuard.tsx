@@ -15,6 +15,7 @@ import {
   sessionErrorCode,
   sessionStatus,
 } from '../state';
+import { consumeQuickSaveLocation } from '../state/saved-page-create';
 import { Button, Icon } from '../ui';
 
 export interface SessionGuardProps {
@@ -88,7 +89,14 @@ export function SessionGuard(props: SessionGuardProps): JSX.Element {
     (status) => {
       if (status !== 'unauthenticated') return;
 
-      const next = untrack(() => sanitizeNextPath(currentPath()));
+      const next = untrack(() => {
+        const stripped = consumeQuickSaveLocation(
+          location.pathname,
+          location.search,
+          location.hash
+        );
+        return sanitizeNextPath(stripped ?? currentPath());
+      });
       navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });
     }
   );

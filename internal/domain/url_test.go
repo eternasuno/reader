@@ -31,7 +31,6 @@ func TestURLParseNormalized(t *testing.T) {
 		wantCreds    bool
 		wantUser     string
 		wantPass     string
-		wantHasPass  bool
 	}{
 		{
 			name:         "empty path becomes root",
@@ -98,7 +97,6 @@ func TestURLParseNormalized(t *testing.T) {
 			wantCreds:    true,
 			wantUser:     "user",
 			wantPass:     "secret",
-			wantHasPass:  true,
 		},
 		{
 			name:         "keeps username only credential",
@@ -161,10 +159,6 @@ func TestURLParseNormalized(t *testing.T) {
 
 			if password != tc.wantPass {
 				t.Fatalf("password = %q, want %q", password, tc.wantPass)
-			}
-
-			if got.hasPass != tc.wantHasPass {
-				t.Fatalf("hasPass = %v, want %v", got.hasPass, tc.wantHasPass)
 			}
 
 			parsed, err := got.Parsed()
@@ -310,7 +304,23 @@ func TestURLSanitizeErrorText(t *testing.T) {
 		{name: "uppercase scheme", in: "HTTPS://user:secret@Example.com/feed", want: "HTTPS://Example.com/feed"},
 		{name: "multiple urls", in: "https://a:b@one.com/x and http://c@two.com/y", want: "https://one.com/x and http://two.com/y"},
 		{name: "path with at sign", in: "https://example.com/user@example.com", want: "https://example.com/user@example.com"},
+		{name: "apostrophe in password prose", in: "see http://u:p'w@host/x", want: "see http://host/x"},
+		{name: "single quoted url with apostrophe in password", in: "failed 'http://u:p'w@host/x'", want: "failed 'http://host/x'"},
+		{name: "double quoted url with apostrophe in password", in: `failed "https://u:p'w@host/x"`, want: `failed "https://host/x"`},
+		{name: "trailing punctuation", in: "check (https://u:p'w@host/x), then http://a:b'c@other.example.", want: "check (https://host/x), then http://other.example."},
+		{name: "websocket credentials", in: "dial ws://tok:p'w@browser.internal:9222/dev failed", want: "dial ws://browser.internal:9222/dev failed"},
 		{name: "non http scheme untouched", in: "smtp://user:secret@example.com:465", want: "smtp://user:secret@example.com:465"},
+		{name: "multiple at signs in password", in: "see http://user:p@ss@host/x", want: "see http://host/x"},
+		{name: "multiple at signs and apostrophe in password", in: "see https://u:p'w@s@s@host/x", want: "see https://host/x"},
+		{name: "quoted and bracketed urls with multi-at password", in: `check [https://u:p@ss@host], <http://a:b@c@other>, {wss://x:y@z@third}, ` + "`ws://k:v@w@fourth`", want: `check [https://host], <http://other>, {wss://third}, ` + "`ws://fourth`"},
+		{name: "single quoted url with multi-at password", in: "'http://user:p@ss@host/x'", want: "'http://host/x'"},
+		{name: "double quoted url with multi-at password", in: `"https://user:p@ss@host/x"`, want: `"https://host/x"`},
+		{name: "whole url label", in: "https://user:secret@example.com/feed", want: "https://example.com/feed"},
+		{name: "whole url label with closing paren in password", in: "HTTPS://user:p)w@Example.com/feed", want: "HTTPS://Example.com/feed"},
+		{name: "url without userinfo unchanged", in: "https://example.com/feed?email=a@b.com#c@d", want: "https://example.com/feed?email=a@b.com#c@d"},
+		{name: "bracketed url without userinfo followed by email", in: "(https://example.com) contact user@example.com", want: "(https://example.com) contact user@example.com"},
+		{name: "email addresses in prose unchanged", in: "contact alice@example.com or bob@host.local", want: "contact alice@example.com or bob@host.local"},
+		{name: "non-matching scheme prefix untouched", in: "myhttp://user:secret@example.com/x and news://user:secret@example.com/y", want: "myhttp://user:secret@example.com/x and news://user:secret@example.com/y"},
 	}
 
 	for _, tc := range cases {

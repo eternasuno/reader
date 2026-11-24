@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -123,10 +124,6 @@ func (r *fakeFeedRepository) GetByID(ctx context.Context, id string) (*domain.Fe
 	}
 
 	return &feed, nil
-}
-
-func (r *fakeFeedRepository) GetByURL(ctx context.Context, url domain.NormalizedURL) (*domain.Feed, error) {
-	return nil, nil
 }
 
 func (r *fakeFeedRepository) Create(ctx context.Context, feed domain.Feed) (domain.Feed, error) {
@@ -443,6 +440,7 @@ type fakeKindleSendRepository struct {
 	feeds           []domain.Feed
 	items           map[string][]domain.FeedItem
 	listErr         error
+	getErr          error
 	claimErr        error
 	recordErr       error
 	completeErr     error
@@ -450,6 +448,7 @@ type fakeKindleSendRepository struct {
 	keepDue         bool
 	running         bool
 	beforeClaim     func()
+	onGetArticle    func(ref domain.KindleArticleRef)
 	onRecord        func(ctx context.Context)
 	afterComplete   func()
 
@@ -586,21 +585,99 @@ func (r *fakeKindleSendRepository) advanceList() []time.Time {
 	return append([]time.Time(nil), r.advances...)
 }
 
-func (r *fakeKindleSendRepository) ListUnreadForKindle(ctx context.Context) ([]domain.SavedPage, []domain.Feed, map[string][]domain.FeedItem, error) {
+func (r *fakeKindleSendRepository) ListUnreadForKindle(ctx context.Context) ([]domain.KindleArticleRef, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.listCalls++
 	if r.listErr != nil {
-		return nil, nil, nil, r.listErr
+		return nil, r.listErr
 	}
 
-	items := make(map[string][]domain.FeedItem, len(r.items))
-	for feedID, feedItems := range r.items {
-		items[feedID] = append([]domain.FeedItem(nil), feedItems...)
+	refs := make([]domain.KindleArticleRef, 0, len(r.savedPages))
+	for _, page := range r.savedPages {
+		refs = append(refs, domain.KindleArticleRef{ID: page.ID, IsSavedPage: true})
 	}
 
-	return append([]domain.SavedPage(nil), r.savedPages...), append([]domain.Feed(nil), r.feeds...), items, nil
+	for _, feed := range r.feeds {
+		for _, item := range r.items[feed.ID] {
+			refs = append(refs, domain.KindleArticleRef{ID: item.ID})
+		}
+	}
+
+	return refs, nil
+}
+
+func (r *fakeKindleSendRepository) GetKindleArticle(ctx context.Context, ref domain.KindleArticleRef) (*domain.SavedPage, *domain.Feed, *domain.FeedItem, error) {
+	r.mu.Lock()
+	onGet := r.onGetArticle
+	getErr := r.getErr
+	r.mu.Unlock()
+
+	if onGet != nil {
+		onGet(ref)
+	}
+
+	if getErr != nil {
+		return nil, nil, nil, getErr
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if ref.IsSavedPage {
+		return r.findSavedPageLocked(ref.ID), nil, nil, nil
+	}
+
+	item := r.findFeedItemLocked(ref.ID)
+	if item == nil {
+		return nil, nil, nil, nil
+	}
+
+	feed := r.findFeedLocked(item.FeedID)
+	if feed == nil {
+		return nil, nil, nil, nil
+	}
+
+	return nil, feed, item, nil
+}
+
+func (r *fakeKindleSendRepository) findSavedPageLocked(id string) *domain.SavedPage {
+	for i := range r.savedPages {
+		if r.savedPages[i].ID == id {
+			page := r.savedPages[i]
+
+			return &page
+		}
+	}
+
+	return nil
+}
+
+func (r *fakeKindleSendRepository) findFeedItemLocked(id string) *domain.FeedItem {
+	for _, feedItems := range r.items {
+		for i := range feedItems {
+			if feedItems[i].ID == id {
+				it := feedItems[i]
+
+				return &it
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *fakeKindleSendRepository) findFeedLocked(id string) *domain.Feed {
+	for i := range r.feeds {
+		if r.feeds[i].ID == id {
+			f := r.feeds[i]
+
+			return &f
+		}
+	}
+
+	return nil
 }
 
 func (r *fakeKindleSendRepository) RecordBookAccepted(ctx context.Context, sendID string, savedPageIDs []string, feedItemIDs []string, articleDelta int) error {
@@ -766,24 +843,84 @@ type buildCall struct {
 }
 
 type fakeEPUBBuilder struct {
-	mu       sync.Mutex
-	build    func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error)
-	calls    int
-	lastCall buildCall
+	mu        sync.Mutex
+	build     func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error)
+	newPacker func(ctx context.Context, dateStr string) (domain.EPUBPacker, error)
+	calls     int
+	lastCall  buildCall
 }
 
-func (b *fakeEPUBBuilder) BuildBooks(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
+func (b *fakeEPUBBuilder) NewPacker(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {
 	b.mu.Lock()
 	b.calls++
-	b.lastCall = buildCall{dateStr: dateStr, articles: append([]domain.KindleArticle(nil), articles...)}
-	hook := b.build
+	b.lastCall = buildCall{dateStr: dateStr}
+	custom := b.newPacker
 	b.mu.Unlock()
 
-	if hook == nil {
-		return nil, nil
+	if custom != nil {
+		return custom(ctx, dateStr)
 	}
 
-	return hook(ctx, dateStr, articles)
+	return &fakeEPUBPacker{builder: b, dateStr: dateStr}, nil
+}
+
+type fakeEPUBPacker struct {
+	builder  *fakeEPUBBuilder
+	dateStr  string
+	articles []domain.KindleArticle
+	books    []domain.EPUBBook
+	closed   bool
+}
+
+func (p *fakeEPUBPacker) AddArticle(ctx context.Context, article domain.KindleArticle) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	p.articles = append(p.articles, article)
+	p.builder.mu.Lock()
+	p.builder.lastCall.articles = append(p.builder.lastCall.articles, article)
+	p.builder.mu.Unlock()
+
+	return nil
+}
+
+func (p *fakeEPUBPacker) Finish(ctx context.Context) (int, error) {
+	p.builder.mu.Lock()
+	hook := p.builder.build
+	p.builder.mu.Unlock()
+
+	if hook == nil {
+		return 0, nil
+	}
+
+	books, err := hook(ctx, p.dateStr, append([]domain.KindleArticle(nil), p.articles...))
+	if err != nil {
+		return 0, err
+	}
+
+	p.books = append([]domain.EPUBBook(nil), books...)
+
+	return len(p.books), nil
+}
+
+func (p *fakeEPUBPacker) ReadBook(ctx context.Context, index int) (domain.EPUBBook, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.EPUBBook{}, err
+	}
+
+	book := p.books[index]
+	p.books[index] = domain.EPUBBook{}
+
+	return book, nil
+}
+
+func (p *fakeEPUBPacker) Close() error {
+	p.closed = true
+	p.articles = nil
+	p.books = nil
+
+	return nil
 }
 
 func (b *fakeEPUBBuilder) callCount() int {
@@ -3145,4 +3282,274 @@ func TestStartSchedulerTicks(t *testing.T) {
 	}
 
 	sender.Wait()
+}
+
+type boundedStreamPacker struct {
+	mu           sync.Mutex
+	onAdd        func(id string)
+	onFinish     func()
+	onRead       func(index int)
+	onClose      func()
+	liveArticles int
+	maxArticles  int
+	liveBooks    int
+	maxBooks     int
+	books        []domain.EPUBBook
+	closed       bool
+}
+
+func (p *boundedStreamPacker) AddArticle(ctx context.Context, article domain.KindleArticle) error {
+	p.mu.Lock()
+	p.liveArticles++
+	if p.liveArticles > p.maxArticles {
+		p.maxArticles = p.liveArticles
+	}
+	onAdd := p.onAdd
+	p.mu.Unlock()
+
+	if onAdd != nil {
+		onAdd(article.ID)
+	}
+
+	// Simulate streaming packer consuming and discarding the body immediately.
+	p.mu.Lock()
+	p.liveArticles--
+	p.mu.Unlock()
+
+	return nil
+}
+
+func (p *boundedStreamPacker) Finish(ctx context.Context) (int, error) {
+	p.mu.Lock()
+	onFinish := p.onFinish
+	n := len(p.books)
+	p.mu.Unlock()
+
+	if onFinish != nil {
+		onFinish()
+	}
+
+	return n, nil
+}
+
+func (p *boundedStreamPacker) ReadBook(ctx context.Context, index int) (domain.EPUBBook, error) {
+	p.mu.Lock()
+	p.liveBooks++
+	if p.liveBooks > p.maxBooks {
+		p.maxBooks = p.liveBooks
+	}
+	book := p.books[index]
+	p.books[index] = domain.EPUBBook{}
+	onRead := p.onRead
+	p.mu.Unlock()
+
+	if onRead != nil {
+		onRead(index)
+	}
+
+	return book, nil
+}
+
+func (p *boundedStreamPacker) markBookSent() {
+	p.mu.Lock()
+	p.liveBooks--
+	p.mu.Unlock()
+}
+
+func (p *boundedStreamPacker) Close() error {
+	p.mu.Lock()
+	p.closed = true
+	onClose := p.onClose
+	p.mu.Unlock()
+
+	if onClose != nil {
+		onClose()
+	}
+
+	return nil
+}
+
+func TestRunJobStreamsArticlesAndBooksWithBoundedLiveState(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+	pages := []domain.SavedPage{
+		{ID: "page-1", URL: testURL(t, "https://example.com/p1"), Title: "P1", Content: "<p>body1</p>"},
+		{ID: "page-2", URL: testURL(t, "https://example.com/p2"), Title: "P2", Content: "<p>body2</p>"},
+	}
+	feed := domain.Feed{ID: "feed-1", Title: "Feed", Order: domain.SortOrderOldest}
+	items := map[string][]domain.FeedItem{
+		"feed-1": {
+			{ID: "item-1", FeedID: "feed-1", URL: testURL(t, "https://example.com/i1"), Title: "I1", Content: ptrTo("<p>i1</p>")},
+			{ID: "item-2", FeedID: "feed-1", URL: testURL(t, "https://example.com/i2"), Title: "I2", Content: ptrTo("<p>i2</p>")},
+		},
+	}
+
+	var mu sync.Mutex
+	var events []string
+	liveLoadedArticles := 0
+	maxLiveLoadedArticles := 0
+
+	sends := &fakeKindleSendRepository{
+		savedPages: pages,
+		feeds:      []domain.Feed{feed},
+		items:      items,
+		onGetArticle: func(ref domain.KindleArticleRef) {
+			mu.Lock()
+			defer mu.Unlock()
+			liveLoadedArticles++
+			if liveLoadedArticles > maxLiveLoadedArticles {
+				maxLiveLoadedArticles = liveLoadedArticles
+			}
+			events = append(events, "get:"+ref.ID)
+		},
+	}
+
+	packer := &boundedStreamPacker{
+		books: []domain.EPUBBook{
+			{Title: "book-1", Filename: "b1.epub", Data: []byte("b1"), SavedPageIDs: []string{"page-1", "page-2"}, ArticleCount: 2},
+			{Title: "book-2", Filename: "b2.epub", Data: []byte("b2"), FeedItemIDs: []string{"item-1", "item-2"}, ArticleCount: 2},
+		},
+		onAdd: func(id string) {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, "add:"+id)
+			liveLoadedArticles--
+		},
+		onFinish: func() {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, "finish")
+		},
+		onRead: func(index int) {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, fmt.Sprintf("read:%d", index))
+		},
+		onClose: func() {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, "close")
+		},
+	}
+
+	mailer := &fakeMailSender{}
+	mailer.send = func(ctx context.Context, delivery domain.KindleDelivery, book domain.EPUBBook) error {
+		mu.Lock()
+		events = append(events, "send:"+book.Title)
+		mu.Unlock()
+		packer.markBookSent()
+		return nil
+	}
+
+	sender := NewKindleSender(KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{
+			newPacker: func(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {
+				return packer, nil
+			},
+		},
+		MailSender: mailer,
+		Now:        func() time.Time { return now },
+	})
+
+	if _, err := sender.EnqueueManual(context.Background()); err != nil {
+		t.Fatalf("EnqueueManual() error = %v", err)
+	}
+
+	sender.Wait()
+
+	if maxLiveLoadedArticles != 1 {
+		t.Fatalf("maxLiveLoadedArticles = %d, want 1", maxLiveLoadedArticles)
+	}
+	if packer.maxArticles != 1 || packer.maxBooks != 1 {
+		t.Fatalf("packer peaks = (articles=%d, books=%d), want (1, 1)", packer.maxArticles, packer.maxBooks)
+	}
+	if !packer.closed {
+		t.Fatal("expected packer.Close() to be called")
+	}
+
+	wantEvents := []string{
+		"get:page-1", "add:page-1",
+		"get:page-2", "add:page-2",
+		"get:item-1", "add:item-1",
+		"get:item-2", "add:item-2",
+		"finish",
+		"read:0", "send:book-1",
+		"read:1", "send:book-2",
+		"close",
+	}
+	if !slices.Equal(events, wantEvents) {
+		t.Fatalf("events = %v, want %v", events, wantEvents)
+	}
+}
+
+func TestRunJobClosesPackerOnFailureAndCancellation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/p1"), Title: "P1", Content: "body"}
+
+	t.Run("mail failure closes packer", func(t *testing.T) {
+		t.Parallel()
+
+		packer := &boundedStreamPacker{
+			books: []domain.EPUBBook{{Title: "book-1", SavedPageIDs: []string{"page-1"}, ArticleCount: 1}},
+		}
+		mailer := &fakeMailSender{
+			send: func(ctx context.Context, delivery domain.KindleDelivery, book domain.EPUBBook) error {
+				return errors.New("smtp down")
+			},
+		}
+
+		sender := NewKindleSender(KindleConfig{
+			KindleSends: &fakeKindleSendRepository{savedPages: []domain.SavedPage{page}},
+			EPUBBuilder: &fakeEPUBBuilder{newPacker: func(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {
+				return packer, nil
+			}},
+			MailSender: mailer,
+			Now:        func() time.Time { return now },
+		})
+
+		if _, err := sender.EnqueueManual(context.Background()); err != nil {
+			t.Fatalf("EnqueueManual() error = %v", err)
+		}
+		sender.Wait()
+
+		if !packer.closed {
+			t.Fatal("expected packer.Close() after mail failure")
+		}
+	})
+
+	t.Run("base context cancel closes packer", func(t *testing.T) {
+		t.Parallel()
+
+		baseCtx, cancel := context.WithCancel(context.Background())
+		packer := &boundedStreamPacker{}
+		sends := &fakeKindleSendRepository{
+			savedPages: []domain.SavedPage{page},
+			onGetArticle: func(ref domain.KindleArticleRef) {
+				cancel()
+			},
+		}
+
+		sender := NewKindleSender(KindleConfig{
+			BaseCtx:     baseCtx,
+			KindleSends: sends,
+			EPUBBuilder: &fakeEPUBBuilder{newPacker: func(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {
+				return packer, nil
+			}},
+			MailSender: &fakeMailSender{},
+			Now:        func() time.Time { return now },
+		})
+
+		if _, err := sender.EnqueueManual(context.Background()); err != nil {
+			t.Fatalf("EnqueueManual() error = %v", err)
+		}
+		sender.Wait()
+
+		if !packer.closed {
+			t.Fatal("expected packer.Close() after context cancellation")
+		}
+	})
 }

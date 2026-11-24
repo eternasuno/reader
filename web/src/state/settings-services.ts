@@ -3,124 +3,135 @@
  * extraction endpoint, and SMTP mail service saves and removals.
  */
 
+import type { StoreSetter } from 'solid-js';
 import type { Settings, SmtpSettingsInput, SmtpSettingsView } from '../api';
 import { settingsApi } from '../api';
 import { t } from '../i18n';
 import { showToast } from '../ui';
+import { sessionGeneration } from './session';
+import type { SettingsDrafts } from './settings-store';
 import {
-  browserEndpointDraft,
-  jinaKeyDraft,
   optionalText,
-  providerDraft,
   runSave,
-  setBrowserEndpointDraft,
-  setJinaKeyDraft,
-  setProviderDraft,
   setSettings,
-  setSmtpHostDraft,
-  setSmtpPasswordDraft,
-  setSmtpPortDraft,
-  setSmtpSecurityDraft,
-  setSmtpSenderEmailDraft,
-  setSmtpUserDraft,
   settings,
-  smtpHostDraft,
-  smtpPasswordDraft,
-  smtpPortDraft,
-  smtpSecurityDraft,
-  smtpSenderEmailDraft,
-  smtpUserDraft,
   toastSettingsError,
 } from './settings-store';
 
-export const saveJinaKey = (): Promise<boolean> =>
-  runSave('jina-key', async () => {
-    const loaded = settings();
-    if (loaded === null) return false;
-
-    const key = jinaKeyDraft().trim();
-    try {
-      await settingsApi.saveJinaKey(key);
-      setSettings({ ...loaded, jinaKeyConfigured: true });
-      setJinaKeyDraft('');
-      showToast(String(t('settings.jinaKeySavedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
-  });
-
-export const removeJinaKey = (): Promise<boolean> =>
-  runSave('jina-key', async () => {
-    try {
-      await settingsApi.deleteJinaKey();
-      const loaded = settings();
-      if (loaded !== null) setSettings({ ...loaded, jinaKeyConfigured: false });
-      setJinaKeyDraft('');
-      showToast(String(t('settings.jinaKeyDeletedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
-  });
-
-export const saveBrowserEndpoint = (): Promise<boolean> =>
-  runSave('browser-endpoint', async () => {
-    const loaded = settings();
-    if (loaded === null) return false;
-
-    const endpoint = browserEndpointDraft().trim();
-    try {
-      await settingsApi.saveBrowserEndpoint(endpoint);
-      setSettings({ ...loaded, browserEndpointConfigured: true });
-      setBrowserEndpointDraft('');
-      showToast(String(t('settings.browserEndpointSavedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
-  });
-
-const applyBrowserRemoved = (): void => {
-  const loaded = settings();
-  if (loaded === null) return;
-
-  const isBrowser = loaded.provider === 'browser';
-  setSettings({
-    ...loaded,
-    browserEndpointConfigured: false,
-    provider: isBrowser ? 'direct' : loaded.provider,
-  });
-  if (isBrowser || providerDraft() === 'browser') {
-    setProviderDraft('direct');
+const commitServiceCall = async (
+  call: () => Promise<void>,
+  onSuccess: () => void,
+  toastKey: Parameters<typeof t>[0]
+): Promise<boolean> => {
+  const startSession = sessionGeneration();
+  try {
+    await call();
+    if (sessionGeneration() !== startSession) return false;
+    onSuccess();
+    showToast(String(t(toastKey)), 'success');
+    return true;
+  } catch (error) {
+    return sessionGeneration() === startSession
+      ? toastSettingsError(error)
+      : false;
   }
 };
 
-export const removeBrowserEndpoint = (): Promise<boolean> =>
-  runSave('browser-endpoint', async () => {
-    try {
-      await settingsApi.deleteBrowserEndpoint();
-      applyBrowserRemoved();
-      setBrowserEndpointDraft('');
-      showToast(String(t('settings.browserEndpointDeletedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
+export const saveJinaKey = (
+  drafts: SettingsDrafts,
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
+  runSave('jina-key', async () => {
+    if (settings() === null) return false;
+    const key = drafts.jinaKey.trim();
+    return commitServiceCall(
+      () => settingsApi.saveJinaKey(key),
+      () => {
+        const current = settings();
+        if (current !== null)
+          setSettings({ ...current, jinaKeyConfigured: true });
+        setDrafts((draft) => ({ ...draft, jinaKey: '' }));
+      },
+      'settings.jinaKeySavedToast'
+    );
   });
 
-/** `SET-VAL-3`: a blank password is omitted so the stored one is preserved. */
-const smtpInputOf = (): SmtpSettingsInput => {
-  const password = smtpPasswordDraft();
-  return {
-    senderEmail: smtpSenderEmailDraft().trim(),
-    host: smtpHostDraft().trim(),
-    port: smtpPortDraft(),
-    security: smtpSecurityDraft(),
-    user: optionalText(smtpUserDraft()),
-    password: password.trim().length > 0 ? password : undefined,
-  };
+export const removeJinaKey = (
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
+  runSave('jina-key', () =>
+    commitServiceCall(
+      () => settingsApi.deleteJinaKey(),
+      () => {
+        const current = settings();
+        if (current !== null)
+          setSettings({ ...current, jinaKeyConfigured: false });
+        setDrafts((draft) => ({ ...draft, jinaKey: '' }));
+      },
+      'settings.jinaKeyDeletedToast'
+    )
+  );
+
+export const saveBrowserEndpoint = (
+  drafts: SettingsDrafts,
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
+  runSave('browser-endpoint', async () => {
+    if (settings() === null) return false;
+    const endpoint = drafts.browserEndpoint.trim();
+    return commitServiceCall(
+      () => settingsApi.saveBrowserEndpoint(endpoint),
+      () => {
+        const current = settings();
+        if (current !== null) {
+          setSettings({ ...current, browserEndpointConfigured: true });
+        }
+        setDrafts((draft) => ({ ...draft, browserEndpoint: '' }));
+      },
+      'settings.browserEndpointSavedToast'
+    );
+  });
+
+const applyBrowserRemoved = (setDrafts: StoreSetter<SettingsDrafts>): void => {
+  const current = settings();
+  const isBrowser = current?.provider === 'browser';
+  if (current !== null) {
+    setSettings({
+      ...current,
+      browserEndpointConfigured: false,
+      provider: isBrowser ? 'direct' : current.provider,
+    });
+  }
+  setDrafts((draft) => ({
+    ...draft,
+    browserEndpoint: '',
+    ...(isBrowser || draft.provider === 'browser'
+      ? { provider: 'direct' }
+      : {}),
+  }));
 };
+
+export const removeBrowserEndpoint = (
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
+  runSave('browser-endpoint', () =>
+    commitServiceCall(
+      () => settingsApi.deleteBrowserEndpoint(),
+      () => applyBrowserRemoved(setDrafts),
+      'settings.browserEndpointDeletedToast'
+    )
+  );
+
+/** `SET-VAL-3`: a blank password is omitted so the stored one is preserved. */
+const smtpInputOf = (drafts: SettingsDrafts): SmtpSettingsInput => ({
+  senderEmail: drafts.smtpSenderEmail.trim(),
+  host: drafts.smtpHost.trim(),
+  port: drafts.smtpPort,
+  security: drafts.smtpSecurity,
+  user: optionalText(drafts.smtpUser),
+  password:
+    drafts.smtpPassword.trim().length > 0 ? drafts.smtpPassword : undefined,
+});
 
 const smtpFromInput = (
   input: SmtpSettingsInput,
@@ -135,68 +146,74 @@ const smtpFromInput = (
     previous?.passwordConfigured === true || input.password !== undefined,
 });
 
-const applySavedSmtpDrafts = (input: SmtpSettingsInput): void => {
-  setSmtpSenderEmailDraft(input.senderEmail);
-  setSmtpHostDraft(input.host);
-  setSmtpPortDraft(input.port);
-  setSmtpSecurityDraft(input.security);
-  setSmtpUserDraft(input.user ?? '');
-  setSmtpPasswordDraft('');
-};
+const savedSmtpDrafts = (input: SmtpSettingsInput) => ({
+  smtpSenderEmail: input.senderEmail,
+  smtpHost: input.host,
+  smtpPort: input.port,
+  smtpSecurity: input.security,
+  smtpUser: input.user ?? '',
+  smtpPassword: '',
+});
 
-export const saveSmtp = (): Promise<boolean> =>
+export const saveSmtp = (
+  drafts: SettingsDrafts,
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
   runSave('smtp', async () => {
-    const loaded = settings();
-    if (loaded === null) return false;
-
-    const input = smtpInputOf();
-    try {
-      await settingsApi.saveSmtp(input);
-      setSettings({ ...loaded, smtp: smtpFromInput(input, loaded.smtp) });
-      applySavedSmtpDrafts(input);
-      showToast(String(t('settings.smtpSavedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
+    if (settings() === null) return false;
+    const input = smtpInputOf(drafts);
+    return commitServiceCall(
+      () => settingsApi.saveSmtp(input),
+      () => {
+        const current = settings();
+        if (current !== null) {
+          setSettings({ ...current, smtp: smtpFromInput(input, current.smtp) });
+        }
+        setDrafts((draft) => ({ ...draft, ...savedSmtpDrafts(input) }));
+      },
+      'settings.smtpSavedToast'
+    );
   });
 
-export const removeSmtpPassword = (): Promise<boolean> =>
-  runSave('smtp-password', async () => {
-    try {
-      await settingsApi.deleteSmtpPassword();
-      const loaded = settings();
-      if (loaded !== null && loaded.smtp !== undefined) {
-        setSettings({
-          ...loaded,
-          smtp: { ...loaded.smtp, passwordConfigured: false },
-        });
-      }
-      setSmtpPasswordDraft('');
-      showToast(String(t('settings.smtpPasswordDeletedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
-  });
+export const removeSmtpPassword = (
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
+  runSave('smtp-password', () =>
+    commitServiceCall(
+      () => settingsApi.deleteSmtpPassword(),
+      () => {
+        const current = settings();
+        if (current?.smtp !== undefined) {
+          setSettings({
+            ...current,
+            smtp: { ...current.smtp, passwordConfigured: false },
+          });
+        }
+        setDrafts((draft) => ({ ...draft, smtpPassword: '' }));
+      },
+      'settings.smtpPasswordDeletedToast'
+    )
+  );
 
-export const removeSmtp = (): Promise<boolean> =>
-  runSave('smtp', async () => {
-    try {
-      await settingsApi.deleteSmtp();
-      const loaded = settings();
-      if (loaded !== null) {
-        setSettings({ ...loaded, smtp: undefined });
-      }
-      setSmtpSenderEmailDraft('');
-      setSmtpHostDraft('');
-      setSmtpPortDraft(0);
-      setSmtpSecurityDraft('tls');
-      setSmtpUserDraft('');
-      setSmtpPasswordDraft('');
-      showToast(String(t('settings.smtpDeletedToast')), 'success');
-      return true;
-    } catch (error) {
-      return toastSettingsError(error);
-    }
-  });
+export const removeSmtp = (
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
+  runSave('smtp', () =>
+    commitServiceCall(
+      () => settingsApi.deleteSmtp(),
+      () => {
+        const current = settings();
+        if (current !== null) setSettings({ ...current, smtp: undefined });
+        setDrafts((draft) => ({
+          ...draft,
+          smtpSenderEmail: '',
+          smtpHost: '',
+          smtpPort: 0,
+          smtpSecurity: 'tls',
+          smtpUser: '',
+          smtpPassword: '',
+        }));
+      },
+      'settings.smtpDeletedToast'
+    )
+  );

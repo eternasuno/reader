@@ -14,25 +14,34 @@ type FolderRepo struct {
 }
 
 func (r *FolderRepo) List(ctx context.Context) ([]domain.Folder, error) {
-	rows, err := r.read.QueryContext(ctx, `SELECT id, name FROM folder ORDER BY name ASC, id ASC`)
+	folders, err := queryFolders(ctx, r.read)
 	if err != nil {
 		return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
+	}
+
+	return folders, nil
+}
+
+func queryFolders(ctx context.Context, querier rowsQuerier) ([]domain.Folder, error) {
+	rows, err := querier.QueryContext(ctx, `SELECT id, name FROM folder ORDER BY name ASC, id ASC`)
+	if err != nil {
+		return nil, err
 	}
 
 	defer closeRows(rows)
 
 	folders := []domain.Folder{}
 	for rows.Next() {
-		folder := domain.Folder{}
+		var folder domain.Folder
 		if err := rows.Scan(&folder.ID, &folder.Name); err != nil {
-			return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
+			return nil, err
 		}
 
 		folders = append(folders, folder)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
+		return nil, err
 	}
 
 	return folders, nil

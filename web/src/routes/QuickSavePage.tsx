@@ -1,34 +1,85 @@
 import { useLocation, useNavigate } from '@solidjs/router';
 import type { JSX } from '@solidjs/web';
-import { createSignal, onSettled, Show } from 'solid-js';
-import { errorCodeOf } from '../api';
+import {
+  createEffect,
+  createSignal,
+  onCleanup,
+  onSettled,
+  Show,
+  untrack,
+} from 'solid-js';
+import { errorText } from '../components/errorText';
 import { t, translateErrorCode } from '../i18n';
-import { createOrFindSavedPage } from '../state/saved-page-create';
+import { sessionStatus } from '../state';
+import {
+  clearQuickSaveDraft,
+  consumeQuickSaveLocation,
+  createOrFindSavedPage,
+  peekQuickSaveDraft,
+  setQuickSaveDraft,
+} from '../state/saved-page-create';
 import { Button, Input, showToast } from '../ui';
 
 const savedPageUrl = (pageId: string): string =>
   `/later/${encodeURIComponent(pageId)}`;
 
-/** `later.md:16,54-58`: `GET /save?url=…` never mutates; the form performs the single POST. */
-const useQuickSave = () => {
+const useQuickSaveDraft = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [urlDraft, setUrlDraft] = createSignal<string | null>(null);
+  const initialCleanPath = untrack(() =>
+    consumeQuickSaveLocation(location.pathname, location.search, location.hash)
+  );
+  const [url, setUrlSignal] = createSignal(peekQuickSaveDraft() ?? '');
+  let strippedInitial = false;
+
+  createEffect(
+    () => ({
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+    }),
+    (loc) => {
+      const cleanPath = consumeQuickSaveLocation(
+        loc.pathname,
+        loc.search,
+        loc.hash
+      );
+      if (cleanPath !== null) setUrlSignal(peekQuickSaveDraft() ?? '');
+      const target = cleanPath ?? (strippedInitial ? null : initialCleanPath);
+      strippedInitial = true;
+      if (target !== null) navigate(target, { replace: true, scroll: false });
+    }
+  );
+
+  onCleanup(() => {
+    if (untrack(sessionStatus) === 'authenticated') clearQuickSaveDraft();
+  });
+
+  const setUrl = (value: string): void => {
+    setQuickSaveDraft(value);
+    setUrlSignal(value);
+  };
+
+  return { url, setUrl };
+};
+
+/** `later.md:18`: `GET /save#url=…` (or legacy `?url=…`) never mutates; the form performs the single POST. */
+const useQuickSave = () => {
+  const navigate = useNavigate();
+  const draft = useQuickSaveDraft();
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-
-  const url = (): string =>
-    urlDraft() ?? new URLSearchParams(location.search).get('url') ?? '';
 
   const runSubmit = async (target: string): Promise<void> => {
     setSubmitting(true);
     setError(null);
     try {
       const { page, created } = await createOrFindSavedPage(target);
+      clearQuickSaveDraft();
       if (created) showToast(String(t('later.addedToast')), 'success');
       navigate(savedPageUrl(page.id));
     } catch (caught) {
-      setError(translateErrorCode(errorCodeOf(caught)));
+      setError(errorText(caught));
     } finally {
       setSubmitting(false);
     }
@@ -38,7 +89,7 @@ const useQuickSave = () => {
     event.preventDefault();
     if (submitting()) return;
 
-    const trimmed = url().trim();
+    const trimmed = draft.url().trim();
     if (trimmed.length === 0) {
       setError(translateErrorCode('InvalidPageUrl'));
       return;
@@ -47,7 +98,7 @@ const useQuickSave = () => {
     void runSubmit(trimmed);
   };
 
-  return { url, error, submitting, setUrl: setUrlDraft, submit };
+  return { url: draft.url, error, submitting, setUrl: draft.setUrl, submit };
 };
 
 interface QuickSaveFormProps {
@@ -93,8 +144,8 @@ function QuickSaveForm(props: QuickSaveFormProps): JSX.Element {
 }
 
 /**
- * `later.md:16,54-58`: `GET /save?url=...` renders an editable, pre-filled confirmation form
- * whose focused submit button performs the single `POST /api/saved-pages`.
+ * `later.md:18`: consumes the `#url=` (or legacy `?url=`) draft into memory, strips it from
+ * the address bar, and renders an editable form whose focused submit performs `POST /api/saved-pages`.
  */
 export function QuickSavePage(): JSX.Element {
   const save = useQuickSave();

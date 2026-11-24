@@ -3,27 +3,22 @@
  * manual sends.
  */
 
-import { flush } from 'solid-js';
+import { flush, type StoreSetter } from 'solid-js';
 import type { KindleSettings, KindleSettingsView, Settings } from '../api';
 import { errorCodeOf, kindleApi, settingsApi } from '../api';
 import { t, translateErrorCode } from '../i18n';
 import { showToast } from '../ui';
 import { sessionGeneration } from './session';
+import type { SettingsDrafts } from './settings-store';
 import {
-  currentDraftsOwner,
-  isCurrentDraftsOwner,
   isCurrentKindleSendsGeneration,
-  kindleEmailDraft,
   kindleSending,
   nextKindleSendsGeneration,
   optionalText,
   runSave,
-  sendTimeDraft,
-  setKindleEmailDraft,
   setKindleRunning,
   setKindleSending,
   setKindleSends,
-  setSendTimeDraft,
   setSettings,
   settings,
   toastSettingsError,
@@ -53,23 +48,27 @@ const fetchSavedKindle = async (
 const applySavedKindle = (
   kindle: KindleSettingsView,
   input: KindleSettings,
-  startDrafts: ReturnType<typeof currentDraftsOwner>
+  setDrafts: StoreSetter<SettingsDrafts>
 ): void => {
   const current = settings();
   if (current !== null) setSettings({ ...current, kindle });
-  if (isCurrentDraftsOwner(startDrafts)) {
-    setKindleEmailDraft(input.kindleEmail);
-    setSendTimeDraft(input.sendTime ?? '');
-  }
+  setDrafts((draft) => ({
+    ...draft,
+    kindleEmail: input.kindleEmail,
+    sendTime: input.sendTime ?? '',
+  }));
   showToast(String(t('settings.kindleSavedToast')), 'success');
 };
 
-const performKindleSave = async (loaded: Settings): Promise<boolean> => {
+const performKindleSave = async (
+  loaded: Settings,
+  drafts: SettingsDrafts,
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> => {
   const startSession = sessionGeneration();
-  const startDrafts = currentDraftsOwner();
   const input: KindleSettings = {
-    kindleEmail: kindleEmailDraft().trim(),
-    sendTime: optionalText(sendTimeDraft()),
+    kindleEmail: drafts.kindleEmail.trim(),
+    sendTime: optionalText(drafts.sendTime),
   };
 
   try {
@@ -79,7 +78,7 @@ const performKindleSave = async (loaded: Settings): Promise<boolean> => {
     const kindle = await fetchSavedKindle(input, loaded.kindle);
     if (sessionGeneration() !== startSession) return false;
 
-    applySavedKindle(kindle, input, startDrafts);
+    applySavedKindle(kindle, input, setDrafts);
     return true;
   } catch (error) {
     return sessionGeneration() === startSession
@@ -88,10 +87,15 @@ const performKindleSave = async (loaded: Settings): Promise<boolean> => {
   }
 };
 
-export const saveKindle = (): Promise<boolean> =>
+export const saveKindle = (
+  drafts: SettingsDrafts,
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
   runSave('kindle', async () => {
     const loaded = settings();
-    return loaded === null ? false : performKindleSave(loaded);
+    return loaded === null
+      ? false
+      : performKindleSave(loaded, drafts, setDrafts);
   });
 
 /** `KD-SEND-1` / `KD-LOG-1`: re-reads the running state and history once, without polling. */

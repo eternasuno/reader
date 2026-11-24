@@ -1,7 +1,7 @@
 package httpserver
 
 import (
-	"container/heap"
+	"container/list"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -24,6 +24,7 @@ const (
 	sessionCookieName  = "reader_session"
 	sessionTTL         = 30 * 24 * time.Hour
 	loginFailureLimit  = 5
+	loginOverflowLimit = loginFailureLimit
 	loginFailureWindow = time.Minute
 	maxTrackedLoginIPs = 1024
 )
@@ -245,57 +246,50 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-type loginEntry struct {
-	ip       string
+type loginWindow struct {
 	started  time.Time
 	failures int
-	index    int
 }
 
-type loginExpiryHeap []*loginEntry
-
-func (h loginExpiryHeap) Len() int { return len(h) }
-
-func (h loginExpiryHeap) Less(i int, j int) bool {
-	return h[i].started.Before(h[j].started)
+func (w loginWindow) isLive(now time.Time) bool {
+	return w.failures > 0 && now.Sub(w.started) < loginFailureWindow
 }
 
-func (h loginExpiryHeap) Swap(i int, j int) {
-	h[i], h[j] = h[j], h[i]
-	h[i].index = i
-	h[j].index = j
-}
+func (w *loginWindow) reserve(now time.Time, limit int) bool {
+	if !w.isLive(now) {
+		*w = loginWindow{started: now, failures: 1}
 
-func (h *loginExpiryHeap) Push(x any) {
-	entry, ok := x.(*loginEntry)
-	if !ok {
-		return
+		return true
 	}
 
-	entry.index = len(*h)
-	*h = append(*h, entry)
+	if w.failures >= limit {
+		return false
+	}
+
+	w.failures++
+
+	return true
 }
 
-func (h *loginExpiryHeap) Pop() any {
-	old := *h
-	n := len(old)
-	entry := old[n-1]
-	old[n-1] = nil
-	entry.index = -1
-	*h = old[:n-1]
-
-	return entry
+type loginEntry struct {
+	ip     string
+	window loginWindow
 }
 
 type loginLimiter struct {
 	mu       sync.Mutex
 	now      func() time.Time
-	attempts map[string]*loginEntry
-	order    loginExpiryHeap
+	attempts map[string]*list.Element
+	order    *list.List
+	overflow loginWindow
 }
 
 func newLoginLimiter(now func() time.Time) *loginLimiter {
-	return &loginLimiter{now: now, attempts: make(map[string]*loginEntry)}
+	return &loginLimiter{
+		now:      now,
+		attempts: make(map[string]*list.Element),
+		order:    list.New(),
+	}
 }
 
 // reserveAttempt checks and records a login attempt for ip under one lock, so
@@ -306,19 +300,30 @@ func (l *loginLimiter) reserveAttempt(ip string) bool {
 	defer l.mu.Unlock()
 
 	now := l.now()
-
-	entry, tracked := l.liveEntryLocked(ip, now)
-	if !tracked {
-		l.storeLocked(ip, now)
-
-		return true
+	if entry, ok := l.liveEntryLocked(ip, now); ok {
+		return entry.window.reserve(now, loginFailureLimit)
 	}
 
-	if entry.failures >= loginFailureLimit {
-		return false
+	// Keep untracked addresses in the active overflow window even if tracked
+	// slots open up via success or expiry, preventing rotating/blocked callers
+	// from acquiring a fresh per-IP allowance until the overflow window elapses.
+	if l.overflow.isLive(now) {
+		return l.overflow.reserve(now, loginOverflowLimit)
 	}
 
-	entry.failures++
+	if len(l.attempts) >= maxTrackedLoginIPs {
+		l.pruneExpiredLocked(now)
+	}
+
+	if len(l.attempts) >= maxTrackedLoginIPs {
+		return l.overflow.reserve(now, loginOverflowLimit)
+	}
+
+	entry := &loginEntry{
+		ip:     ip,
+		window: loginWindow{started: now, failures: 1},
+	}
+	l.attempts[ip] = l.order.PushBack(entry)
 
 	return true
 }
@@ -327,19 +332,22 @@ func (l *loginLimiter) reset(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.deleteLocked(ip)
+	if elem, tracked := l.attempts[ip]; tracked {
+		l.removeElementLocked(elem)
+	}
 }
 
 // liveEntryLocked returns the unexpired failure window for ip, dropping it when
 // the window has elapsed.
 func (l *loginLimiter) liveEntryLocked(ip string, now time.Time) (*loginEntry, bool) {
-	entry, tracked := l.attempts[ip]
+	elem, tracked := l.attempts[ip]
 	if !tracked {
 		return nil, false
 	}
 
-	if now.Sub(entry.started) >= loginFailureWindow {
-		l.deleteLocked(ip)
+	entry, ok := elem.Value.(*loginEntry)
+	if !ok || !entry.window.isLive(now) {
+		l.removeElementLocked(elem)
 
 		return nil, false
 	}
@@ -347,48 +355,23 @@ func (l *loginLimiter) liveEntryLocked(ip string, now time.Time) (*loginEntry, b
 	return entry, true
 }
 
-func (l *loginLimiter) deleteLocked(ip string) {
-	entry, tracked := l.attempts[ip]
-	if !tracked {
-		return
-	}
-
-	if entry.index >= 0 {
-		heap.Remove(&l.order, entry.index)
-	}
-
-	delete(l.attempts, ip)
-}
-
-// storeLocked writes a new window while keeping the tracked-IP table strictly
-// bounded at maxTrackedLoginIPs: expired windows are pruned first and the oldest
-// entry is evicted when every remaining entry is still unexpired.
-func (l *loginLimiter) storeLocked(ip string, now time.Time) {
-	if len(l.attempts) >= maxTrackedLoginIPs {
-		l.pruneExpiredLocked(now)
-
-		for len(l.attempts) >= maxTrackedLoginIPs {
-			l.evictOldestLocked()
-		}
-	}
-
-	entry := &loginEntry{ip: ip, started: now, failures: 1}
-	heap.Push(&l.order, entry)
-	l.attempts[ip] = entry
-}
-
 func (l *loginLimiter) pruneExpiredLocked(now time.Time) {
-	for l.order.Len() > 0 && now.Sub(l.order[0].started) >= loginFailureWindow {
-		l.evictOldestLocked()
+	for front := l.order.Front(); front != nil; {
+		entry, ok := front.Value.(*loginEntry)
+		if ok && entry.window.isLive(now) {
+			break
+		}
+
+		next := front.Next()
+		l.removeElementLocked(front)
+		front = next
 	}
 }
 
-func (l *loginLimiter) evictOldestLocked() {
-	if l.order.Len() == 0 {
-		return
+func (l *loginLimiter) removeElementLocked(elem *list.Element) {
+	if entry, ok := elem.Value.(*loginEntry); ok {
+		delete(l.attempts, entry.ip)
 	}
 
-	if oldest, ok := heap.Pop(&l.order).(*loginEntry); ok {
-		delete(l.attempts, oldest.ip)
-	}
+	l.order.Remove(elem)
 }

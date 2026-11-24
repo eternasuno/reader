@@ -85,7 +85,6 @@ type NormalizedURL struct {
 	hasCreds bool
 	username string
 	password string
-	hasPass  bool
 }
 
 func (u NormalizedURL) Raw() string {
@@ -326,6 +325,11 @@ type KindleSendRecord struct {
 	FinishedAt   *time.Time
 }
 
+type KindleArticleRef struct {
+	ID          string
+	IsSavedPage bool
+}
+
 type KindleArticle struct {
 	ID          string
 	IsSavedPage bool
@@ -356,7 +360,6 @@ type FolderRepository interface {
 type FeedRepository interface {
 	List(ctx context.Context) ([]Feed, error)
 	GetByID(ctx context.Context, id string) (*Feed, error)
-	GetByURL(ctx context.Context, url NormalizedURL) (*Feed, error)
 	Create(ctx context.Context, feed Feed) (Feed, error)
 	Delete(ctx context.Context, id string) error
 	UpdateReaderMode(ctx context.Context, id string, mode ReaderMode) error
@@ -414,7 +417,8 @@ type KindleSendRepository interface {
 	ListRecent(ctx context.Context) ([]KindleSendRecord, error)
 	ClaimManualSend(ctx context.Context, sendID string, now time.Time) (ClaimedKindleSend, error)
 	ClaimDueSend(ctx context.Context, sendID string, now time.Time, loc *time.Location, slotBusy bool) (ClaimedKindleSend, error)
-	ListUnreadForKindle(ctx context.Context) ([]SavedPage, []Feed, map[string][]FeedItem, error)
+	ListUnreadForKindle(ctx context.Context) ([]KindleArticleRef, error)
+	GetKindleArticle(ctx context.Context, ref KindleArticleRef) (*SavedPage, *Feed, *FeedItem, error)
 	RecordBookAccepted(ctx context.Context, sendID string, savedPageIDs []string, feedItemIDs []string, articleDelta int) error
 	CompleteSend(ctx context.Context, sendID string, status KindleStatus, errSummary *string, finishedAt time.Time) error
 }
@@ -443,8 +447,15 @@ type HTMLSanitizer interface {
 	SanitizeHTML(rawHTML string, baseURL string) (string, error)
 }
 
+type EPUBPacker interface {
+	AddArticle(ctx context.Context, article KindleArticle) error
+	Finish(ctx context.Context) (int, error)
+	ReadBook(ctx context.Context, index int) (EPUBBook, error)
+	Close() error
+}
+
 type EPUBBuilder interface {
-	BuildBooks(ctx context.Context, dateStr string, articles []KindleArticle) ([]EPUBBook, error)
+	NewPacker(ctx context.Context, dateStr string) (EPUBPacker, error)
 }
 
 type MailSender interface {

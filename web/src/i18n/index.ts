@@ -8,7 +8,6 @@ import { zhDict } from './zh';
 
 export type { Dict } from './en';
 export type Locale = 'zh-CN' | 'en';
-export type FlatDict = i18n.Flatten<Dict>;
 
 const STORAGE_KEY = 'reader.locale';
 

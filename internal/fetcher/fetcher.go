@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -49,8 +48,6 @@ var (
 	errEmptyResponseBody    = errors.New("empty response body")
 	errUnsupportedImage     = errors.New("unsupported image media type")
 	errBrowserFetchFailed   = errors.New("browser webpage fetch failed")
-
-	userInfoPattern = regexp.MustCompile(`(?i)((?:https?|wss?)://)[^/\s?#"']+@`)
 )
 
 type browserSnapshot struct {
@@ -168,12 +165,9 @@ func (c *Client) FetchFeed(ctx context.Context, target domain.NormalizedURL) (bo
 		return nil, "", domain.NewError(domain.ErrFetchFeedError, err)
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", feedAccept)
-
-	result, err := c.do(ctx, req, c.feedTimeout)
+	result, err := c.executeHTTP(ctx, req, feedAccept, c.feedTimeout)
 	if err != nil {
-		return nil, "", domain.NewError(domain.ErrFetchFeedError, sanitizedError(err))
+		return nil, "", domain.NewError(domain.ErrFetchFeedError, err)
 	}
 
 	return result.body, sanitizedURL(result.finalURL), nil
@@ -211,12 +205,9 @@ func (c *Client) FetchImage(ctx context.Context, rawURL string) (data []byte, me
 		return nil, "", "", err
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", imageAccept)
-
-	result, err := c.do(ctx, req, c.imageTimeout)
+	result, err := c.executeHTTP(ctx, req, imageAccept, c.imageTimeout)
 	if err != nil {
-		return nil, "", "", sanitizedError(err)
+		return nil, "", "", err
 	}
 
 	if len(result.body) == 0 {
@@ -237,12 +228,9 @@ func (c *Client) fetchDirect(ctx context.Context, target domain.NormalizedURL) (
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, reqErr)
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", webpageAccept)
-
-	result, doErr := c.do(ctx, req, c.webpageTimeout)
+	result, doErr := c.executeHTTP(ctx, req, webpageAccept, c.webpageTimeout)
 	if doErr != nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(doErr))
+		return "", "", domain.NewError(domain.ErrWebpageFetcherError, doErr)
 	}
 
 	return string(result.body), sanitizedURL(result.finalURL), nil
@@ -259,8 +247,6 @@ func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL,
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(reqErr))
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", jinaAccept)
 	req.Header.Set("X-Respond-With", "html")
 
 	if settings.JinaKey != nil {
@@ -269,9 +255,9 @@ func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL,
 		}
 	}
 
-	result, doErr := c.do(ctx, req, c.webpageTimeout)
+	result, doErr := c.executeHTTP(ctx, req, jinaAccept, c.webpageTimeout)
 	if doErr != nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(doErr))
+		return "", "", domain.NewError(domain.ErrWebpageFetcherError, doErr)
 	}
 
 	if len(result.body) == 0 {
@@ -295,13 +281,9 @@ func (c *Client) fetchWithBrowser(ctx context.Context, target domain.NormalizedU
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errBrowserEndpointBad)
 	}
 
-	if c.browserFetch == nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errBrowserEndpointUnset)
-	}
-
 	body, pageURL, fetchErr := c.browserFetch(ctx, endpoint, target.RedactedString(), c.webpageTimeout)
 	if fetchErr != nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizeBrowserError(fetchErr, endpoint))
+		return "", "", domain.NewError(domain.ErrWebpageFetcherError, classifyBrowserError(fetchErr))
 	}
 
 	if int64(len(body)) > c.maxBodyBytes {
@@ -315,14 +297,17 @@ func (c *Client) fetchWithBrowser(ctx context.Context, target domain.NormalizedU
 	return body, sanitizedStringURL(pageURL), nil
 }
 
-func (c *Client) do(ctx context.Context, req *http.Request, timeout time.Duration) (*fetchResult, error) {
-	requestCtx := ctx
-	cancel := func() {}
-	if timeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, timeout)
-	}
-
+func (c *Client) executeHTTP(
+	ctx context.Context,
+	req *http.Request,
+	accept string,
+	timeout time.Duration,
+) (*fetchResult, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", accept)
 
 	resp, err := c.httpClient.Do(req.WithContext(requestCtx))
 	if err != nil {
@@ -399,32 +384,27 @@ func runBrowserFetch(
 	timeout time.Duration,
 	maxBodyBytes int64,
 ) (string, string, error) {
-	if timeout <= 0 {
-		timeout = defaultWebpageTimeout
-	}
-
 	allocCtx, allocCancel := remote.NewAllocator(ctx, endpoint, remote.WithDialTimeout(timeout))
 	defer allocCancel()
 
-	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
+	tabCtx, tabCancel := chromedp.NewContext(allocCtx, chromedp.WithNewBrowserContext())
 	defer tabCancel()
 
 	runCtx, runCancel := context.WithTimeout(tabCtx, timeout)
 	defer runCancel()
 
-	err := chromedp.Do(runCtx, chromedp.Navigate(targetURL), chromedp.WaitReady(chromedp.CSS("body")))
-	if err != nil {
-		return "", "", fmt.Errorf("browser navigation failed: %w", err)
+	if err := chromedp.Do(runCtx, chromedp.Navigate(targetURL), chromedp.WaitReady(chromedp.CSS("body"))); err != nil {
+		return "", "", classifyBrowserError(err)
 	}
 
 	finalURL, err := chromedp.Run(runCtx, chromedp.Location())
 	if err != nil {
-		return "", "", fmt.Errorf("browser location failed: %w", err)
+		return "", "", classifyBrowserError(err)
 	}
 
 	htmlBody, err := captureBrowserSnapshot(runCtx, maxBodyBytes)
 	if err != nil {
-		return "", "", err
+		return "", "", classifyBrowserError(err)
 	}
 
 	return htmlBody, finalURL, nil
@@ -446,7 +426,7 @@ func captureBrowserSnapshot(ctx context.Context, maxBodyBytes int64) (string, er
 		),
 	)
 	if err != nil {
-		return "", fmt.Errorf("browser html failed: %w", err)
+		return "", err
 	}
 
 	if snapshot.TooLarge || int64(len(snapshot.HTML)) > maxBodyBytes {
@@ -459,7 +439,7 @@ func captureBrowserSnapshot(ctx context.Context, maxBodyBytes int64) (string, er
 func createSnapshotWorld(ctx context.Context) (runtime.ExecutionContextID, error) {
 	frameTree, err := chromedp.Call(ctx, page.GetFrameTree, cdp.Empty{})
 	if err != nil {
-		return 0, fmt.Errorf("browser frame tree failed: %w", err)
+		return 0, err
 	}
 
 	if frameTree.FrameTree == nil || frameTree.FrameTree.Frame == nil {
@@ -475,7 +455,7 @@ func createSnapshotWorld(ctx context.Context) (runtime.ExecutionContextID, error
 		},
 	)
 	if err != nil {
-		return 0, fmt.Errorf("browser isolated world failed: %w", err)
+		return 0, err
 	}
 
 	return world.ExecutionContextID, nil
@@ -486,7 +466,7 @@ func sanitizedError(err error) error {
 		return nil
 	}
 
-	message := stripCredentialText(err.Error())
+	message := domain.SanitizeErrorText(err.Error())
 	if message == err.Error() {
 		return err
 	}
@@ -494,36 +474,23 @@ func sanitizedError(err error) error {
 	return errors.New(message)
 }
 
-func sanitizeBrowserError(err error, endpoint string) error {
-	if err == nil {
-		return nil
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
+func classifyBrowserError(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
 		return context.DeadlineExceeded
-	}
-
-	if errors.Is(err, context.Canceled) {
+	case errors.Is(err, context.Canceled):
 		return context.Canceled
-	}
-
-	if errors.Is(err, errResponseTooLarge) {
+	case errors.Is(err, errResponseTooLarge):
 		return errResponseTooLarge
+	default:
+		return errBrowserFetchFailed
 	}
-
-	_ = endpoint
-
-	return errBrowserFetchFailed
-}
-
-func stripCredentialText(message string) string {
-	return userInfoPattern.ReplaceAllString(domain.SanitizeErrorText(message), "$1")
 }
 
 func sanitizedStringURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return stripCredentialText(raw)
+		return domain.SanitizeErrorText(raw)
 	}
 
 	return sanitizedURL(parsed)

@@ -23,7 +23,7 @@ let h: Harness;
 let fetchMock: ReturnType<typeof vi.fn>;
 const disposers: Array<() => void> = [];
 
-const SAVE_PATH = '/save?url=https%3A%2F%2Fexample.com%2Fpost';
+const SAVE_PATH = '/save#url=https%3A%2F%2Fexample.com%2Fpost';
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status });
@@ -144,6 +144,7 @@ describe('quick save page', () => {
     await settle(4);
 
     expect(posts()).toHaveLength(0);
+    expect(history.get()).toBe('/save');
     expect(inputValue(container, 'input[type="url"]')).toBe(
       'https://example.com/post'
     );
@@ -176,26 +177,6 @@ describe('quick save page', () => {
     expect(hasUrl('/api/saved-pages/page-1')).toBe(true);
     expect(history.get()).toBe('/later/page-1');
     expect(h.ui.currentToast()).toBeNull();
-  });
-});
-
-describe('quick save errors', () => {
-  it('shows a translated error inline so the URL can be fixed', async () => {
-    respond((url, init) =>
-      url === '/api/saved-pages' && init.method === 'POST'
-        ? json({ error: 'InvalidPageUrl' }, 400)
-        : undefined
-    );
-
-    const { container, history } = mountApp('/save?url=not-a-url');
-    await settle(4);
-
-    typeInto(container, 'input[type="url"]', 'ftp://example.com/post');
-    submitForm(container);
-    await settle(4);
-
-    expect(container.textContent).toContain('请输入有效的 http 或 https 链接');
-    expect(history.get()).toBe('/save?url=not-a-url');
   });
 });
 

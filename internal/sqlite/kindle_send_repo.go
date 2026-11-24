@@ -3,8 +3,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-
 	"time"
 
 	"reader/internal/domain"
@@ -220,28 +220,68 @@ func insertRunningKindleSendInTx(ctx context.Context, tx *sql.Tx, created domain
 	return err
 }
 
-func (r *KindleSendRepo) ListUnreadForKindle(ctx context.Context) ([]domain.SavedPage, []domain.Feed, map[string][]domain.FeedItem, error) {
-	savedPages, err := r.listUnreadSavedPages(ctx)
+func (r *KindleSendRepo) ListUnreadForKindle(ctx context.Context) ([]domain.KindleArticleRef, error) {
+	tx, err := r.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
+	defer func() { _ = tx.Rollback() }()
 
-	feeds, err := r.listFeedsWithUnread(ctx)
+	refs, err := listUnreadSavedPageRefs(ctx, tx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	items := make(map[string][]domain.FeedItem, len(feeds))
-	for _, feed := range feeds {
-		feedItems, err := r.listUnreadFeedItems(ctx, feed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		items[feed.ID] = feedItems
+	refs, err = appendUnreadFeedItemRefs(ctx, tx, refs)
+	if err != nil {
+		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	return savedPages, feeds, items, nil
+	if err := tx.Commit(); err != nil {
+		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
+	}
+
+	return refs, nil
+}
+
+func (r *KindleSendRepo) GetKindleArticle(ctx context.Context, ref domain.KindleArticleRef) (*domain.SavedPage, *domain.Feed, *domain.FeedItem, error) {
+	if ref.IsSavedPage {
+		return r.getSavedPageForKindle(ctx, ref.ID)
+	}
+
+	return r.getFeedItemForKindle(ctx, ref.ID)
+}
+
+func (r *KindleSendRepo) getSavedPageForKindle(ctx context.Context, id string) (*domain.SavedPage, *domain.Feed, *domain.FeedItem, error) {
+	page, err := scanSavedPage(r.read.QueryRowContext(ctx, `SELECT `+savedPageColumns+` FROM saved_page WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, nil, domain.NewError(domain.ErrSettingRepositoryError, err)
+	}
+
+	return &page, nil, nil, nil
+}
+
+func (r *KindleSendRepo) getFeedItemForKindle(ctx context.Context, id string) (*domain.SavedPage, *domain.Feed, *domain.FeedItem, error) {
+	item, err := scanFeedItem(r.read.QueryRowContext(ctx, `SELECT `+feedItemColumns+` FROM feed_item WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, nil, domain.NewError(domain.ErrSettingRepositoryError, err)
+	}
+
+	feed, err := scanFeed(r.read.QueryRowContext(ctx, `SELECT `+feedColumns+` FROM feed WHERE id = ?`, item.FeedID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, nil, domain.NewError(domain.ErrSettingRepositoryError, err)
+	}
+
+	return nil, &feed, &item, nil
 }
 
 func (r *KindleSendRepo) RecordBookAccepted(ctx context.Context, sendID string, savedPageIDs []string, feedItemIDs []string, articleDelta int) error {
@@ -340,87 +380,54 @@ func (r *KindleSendRepo) CompleteSend(ctx context.Context, sendID string, status
 	return nil
 }
 
-func (r *KindleSendRepo) listUnreadSavedPages(ctx context.Context) ([]domain.SavedPage, error) {
-	rows, err := r.read.QueryContext(ctx, `SELECT `+savedPageColumns+` FROM saved_page WHERE read = 0 ORDER BY id ASC`)
+func listUnreadSavedPageRefs(ctx context.Context, tx *sql.Tx) ([]domain.KindleArticleRef, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM saved_page WHERE read = 0 ORDER BY id ASC`)
 	if err != nil {
-		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
+		return nil, err
 	}
-
 	defer closeRows(rows)
 
-	pages := []domain.SavedPage{}
+	refs := []domain.KindleArticleRef{}
 	for rows.Next() {
-		page, err := scanSavedPage(rows)
-		if err != nil {
-			return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
 
-		pages = append(pages, page)
+		refs = append(refs, domain.KindleArticleRef{ID: id, IsSavedPage: true})
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
-	return pages, nil
+	return refs, rows.Err()
 }
 
-func (r *KindleSendRepo) listFeedsWithUnread(ctx context.Context) ([]domain.Feed, error) {
-	rows, err := r.read.QueryContext(
+func appendUnreadFeedItemRefs(ctx context.Context, tx *sql.Tx, refs []domain.KindleArticleRef) ([]domain.KindleArticleRef, error) {
+	rows, err := tx.QueryContext(
 		ctx,
-		`SELECT `+feedColumns+` FROM feed WHERE EXISTS (SELECT 1 FROM feed_item WHERE feed_item.feed_id = feed.id AND feed_item.read = 0) ORDER BY title ASC, id ASC`,
+		`SELECT fi.id
+		 FROM feed_item fi
+		 JOIN feed f ON f.id = fi.feed_id
+		 WHERE fi.read = 0
+		 ORDER BY f.title ASC, f.id ASC,
+		   CASE WHEN f.sort_order = ? THEN fi.id END ASC,
+		   CASE WHEN f.sort_order != ? THEN fi.id END DESC`,
+		string(domain.SortOrderOldest),
+		string(domain.SortOrderOldest),
 	)
 	if err != nil {
-		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
+		return nil, err
 	}
-
 	defer closeRows(rows)
 
-	feeds := []domain.Feed{}
 	for rows.Next() {
-		feed, err := scanFeed(rows)
-		if err != nil {
-			return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
 
-		feeds = append(feeds, feed)
+		refs = append(refs, domain.KindleArticleRef{ID: id})
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
-	return feeds, nil
-}
-
-func (r *KindleSendRepo) listUnreadFeedItems(ctx context.Context, feed domain.Feed) ([]domain.FeedItem, error) {
-	direction := `DESC`
-	if feed.Order == domain.SortOrderOldest {
-		direction = `ASC`
-	}
-
-	rows, err := r.read.QueryContext(ctx, `SELECT `+feedItemColumns+` FROM feed_item WHERE feed_id = ? AND read = 0 ORDER BY id `+direction, feed.ID)
-	if err != nil {
-		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
-	defer closeRows(rows)
-
-	items := []domain.FeedItem{}
-	for rows.Next() {
-		item, err := scanFeedItem(rows)
-		if err != nil {
-			return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
-		}
-
-		items = append(items, item)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
-	return items, nil
+	return refs, rows.Err()
 }
 
 func scanKindleSend(row interface{ Scan(...any) error }) (domain.KindleSendRecord, error) {

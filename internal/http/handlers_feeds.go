@@ -4,21 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"mime"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"reader/internal/domain"
 )
 
-const (
-	opmlContentType    = "text/x-opml+xml; charset=utf-8"
-	opmlFilename       = "subscriptions.opml"
-	maxOPMLUploadBytes = 10 << 20
-	maxPreviewTitles   = 3
-)
+const maxPreviewTitles = 3
 
 type feedJSON struct {
 	ID           string            `json:"id"`
@@ -44,15 +38,6 @@ func toFeedJSON(feed domain.Feed) feedJSON {
 		ReaderMode:   feed.ReaderMode,
 		Order:        feed.Order,
 	}
-}
-
-func toFeedsJSON(feeds []domain.Feed) []feedJSON {
-	converted := make([]feedJSON, 0, len(feeds))
-	for _, feed := range feeds {
-		converted = append(converted, toFeedJSON(feed))
-	}
-
-	return converted
 }
 
 type feedItemJSON struct {
@@ -81,23 +66,11 @@ func toFeedItemJSON(item domain.FeedItem) feedItemJSON {
 	}
 }
 
-func toFeedItemPtr(item *domain.FeedItem) *feedItemJSON {
-	if item == nil {
-		return nil
-	}
-
-	converted := toFeedItemJSON(*item)
-
-	return &converted
-}
-
 func toFeedItemsPage(result domain.PageResult[domain.FeedItem]) pageResponse[feedItemJSON] {
-	items := make([]feedItemJSON, 0, len(result.Items))
-	for _, item := range result.Items {
-		items = append(items, toFeedItemJSON(item))
+	return pageResponse[feedItemJSON]{
+		Items:  mapSlice(result.Items, toFeedItemJSON),
+		Cursor: result.Cursor,
 	}
-
-	return pageResponse[feedItemJSON]{Items: items, Cursor: result.Cursor}
 }
 
 type feedUnreadCountJSON struct {
@@ -134,12 +107,6 @@ type feedOrderRequest struct {
 	Order domain.SortOrder `json:"order"`
 }
 
-type opmlImportResponse struct {
-	ImportedFeeds  int `json:"importedFeeds"`
-	SkippedFeeds   int `json:"skippedFeeds"`
-	CreatedFolders int `json:"createdFolders"`
-}
-
 func (s *server) handleFeedList(w http.ResponseWriter, r *http.Request) {
 	feeds, err := s.cfg.Feeds.List(r.Context())
 	if err != nil {
@@ -148,7 +115,7 @@ func (s *server) handleFeedList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, listResponse[feedJSON]{Items: toFeedsJSON(feeds)})
+	writeJSON(w, http.StatusOK, listResponse[feedJSON]{Items: mapSlice(feeds, toFeedJSON)})
 }
 
 func (s *server) handleFeedPreview(w http.ResponseWriter, r *http.Request) {
@@ -175,17 +142,7 @@ func (s *server) fetchFeedPreview(ctx context.Context, rawURL string) (feedPrevi
 		return feedPreviewJSON{}, err
 	}
 
-	if err := s.acquireFetchSlot(ctx); err != nil {
-		return feedPreviewJSON{}, err
-	}
-	defer s.releaseFetchSlot()
-
-	body, finalURL, err := s.cfg.FeedFetcher.FetchFeed(ctx, feedURL)
-	if err != nil {
-		return feedPreviewJSON{}, err
-	}
-
-	parsed, err := s.cfg.FeedParser.ParseFeed(body, finalURL)
+	parsed, err := s.fetchAndParseFeed(ctx, feedURL)
 	if err != nil {
 		return feedPreviewJSON{}, err
 	}
@@ -210,6 +167,23 @@ func (s *server) fetchFeedPreview(ctx context.Context, rawURL string) (feedPrevi
 		Description: parsed.Description,
 		Titles:      titles,
 	}, nil
+}
+
+func (s *server) fetchAndParseFeed(ctx context.Context, feedURL domain.NormalizedURL) (domain.ParsedFeed, error) {
+	if !s.fetchSem.tryAcquire() {
+		return domain.ParsedFeed{}, domain.NewError(domain.ErrTooManyRequests, nil)
+	}
+	defer s.fetchSem.release()
+
+	fetchCtx, cancel := s.withForegroundFetchTimeout(ctx)
+	defer cancel()
+
+	body, finalURL, err := s.cfg.FeedFetcher.FetchFeed(fetchCtx, feedURL)
+	if err != nil {
+		return domain.ParsedFeed{}, err
+	}
+
+	return s.cfg.FeedParser.ParseFeed(body, finalURL)
 }
 
 func (s *server) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
@@ -250,17 +224,9 @@ func (s *server) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Refresher.Enqueue(created.ID)
 	}
 
-	writeJSON(w, http.StatusCreated, itemResponse[feedJSON]{Item: toFeedPtr(&created)})
-}
+	converted := toFeedJSON(created)
 
-func toFeedPtr(feed *domain.Feed) *feedJSON {
-	if feed == nil {
-		return nil
-	}
-
-	converted := toFeedJSON(*feed)
-
-	return &converted
+	writeJSON(w, http.StatusCreated, itemResponse[feedJSON]{Item: &converted})
 }
 
 func (s *server) handleFeedDelete(w http.ResponseWriter, r *http.Request) {
@@ -375,10 +341,9 @@ func (s *server) handleFeedUnreadCounts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	converted := make([]feedUnreadCountJSON, 0, len(counts))
-	for _, count := range counts {
-		converted = append(converted, feedUnreadCountJSON{FeedID: count.FeedID, Count: count.Count})
-	}
+	converted := mapSlice(counts, func(count domain.FeedUnreadCount) feedUnreadCountJSON {
+		return feedUnreadCountJSON{FeedID: count.FeedID, Count: count.Count}
+	})
 
 	writeJSON(w, http.StatusOK, listResponse[feedUnreadCountJSON]{Items: converted})
 }
@@ -435,14 +400,7 @@ func (s *server) handleFeedItems(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleFeedItemList(w http.ResponseWriter, r *http.Request) {
-	query, err := parsePageQuery(r)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	params, err := query.params(query.orderOrDefault())
+	params, err := parseDefaultPageParams(r)
 	if err != nil {
 		writeError(w, err)
 
@@ -467,43 +425,43 @@ func (s *server) handleFeedItemGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, itemResponse[feedItemJSON]{Item: toFeedItemPtr(item)})
+	writeJSON(w, http.StatusOK, itemResponse[feedItemJSON]{Item: toPtr(item, toFeedItemJSON)})
 }
 
 func (s *server) handleFeedItemExtract(w http.ResponseWriter, r *http.Request) {
 	item, err := s.cfg.FeedItems.GetByID(r.Context(), r.PathValue("id"))
+	if err == nil && item == nil {
+		err = domain.NewError(domain.ErrFeedItemNotFound, nil)
+	}
+
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	if item == nil {
-		writeError(w, domain.NewError(domain.ErrFeedItemNotFound, nil))
+	extracted := *item
+	if !hasText(item.ExtractedContent) {
+		pending := *item
+		updated, err := s.extracts.do(r.Context(), pending.ID, func(ctx context.Context) (*domain.FeedItem, error) {
+			return s.extractFeedItem(ctx, pending)
+		})
+		if err != nil {
+			writeError(w, err)
 
-		return
+			return
+		}
+
+		extracted = *updated
 	}
 
-	if hasText(item.ExtractedContent) {
-		writeJSON(w, http.StatusOK, itemResponse[feedItemJSON]{Item: toFeedItemPtr(item)})
+	converted := toFeedItemJSON(extracted)
 
-		return
-	}
-
-	updated, err := s.extracts.do(r.Context(), item.ID, func(ctx context.Context) (*domain.FeedItem, error) {
-		return s.extractAndSaveFeedItem(ctx, item)
-	})
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, itemResponse[feedItemJSON]{Item: toFeedItemPtr(updated)})
+	writeJSON(w, http.StatusOK, itemResponse[feedItemJSON]{Item: &converted})
 }
 
-func (s *server) extractAndSaveFeedItem(ctx context.Context, item *domain.FeedItem) (*domain.FeedItem, error) {
-	article, err := s.extractWebpage(ctx, item.URL)
+func (s *server) extractFeedItem(ctx context.Context, item domain.FeedItem) (*domain.FeedItem, error) {
+	article, err := s.extractWebpageWithSlot(ctx, item.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -529,12 +487,18 @@ type extractCall struct {
 }
 
 type extractGroup struct {
-	mu    sync.Mutex
-	calls map[string]*extractCall
+	mu      sync.Mutex
+	calls   map[string]*extractCall
+	sem     slotSemaphore
+	timeout time.Duration
 }
 
-func newExtractGroup() *extractGroup {
-	return &extractGroup{calls: make(map[string]*extractCall)}
+func newExtractGroup(sem slotSemaphore, timeout time.Duration) *extractGroup {
+	return &extractGroup{
+		calls:   make(map[string]*extractCall),
+		sem:     sem,
+		timeout: timeout,
+	}
 }
 
 func (g *extractGroup) do(ctx context.Context, key string, fn func(context.Context) (*domain.FeedItem, error)) (*domain.FeedItem, error) {
@@ -542,7 +506,10 @@ func (g *extractGroup) do(ctx context.Context, key string, fn func(context.Conte
 		return nil, err
 	}
 
-	call := g.joinOrStart(ctx, key, fn)
+	call, err := g.joinOrStart(ctx, key, fn)
+	if err != nil {
+		return nil, err
+	}
 
 	select {
 	case <-call.done:
@@ -554,27 +521,35 @@ func (g *extractGroup) do(ctx context.Context, key string, fn func(context.Conte
 	}
 }
 
-func (g *extractGroup) joinOrStart(ctx context.Context, key string, fn func(context.Context) (*domain.FeedItem, error)) *extractCall {
+func (g *extractGroup) joinOrStart(ctx context.Context, key string, fn func(context.Context) (*domain.FeedItem, error)) (*extractCall, error) {
 	g.mu.Lock()
 	if call, ok := g.calls[key]; ok {
 		call.waiters++
 		g.mu.Unlock()
 
-		return call
+		return call, nil
 	}
 
-	callCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	if !g.sem.tryAcquire() {
+		g.mu.Unlock()
+
+		return nil, domain.NewError(domain.ErrTooManyRequests, nil)
+	}
+
+	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), g.timeout)
 	call := &extractCall{done: make(chan struct{}), cancel: cancel, waiters: 1}
 	g.calls[key] = call
 	g.mu.Unlock()
 
 	go g.run(callCtx, key, call, fn)
 
-	return call
+	return call, nil
 }
 
 func (g *extractGroup) run(callCtx context.Context, key string, call *extractCall, fn func(context.Context) (*domain.FeedItem, error)) {
-	item, err := fn(callCtx)
+	item, err := runContained(callCtx, fn)
+	call.cancel()
+	g.sem.release()
 
 	g.mu.Lock()
 	call.item = item
@@ -584,8 +559,16 @@ func (g *extractGroup) run(callCtx context.Context, key string, call *extractCal
 	}
 	close(call.done)
 	g.mu.Unlock()
+}
 
-	call.cancel()
+func runContained(ctx context.Context, fn func(context.Context) (*domain.FeedItem, error)) (item *domain.FeedItem, err error) {
+	defer func() {
+		if recover() != nil {
+			item, err = nil, errors.New("feed item extraction panicked")
+		}
+	}()
+
+	return fn(ctx)
 }
 
 func (g *extractGroup) abandon(key string, call *extractCall) {
@@ -600,123 +583,6 @@ func (g *extractGroup) abandon(key string, call *extractCall) {
 	if shouldCancel {
 		call.cancel()
 	}
-}
-
-func (s *server) handleOPMLExport(w http.ResponseWriter, r *http.Request) {
-	exportFolders, topFeeds, err := s.cfg.Feeds.ExportOPML(r.Context())
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	payload, err := domain.ExportOPML(exportFolders, topFeeds)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	w.Header().Set("Content-Type", opmlContentType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+opmlFilename+`"`)
-	w.WriteHeader(http.StatusOK)
-
-	_, _ = w.Write(payload)
-}
-
-func (s *server) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
-	payload, err := readOPMLUpload(w, r)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	document, err := domain.ParseOPML(payload)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	result, newFeedIDs, err := s.cfg.Feeds.ImportOPML(r.Context(), document)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if s.cfg.Refresher != nil && len(newFeedIDs) > 0 {
-		s.cfg.Refresher.Enqueue(newFeedIDs...)
-	}
-
-	writeJSON(w, http.StatusOK, opmlImportResponse{
-		ImportedFeeds:  result.ImportedFeeds,
-		SkippedFeeds:   result.SkippedFeeds,
-		CreatedFolders: result.CreatedFolders,
-	})
-}
-
-func readOPMLUpload(w http.ResponseWriter, r *http.Request) ([]byte, error) {
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err == nil && strings.HasPrefix(mediaType, "multipart/") {
-		return readOPMLMultipart(w, r)
-	}
-
-	payload, err := io.ReadAll(io.LimitReader(r.Body, maxOPMLUploadBytes+1))
-	if err != nil {
-		return nil, domain.NewError(domain.ErrInvalidOpml, err)
-	}
-
-	if len(payload) > maxOPMLUploadBytes {
-		return nil, domain.NewError(domain.ErrInvalidOpml, nil)
-	}
-
-	return payload, nil
-}
-
-func readOPMLMultipart(w http.ResponseWriter, r *http.Request) ([]byte, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxOPMLUploadBytes)
-
-	if err := r.ParseMultipartForm(maxOPMLUploadBytes); err != nil {
-		return nil, domain.NewError(domain.ErrInvalidOpml, err)
-	}
-
-	if file, _, err := r.FormFile("file"); err == nil {
-		defer func() { _ = file.Close() }()
-
-		return readLimited(file)
-	}
-
-	for _, headers := range r.MultipartForm.File {
-		if len(headers) == 0 {
-			continue
-		}
-
-		file, err := headers[0].Open()
-		if err != nil {
-			return nil, domain.NewError(domain.ErrInvalidOpml, err)
-		}
-
-		defer func() { _ = file.Close() }()
-
-		return readLimited(file)
-	}
-
-	return nil, domain.NewError(domain.ErrInvalidOpml, errors.New("opml upload has no file part"))
-}
-
-func readLimited(r io.Reader) ([]byte, error) {
-	payload, err := io.ReadAll(io.LimitReader(r, maxOPMLUploadBytes+1))
-	if err != nil {
-		return nil, domain.NewError(domain.ErrInvalidOpml, err)
-	}
-
-	if len(payload) > maxOPMLUploadBytes {
-		return nil, domain.NewError(domain.ErrInvalidOpml, nil)
-	}
-
-	return payload, nil
 }
 
 type listResponse[T any] struct {

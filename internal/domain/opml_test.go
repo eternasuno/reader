@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -528,5 +529,137 @@ func TestOPMLImportAndExportStripLabelCredentials(t *testing.T) {
 
 	if !strings.Contains(body, `title="Top (http://example.com/top)"`) {
 		t.Fatalf("export missing redacted top feed title:\n%s", body)
+	}
+}
+
+func TestOPMLParseAndExportRedactApostropheInPassword(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`<opml version="2.0"><body>
+  <outline text="see http://u:p'w@host/folder">
+    <outline title="see http://u:p'w@host/x" xmlUrl="https://example.com/feed.xml"/>
+    <outline text="quoted 'https://u:p'w@host/y'." xmlUrl="https://example.com/y.xml"/>
+  </outline>
+</body></opml>`)
+
+	document, err := ParseOPML(data)
+	if err != nil {
+		t.Fatalf("ParseOPML returned %v", err)
+	}
+
+	if len(document.Folders) != 1 || document.Folders[0] != "see http://host/folder" {
+		t.Fatalf("Folders = %v", document.Folders)
+	}
+
+	if document.Feeds[0].Title != "see http://host/x" {
+		t.Fatalf("Feeds[0].Title = %q", document.Feeds[0].Title)
+	}
+
+	if document.Feeds[1].Title != "quoted 'https://host/y'." {
+		t.Fatalf("Feeds[1].Title = %q", document.Feeds[1].Title)
+	}
+
+	exported, err := ExportOPML(nil, []Feed{
+		opmlTestFeed(t, "id-1", "see http://u:p'w@host/x", "https://example.com/feed.xml"),
+	})
+	if err != nil {
+		t.Fatalf("ExportOPML returned %v", err)
+	}
+
+	if strings.Contains(string(exported), "u:p'w") {
+		t.Fatalf("export leaked apostrophe password:\n%s", string(exported))
+	}
+
+	if !strings.Contains(string(exported), `title="see http://host/x"`) {
+		t.Fatalf("export missing redacted title:\n%s", string(exported))
+	}
+}
+
+func TestOPMLParseAndExportRedactMultiAtAndProseLabels(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`<opml version="2.0"><body>
+  <outline text="see http://user:p@ss@host/folder">
+    <outline title="see http://user:p@ss@host/x" xmlUrl="https://example.com/feed.xml"/>
+    <outline text="https://user:p@ss@example.com/whole" xmlUrl="https://example.com/whole.xml"/>
+    <outline text="https://user:p)w@example.com/paren" xmlUrl="https://example.com/paren.xml"/>
+    <outline text="quoted 'https://u:p'w@s@host/y'." xmlUrl="https://example.com/quoted.xml"/>
+    <outline text="contact editor@example.com for https://example.com/plain" xmlUrl="https://example.com/plain.xml"/>
+  </outline>
+</body></opml>`)
+
+	document, err := ParseOPML(data)
+	if err != nil {
+		t.Fatalf("ParseOPML returned %v", err)
+	}
+
+	if len(document.Folders) != 1 || document.Folders[0] != "see http://host/folder" {
+		t.Fatalf("Folders = %v", document.Folders)
+	}
+
+	wantTitles := []string{
+		"see http://host/x",
+		"https://example.com/whole",
+		"https://example.com/paren",
+		"quoted 'https://host/y'.",
+		"contact editor@example.com for https://example.com/plain",
+	}
+	for i, wantTitle := range wantTitles {
+		if document.Feeds[i].Title != wantTitle {
+			t.Fatalf("Feeds[%d].Title = %q, want %q", i, document.Feeds[i].Title, wantTitle)
+		}
+	}
+
+	exported, err := ExportOPML([]OPMLExportFolder{
+		{
+			Name: "see http://user:p@ss@host/folder",
+			Feeds: []Feed{
+				opmlTestFeed(t, "id-1", "see http://user:p@ss@host/x", "https://example.com/feed.xml"),
+				opmlTestFeed(t, "id-2", "https://user:p)w@example.com/paren", "https://example.com/paren.xml"),
+				opmlTestFeed(t, "id-3", "contact editor@example.com for https://example.com/plain", "https://example.com/plain.xml"),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ExportOPML returned %v", err)
+	}
+
+	body := string(exported)
+	for _, secret := range []string{"user:p@ss", "p@ss", "user:p)w"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("export leaked credential %q in:\n%s", secret, body)
+		}
+	}
+
+	for _, wantAttr := range []string{
+		`text="see http://host/folder"`,
+		`title="see http://host/x"`,
+		`title="https://example.com/paren"`,
+		`title="contact editor@example.com for https://example.com/plain"`,
+	} {
+		if !strings.Contains(body, wantAttr) {
+			t.Fatalf("export missing %s in:\n%s", wantAttr, body)
+		}
+	}
+}
+
+func TestOPMLParseRejectsOutlineLimitAndDepth(t *testing.T) {
+	t.Parallel()
+
+	var outlines strings.Builder
+	for i := range maxOPMLOutlines + 1 {
+		fmt.Fprintf(&outlines, `<outline text="Feed %d" xmlUrl="https://example.com/%d.xml"/>`, i, i)
+	}
+
+	tooMany := []byte(`<opml version="2.0"><body>` + outlines.String() + `</body></opml>`)
+	_, err := ParseOPML(tooMany)
+	if code := opmlTestErrorCode(t, err); code != ErrInvalidOpml {
+		t.Fatalf("error code = %q, want %q", code, ErrInvalidOpml)
+	}
+
+	deep := []byte(`<opml version="2.0"><body>` + strings.Repeat(`<outline text="Folder">`, maxOPMLDepth) + strings.Repeat(`</outline>`, maxOPMLDepth) + `</body></opml>`)
+	_, err = ParseOPML(deep)
+	if code := opmlTestErrorCode(t, err); code != ErrInvalidOpml {
+		t.Fatalf("deep error code = %q, want %q", code, ErrInvalidOpml)
 	}
 }

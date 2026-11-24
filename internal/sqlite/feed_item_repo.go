@@ -110,21 +110,13 @@ func (r *FeedItemRepo) SetRead(ctx context.Context, id string, read bool) error 
 }
 
 func (r *FeedItemRepo) MarkIDsRead(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	payload, err := encodeIDs(ids)
-	if err != nil {
-		return domain.NewError(domain.ErrFeedItemRepositoryError, err)
-	}
-
-	_, err = r.write.ExecContext(ctx, `UPDATE feed_item SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`, payload)
-	if err != nil {
-		return domain.NewError(domain.ErrFeedItemRepositoryError, err)
-	}
-
-	return nil
+	return markIDsRead(
+		ctx,
+		r.write,
+		`UPDATE feed_item SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`,
+		ids,
+		domain.ErrFeedItemRepositoryError,
+	)
 }
 
 func (r *FeedItemRepo) MarkAllRead(ctx context.Context) error {

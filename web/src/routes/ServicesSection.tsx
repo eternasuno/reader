@@ -1,36 +1,21 @@
 import type { JSX } from '@solidjs/web';
-import { Show } from 'solid-js';
+import { Show, type StoreSetter } from 'solid-js';
 import type { SMTPSecurity } from '../api';
 import { t } from '../i18n';
 import {
-  browserEndpointDraft,
   isSaving,
   isSettingsReady,
   isSmtpConfigured,
-  jinaKeyDraft,
   removeBrowserEndpoint,
   removeJinaKey,
   removeSmtp,
   removeSmtpPassword,
+  type SettingsDrafts,
   saveBrowserEndpoint,
   saveJinaKey,
   saveSmtp,
   savingAction,
-  setBrowserEndpointDraft,
-  setJinaKeyDraft,
-  setSmtpHostDraft,
-  setSmtpPasswordDraft,
-  setSmtpPortDraft,
-  setSmtpSecurityDraft,
-  setSmtpSenderEmailDraft,
-  setSmtpUserDraft,
   settings,
-  smtpHostDraft,
-  smtpPasswordDraft,
-  smtpPortDraft,
-  smtpSecurityDraft,
-  smtpSenderEmailDraft,
-  smtpUserDraft,
 } from '../state';
 import {
   Button,
@@ -40,19 +25,19 @@ import {
   SettingsRow,
   StatusBadge,
 } from '../ui';
-import { statusKey } from './settingsHelpers';
+import { type SettingsDraftProps, statusKey } from './settingsHelpers';
 
 const controlsDisabled = (): boolean => isSaving() || !isSettingsReady();
 
-const confirmClearBrowser = (): void => {
+const confirmClearBrowser = (setDrafts: StoreSetter<SettingsDrafts>): void => {
   if (window.confirm(String(t('settings.clearBrowserEndpointConfirm')))) {
-    void removeBrowserEndpoint();
+    void removeBrowserEndpoint(setDrafts);
   }
 };
 
-const confirmClearSmtp = (): void => {
+const confirmClearSmtp = (setDrafts: StoreSetter<SettingsDrafts>): void => {
   if (window.confirm(String(t('settings.clearSmtpConfirm')))) {
-    void removeSmtp();
+    void removeSmtp(setDrafts);
   }
 };
 
@@ -89,14 +74,14 @@ function SaveButton(props: { label: string; loading: boolean }): JSX.Element {
   );
 }
 
-function JinaCard(): JSX.Element {
+function JinaCard(props: SettingsDraftProps): JSX.Element {
   const configured = (): boolean => settings()?.jinaKeyConfigured === true;
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void saveJinaKey();
+        void saveJinaKey(props.drafts, props.setDrafts);
       }}
     >
       <SettingsGroup
@@ -115,7 +100,7 @@ function JinaCard(): JSX.Element {
             <Show when={configured()}>
               <RemoveButton
                 label={String(t('settings.deleteJinaKey'))}
-                onClick={() => void removeJinaKey()}
+                onClick={() => void removeJinaKey(props.setDrafts)}
               />
             </Show>
             <SaveButton
@@ -132,9 +117,12 @@ function JinaCard(): JSX.Element {
             autocomplete="off"
             label={String(t('settings.jinaKeyLabel'))}
             placeholder={String(t('settings.jinaKeyPlaceholder'))}
-            value={jinaKeyDraft()}
+            value={props.drafts.jinaKey}
             disabled={controlsDisabled()}
-            onInput={(event) => setJinaKeyDraft(event.currentTarget.value)}
+            onInput={(event) => {
+              const jinaKey = event.currentTarget.value;
+              props.setDrafts((draft) => ({ ...draft, jinaKey }));
+            }}
           />
         </SettingsRow>
       </SettingsGroup>
@@ -142,7 +130,7 @@ function JinaCard(): JSX.Element {
   );
 }
 
-function BrowserCard(): JSX.Element {
+function BrowserCard(props: SettingsDraftProps): JSX.Element {
   const configured = (): boolean =>
     settings()?.browserEndpointConfigured === true;
 
@@ -150,7 +138,7 @@ function BrowserCard(): JSX.Element {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void saveBrowserEndpoint();
+        void saveBrowserEndpoint(props.drafts, props.setDrafts);
       }}
     >
       <SettingsGroup
@@ -169,7 +157,7 @@ function BrowserCard(): JSX.Element {
             <Show when={configured()}>
               <RemoveButton
                 label={String(t('settings.clearBrowserEndpoint'))}
-                onClick={confirmClearBrowser}
+                onClick={() => confirmClearBrowser(props.setDrafts)}
               />
             </Show>
             <SaveButton
@@ -185,11 +173,12 @@ function BrowserCard(): JSX.Element {
             required
             label={String(t('settings.browserEndpointLabel'))}
             placeholder={String(t('settings.browserEndpointPlaceholder'))}
-            value={browserEndpointDraft()}
+            value={props.drafts.browserEndpoint}
             disabled={controlsDisabled()}
-            onInput={(event) =>
-              setBrowserEndpointDraft(event.currentTarget.value)
-            }
+            onInput={(event) => {
+              const browserEndpoint = event.currentTarget.value;
+              props.setDrafts((draft) => ({ ...draft, browserEndpoint }));
+            }}
           />
         </SettingsRow>
       </SettingsGroup>
@@ -197,16 +186,19 @@ function BrowserCard(): JSX.Element {
   );
 }
 
-function SmtpServerFields(): JSX.Element {
+function SmtpServerFields(props: SettingsDraftProps): JSX.Element {
   return (
     <>
       <Input
         type="text"
         required
         label={String(t('settings.smtpHostLabel'))}
-        value={smtpHostDraft()}
+        value={props.drafts.smtpHost}
         disabled={controlsDisabled()}
-        onInput={(event) => setSmtpHostDraft(event.currentTarget.value)}
+        onInput={(event) => {
+          const smtpHost = event.currentTarget.value;
+          props.setDrafts((draft) => ({ ...draft, smtpHost }));
+        }}
       />
       <Input
         type="number"
@@ -215,35 +207,40 @@ function SmtpServerFields(): JSX.Element {
         max={65535}
         class="tabular-nums"
         label={String(t('settings.smtpPortLabel'))}
-        value={smtpPortDraft() === 0 ? '' : String(smtpPortDraft())}
+        value={props.drafts.smtpPort === 0 ? '' : String(props.drafts.smtpPort)}
         disabled={controlsDisabled()}
         onInput={(event) => {
           const parsed = Number.parseInt(event.currentTarget.value, 10);
-          setSmtpPortDraft(Number.isNaN(parsed) ? 0 : parsed);
+          const smtpPort = Number.isNaN(parsed) ? 0 : parsed;
+          props.setDrafts((draft) => ({ ...draft, smtpPort }));
         }}
       />
     </>
   );
 }
 
-function SmtpSenderFields(): JSX.Element {
+function SmtpSenderFields(props: SettingsDraftProps): JSX.Element {
   return (
     <>
       <Input
         type="email"
         required
         label={String(t('settings.smtpSenderEmailLabel'))}
-        value={smtpSenderEmailDraft()}
+        value={props.drafts.smtpSenderEmail}
         disabled={controlsDisabled()}
-        onInput={(event) => setSmtpSenderEmailDraft(event.currentTarget.value)}
+        onInput={(event) => {
+          const smtpSenderEmail = event.currentTarget.value;
+          props.setDrafts((draft) => ({ ...draft, smtpSenderEmail }));
+        }}
       />
       <Select
         label={String(t('settings.smtpSecurityLabel'))}
-        value={smtpSecurityDraft()}
+        value={props.drafts.smtpSecurity}
         disabled={controlsDisabled()}
-        onChange={(event) =>
-          setSmtpSecurityDraft(event.currentTarget.value as SMTPSecurity)
-        }
+        onChange={(event) => {
+          const smtpSecurity = event.currentTarget.value as SMTPSecurity;
+          props.setDrafts((draft) => ({ ...draft, smtpSecurity }));
+        }}
       >
         <option value="tls">{String(t('settings.smtpSecurityTls'))}</option>
         <option value="starttls">
@@ -254,16 +251,19 @@ function SmtpSenderFields(): JSX.Element {
   );
 }
 
-function SmtpCredentialFields(): JSX.Element {
+function SmtpCredentialFields(props: SettingsDraftProps): JSX.Element {
   return (
     <>
       <Input
         type="text"
         autocomplete="off"
         label={String(t('settings.smtpUserLabel'))}
-        value={smtpUserDraft()}
+        value={props.drafts.smtpUser}
         disabled={controlsDisabled()}
-        onInput={(event) => setSmtpUserDraft(event.currentTarget.value)}
+        onInput={(event) => {
+          const smtpUser = event.currentTarget.value;
+          props.setDrafts((draft) => ({ ...draft, smtpUser }));
+        }}
       />
       <Input
         type="password"
@@ -275,27 +275,32 @@ function SmtpCredentialFields(): JSX.Element {
             status: String(t(statusKey(settings()?.smtp?.passwordConfigured))),
           })
         )}
-        value={smtpPasswordDraft()}
+        value={props.drafts.smtpPassword}
         disabled={controlsDisabled()}
-        onInput={(event) => setSmtpPasswordDraft(event.currentTarget.value)}
+        onInput={(event) => {
+          const smtpPassword = event.currentTarget.value;
+          props.setDrafts((draft) => ({ ...draft, smtpPassword }));
+        }}
       />
     </>
   );
 }
 
-function SmtpFooter(): JSX.Element {
+function SmtpFooter(props: {
+  setDrafts: StoreSetter<SettingsDrafts>;
+}): JSX.Element {
   return (
     <>
       <Show when={settings()?.smtp?.passwordConfigured}>
         <RemoveButton
           label={String(t('settings.deleteSmtpPassword'))}
-          onClick={() => void removeSmtpPassword()}
+          onClick={() => void removeSmtpPassword(props.setDrafts)}
         />
       </Show>
       <Show when={isSmtpConfigured()}>
         <RemoveButton
           label={String(t('settings.clearSmtp'))}
-          onClick={confirmClearSmtp}
+          onClick={() => confirmClearSmtp(props.setDrafts)}
         />
       </Show>
       <SaveButton
@@ -307,12 +312,12 @@ function SmtpFooter(): JSX.Element {
 }
 
 /** Two columns on wide screens: server + port, sender + security, user + password. */
-function SmtpCard(): JSX.Element {
+function SmtpCard(props: SettingsDraftProps): JSX.Element {
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void saveSmtp();
+        void saveSmtp(props.drafts, props.setDrafts);
       }}
     >
       <SettingsGroup
@@ -326,21 +331,30 @@ function SmtpCard(): JSX.Element {
             )}
           </StatusBadge>
         }
-        footer={<SmtpFooter />}
+        footer={<SmtpFooter setDrafts={props.setDrafts} />}
       >
         <SettingsRow stacked>
           <div class="grid items-start gap-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
-            <SmtpServerFields />
+            <SmtpServerFields
+              drafts={props.drafts}
+              setDrafts={props.setDrafts}
+            />
           </div>
         </SettingsRow>
         <SettingsRow stacked>
           <div class="grid items-start gap-4 sm:grid-cols-2">
-            <SmtpSenderFields />
+            <SmtpSenderFields
+              drafts={props.drafts}
+              setDrafts={props.setDrafts}
+            />
           </div>
         </SettingsRow>
         <SettingsRow stacked>
           <div class="grid items-start gap-4 sm:grid-cols-2">
-            <SmtpCredentialFields />
+            <SmtpCredentialFields
+              drafts={props.drafts}
+              setDrafts={props.setDrafts}
+            />
           </div>
         </SettingsRow>
       </SettingsGroup>
@@ -349,12 +363,12 @@ function SmtpCard(): JSX.Element {
 }
 
 /** `settings.md:21-24`: independent external services (Jina, browser extraction, SMTP). */
-export function ServicesSection(): JSX.Element {
+export function ServicesSection(props: SettingsDraftProps): JSX.Element {
   return (
     <div class="flex flex-col gap-6">
-      <JinaCard />
-      <BrowserCard />
-      <SmtpCard />
+      <JinaCard drafts={props.drafts} setDrafts={props.setDrafts} />
+      <BrowserCard drafts={props.drafts} setDrafts={props.setDrafts} />
+      <SmtpCard drafts={props.drafts} setDrafts={props.setDrafts} />
     </div>
   );
 }

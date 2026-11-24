@@ -6,7 +6,7 @@ import { createSignal, flush } from 'solid-js';
 import { getItem, removeItem, setItem } from './storage';
 
 export const APPEARANCE_STORAGE_KEY = 'reader.appearance';
-export const THEME_STORAGE_KEY = 'reader.theme';
+const THEME_STORAGE_KEY = 'reader.theme';
 
 export type ReaderTheme = 'auto' | 'light' | 'dark';
 export type ReaderFontSize = 14 | 16 | 18 | 20 | 22;
@@ -28,15 +28,9 @@ export interface ReaderAppearanceInput {
   lineHeight?: ReaderLineHeight | 'compact' | 'comfortable' | 'relaxed';
 }
 
-export const FONT_SIZE_STEPS: ReadonlyArray<ReaderFontSize> = [
-  14, 16, 18, 20, 22,
-];
-export const LINE_HEIGHT_STEPS: ReadonlyArray<ReaderLineHeight> = [
-  1.4, 1.6, 1.8, 2.0,
-];
-export const LINE_WIDTH_STEPS: ReadonlyArray<ReaderLineWidth> = [
-  1, 2, 3, 4, 5, 6,
-];
+const FONT_SIZE_STEPS: ReadonlyArray<ReaderFontSize> = [14, 16, 18, 20, 22];
+const LINE_HEIGHT_STEPS: ReadonlyArray<ReaderLineHeight> = [1.4, 1.6, 1.8, 2.0];
+const LINE_WIDTH_STEPS: ReadonlyArray<ReaderLineWidth> = [1, 2, 3, 4, 5, 6];
 
 export const DEFAULT_APPEARANCE: ReaderAppearance = {
   fontSize: 16,
@@ -229,7 +223,7 @@ export const setReaderTheme = (next: ReaderTheme): void => {
 
 const [readerFullscreen, setReaderFullscreen] = createSignal(false);
 
-export { readerFullscreen, setReaderFullscreen };
+export { readerFullscreen };
 
 export const toggleReaderFullscreen = (): void => {
   setReaderFullscreen((prev) => !prev);

@@ -99,7 +99,7 @@ describe('SessionGuard cross-tab revalidation', () => {
 
 describe('QuickSavePage missing conflict id', () => {
   it('shows inline error without lookup when 409 omits id', async () => {
-    const savePath = '/save?url=https%3A%2F%2Fexample.com%2Fpost';
+    const savePath = '/save#url=https%3A%2F%2Fexample.com%2Fpost';
     respond((url, init) =>
       url === '/api/saved-pages' && init.method === 'POST'
         ? json({ error: 'SavedPageAlreadyExists' }, 409)
@@ -120,7 +120,7 @@ describe('QuickSavePage missing conflict id', () => {
       false
     );
     expect(container.textContent).toContain('该文章已在稍后阅读中');
-    expect(history.get()).toBe(savePath);
+    expect(history.get()).toBe('/save');
   });
 });
 
@@ -158,5 +158,14 @@ describe('SessionGuard offline navigation', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
     const afterRetry = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(afterRetry.some((u) => u.startsWith('/api/saved-pages'))).toBe(true);
+  });
+});
+
+describe('LoginPage authenticated redirect', () => {
+  it('redirects an already signed-in visitor on /login to sanitized ?next', async () => {
+    const { history } = mountApp('/login?next=%2Fall%3Funread');
+    await settle(4);
+
+    expect(history.get()).toBe('/all?unread');
   });
 });

@@ -1,24 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings } from '../src/api';
+import type { SettingsDrafts } from '../src/state';
 
 type StateModule = typeof import('../src/state');
 
 let state: StateModule;
 let solid: typeof import('solid-js');
 let fetchMock: ReturnType<typeof vi.fn>;
-let disposeDrafts: (() => void) | undefined;
+const disposers: Array<() => void> = [];
+
+const createDraftStore = () =>
+  solid.createRoot((dispose) => {
+    disposers.push(dispose);
+    const [store, setStore] = solid.createStore<SettingsDrafts>(
+      state.draftsFromSettings(null)
+    );
+    return { store, setStore };
+  });
 
 const fresh = async (): Promise<void> => {
-  disposeDrafts?.();
+  for (const dispose of disposers.splice(0)) dispose();
   vi.resetModules();
   solid = await import('solid-js');
   state = await import('../src/state');
-  disposeDrafts = state.mountSettingsDrafts();
 };
 
 afterEach(() => {
-  disposeDrafts?.();
-  disposeDrafts = undefined;
+  for (const dispose of disposers.splice(0)) dispose();
 });
 
 beforeEach(async () => {
@@ -54,19 +62,28 @@ const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
 describe('stale settings GET after remount', () => {
   it('ignores an earlier visit GET resolving after remount and edits', async () => {
     state.markAuthenticated();
+    const visit1 = createDraftStore();
+    let visit1Active = true;
     const visit1Get = pending();
-    const firstLoad = state.loadSettings();
+    const firstLoad = state.loadSettings((loaded) => {
+      if (visit1Active) visit1.setStore(() => state.draftsFromSettings(loaded));
+    });
 
-    disposeDrafts?.();
-    disposeDrafts = state.mountSettingsDrafts();
+    visit1Active = false;
+    const visit2 = createDraftStore();
     fetchMock.mockResolvedValueOnce(json(makeSettings({ retention: 100 })));
     fetchMock.mockResolvedValueOnce(json({ running: false, items: [] }));
-    await state.loadSettings();
+    await state.loadSettings((loaded) => {
+      visit2.setStore(() => state.draftsFromSettings(loaded));
+    });
     solid.flush();
 
-    state.setRetentionDraft(42);
-    state.setJinaKeyDraft('new-secret');
-    state.setSmtpPasswordDraft('smtp-secret');
+    visit2.setStore((d) => ({
+      ...d,
+      retention: 42,
+      jinaKey: 'new-secret',
+      smtpPassword: 'smtp-secret',
+    }));
     solid.flush();
 
     const callsBeforeStale = fetchMock.mock.calls.length;
@@ -75,9 +92,9 @@ describe('stale settings GET after remount', () => {
     solid.flush();
 
     expect(state.settings()?.retention).toBe(100);
-    expect(state.retentionDraft()).toBe(42);
-    expect(state.jinaKeyDraft()).toBe('new-secret');
-    expect(state.smtpPasswordDraft()).toBe('smtp-secret');
+    expect(visit2.store.retention).toBe(42);
+    expect(visit2.store.jinaKey).toBe('new-secret');
+    expect(visit2.store.smtpPassword).toBe('smtp-secret');
     expect(fetchMock.mock.calls.length).toBe(callsBeforeStale);
   });
 });

@@ -2,9 +2,9 @@ import type { ErrorResponse, ListParams } from './types';
 import { ApiError } from './types';
 
 /** Query-string value accepted by `request`; `null`/`undefined` are dropped. */
-export type QueryValue = string | number | boolean | null | undefined;
+type QueryValue = string | number | boolean | null | undefined;
 
-export interface RequestOptions {
+interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   rawBody?: BodyInit;

@@ -7,17 +7,14 @@ import {
   isBrowserAvailable,
   isSaving,
   isSettingsReady,
-  providerDraft,
-  retentionDraft,
   saveProvider,
   saveRetention,
   savingAction,
-  setProviderDraft,
-  setRetentionDraft,
   settings,
 } from '../state';
 import { Button, Icon, Input, SettingsGroup, SettingsRow } from '../ui';
 import { useOpmlImport } from './importOpml';
+import type { SettingsDraftProps } from './settingsHelpers';
 
 const controlsDisabled = (): boolean => isSaving() || !isSettingsReady();
 
@@ -43,7 +40,7 @@ const PROVIDERS = [
   hintKey: string;
 }>;
 
-function RetentionGroup(): JSX.Element {
+function RetentionGroup(props: SettingsDraftProps): JSX.Element {
   const inputId = createUniqueId();
 
   return (
@@ -55,7 +52,7 @@ function RetentionGroup(): JSX.Element {
           size="sm"
           loading={savingAction() === 'retention'}
           disabled={controlsDisabled()}
-          onClick={() => void saveRetention()}
+          onClick={() => void saveRetention(props.drafts)}
         >
           {String(t('settings.saveArticles'))}
         </Button>
@@ -72,11 +69,12 @@ function RetentionGroup(): JSX.Element {
           min={1}
           containerClass="sm:w-28"
           class="tabular-nums"
-          value={String(retentionDraft())}
+          value={String(props.drafts.retention)}
           disabled={controlsDisabled()}
           onInput={(event) => {
             const parsed = Number.parseInt(event.currentTarget.value, 10);
-            setRetentionDraft(Number.isNaN(parsed) ? 0 : parsed);
+            const retention = Number.isNaN(parsed) ? 0 : parsed;
+            props.setDrafts((draft) => ({ ...draft, retention }));
           }}
         />
       </SettingsRow>
@@ -116,7 +114,7 @@ function OpmlGroup(): JSX.Element {
 
 function BookmarkletGroup(): JSX.Element {
   const href = (): string =>
-    `javascript:location.href='${window.location.origin}/save?url='+encodeURIComponent(location.href)`;
+    `javascript:location.href='${window.location.origin}/save#url='+encodeURIComponent(location.href)`;
 
   return (
     <SettingsGroup title={String(t('settings.bookmarkletHeading'))}>
@@ -136,10 +134,10 @@ function BookmarkletGroup(): JSX.Element {
 }
 
 /** `settings.md:18`: articles & subscriptions: retention, OPML import/export, and the save bookmarklet. */
-export function ArticlesSection(): JSX.Element {
+export function ArticlesSection(props: SettingsDraftProps): JSX.Element {
   return (
     <div class="flex flex-col gap-6">
-      <RetentionGroup />
+      <RetentionGroup drafts={props.drafts} setDrafts={props.setDrafts} />
       <OpmlGroup />
       <BookmarkletGroup />
     </div>
@@ -167,10 +165,12 @@ function BrowserUnavailableHint(props: {
 }
 
 /** A selectable row: the label toggles the radio; disabled options stay legible. */
-function ProviderOption(props: {
-  provider: (typeof PROVIDERS)[number];
-  onGoToServices: () => void;
-}): JSX.Element {
+function ProviderOption(
+  props: SettingsDraftProps & {
+    provider: (typeof PROVIDERS)[number];
+    onGoToServices: () => void;
+  }
+): JSX.Element {
   const browserUnavailable = (): boolean =>
     props.provider.id === 'browser' &&
     settings() !== null &&
@@ -184,9 +184,14 @@ function ProviderOption(props: {
           class="radio radio-sm radio-primary mt-0.5 disabled:border-base-content/30 disabled:opacity-100"
           name="extractor-provider"
           value={props.provider.id}
-          checked={providerDraft() === props.provider.id}
+          checked={props.drafts.provider === props.provider.id}
           disabled={controlsDisabled() || browserUnavailable()}
-          onChange={() => setProviderDraft(props.provider.id)}
+          onChange={() => {
+            props.setDrafts((draft) => ({
+              ...draft,
+              provider: props.provider.id,
+            }));
+          }}
         />
         <span class="flex min-w-0 flex-col gap-1">
           <span
@@ -212,9 +217,11 @@ function ProviderOption(props: {
 }
 
 /** `settings.md:19`: extraction provider choice; external services live under services. */
-export function ExtractionSection(props: {
-  onGoToServices: () => void;
-}): JSX.Element {
+export function ExtractionSection(
+  props: SettingsDraftProps & {
+    onGoToServices: () => void;
+  }
+): JSX.Element {
   return (
     <fieldset disabled={controlsDisabled()}>
       <legend class="sr-only">{String(t('settings.providerLabel'))}</legend>
@@ -226,7 +233,7 @@ export function ExtractionSection(props: {
             size="sm"
             loading={savingAction() === 'provider'}
             disabled={controlsDisabled()}
-            onClick={() => void saveProvider()}
+            onClick={() => void saveProvider(props.drafts)}
           >
             {String(t('settings.saveExtraction'))}
           </Button>
@@ -236,6 +243,8 @@ export function ExtractionSection(props: {
           {(provider) => (
             <ProviderOption
               provider={provider}
+              drafts={props.drafts}
+              setDrafts={props.setDrafts}
               onGoToServices={props.onGoToServices}
             />
           )}

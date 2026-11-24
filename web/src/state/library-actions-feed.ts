@@ -6,9 +6,10 @@
 
 import { flush } from 'solid-js';
 import type { Feed } from '../api';
-import { errorCodeOf, feedsApi } from '../api';
-import { t, translateErrorCode } from '../i18n';
+import { feedsApi } from '../api';
+import { t } from '../i18n';
 import { showToast } from '../ui';
+import { errorText } from './errorText';
 import type { DroppedFeedRows } from './library-mutations';
 import { feedMoveTracker, LatestTokenMap } from './library-mutations';
 import {
@@ -106,7 +107,7 @@ export const moveFeedToFolder = async (
 
     reconcileFeedMove(feed.id, outcome.targetFolderId, outcome.dropped);
     if (outcome.owns) {
-      showToast(translateErrorCode(errorCodeOf(error)), 'error');
+      showToast(errorText(error), 'error');
     }
     return false;
   }
@@ -126,7 +127,7 @@ export const changeFeedReaderMode = async (
     return true;
   } catch (error) {
     if (readerModeTokens.isCurrent(feed.id, token)) {
-      showToast(translateErrorCode(errorCodeOf(error)), 'error');
+      showToast(errorText(error), 'error');
     }
     return false;
   } finally {

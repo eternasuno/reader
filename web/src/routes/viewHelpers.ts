@@ -1,7 +1,5 @@
 import type { RouteState } from '../state';
 
-export { errorCodeOf } from '../api';
-
 /** Panels collected by the library layout; focus recovery reads them after route changes. */
 export interface PanelElements {
   sidebar?: HTMLElement;
@@ -13,7 +11,7 @@ export interface PanelElements {
  * `LIB-VIEW-1`: panels are hidden by CSS. `offsetParent` catches a hidden ancestor; the computed
  * `display`/`visibility` walk covers elements without a layout box (e.g. jsdom, `position: fixed`).
  */
-export const isElementVisible = (element: HTMLElement): boolean => {
+const isElementVisible = (element: HTMLElement): boolean => {
   if (element.offsetParent !== null) return true;
   if (
     typeof window === 'undefined' ||

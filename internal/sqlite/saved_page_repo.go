@@ -125,21 +125,13 @@ func (r *SavedPageRepo) SetRead(ctx context.Context, id string, read bool) error
 }
 
 func (r *SavedPageRepo) MarkIDsRead(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	payload, err := encodeIDs(ids)
-	if err != nil {
-		return domain.NewError(domain.ErrSavedPageRepositoryError, err)
-	}
-
-	_, err = r.write.ExecContext(ctx, `UPDATE saved_page SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`, payload)
-	if err != nil {
-		return domain.NewError(domain.ErrSavedPageRepositoryError, err)
-	}
-
-	return nil
+	return markIDsRead(
+		ctx,
+		r.write,
+		`UPDATE saved_page SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`,
+		ids,
+		domain.ErrSavedPageRepositoryError,
+	)
 }
 
 func (r *SavedPageRepo) MarkAllRead(ctx context.Context) error {

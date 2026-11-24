@@ -6,9 +6,13 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
-	"net/url"
 	"slices"
 	"strings"
+)
+
+const (
+	maxOPMLOutlines = 2000
+	maxOPMLDepth    = 64
 )
 
 type opmlXMLDocument struct {
@@ -33,8 +37,16 @@ type opmlWalkState struct {
 }
 
 func ParseOPML(data []byte) (OPMLDocument, error) {
-	parsed := opmlXMLDocument{}
+	return parseOPMLWithLimit(data, maxOPMLOutlines)
+}
+
+func parseOPMLWithLimit(data []byte, maxOutlines int) (OPMLDocument, error) {
 	payload := bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
+	if err := validateOPMLPayload(payload, maxOutlines); err != nil {
+		return OPMLDocument{}, err
+	}
+
+	parsed := opmlXMLDocument{}
 	decoder := xml.NewDecoder(bytes.NewReader(payload))
 	if err := opmlDecodeRoot(decoder, payload, &parsed); err != nil {
 		return OPMLDocument{}, err
@@ -55,6 +67,53 @@ func ParseOPML(data []byte) (OPMLDocument, error) {
 	state.walk(parsed.Body.Outlines, nil)
 
 	return state.document, nil
+}
+
+type opmlTokenValidator struct {
+	maxOutlines int
+	outlines    int
+	depth       int
+}
+
+func validateOPMLPayload(payload []byte, maxOutlines int) error {
+	decoder := xml.NewDecoder(bytes.NewReader(payload))
+	validator := opmlTokenValidator{maxOutlines: maxOutlines}
+
+	for {
+		tok, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+
+		if err != nil {
+			return NewError(ErrInvalidOpml, err)
+		}
+
+		if err := validator.handleToken(tok); err != nil {
+			return err
+		}
+	}
+}
+
+func (v *opmlTokenValidator) handleToken(tok xml.Token) error {
+	switch typed := tok.(type) {
+	case xml.StartElement:
+		v.depth++
+		if v.depth > maxOPMLDepth {
+			return NewError(ErrInvalidOpml, errors.New("opml nesting depth exceeds limit"))
+		}
+
+		if strings.EqualFold(typed.Name.Local, "outline") {
+			v.outlines++
+			if v.outlines > v.maxOutlines {
+				return NewError(ErrInvalidOpml, errors.New("opml outline count exceeds limit"))
+			}
+		}
+	case xml.EndElement:
+		v.depth--
+	}
+
+	return nil
 }
 
 func (s *opmlWalkState) walk(outlines []opmlXMLOutline, folder *string) {
@@ -237,7 +296,7 @@ func ExportOPML(folders []OPMLExportFolder, topFeeds []Feed) ([]byte, error) {
 func opmlSortedFolders(folders []OPMLExportFolder) []OPMLExportFolder {
 	sorted := make([]OPMLExportFolder, len(folders))
 	for i, folder := range folders {
-		sorted[i] = OPMLExportFolder{Name: redactOPMLLabel(folder.Name), Feeds: opmlSortedFeeds(folder.Feeds)}
+		sorted[i] = OPMLExportFolder{Name: SanitizeErrorText(folder.Name), Feeds: opmlSortedFeeds(folder.Feeds)}
 	}
 
 	slices.SortFunc(sorted, func(a, b OPMLExportFolder) int {
@@ -250,7 +309,7 @@ func opmlSortedFolders(folders []OPMLExportFolder) []OPMLExportFolder {
 func opmlSortedFeeds(feeds []Feed) []Feed {
 	sorted := make([]Feed, len(feeds))
 	for i, feed := range feeds {
-		feed.Title = redactOPMLLabel(feed.Title)
+		feed.Title = SanitizeErrorText(feed.Title)
 		sorted[i] = feed
 	}
 
@@ -266,12 +325,10 @@ func opmlSortedFeeds(feeds []Feed) []Feed {
 }
 
 func opmlFeedOutline(feed Feed) opmlXMLOutline {
-	title := redactOPMLLabel(feed.Title)
-
 	return opmlXMLOutline{Attrs: []xml.Attr{
 		{Name: xml.Name{Local: "type"}, Value: "rss"},
-		{Name: xml.Name{Local: "text"}, Value: title},
-		{Name: xml.Name{Local: "title"}, Value: title},
+		{Name: xml.Name{Local: "text"}, Value: feed.Title},
+		{Name: xml.Name{Local: "title"}, Value: feed.Title},
 		{Name: xml.Name{Local: "xmlUrl"}, Value: feed.URL.RedactedString()},
 	}}
 }
@@ -282,7 +339,7 @@ func opmlFolderName(outline opmlXMLOutline, parent *string, document *OPMLDocume
 		name = opmlOptionalAttribute(outline.Attrs, "title")
 	}
 
-	name = redactOPMLLabel(name)
+	name = SanitizeErrorText(name)
 	if name == "" {
 		return parent
 	}
@@ -301,29 +358,12 @@ func opmlFeedTitle(outline opmlXMLOutline, feedURL NormalizedURL) string {
 		title = opmlOptionalAttribute(outline.Attrs, "text")
 	}
 
-	title = redactOPMLLabel(title)
+	title = SanitizeErrorText(title)
 	if title == "" {
 		title = feedURL.Host()
 	}
 
 	return title
-}
-
-func redactOPMLLabel(label string) string {
-	if label == "" {
-		return ""
-	}
-
-	if parsed, err := url.Parse(label); err == nil && parsed.User != nil {
-		switch strings.ToLower(parsed.Scheme) {
-		case "http", "https":
-			parsed.User = nil
-
-			return parsed.String()
-		}
-	}
-
-	return SanitizeErrorText(label)
 }
 
 func opmlOptionalAttribute(attrs []xml.Attr, name string) string {

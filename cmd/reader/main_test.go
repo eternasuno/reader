@@ -6,9 +6,14 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"reader/internal/domain"
+	"reader/internal/sqlite"
 )
 
 func getenvFrom(values map[string]string) func(string) string {
@@ -342,5 +347,74 @@ func TestLoadConfigAllowPrivateNetworkValues(t *testing.T) {
 				t.Fatalf("allow private network = %v, want %v", cfg.AllowPrivateNetwork, want)
 			}
 		})
+	}
+}
+
+func TestRecoverStartupStateCleansSpoolAndRecoversRunningSends(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, err := sqlite.Open(ctx, filepath.Join(dataDir, databaseFileName))
+	if err != nil {
+		t.Fatalf("sqlite.Open() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	if err := store.Settings().UpdateSMTP(ctx, domain.SMTPSettings{
+		SenderEmail: "sender@example.com",
+		Host:        "smtp.example.com",
+		Port:        587,
+		Security:    domain.SMTPSecuritySTARTTLS,
+	}); err != nil {
+		t.Fatalf("UpdateSMTP() error = %v", err)
+	}
+
+	if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{
+		KindleEmail: "reader@kindle.com",
+	}); err != nil {
+		t.Fatalf("UpdateKindle() error = %v", err)
+	}
+
+	startedAt := time.Date(2026, 3, 15, 8, 0, 0, 0, time.UTC)
+	if _, err := store.KindleSends().ClaimManualSend(ctx, domain.NewID(), startedAt); err != nil {
+		t.Fatalf("ClaimManualSend() error = %v", err)
+	}
+
+	spoolDir := filepath.Join(dataDir, epubSpoolDirName)
+	if err := os.MkdirAll(spoolDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(spoolDir, "leaf-epub-crashed.spool"), []byte("leftover"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := recoverStartupState(ctx, store, spoolDir, startedAt.Add(time.Minute)); err != nil {
+		t.Fatalf("recoverStartupState() error = %v", err)
+	}
+
+	recent, err := store.KindleSends().ListRecent(ctx)
+	if err != nil {
+		t.Fatalf("ListRecent() error = %v", err)
+	}
+	if len(recent) != 1 || recent[0].Status != domain.KindleStatusFailed {
+		t.Fatalf("recent sends after recovery = %+v, want 1 failed row", recent)
+	}
+
+	info, err := os.Stat(spoolDir)
+	if err != nil {
+		t.Fatalf("Stat(spoolDir) error = %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("spoolDir mode = %o, want 0700", perm)
+	}
+
+	entries, err := os.ReadDir(spoolDir)
+	if err != nil {
+		t.Fatalf("ReadDir(spoolDir) error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("leftover spool files after startup recovery: %v", entries)
 	}
 }

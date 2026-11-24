@@ -13,8 +13,8 @@ import {
   foldersApi,
   savedPagesApi,
 } from '../api';
-import { translateErrorCode } from '../i18n';
 import { showToast } from '../ui';
+import { errorText } from './errorText';
 import {
   isShowingEmptyFeed,
   waitForFirstRefresh,
@@ -333,7 +333,7 @@ export const changeFeedOrder = async (
     current = feedOrderTokens.isCurrent(feed.id, token);
   } catch (error) {
     if (feedOrderTokens.isCurrent(feed.id, token)) {
-      showToast(translateErrorCode(errorCodeOf(error)), 'error');
+      showToast(errorText(error), 'error');
     }
     return;
   } finally {

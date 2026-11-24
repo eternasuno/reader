@@ -59,10 +59,6 @@ func (r *FeedRepo) ExportOPML(ctx context.Context) ([]domain.OPMLExportFolder, [
 	return exportFolders, topFeeds, nil
 }
 
-type rowsQuerier interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}
-
 func queryFeeds(ctx context.Context, querier rowsQuerier) ([]domain.Feed, error) {
 	rows, err := querier.QueryContext(ctx, `SELECT `+feedColumns+` FROM feed ORDER BY title ASC, id ASC`)
 	if err != nil {
@@ -88,31 +84,6 @@ func queryFeeds(ctx context.Context, querier rowsQuerier) ([]domain.Feed, error)
 	return feeds, nil
 }
 
-func queryFolders(ctx context.Context, querier rowsQuerier) ([]domain.Folder, error) {
-	rows, err := querier.QueryContext(ctx, `SELECT id, name FROM folder ORDER BY name ASC, id ASC`)
-	if err != nil {
-		return nil, err
-	}
-
-	defer closeRows(rows)
-
-	folders := []domain.Folder{}
-	for rows.Next() {
-		var folder domain.Folder
-		if err := rows.Scan(&folder.ID, &folder.Name); err != nil {
-			return nil, err
-		}
-
-		folders = append(folders, folder)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return folders, nil
-}
-
 func groupOPMLFeeds(folders []domain.Folder, feeds []domain.Feed) ([]domain.OPMLExportFolder, []domain.Feed) {
 	grouped := make(map[string][]domain.Feed, len(folders))
 	topFeeds := make([]domain.Feed, 0, len(feeds))
@@ -135,19 +106,6 @@ func groupOPMLFeeds(folders []domain.Folder, feeds []domain.Feed) ([]domain.OPML
 
 func (r *FeedRepo) GetByID(ctx context.Context, id string) (*domain.Feed, error) {
 	feed, err := scanFeed(r.read.QueryRowContext(ctx, `SELECT `+feedColumns+` FROM feed WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-
-	if err != nil {
-		return nil, domain.NewError(domain.ErrFeedRepositoryError, err)
-	}
-
-	return &feed, nil
-}
-
-func (r *FeedRepo) GetByURL(ctx context.Context, url domain.NormalizedURL) (*domain.Feed, error) {
-	feed, err := scanFeed(r.read.QueryRowContext(ctx, `SELECT `+feedColumns+` FROM feed WHERE url = ?`, url.Raw()))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

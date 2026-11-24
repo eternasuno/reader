@@ -185,33 +185,80 @@ func (s *KindleSender) runJob(sendID string, snapshot domain.KindleDelivery) {
 }
 
 func (s *KindleSender) executeJob(ctx context.Context, sendID string, snapshot domain.KindleDelivery) (domain.KindleStatus, error) {
-	savedPages, feeds, itemsByFeed, err := s.kindleSends.ListUnreadForKindle(ctx)
+	refs, err := s.kindleSends.ListUnreadForKindle(ctx)
 	if err != nil {
 		return domain.KindleStatusFailed, err
 	}
 
-	articles := s.buildArticles(ctx, savedPages, feeds, itemsByFeed)
-	if len(articles) == 0 {
+	if len(refs) == 0 {
 		return domain.KindleStatusSucceeded, nil
 	}
 
-	if err := s.deliverBooks(ctx, sendID, snapshot, articles); err != nil {
+	if err := s.deliverBooks(ctx, sendID, snapshot, refs); err != nil {
 		return domain.KindleStatusFailed, err
 	}
 
 	return domain.KindleStatusSucceeded, nil
 }
 
-func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot domain.KindleDelivery, articles []domain.KindleArticle) error {
+func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot domain.KindleDelivery, refs []domain.KindleArticleRef) error {
 	dateStr := s.now().In(s.loc).Format(kindleDateLayout)
 
-	books, err := s.epubBuilder.BuildBooks(ctx, dateStr, articles)
+	packer, err := s.epubBuilder.NewPacker(ctx, dateStr)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := packer.Close(); closeErr != nil {
+			logBoundedError("close kindle epub packer failed", closeErr, "send_id", sendID)
+		}
+	}()
+
+	bookCount, err := s.packArticles(ctx, packer, refs)
 	if err != nil {
 		return err
 	}
 
-	for _, book := range books {
+	return s.sendPackedBooks(ctx, sendID, snapshot, packer, bookCount)
+}
+
+func (s *KindleSender) packArticles(ctx context.Context, packer domain.EPUBPacker, refs []domain.KindleArticleRef) (int, error) {
+	for _, ref := range refs {
 		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+
+		article, ok, err := s.loadArticle(ctx, ref)
+		if err != nil {
+			return 0, err
+		}
+
+		if !ok {
+			continue
+		}
+
+		if err := packer.AddArticle(ctx, article); err != nil {
+			return 0, err
+		}
+	}
+
+	return packer.Finish(ctx)
+}
+
+func (s *KindleSender) sendPackedBooks(
+	ctx context.Context,
+	sendID string,
+	snapshot domain.KindleDelivery,
+	packer domain.EPUBPacker,
+	bookCount int,
+) error {
+	for i := range bookCount {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		book, err := packer.ReadBook(ctx, i)
+		if err != nil {
 			return err
 		}
 
@@ -234,36 +281,49 @@ func (s *KindleSender) recordBookAccepted(ctx context.Context, sendID string, bo
 	return s.kindleSends.RecordBookAccepted(writeCtx, sendID, book.SavedPageIDs, book.FeedItemIDs, book.ArticleCount)
 }
 
-func (s *KindleSender) buildArticles(ctx context.Context, savedPages []domain.SavedPage, feeds []domain.Feed, itemsByFeed map[string][]domain.FeedItem) []domain.KindleArticle {
-	articles := make([]domain.KindleArticle, 0, len(savedPages))
-
-	for _, page := range savedPages {
-		articles = append(articles, domain.KindleArticle{
-			ID:          page.ID,
-			IsSavedPage: true,
-			SourceTitle: page.URL.Host(),
-			URL:         page.URL.RedactedString(),
-			Title:       page.Title,
-			HTMLBody:    page.Content,
-			PublishedAt: page.PublishedAt,
-		})
+func (s *KindleSender) loadArticle(ctx context.Context, ref domain.KindleArticleRef) (domain.KindleArticle, bool, error) {
+	page, feed, item, err := s.kindleSends.GetKindleArticle(ctx, ref)
+	if err != nil {
+		return domain.KindleArticle{}, false, err
 	}
 
-	for _, feed := range feeds {
-		for _, item := range itemsByFeed[feed.ID] {
-			articles = append(articles, domain.KindleArticle{
-				ID:          item.ID,
-				IsSavedPage: false,
-				SourceTitle: feed.Title,
-				URL:         item.URL.RedactedString(),
-				Title:       item.Title,
-				HTMLBody:    s.feedItemBody(ctx, feed, item),
-				PublishedAt: item.PublishedAt,
-			})
-		}
+	if ref.IsSavedPage {
+		return savedPageArticle(page)
 	}
 
-	return articles
+	return s.feedItemArticle(ctx, feed, item)
+}
+
+func savedPageArticle(page *domain.SavedPage) (domain.KindleArticle, bool, error) {
+	if page == nil {
+		return domain.KindleArticle{}, false, nil
+	}
+
+	return domain.KindleArticle{
+		ID:          page.ID,
+		IsSavedPage: true,
+		SourceTitle: page.URL.Host(),
+		URL:         page.URL.RedactedString(),
+		Title:       page.Title,
+		HTMLBody:    page.Content,
+		PublishedAt: page.PublishedAt,
+	}, true, nil
+}
+
+func (s *KindleSender) feedItemArticle(ctx context.Context, feed *domain.Feed, item *domain.FeedItem) (domain.KindleArticle, bool, error) {
+	if feed == nil || item == nil {
+		return domain.KindleArticle{}, false, nil
+	}
+
+	return domain.KindleArticle{
+		ID:          item.ID,
+		IsSavedPage: false,
+		SourceTitle: feed.Title,
+		URL:         item.URL.RedactedString(),
+		Title:       item.Title,
+		HTMLBody:    s.feedItemBody(ctx, *feed, *item),
+		PublishedAt: item.PublishedAt,
+	}, true, nil
 }
 
 // feedItemBody resolves the article HTML per KD-TEXT-1: extracted modes prefer

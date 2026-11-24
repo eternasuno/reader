@@ -30,25 +30,6 @@ func toSavedPageJSON(page domain.SavedPage) savedPageJSON {
 	}
 }
 
-func toSavedPagesJSON(pages []domain.SavedPage) []savedPageJSON {
-	converted := make([]savedPageJSON, 0, len(pages))
-	for _, page := range pages {
-		converted = append(converted, toSavedPageJSON(page))
-	}
-
-	return converted
-}
-
-func toSavedPagePtr(page *domain.SavedPage) *savedPageJSON {
-	if page == nil {
-		return nil
-	}
-
-	converted := toSavedPageJSON(*page)
-
-	return &converted
-}
-
 type savedPageRequest struct {
 	URL string `json:"url"`
 }
@@ -62,14 +43,7 @@ type idsRequest struct {
 }
 
 func (s *server) handleSavedPageList(w http.ResponseWriter, r *http.Request) {
-	query, err := parsePageQuery(r)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	params, err := query.params(query.orderOrDefault())
+	params, err := parseDefaultPageParams(r)
 	if err != nil {
 		writeError(w, err)
 
@@ -83,7 +57,7 @@ func (s *server) handleSavedPageList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pageResponse[savedPageJSON]{Items: toSavedPagesJSON(result.Items), Cursor: result.Cursor})
+	writeJSON(w, http.StatusOK, pageResponse[savedPageJSON]{Items: mapSlice(result.Items, toSavedPageJSON), Cursor: result.Cursor})
 }
 
 func (s *server) handleSavedPageUnreadCount(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +79,7 @@ func (s *server) handleSavedPageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, itemResponse[savedPageJSON]{Item: toSavedPagePtr(page)})
+	writeJSON(w, http.StatusOK, itemResponse[savedPageJSON]{Item: toPtr(page, toSavedPageJSON)})
 }
 
 func (s *server) handleSavedPageCreate(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +104,9 @@ func (s *server) handleSavedPageCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, itemResponse[savedPageJSON]{Item: toSavedPagePtr(&created)})
+	converted := toSavedPageJSON(created)
+
+	writeJSON(w, http.StatusCreated, itemResponse[savedPageJSON]{Item: &converted})
 }
 
 func (s *server) createSavedPage(ctx context.Context, pageURL domain.NormalizedURL) (domain.SavedPage, error) {
@@ -197,7 +173,9 @@ func (s *server) handleFeedItemSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, itemResponse[savedPageJSON]{Item: toSavedPagePtr(&created)})
+	converted := toSavedPageJSON(created)
+
+	writeJSON(w, http.StatusCreated, itemResponse[savedPageJSON]{Item: &converted})
 }
 
 func (s *server) saveFeedItem(ctx context.Context, item *domain.FeedItem) (domain.SavedPage, error) {

@@ -667,25 +667,36 @@ func TestLoginLimiterBoundsTrackedIPs(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	limiter := newLoginLimiter(func() time.Time { return now })
+	clock := now
+	limiter := newLoginLimiter(func() time.Time { return clock })
 
-	for i := range maxTrackedLoginIPs * 3 {
+	for i := range maxTrackedLoginIPs {
 		if !limiter.reserveAttempt("192.0.2." + strconv.Itoa(i)) {
-			t.Fatalf("first attempt for a fresh ip was rejected")
+			t.Fatalf("attempt %d for a fresh ip was rejected before table filled", i)
 		}
+	}
+
+	for i := range loginOverflowLimit {
+		if !limiter.reserveAttempt("192.0.3." + strconv.Itoa(i)) {
+			t.Fatalf("overflow attempt %d within shared budget was rejected", i)
+		}
+	}
+
+	if limiter.reserveAttempt("192.0.3.999") {
+		t.Fatal("expected overflow attempt beyond shared budget to be rejected")
 	}
 
 	limiter.mu.Lock()
 	tracked := len(limiter.attempts)
 	limiter.mu.Unlock()
 
-	if tracked > maxTrackedLoginIPs {
-		t.Fatalf("tracked ips = %d, want <= %d", tracked, maxTrackedLoginIPs)
+	if tracked != maxTrackedLoginIPs {
+		t.Fatalf("tracked ips = %d, want %d (must not evict live windows)", tracked, maxTrackedLoginIPs)
 	}
 
 	// Fill table at t=0, advance half past expiry, and verify expired entries are
-	// pruned without evicting unexpired entries.
-	clock := now
+	// pruned from the front without evicting unexpired entries.
+	clock = now
 	expLimiter := newLoginLimiter(func() time.Time { return clock })
 	for i := range maxTrackedLoginIPs {
 		if i == maxTrackedLoginIPs/2 {
@@ -708,6 +719,102 @@ func TestLoginLimiterBoundsTrackedIPs(t *testing.T) {
 	if afterPrune != maxTrackedLoginIPs/2+1 {
 		t.Fatalf("tracked after pruning expired = %d, want %d", afterPrune, maxTrackedLoginIPs/2+1)
 	}
+}
+
+func TestLoginLimiterSaturationPreservesBlockedIP(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	blockedAddr := "198.51.100.77:41000"
+
+	for range loginFailureLimit {
+		req := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": "wrong"})
+		req.RemoteAddr = blockedAddr
+		requireAPIError(t, h.do(req), http.StatusUnauthorized, "InvalidCredentials")
+	}
+
+	req := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	req.RemoteAddr = blockedAddr
+	requireAPIError(t, h.do(req), http.StatusTooManyRequests, "TooManyRequests")
+
+	// Saturate all remaining table slots and exhaust the shared overflow budget.
+	for i := range maxTrackedLoginIPs + loginOverflowLimit + 5 {
+		flood := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": "wrong"})
+		flood.RemoteAddr = "192.0.2." + strconv.Itoa(i) + ":41000"
+		h.do(flood)
+	}
+
+	// Blocked IP must remain blocked even after table saturation.
+	retry := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	retry.RemoteAddr = blockedAddr
+	requireAPIError(t, h.do(retry), http.StatusTooManyRequests, "TooManyRequests")
+
+	h.clock.Advance(loginFailureWindow + time.Second)
+
+	afterWindow := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	afterWindow.RemoteAddr = blockedAddr
+	requireStatus(t, h.do(afterWindow), http.StatusNoContent)
+}
+
+func TestLoginLimiterOverflowKeepsBlockingUntilExpiry(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	// Seed one early tracked entry so it expires before the overflow window does.
+	earlyTrackedReq := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": "wrong"})
+	earlyTrackedReq.RemoteAddr = "198.51.100.10:41000"
+	requireAPIError(t, h.do(earlyTrackedReq), http.StatusUnauthorized, "InvalidCredentials")
+
+	h.clock.Advance(loginFailureWindow / 2)
+
+	for i := range maxTrackedLoginIPs - 1 {
+		fillReq := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": "wrong"})
+		fillReq.RemoteAddr = "192.0.2." + strconv.Itoa(i) + ":41000"
+		requireAPIError(t, h.do(fillReq), http.StatusUnauthorized, "InvalidCredentials")
+	}
+
+	overflowAddr := "203.0.113.50:41000"
+	for range loginOverflowLimit {
+		req := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": "wrong"})
+		req.RemoteAddr = overflowAddr
+		requireAPIError(t, h.do(req), http.StatusUnauthorized, "InvalidCredentials")
+	}
+
+	blockedReq := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	blockedReq.RemoteAddr = overflowAddr
+	requireAPIError(t, h.do(blockedReq), http.StatusTooManyRequests, "TooManyRequests")
+
+	// Free a tracked slot by expiry while the overflow window is still live.
+	h.clock.Advance(loginFailureWindow / 2)
+
+	afterExpiryRetry := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	afterExpiryRetry.RemoteAddr = overflowAddr
+	requireAPIError(t, h.do(afterExpiryRetry), http.StatusTooManyRequests, "TooManyRequests")
+
+	rotatedAfterExpiry := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	rotatedAfterExpiry.RemoteAddr = "203.0.113.51:41000"
+	requireAPIError(t, h.do(rotatedAfterExpiry), http.StatusTooManyRequests, "TooManyRequests")
+
+	// Already-tracked addresses keep their own window; a success frees another slot.
+	trackedSuccess := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	trackedSuccess.RemoteAddr = "192.0.2.0:41000"
+	requireStatus(t, h.do(trackedSuccess), http.StatusNoContent)
+
+	afterResetRetry := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	afterResetRetry.RemoteAddr = overflowAddr
+	requireAPIError(t, h.do(afterResetRetry), http.StatusTooManyRequests, "TooManyRequests")
+
+	rotatedAfterReset := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	rotatedAfterReset.RemoteAddr = "203.0.113.52:41000"
+	requireAPIError(t, h.do(rotatedAfterReset), http.StatusTooManyRequests, "TooManyRequests")
+
+	// Once the overflow window expires, the formerly blocked client is admitted normally.
+	h.clock.Advance(loginFailureWindow/2 + time.Second)
+
+	afterOverflowExpiry := h.newRequest(http.MethodPost, "/api/auth/login", map[string]any{"password": testPassword})
+	afterOverflowExpiry.RemoteAddr = overflowAddr
+	requireStatus(t, h.do(afterOverflowExpiry), http.StatusNoContent)
 }
 
 func TestLoginBodyBudgetAndTrailingJSON(t *testing.T) {
@@ -2030,12 +2137,9 @@ func TestForegroundFetchSemaphoreBoundsConcurrency(t *testing.T) {
 		<-entered
 	}
 
-	// Fifth request enters acquireFetchSlot and aborts when its context cancels.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	req := h.newRequest(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://example.com/sem/overflow"}).WithContext(ctx)
-	req.AddCookie(h.sessionCookie())
-	requireAPIError(t, h.do(req), http.StatusInternalServerError, "RequestFailed")
+	// Fifth request is rejected immediately without blocking when all slots are busy.
+	requireAPIError(t, h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://example.com/sem/overflow"}), http.StatusTooManyRequests, "TooManyRequests")
+	requireAPIError(t, h.authed(http.MethodPost, "/api/feeds/preview", map[string]any{"url": "https://example.com/sem/feed"}), http.StatusTooManyRequests, "TooManyRequests")
 
 	h.webpageFetcher.mu.Lock()
 	calls := h.webpageFetcher.calls
@@ -2046,6 +2150,104 @@ func TestForegroundFetchSemaphoreBoundsConcurrency(t *testing.T) {
 
 	close(release)
 	wg.Wait()
+}
+
+func TestFeedItemExtractAdmissionAndDedupe(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
+	items := make([]domain.FeedItem, 0, maxConcurrentForegroundFetches+2)
+	for i := range maxConcurrentForegroundFetches + 2 {
+		items = append(items, h.seedItem(feed.ID, "https://example.com/admit/"+strconv.Itoa(i), nil))
+	}
+
+	entered := make(chan struct{}, maxConcurrentForegroundFetches+2)
+	release := make(chan struct{})
+	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+		if strings.HasSuffix(target.Raw(), "/admit/"+strconv.Itoa(maxConcurrentForegroundFetches)) {
+			return "<html></html>", target.Raw(), nil
+		}
+
+		entered <- struct{}{}
+		select {
+		case <-release:
+			return "<html></html>", target.Raw(), nil
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+	}
+	h.extractor.article = domain.ExtractedArticle{Title: "Ok", Content: "<p>ok</p>"}
+
+	cachedItem := items[maxConcurrentForegroundFetches]
+	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/"+cachedItem.ID+"/extract", nil), http.StatusOK)
+
+	var wg sync.WaitGroup
+	for i := range maxConcurrentForegroundFetches {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/"+id+"/extract", nil), http.StatusOK)
+		}(items[i].ID)
+	}
+
+	for range maxConcurrentForegroundFetches {
+		<-entered
+	}
+
+	// A cached item is served without a fetch slot; a new uncached item is rejected.
+	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/"+cachedItem.ID+"/extract", nil), http.StatusOK)
+
+	overflowItem := items[maxConcurrentForegroundFetches+1]
+	requireAPIError(t, h.authed(http.MethodPost, "/api/feed-items/"+overflowItem.ID+"/extract", nil), http.StatusTooManyRequests, "TooManyRequests")
+
+	// Concurrent request for an already in-flight item still joins the existing job.
+	joinedDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		joinedDone <- h.authed(http.MethodPost, "/api/feed-items/"+items[0].ID+"/extract", nil)
+	}()
+
+	// Let the joiner enter extractGroup before releasing the fetcher.
+	time.Sleep(10 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	joined := <-joinedDone
+	requireStatus(t, joined, http.StatusOK)
+
+	h.webpageFetcher.mu.Lock()
+	calls := h.webpageFetcher.calls
+	h.webpageFetcher.mu.Unlock()
+	if want := maxConcurrentForegroundFetches + 1; calls != want {
+		t.Fatalf("fetch calls = %d, want %d (joined request must not fetch again)", calls, want)
+	}
+}
+
+func TestFeedItemExtractDeadline(t *testing.T) {
+	t.Parallel()
+
+	h := newHarnessWith(t, func(cfg *Config) {
+		cfg.ForegroundFetchTimeout = 30 * time.Millisecond
+	})
+
+	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
+	slow := h.seedItem(feed.ID, "https://example.com/slow", nil)
+	fast := h.seedItem(feed.ID, "https://example.com/fast", nil)
+
+	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+		if strings.HasSuffix(target.Raw(), "/slow") {
+			<-ctx.Done()
+
+			return "", "", domain.NewError(domain.ErrWebpageFetcherError, ctx.Err())
+		}
+
+		return "<html></html>", target.Raw(), nil
+	}
+	h.extractor.article = domain.ExtractedArticle{Title: "Fast", Content: "<p>fast</p>"}
+
+	requireAPIError(t, h.authed(http.MethodPost, "/api/feed-items/"+slow.ID+"/extract", nil), http.StatusUnprocessableEntity, "WebpageFetcherError")
+	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/"+fast.ID+"/extract", nil), http.StatusOK)
 }
 
 func TestFolderCRUD(t *testing.T) {
@@ -2332,6 +2534,49 @@ func TestOPMLImportRejectsInvalidDocument(t *testing.T) {
 	if len(h.refresher.batches) != 0 {
 		t.Fatalf("invalid OPML must not enqueue refreshes: %+v", h.refresher.batches)
 	}
+}
+
+func TestOPMLImportMultipartFallbackAndSizeLimits(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	document := `<opml version="2.0"><body><outline type="rss" text="Fallback" xmlUrl="https://fallback.example.com/rss"/></body></opml>`
+
+	var fallbackBuf bytes.Buffer
+	writer := multipart.NewWriter(&fallbackBuf)
+	part, err := writer.CreateFormFile("opml", "custom.opml")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte(document)); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/opml", bytes.NewReader(fallbackBuf.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Origin", testAppURL)
+	req.AddCookie(h.sessionCookie())
+	requireStatus(t, h.do(req), http.StatusOK)
+
+	var emptyBuf bytes.Buffer
+	emptyWriter := multipart.NewWriter(&emptyBuf)
+	_ = emptyWriter.WriteField("note", "no-file")
+	_ = emptyWriter.Close()
+	noFileReq := httptest.NewRequest(http.MethodPost, "/api/opml", bytes.NewReader(emptyBuf.Bytes()))
+	noFileReq.Header.Set("Content-Type", emptyWriter.FormDataContentType())
+	noFileReq.Header.Set("Origin", testAppURL)
+	noFileReq.AddCookie(h.sessionCookie())
+	requireAPIError(t, h.do(noFileReq), http.StatusBadRequest, "InvalidOpml")
+
+	oversized := strings.Repeat("a", maxOPMLUploadBytes+1)
+	rawTooLarge := httptest.NewRequest(http.MethodPost, "/api/opml", strings.NewReader(oversized))
+	rawTooLarge.Header.Set("Content-Type", "text/xml")
+	rawTooLarge.Header.Set("Origin", testAppURL)
+	rawTooLarge.AddCookie(h.sessionCookie())
+	requireAPIError(t, h.do(rawTooLarge), http.StatusBadRequest, "InvalidOpml")
 }
 
 func TestSettingsRedaction(t *testing.T) {
@@ -2847,6 +3092,7 @@ func TestStaticSPAFallback(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), "spa-shell") {
 		t.Fatalf("root body = %s", recorder.Body.String())
 	}
+	requireSPASecurityHeaders(t, recorder)
 
 	if cache := recorder.Header().Get("Cache-Control"); cache != indexCacheControl {
 		t.Fatalf("index cache control = %q", cache)
@@ -2857,9 +3103,14 @@ func TestStaticSPAFallback(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), "spa-shell") {
 		t.Fatalf("spa fallback body = %s", recorder.Body.String())
 	}
+	requireSPASecurityHeaders(t, recorder)
 
 	recorder = h.raw(http.MethodHead, "/settings", nil)
 	requireStatus(t, recorder, http.StatusOK)
+	requireSPASecurityHeaders(t, recorder)
+
+	recorder = h.raw(http.MethodGet, "/index.html", nil)
+	requireSPASecurityHeaders(t, recorder)
 
 	recorder = h.raw(http.MethodGet, "/assets/app-123.js", nil)
 	requireStatus(t, recorder, http.StatusOK)
@@ -2898,6 +3149,18 @@ func TestStaticSPAFallback(t *testing.T) {
 
 	recorder = h.raw(http.MethodGet, "/healthz", nil)
 	requireStatus(t, recorder, http.StatusOK)
+}
+
+func requireSPASecurityHeaders(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	if got := recorder.Header().Get("Content-Security-Policy"); got != indexCSP {
+		t.Fatalf("Content-Security-Policy = %q, want %q", got, indexCSP)
+	}
+
+	if got := recorder.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
 }
 
 func TestStaticServingWithoutEmbeddedFS(t *testing.T) {

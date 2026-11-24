@@ -1,7 +1,6 @@
 package epub
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -37,24 +36,6 @@ type chapterInput struct {
 	root     *html.Node
 	nodeURLs map[*html.Node]string
 	imgURLs  []string
-}
-
-func parseChapters(ctx context.Context, articles []domain.KindleArticle) ([]chapterInput, error) {
-	chapters := make([]chapterInput, len(articles))
-	for i, article := range articles {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		parsed, err := newChapterInput(article)
-		if err != nil {
-			return nil, err
-		}
-
-		chapters[i] = parsed
-	}
-
-	return chapters, nil
 }
 
 func newChapterInput(article domain.KindleArticle) (chapterInput, error) {

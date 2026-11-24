@@ -6,9 +6,9 @@
 
 import { createSignal, flush } from 'solid-js';
 import type { FeedItem, ReaderMode, SavedPage } from '../api';
-import { errorCodeOf, feedItemsApi, savedPagesApi } from '../api';
-import { translateErrorCode } from '../i18n';
+import { feedItemsApi, savedPagesApi } from '../api';
 import { showToast } from '../ui';
+import { errorText } from './errorText';
 import type { LibraryArticle } from './library';
 import * as library from './library';
 import type { LibraryScope } from './scope';
@@ -120,7 +120,7 @@ const loadArticle = async (
 
     setLoadingArticle(false);
     flush();
-    showToast(translateErrorCode(errorCodeOf(error)), 'error');
+    showToast(errorText(error), 'error');
     return undefined;
   }
 };
@@ -262,7 +262,7 @@ export const extractCurrentFeedItem = async (): Promise<void> => {
     if (requestGeneration !== generation) return;
 
     setDisplayMode('default');
-    showToast(translateErrorCode(errorCodeOf(error)), 'error');
+    showToast(errorText(error), 'error');
   } finally {
     if (requestGeneration === generation) {
       setExtracting(false);

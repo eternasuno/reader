@@ -1,8 +1,8 @@
 import { feedsApi } from '../api';
-import { t, translateErrorCode } from '../i18n';
+import { errorText } from '../components/errorText';
+import { t } from '../i18n';
 import { invalidateSidebar } from '../state';
 import { showToast } from '../ui';
-import { errorCodeOf } from './viewHelpers';
 
 export interface OpmlImport {
   /** Callback ref for the hidden file input; the visible button opens this picker. */
@@ -29,7 +29,7 @@ export const useOpmlImport = (): OpmlImport => {
       );
       await invalidateSidebar();
     } catch (error) {
-      showToast(translateErrorCode(errorCodeOf(error)), 'error');
+      showToast(errorText(error), 'error');
     }
   };
 

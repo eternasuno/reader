@@ -31,7 +31,7 @@ Every scope and open article has its own URL so reloads and browser history rest
 | --- | --- |
 | `/` | redirects to `/later` |
 | `/login` | password sign-in page (public) |
-| `/save` | quick-save landing route for `?url=...` (requires session; redirects back after login) |
+| `/save` | quick-save landing route for `#url=...` (and legacy `?url=...`; requires session, strips draft into memory, and redirects back after login) |
 | `/later`, `/later/:pageId` | saved pages; with `:pageId`, that page open in the reader |
 | `/all`, `/all/:itemId` | all feed items |
 | `/feed/:feedId`, `/feed/:feedId/:itemId` | one feed's items |

@@ -85,6 +85,19 @@ const findButton = (root: ParentNode, text: string): HTMLButtonElement => {
   return btn;
 };
 
+const setInput = (
+  root: ParentNode,
+  selector: string,
+  value: string,
+  index = 0
+): void => {
+  const el = root.querySelectorAll<HTMLInputElement>(selector)[index];
+  if (el === undefined) throw new Error(`missing input ${selector}`);
+  el.value = value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  h.solid.flush();
+};
+
 const sendsCalls = (): number =>
   fetchMock.mock.calls.filter(([u]) => String(u) === '/api/kindle/sends')
     .length;
@@ -134,8 +147,7 @@ describe('kindle history refresh on section entry', () => {
     const { container } = await mountSettings();
     const initialCalls = sendsCalls();
 
-    h.state.setRetentionDraft(25);
-    h.solid.flush();
+    setInput(container, 'input[type="number"]', '25');
     navBtn(container, 2).click();
     await settle(2);
 
@@ -151,8 +163,7 @@ describe('settings leave guards', () => {
     window.dispatchEvent(cleanEvent);
     expect(cleanEvent.defaultPrevented).toBe(false);
 
-    h.state.setRetentionDraft(25);
-    h.solid.flush();
+    setInput(container, 'input[type="number"]', '25');
 
     const dirtyEvent = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(dirtyEvent);
@@ -171,17 +182,19 @@ describe('settings leave guards', () => {
     window.dispatchEvent(afterLeaveEvent);
     expect(afterLeaveEvent.defaultPrevented).toBe(false);
   });
+});
 
+describe('settings secret disposal', () => {
   it('disposes secret drafts on exit so secrets never persist across visits', async () => {
     const { container, history } = await mountSettings();
     navBtn(container, 3).click();
     h.solid.flush();
 
-    h.state.setJinaKeyDraft('jina-secret');
-    h.state.setBrowserEndpointDraft('http://browser:9222');
-    h.state.setSmtpPasswordDraft('smtp-secret');
-    h.solid.flush();
-    expect(h.state.hasAnyUnsavedChanges()).toBe(true);
+    const svc = container.querySelector('section[aria-label="外部服务"]');
+    if (svc === null) throw new Error('missing services section');
+    setInput(svc, 'input[type="password"]', 'jina-secret', 0);
+    setInput(svc, 'input[type="url"]', 'http://browser:9222');
+    setInput(svc, 'input[type="password"]', 'smtp-secret', 1);
 
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
     container
@@ -191,10 +204,28 @@ describe('settings leave guards', () => {
 
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(history.get()).toBe('/later');
-    expect(h.state.jinaKeyDraft()).toBe('');
-    expect(h.state.browserEndpointDraft()).toBe('');
-    expect(h.state.smtpPasswordDraft()).toBe('');
-    expect(h.state.hasAnyUnsavedChanges()).toBe(false);
+
+    history.set({ value: '/settings' });
+    await settle(4);
+    navBtn(container, 3).click();
+    h.solid.flush();
+
+    const nextSvc = container.querySelector('section[aria-label="外部服务"]');
+    const nextPasswords = nextSvc?.querySelectorAll<HTMLInputElement>(
+      'input[type="password"]'
+    );
+    expect(nextPasswords?.[0]?.value).toBe('');
+    expect(
+      nextSvc?.querySelector<HTMLInputElement>('input[type="url"]')?.value
+    ).toBe('');
+    expect(nextPasswords?.[1]?.value).toBe('');
+
+    container
+      .querySelector<HTMLButtonElement>('button[aria-label="返回阅读器"]')
+      ?.click();
+    await settle(4);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(history.get()).toBe('/later');
   });
 });
 

@@ -1,12 +1,19 @@
+import type { StoreSetter } from 'solid-js';
 import type { KindleSendRecord } from '../api';
 import { locale, t } from '../i18n';
+import type { SettingsDrafts } from '../state';
+
+export interface SettingsDraftProps {
+  drafts: SettingsDrafts;
+  setDrafts: StoreSetter<SettingsDrafts>;
+}
 
 const STATUS_KEYS = {
   on: 'settings.statusConfigured',
   off: 'settings.statusNotConfigured',
 } as const;
 
-export type StatusKey = (typeof STATUS_KEYS)[keyof typeof STATUS_KEYS];
+type StatusKey = (typeof STATUS_KEYS)[keyof typeof STATUS_KEYS];
 
 export const statusKey = (configured: boolean | undefined): StatusKey =>
   configured ? STATUS_KEYS.on : STATUS_KEYS.off;
@@ -38,7 +45,7 @@ export const SEND_TIME_SLOTS: ReadonlyArray<string> = Array.from(
 );
 
 /** `kindle.md`: sanitized error summaries never inject markup or stray line breaks. */
-export const sanitizeError = (error: string | undefined): string => {
+const sanitizeError = (error: string | undefined): string => {
   if (error === undefined) return '';
 
   return error

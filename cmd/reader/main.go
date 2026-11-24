@@ -32,17 +32,19 @@ import (
 )
 
 const (
-	defaultAppURL      = "http://localhost:8080"
-	defaultPort        = "8080"
-	defaultDataDir     = ".data"
-	sessionSecretBytes = 32
-	readHeaderTimeout  = 10 * time.Second
-	readTimeout        = 30 * time.Second
+	defaultAppURL          = "http://localhost:8080"
+	defaultPort            = "8080"
+	defaultDataDir         = ".data"
+	sessionSecretBytes     = 32
+	readHeaderTimeout      = 10 * time.Second
+	readTimeout            = 30 * time.Second
+	foregroundFetchTimeout = 30 * time.Second
 	// writeTimeout bounds full handler execution and response writing; 60s stays
-	// well above the 20s webpage fetch/extract timeout.
+	// well above the 30s foreground fetch/extract timeout.
 	writeTimeout          = 60 * time.Second
 	shutdownTimeout       = 15 * time.Second
 	databaseFileName      = "reader.db"
+	epubSpoolDirName      = "spool"
 	staticAssetsDirectory = "dist"
 )
 
@@ -94,10 +96,9 @@ func run() (err error) {
 		}
 	}()
 
-	// Mark leftover "running" Kindle sends as failed before workers start so a
-	// crash cannot leave an in-progress job blocking future deliveries.
-	if err := store.KindleSends().RecoverRunningOnStartup(ctx, time.Now().UTC()); err != nil {
-		return fmt.Errorf("recover kindle sends: %w", err)
+	spoolDir := filepath.Join(cfg.DataDir, epubSpoolDirName)
+	if err := recoverStartupState(ctx, store, spoolDir, time.Now().UTC()); err != nil {
+		return err
 	}
 
 	// Workers use an application-owned context so a canceled HTTP request can
@@ -119,6 +120,20 @@ func run() (err error) {
 	stopWorkers := startWorkers(appCtx, cancelApp, deps)
 
 	return serveUntilExit(ctx, listener, handler, stopWorkers)
+}
+
+func recoverStartupState(ctx context.Context, store *sqlite.Store, spoolDir string, now time.Time) error {
+	// Mark leftover "running" Kindle sends as failed before workers start so a
+	// crash cannot leave an in-progress job blocking future deliveries.
+	if err := store.KindleSends().RecoverRunningOnStartup(ctx, now); err != nil {
+		return fmt.Errorf("recover kindle sends: %w", err)
+	}
+
+	if err := epub.PrepareSpoolDir(spoolDir); err != nil {
+		return fmt.Errorf("prepare epub spool: %w", err)
+	}
+
+	return nil
 }
 
 func startWorkers(appCtx context.Context, cancelApp context.CancelFunc, deps appDependencies) func() {
@@ -162,9 +177,12 @@ func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.S
 			FeedItems:   store.FeedItems(),
 			Fetcher:     fetchClient,
 			Extractor:   articleExtractor,
-			EPUBBuilder: epub.NewBuilder(epub.Config{ImageFetcher: fetchClient}),
-			MailSender:  mail.NewSender(mail.Config{}),
-			Location:    cfg.Location,
+			EPUBBuilder: epub.NewBuilder(epub.Config{
+				ImageFetcher: fetchClient,
+				SpoolDir:     filepath.Join(cfg.DataDir, epubSpoolDirName),
+			}),
+			MailSender: mail.NewSender(mail.Config{}),
+			Location:   cfg.Location,
 		}),
 	}
 }
@@ -194,25 +212,26 @@ func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (
 	}
 
 	handler, err := httpserver.NewServer(httpserver.Config{
-		AppPassword:      cfg.AppPassword,
-		AppURL:           cfg.AppURL,
-		SessionSecret:    cfg.SessionSecret,
-		Location:         cfg.Location,
-		Now:              time.Now,
-		HealthCheck:      func(ctx context.Context) error { return store.ReadDB().PingContext(ctx) },
-		StaticFS:         staticFS,
-		Folders:          store.Folders(),
-		Feeds:            store.Feeds(),
-		FeedItems:        store.FeedItems(),
-		SavedPages:       store.SavedPages(),
-		Settings:         store.Settings(),
-		KindleSends:      store.KindleSends(),
-		FeedFetcher:      deps.fetchClient,
-		FeedParser:       deps.feedParser,
-		WebpageFetcher:   deps.fetchClient,
-		ArticleExtractor: deps.articleExtractor,
-		Refresher:        deps.refreshQueue,
-		Kindle:           deps.kindleSender,
+		AppPassword:            cfg.AppPassword,
+		AppURL:                 cfg.AppURL,
+		SessionSecret:          cfg.SessionSecret,
+		Location:               cfg.Location,
+		Now:                    time.Now,
+		ForegroundFetchTimeout: foregroundFetchTimeout,
+		HealthCheck:            func(ctx context.Context) error { return store.ReadDB().PingContext(ctx) },
+		StaticFS:               staticFS,
+		Folders:                store.Folders(),
+		Feeds:                  store.Feeds(),
+		FeedItems:              store.FeedItems(),
+		SavedPages:             store.SavedPages(),
+		Settings:               store.Settings(),
+		KindleSends:            store.KindleSends(),
+		FeedFetcher:            deps.fetchClient,
+		FeedParser:             deps.feedParser,
+		WebpageFetcher:         deps.fetchClient,
+		ArticleExtractor:       deps.articleExtractor,
+		Refresher:              deps.refreshQueue,
+		Kindle:                 deps.kindleSender,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build http server: %w", err)

@@ -151,11 +151,12 @@ describe('session guard redirect', () => {
         : undefined
     );
 
-    const next = '/save?url=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2';
-    const { history, container } = mountApp(next);
+    const target =
+      '/save#url=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2%23frag';
+    const { history, container } = mountApp(target);
     await settle(4);
 
-    expect(history.get()).toBe(`/login?next=${encodeURIComponent(next)}`);
+    expect(history.get()).toBe('/login?next=%2Fsave');
     expect(container.textContent).toContain('登录');
   });
 
@@ -176,28 +177,29 @@ describe('session guard redirect', () => {
   });
 });
 
+/** The first attempt fails with `InvalidCredentials`, the second one succeeds. */
+const respondFailedThenSignedIn = (): void => {
+  let attempts = 0;
+  let signedIn = false;
+  respond((url) => {
+    if (url.includes('/api/auth/session'))
+      return json({ authenticated: signedIn });
+    if (!url.includes('/api/auth/login')) return undefined;
+
+    attempts += 1;
+    if (attempts === 1) return json({ error: 'InvalidCredentials' }, 401);
+    signedIn = true;
+    return new Response(null, { status: 204 });
+  });
+};
+
 describe('session guard sign in', () => {
-  /** The first attempt fails with `InvalidCredentials`, the second one succeeds. */
-  const respondFailedThenSignedIn = (): void => {
-    let attempts = 0;
-    let signedIn = false;
-    respond((url) => {
-      if (url.includes('/api/auth/session'))
-        return json({ authenticated: signedIn });
-      if (!url.includes('/api/auth/login')) return undefined;
-
-      attempts += 1;
-      if (attempts === 1) return json({ error: 'InvalidCredentials' }, 401);
-      signedIn = true;
-      return new Response(null, { status: 204 });
-    });
-  };
-
-  it('keeps ?next across a failed login and returns to quick save after success', async () => {
+  it('keeps quick-save fragment draft in memory across failed login and returns to /save', async () => {
     respondFailedThenSignedIn();
-    const next = '/save?url=https%3A%2F%2Fexample.com%2Fpost';
-    const loginPath = `/login?next=${encodeURIComponent(next)}`;
-    const { container, history } = mountApp(loginPath);
+    const loginPath = '/login?next=%2Fsave';
+    const { container, history } = mountApp(
+      '/save#url=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2'
+    );
     await settle(4);
     expect(history.get()).toBe(loginPath);
 
@@ -209,10 +211,10 @@ describe('session guard sign in', () => {
 
     submitForm(container);
     await settle(4);
-    expect(history.get()).toBe(next);
+    expect(history.get()).toBe('/save');
     expect(container.textContent).toContain('保存到稍后阅读');
     expect(must<HTMLInputElement>(container, 'input[type="url"]').value).toBe(
-      'https://example.com/post'
+      'https://example.com/post?a=1&b=2'
     );
   });
 });

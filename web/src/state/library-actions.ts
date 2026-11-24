@@ -4,9 +4,9 @@
  */
 
 import { flush } from 'solid-js';
-import { errorCodeOf, feedItemsApi, savedPagesApi } from '../api';
-import { translateErrorCode } from '../i18n';
+import { feedItemsApi, savedPagesApi } from '../api';
 import { showToast } from '../ui';
+import { errorText } from './errorText';
 import { readTracker } from './library-mutations';
 import type { ArticleReadFallback, LibraryArticle } from './library-store';
 import {
@@ -132,7 +132,7 @@ const handleReadFailure = async (
     await sidebar.invalidateSidebar();
   }
 
-  showToast(translateErrorCode(errorCodeOf(error)), 'error');
+  showToast(errorText(error), 'error');
 };
 
 /**

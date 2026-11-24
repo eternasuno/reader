@@ -6,15 +6,11 @@ import {
   canSendToKindle,
   isSaving,
   isSmtpConfigured,
-  kindleEmailDraft,
   kindleRunning,
   kindleSending,
   kindleSends,
   saveKindle,
   savingAction,
-  sendTimeDraft,
-  setKindleEmailDraft,
-  setSendTimeDraft,
   triggerKindleSend,
 } from '../state';
 import { Button, Icon, Input, Select, SettingsGroup, SettingsRow } from '../ui';
@@ -23,6 +19,7 @@ import {
   SEND_STATUS_CLASSES,
   SEND_STATUS_KEYS,
   SEND_TIME_SLOTS,
+  type SettingsDraftProps,
   sendResultText,
   TRIGGER_KEYS,
 } from './settingsHelpers';
@@ -49,7 +46,7 @@ function SmtpRequiredBanner(props: {
   );
 }
 
-function DeliveryFields(): JSX.Element {
+function DeliveryFields(props: SettingsDraftProps): JSX.Element {
   return (
     <>
       <SettingsRow stacked>
@@ -57,17 +54,23 @@ function DeliveryFields(): JSX.Element {
           type="email"
           required
           label={String(t('kindle.kindleEmailLabel'))}
-          value={kindleEmailDraft()}
+          value={props.drafts.kindleEmail}
           disabled={isSaving()}
-          onInput={(event) => setKindleEmailDraft(event.currentTarget.value)}
+          onInput={(event) => {
+            const kindleEmail = event.currentTarget.value;
+            props.setDrafts((draft) => ({ ...draft, kindleEmail }));
+          }}
         />
       </SettingsRow>
       <SettingsRow stacked>
         <Select
           label={String(t('kindle.sendTimeLabel'))}
-          value={sendTimeDraft()}
+          value={props.drafts.sendTime}
           disabled={isSaving()}
-          onChange={(event) => setSendTimeDraft(event.currentTarget.value)}
+          onChange={(event) => {
+            const sendTime = event.currentTarget.value;
+            props.setDrafts((draft) => ({ ...draft, sendTime }));
+          }}
         >
           <option value="">{String(t('kindle.sendTimeNone'))}</option>
           <For each={SEND_TIME_SLOTS}>
@@ -79,12 +82,12 @@ function DeliveryFields(): JSX.Element {
   );
 }
 
-function DeliveryForm(): JSX.Element {
+function DeliveryForm(props: SettingsDraftProps): JSX.Element {
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void saveKindle();
+        void saveKindle(props.drafts, props.setDrafts);
       }}
     >
       <fieldset disabled={!isSmtpConfigured()}>
@@ -102,7 +105,7 @@ function DeliveryForm(): JSX.Element {
             </Button>
           }
         >
-          <DeliveryFields />
+          <DeliveryFields drafts={props.drafts} setDrafts={props.setDrafts} />
         </SettingsGroup>
       </fieldset>
     </form>
@@ -180,15 +183,17 @@ function SendsGroup(): JSX.Element {
 }
 
 /** `settings.md:20`: Kindle delivery address, schedule, manual send, and history. */
-export function KindleSection(props: {
-  onGoToServices: () => void;
-}): JSX.Element {
+export function KindleSection(
+  props: SettingsDraftProps & {
+    onGoToServices: () => void;
+  }
+): JSX.Element {
   return (
     <div class="flex flex-col gap-6">
       <Show when={!isSmtpConfigured()}>
         <SmtpRequiredBanner onGoToServices={props.onGoToServices} />
       </Show>
-      <DeliveryForm />
+      <DeliveryForm drafts={props.drafts} setDrafts={props.setDrafts} />
       <SendNowGroup />
       <SendsGroup />
     </div>

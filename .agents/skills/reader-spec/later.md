@@ -15,7 +15,7 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 ## Interface
 
 - **Add dialog (`新增文章链接`)**: triggered from `稍后阅读` row/list menu or empty state; requires `http`/`https` URL. Shows `添加中…` while fetching; on success closes, shows `文章已添加`, and opens `/later/:pageId`.
-- **Bookmarklet quick-save (`/save?url=...`)**: does **not** mutate state automatically on `GET` (preventing external link-based CSRF). Instead, it pre-fills an editable URL form with a focused `确认保存` submit button (Enter or one click invokes `POST /api/saved-pages`). Redirects to `/later/:pageId` on success or duplicate (`409 SavedPageAlreadyExists`), or shows the failure inline for retry/editing. If the session expires during submit, `401 Unauthorized` redirects to `/login?next=...` and returns here.
+- **Bookmarklet quick-save (`/save#url=...`, legacy `/save?url=...`)**: does **not** mutate state automatically on `GET` (preventing external link-based CSRF). Instead, it consumes the URL from `#url=` (or legacy `?url=`) into tab-scoped in-memory state, strips it from the address bar via `history.replaceState`, and pre-fills an editable URL form with a focused `确认保存` submit button (Enter or one click invokes `POST /api/saved-pages`). Redirects to `/later/:pageId` on success or duplicate (`409 SavedPageAlreadyExists`), or shows the failure inline for retry/editing. If the session is missing or expires during submit, `401 Unauthorized` redirects to `/login?next=%2Fsave` without copying the target URL into `?next` and keeps the draft in memory until returning to `/save`.
 - **Feed item reader header**: `保存到稍后阅读` button saves the open item without navigating away (`已保存到稍后阅读`).
 - **Delete**: `删除` in the saved-page reader overflow menu asks `window.confirm` before deleting and returning to `/later`.
 
@@ -26,8 +26,8 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 | GET | `/api/saved-pages` | `limit`, `unread`, `order?`, `cursor?` | `200 { items, cursor }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/unread-count` | — | `200 { count }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/:id` | `id` | `200 { item \| null }` | `SavedPageRepositoryError` 500 |
-| POST | `/api/saved-pages` | `{ url }` | `201 { item }` | `InvalidPageUrl` 400, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, 500 |
-| POST | `/api/feed-items/:id/save` | `id` | `201 { item }` | `FeedItemNotFound` 404, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, 500 |
+| POST | `/api/saved-pages` | `{ url }` | `201 { item }` | `InvalidPageUrl` 400, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
+| POST | `/api/feed-items/:id/save` | `id` | `201 { item }` | `FeedItemNotFound` 404, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
 | PATCH | `/api/saved-pages/:id` | `{ read }` | `204` | `SavedPageRepositoryError` 500 |
 | POST | `/api/saved-pages/read` | `{ ids }` | `204` | `SavedPageRepositoryError` 500 |
 | POST | `/api/saved-pages/read-all` | — | `204` | `SavedPageRepositoryError` 500 |
@@ -52,7 +52,7 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 Feature: Saved pages
   Scenario: Adding an already-saved URL via dialog or /save opens the existing page
     Given "https://example.com/post" is already saved
-    When I submit "https://example.com/post?utm_source=x" or open "/save?url=https://example.com/post"
+    When I submit "https://example.com/post?utm_source=x" or open "/save#url=https%3A%2F%2Fexample.com%2Fpost"
     Then no duplicate is created and the existing page opens at "/later/<pageId>"
 
   Scenario: Saving a feed item that has feed content does not fetch the webpage

@@ -3,20 +3,26 @@ package epub
 import (
 	"archive/zip"
 	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -605,7 +611,6 @@ func TestBuildBooksKeepsNumberedBooksWithinLimit(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	baseTitle := "拾叶 2026-03-15"
 	articles := make([]domain.KindleArticle, 4)
 	for i := range articles {
 		articles[i] = domain.KindleArticle{
@@ -616,26 +621,16 @@ func TestBuildBooksKeepsNumberedBooksWithinLimit(t *testing.T) {
 		}
 	}
 
-	chapters, err := parseChapters(ctx, articles[:2])
+	unnumberedBooks, err := NewBuilder(Config{}).BuildBooks(ctx, "2026-03-15", articles[:2])
 	if err != nil {
-		t.Fatalf("parseChapters() error = %v", err)
+		t.Fatalf("BuildBooks() error = %v", err)
 	}
 
-	unnumbered, err := renderEPUB(ctx, baseTitle, chapters, nil, false)
-	if err != nil {
-		t.Fatalf("renderEPUB() error = %v", err)
-	}
-
-	numbered, err := renderEPUB(ctx, baseTitle+" (1/2)", chapters, nil, false)
-	if err != nil {
-		t.Fatalf("renderEPUB() error = %v", err)
-	}
-
+	unnumbered := unnumberedBooks[0].Data
 	maxBytes := len(unnumbered) + 5
-	if len(numbered) <= maxBytes {
-		t.Fatalf("numbered pair book is %d bytes with limit %d, want the numbering to exceed the limit", len(numbered), maxBytes)
-	}
 
+	// A 2-part numbered title (" (1/2)") adds >5 bytes across nav/ncx/opf,
+	// so packing with the padded upper-bound title prevents exceeding maxBytes.
 	books, err := NewBuilder(Config{MaxEPUBBytes: maxBytes}).BuildBooks(ctx, "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
@@ -1008,9 +1003,12 @@ type blockingImageFetcher struct {
 	fastData []byte
 	slowURL  string
 	gate     <-chan struct{}
+	calls    atomic.Int64
 }
 
 func (f *blockingImageFetcher) FetchImage(ctx context.Context, rawURL string) ([]byte, string, string, error) {
+	f.calls.Add(1)
+
 	if rawURL == f.fastURL {
 		return f.fastData, "image/png", ".png", nil
 	}
@@ -1200,4 +1198,885 @@ func randomText(t *testing.T, size int) string {
 	}
 
 	return string(text)
+}
+
+func TestEstimateDecodeBytesChargesInterlacedPNGAdam7Pass(t *testing.T) {
+	t.Parallel()
+
+	if got := maxAdam7PassPixels(1, 1); got != 1 {
+		t.Fatalf("maxAdam7PassPixels(1, 1) = %d, want 1", got)
+	}
+	if got := maxAdam7PassPixels(9, 1); got != 4 {
+		t.Fatalf("maxAdam7PassPixels(9, 1) = %d, want 4", got)
+	}
+	if got := maxAdam7PassPixels(1000, 1000); got != 500_000 {
+		t.Fatalf("maxAdam7PassPixels(1000, 1000) = %d, want 500000", got)
+	}
+
+	const side = 1000
+	pixels := int64(side) * int64(side)
+	passPixels := maxAdam7PassPixels(side, side)
+	dstBytes := pixels * bytesPerRGBAPixel
+
+	tests := []struct {
+		name       string
+		sixteenBit bool
+		wantBPP    int64
+	}{
+		{name: "interlaced full-colour 8-bit", sixteenBit: false, wantBPP: 4},
+		{name: "interlaced full-colour 16-bit", sixteenBit: true, wantBPP: 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			data := encodeTestInterlacedPNG(t, side, side, tt.sixteenBit)
+			if !pngInterlaced(data) {
+				t.Fatal("pngInterlaced() = false, want true")
+			}
+
+			cfg, valid := validateImageConfig(data, pngFormat)
+			if !valid {
+				t.Fatal("validateImageConfig() rejected interlaced PNG")
+			}
+
+			if _, err := png.Decode(bytes.NewReader(data)); err != nil {
+				t.Fatalf("png.Decode() failed on interlaced fixture: %v", err)
+			}
+
+			got := estimateDecodeBytes(pngFormat, data, cfg, side, side)
+			want := (pixels+passPixels)*tt.wantBPP + dstBytes + 2*(int64(side)*tt.wantBPP+1) + pngDecoderOverheadBytes
+			if got != want {
+				t.Fatalf("estimateDecodeBytes() = %d, want %d", got, want)
+			}
+		})
+	}
+}
+
+func TestBuildBooksChargesInterlacedPNGAgainstDecodeBudget(t *testing.T) {
+	t.Parallel()
+
+	const side = 1000
+
+	nonInterlaced8 := encodeTestPNG(t, side, side)
+	interlaced8 := encodeTestInterlacedPNG(t, side, side, false)
+	interlaced16 := encodeTestInterlacedPNG(t, side, side, true)
+
+	// Make sure all images trigger optimization (> 128 KiB).
+	for name, img := range map[string][]byte{
+		"nonInterlaced8": nonInterlaced8,
+		"interlaced8":    interlaced8,
+		"interlaced16":   interlaced16,
+	} {
+		if len(img) <= imageReencodeMinBytes {
+			t.Fatalf("%s len = %d, want > %d", name, len(img), imageReencodeMinBytes)
+		}
+	}
+
+	fetcher := newFakeImageFetcher(map[string]fakeImage{
+		"https://example.com/plain8.png":       {data: nonInterlaced8, mediaType: "image/png"},
+		"https://example.com/interlaced8.png":  {data: interlaced8, mediaType: "image/png"},
+		"https://example.com/interlaced16.png": {data: interlaced16, mediaType: "image/png"},
+	})
+
+	article := domain.KindleArticle{
+		ID:       "article-1",
+		URL:      "https://example.com/posts/1",
+		Title:    "隔行扫描",
+		HTMLBody: `<p>正文</p><img src="https://example.com/plain8.png"><img src="https://example.com/interlaced8.png"><img src="https://example.com/interlaced16.png">`,
+	}
+
+	// 8-bit plain ~8.5 MiB, 8-bit interlaced ~10.5 MiB, 16-bit interlaced ~16.5 MiB.
+	books95, err := NewBuilder(Config{ImageFetcher: fetcher, ImageDecodeMemoryBudget: 9_500_000}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{article})
+	if err != nil {
+		t.Fatalf("BuildBooks(9.5MB) error = %v", err)
+	}
+	ch95 := string(entryBody(t, entryByName(t, openArchive(t, books95[0].Data), "OEBPS/chapters/chapter-0001.xhtml")))
+	if strings.Count(ch95, "<img") != 1 {
+		t.Fatalf("9.5MB budget embedded %d images, want 1 (plain 8-bit only):\n%s", strings.Count(ch95, "<img"), ch95)
+	}
+
+	// 15 MB admits plain 8-bit and interlaced 8-bit (~10.5 MB), excludes interlaced 16-bit (~16.5 MB).
+	books15, err := NewBuilder(Config{ImageFetcher: fetcher, ImageDecodeMemoryBudget: 15 << 20}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{article})
+	if err != nil {
+		t.Fatalf("BuildBooks(15MiB) error = %v", err)
+	}
+	ch15 := string(entryBody(t, entryByName(t, openArchive(t, books15[0].Data), "OEBPS/chapters/chapter-0001.xhtml")))
+	if strings.Count(ch15, "<img") != 2 {
+		t.Fatalf("15MiB budget embedded %d images, want 2 (8-bit plain + 8-bit interlaced):\n%s", strings.Count(ch15, "<img"), ch15)
+	}
+
+	// 18 MiB admits all three.
+	books18, err := NewBuilder(Config{ImageFetcher: fetcher, ImageDecodeMemoryBudget: 18 << 20}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{article})
+	if err != nil {
+		t.Fatalf("BuildBooks(18MiB) error = %v", err)
+	}
+	ch18 := string(entryBody(t, entryByName(t, openArchive(t, books18[0].Data), "OEBPS/chapters/chapter-0001.xhtml")))
+	if strings.Count(ch18, "<img") != 3 {
+		t.Fatalf("18MiB budget embedded %d images, want 3:\n%s", strings.Count(ch18, "<img"), ch18)
+	}
+}
+
+func TestPackerOverLimitTrialAbortsEarly(t *testing.T) {
+	t.Parallel()
+
+	const maxBytes = 64 * 1024
+	const addedEntrySize = 512 * 1024
+
+	measured, err := measureArchiveSize(
+		context.Background(),
+		archiveMeta{
+			title:    "拾叶 2026-03-15 (1/2)",
+			identity: newBookIdentity(),
+			chapters: []chapterMeta{{title: "Oversize"}},
+		},
+		nil,
+		[]spooledEntry{{
+			name:             "OEBPS/chapters/chapter-0001.xhtml",
+			method:           zip.Deflate,
+			compressedSize:   addedEntrySize,
+			uncompressedSize: addedEntrySize,
+		}},
+		maxBytes,
+	)
+	if !errors.Is(err, errArchiveTooLarge) {
+		t.Fatalf("measureArchiveSize() err = %v, want errArchiveTooLarge", err)
+	}
+	if measured >= addedEntrySize/2 {
+		t.Fatalf("measureArchiveSize() wrote %d bytes before aborting, expected early abort near %d", measured, maxBytes)
+	}
+
+	_, compErr := compressDeflateBounded("OEBPS/chapters/chapter-0001.xhtml", randomBytes(t, addedEntrySize), maxBytes)
+	if !errors.Is(compErr, errArchiveTooLarge) {
+		t.Fatalf("compressDeflateBounded() err = %v, want errArchiveTooLarge", compErr)
+	}
+}
+
+func TestPackerSpoolCleanupOnSuccessFailureAndCancel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("success removes spool files and uses 0600 mode", func(t *testing.T) {
+		t.Parallel()
+
+		spoolDir := t.TempDir()
+		packer, err := NewBuilder(Config{MaxEPUBBytes: 200 * 1024, SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15")
+		if err != nil {
+			t.Fatalf("NewPacker() error = %v", err)
+		}
+		defer func() { _ = packer.Close() }()
+
+		for i := range 4 {
+			err := packer.AddArticle(context.Background(), domain.KindleArticle{
+				ID:       fmt.Sprintf("a-%d", i+1),
+				Title:    fmt.Sprintf("篇 %d", i+1),
+				HTMLBody: "<p>" + randomText(t, 100*1024) + "</p>",
+			})
+			if err != nil {
+				t.Fatalf("AddArticle(%d) error = %v", i, err)
+			}
+		}
+
+		count, err := packer.Finish(context.Background())
+		if err != nil {
+			t.Fatalf("Finish() error = %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("Finish() count = %d, want 2", count)
+		}
+
+		entries, err := os.ReadDir(spoolDir)
+		if err != nil {
+			t.Fatalf("ReadDir() error = %v", err)
+		}
+		if len(entries) != 2 {
+			t.Fatalf("spool entries after Finish = %d, want 2", len(entries))
+		}
+		for _, entry := range entries {
+			info, err := os.Stat(filepath.Join(spoolDir, entry.Name()))
+			if err != nil {
+				t.Fatalf("Stat(%s) error = %v", entry.Name(), err)
+			}
+			if perm := info.Mode().Perm(); perm != 0o600 {
+				t.Fatalf("spool file %s mode = %o, want 0600", entry.Name(), perm)
+			}
+		}
+
+		for i := range count {
+			book, err := packer.ReadBook(context.Background(), i)
+			if err != nil {
+				t.Fatalf("ReadBook(%d) error = %v", i, err)
+			}
+			if len(book.Data) == 0 {
+				t.Fatalf("ReadBook(%d) returned empty data", i)
+			}
+		}
+
+		if err := packer.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+
+		remaining, err := os.ReadDir(spoolDir)
+		if err != nil {
+			t.Fatalf("ReadDir() after Close error = %v", err)
+		}
+		if len(remaining) != 0 {
+			t.Fatalf("leftover spool files after success: %v", remaining)
+		}
+	})
+
+	t.Run("oversize text-only failure cleans up prior spool files", func(t *testing.T) {
+		t.Parallel()
+
+		spoolDir := t.TempDir()
+		packer, err := NewBuilder(Config{MaxEPUBBytes: 64 * 1024, SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15")
+		if err != nil {
+			t.Fatalf("NewPacker() error = %v", err)
+		}
+
+		if err := packer.AddArticle(context.Background(), domain.KindleArticle{
+			ID:       "ok-1",
+			Title:    "正常文章",
+			HTMLBody: "<p>" + randomText(t, 40*1024) + "</p>",
+		}); err != nil {
+			t.Fatalf("AddArticle(ok) error = %v", err)
+		}
+
+		addErr := packer.AddArticle(context.Background(), domain.KindleArticle{
+			ID:       "too-big",
+			Title:    "超大纯文本",
+			HTMLBody: "<p>" + randomText(t, 128*1024) + "</p>",
+		})
+		if addErr == nil || !strings.Contains(addErr.Error(), "even without images") {
+			t.Fatalf("AddArticle(too-big) error = %v, want even without images oversize error", addErr)
+		}
+
+		if err := packer.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+
+		remaining, err := os.ReadDir(spoolDir)
+		if err != nil {
+			t.Fatalf("ReadDir() error = %v", err)
+		}
+		if len(remaining) != 0 {
+			t.Fatalf("leftover spool files after failure: %v", remaining)
+		}
+	})
+
+	t.Run("context cancel cleans up spool files", func(t *testing.T) {
+		t.Parallel()
+
+		spoolDir := t.TempDir()
+		ctx, cancel := context.WithCancel(context.Background())
+		packer, err := NewBuilder(Config{MaxEPUBBytes: 128 * 1024, SpoolDir: spoolDir}).NewPacker(ctx, "2026-03-15")
+		if err != nil {
+			t.Fatalf("NewPacker() error = %v", err)
+		}
+
+		if err := packer.AddArticle(ctx, domain.KindleArticle{
+			ID:       "ok-1",
+			Title:    "第一篇",
+			HTMLBody: "<p>" + randomText(t, 32*1024) + "</p>",
+		}); err != nil {
+			t.Fatalf("AddArticle() error = %v", err)
+		}
+
+		cancel()
+		if err := packer.AddArticle(ctx, domain.KindleArticle{
+			ID:       "canceled-2",
+			Title:    "第二篇",
+			HTMLBody: "<p>hello</p>",
+		}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("AddArticle(canceled) error = %v, want context.Canceled", err)
+		}
+
+		if err := packer.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+
+		remaining, err := os.ReadDir(spoolDir)
+		if err != nil {
+			t.Fatalf("ReadDir() error = %v", err)
+		}
+		if len(remaining) != 0 {
+			t.Fatalf("leftover spool files after cancel: %v", remaining)
+		}
+	})
+}
+
+func TestPackerEnforcesPerJobSpoolQuota(t *testing.T) {
+	t.Parallel()
+
+	spoolDir := t.TempDir()
+	packer, err := NewBuilder(Config{
+		MaxEPUBBytes:     128 * 1024,
+		MaxJobSpoolBytes: 150 * 1024,
+		SpoolDir:         spoolDir,
+	}).NewPacker(context.Background(), "2026-03-15")
+	if err != nil {
+		t.Fatalf("NewPacker() error = %v", err)
+	}
+
+	var quotaErr error
+	for i := range 4 {
+		err := packer.AddArticle(context.Background(), domain.KindleArticle{
+			ID:       fmt.Sprintf("a-%d", i+1),
+			Title:    fmt.Sprintf("文章 %d", i+1),
+			HTMLBody: "<p>" + randomText(t, 80*1024) + "</p>",
+		})
+		if err != nil {
+			quotaErr = err
+			break
+		}
+	}
+
+	if quotaErr == nil || !strings.Contains(quotaErr.Error(), "spool quota exceeded") {
+		t.Fatalf("expected spool quota error, got %v", quotaErr)
+	}
+
+	if err := packer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	remaining, err := os.ReadDir(spoolDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("leftover spool files after quota failure: %v", remaining)
+	}
+}
+
+func TestPackerEnforcesPerBookImageBudget(t *testing.T) {
+	t.Parallel()
+
+	img1 := encodeTestPNG(t, 95, 95) // ~36 KiB <= 128 KiB, kept as PNG
+	img2 := encodeTestPNG(t, 95, 95)
+	img3 := encodeTestPNG(t, 95, 95)
+	if len(img1) <= 30*1024 || len(img1) >= 50*1024 {
+		t.Fatalf("unexpected test PNG size: %d", len(img1))
+	}
+
+	fetcher := newFakeImageFetcher(map[string]fakeImage{
+		"https://example.com/1.png": {data: img1, mediaType: "image/png"},
+		"https://example.com/2.png": {data: img2, mediaType: "image/png"},
+		"https://example.com/3.png": {data: img3, mediaType: "image/png"},
+	})
+
+	books, err := NewBuilder(Config{
+		ImageFetcher:      fetcher,
+		MaxEPUBBytes:      512 * 1024,
+		MaxBookImageBytes: 50 * 1024,
+	}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{{
+		ID:       "a-1",
+		URL:      "https://example.com/posts/1",
+		Title:    "图片预算",
+		HTMLBody: `<p>正文</p><img src="https://example.com/1.png"><img src="https://example.com/2.png"><img src="https://example.com/3.png">`,
+	}})
+	if err != nil {
+		t.Fatalf("BuildBooks() error = %v", err)
+	}
+
+	reader := openArchive(t, books[0].Data)
+	chapter := string(entryBody(t, entryByName(t, reader, "OEBPS/chapters/chapter-0001.xhtml")))
+	if strings.Count(chapter, "<img") != 1 || !strings.Contains(chapter, `src="../images/img-0001.png"`) {
+		t.Fatalf("expected only first image within per-book budget, got:\n%s", chapter)
+	}
+}
+
+func TestPackerSharesSingleImagePrepDeadlineAcrossArticles(t *testing.T) {
+	t.Parallel()
+
+	const (
+		prepTimeout  = 80 * time.Millisecond
+		articleCount = 30
+	)
+
+	gate := make(chan struct{})
+	defer close(gate)
+
+	fetcher := &blockingImageFetcher{
+		fastURL:  "https://example.com/fast.png",
+		fastData: encodeTestPNG(t, 16, 16),
+		gate:     gate,
+	}
+
+	articles := make([]domain.KindleArticle, articleCount)
+	for i := range articles {
+		body := fmt.Sprintf(`<p>article-%d</p><img src="https://example.com/slow-%d.png">`, i+1, i+1)
+		if i == 0 {
+			body = `<p>article-1</p><img src="https://example.com/fast.png"><img src="https://example.com/slow-1.png">`
+		}
+
+		articles[i] = domain.KindleArticle{
+			ID:       fmt.Sprintf("a-%d", i+1),
+			URL:      fmt.Sprintf("https://example.com/posts/%d", i+1),
+			Title:    fmt.Sprintf("文章 %d", i+1),
+			HTMLBody: body,
+		}
+	}
+
+	start := time.Now()
+	books, err := NewBuilder(Config{
+		ImageFetcher:     fetcher,
+		ImagePrepTimeout: prepTimeout,
+		MaxEPUBBytes:     64 * 1024,
+	}).BuildBooks(context.Background(), "2026-03-15", articles)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("BuildBooks() error = %v", err)
+	}
+
+	// 30 articles with per-article timeouts would take >= 2.4s; one shared job
+	// budget completes well under half of that even under -race CPU contention.
+	if elapsed >= 10*prepTimeout {
+		t.Fatalf("BuildBooks() took %v, expected well below per-article timeout total (%v)", elapsed, time.Duration(articleCount)*prepTimeout)
+	}
+
+	if gotCalls := fetcher.calls.Load(); gotCalls > 2 {
+		t.Fatalf("FetchImage called %d times, expected <= 2 (fast + slow in article 1 before deadline expiry)", gotCalls)
+	}
+
+	totalArticles := 0
+	for _, book := range books {
+		totalArticles += book.ArticleCount
+		reader := openArchive(t, book.Data)
+		for _, f := range reader.File {
+			if strings.HasPrefix(f.Name, "OEBPS/chapters/") {
+				ch := string(entryBody(t, f))
+				if f.Name == "OEBPS/chapters/chapter-0001.xhtml" && book.Filename == books[0].Filename {
+					if strings.Count(ch, "<img") != 1 || !strings.Contains(ch, `src="../images/img-0001.png"`) {
+						t.Fatalf("expected fast.png kept and slow-1 stripped in chapter 1, got:\n%s", ch)
+					}
+					continue
+				}
+
+				if strings.Contains(ch, "<img") {
+					t.Fatalf("expected slow image stripped after shared deadline in %s (%s), got:\n%s", book.Filename, f.Name, ch)
+				}
+			}
+		}
+	}
+
+	if totalArticles != articleCount {
+		t.Fatalf("total ArticleCount = %d, want %d", totalArticles, articleCount)
+	}
+}
+
+func TestPrepareSpoolDirCleansLeftoversAndEnforces0700(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	spoolDir := filepath.Join(parent, "spool")
+	if err := os.MkdirAll(filepath.Join(spoolDir, "nested"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(spoolDir, "stale.spool"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(spoolDir, "nested", "inner.spool"), []byte("inner"), 0o600); err != nil {
+		t.Fatalf("WriteFile(nested) error = %v", err)
+	}
+
+	if err := PrepareSpoolDir(spoolDir); err != nil {
+		t.Fatalf("PrepareSpoolDir() error = %v", err)
+	}
+
+	info, err := os.Stat(spoolDir)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("spool dir mode = %o, want 0700", perm)
+	}
+
+	entries, err := os.ReadDir(spoolDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected clean spool dir, got %v", entries)
+	}
+}
+
+func TestPackerRetriesSpoolRemovalOnCloseAfterReadBookFailure(t *testing.T) {
+	t.Parallel()
+
+	spoolDir := t.TempDir()
+	rawPacker, err := NewBuilder(Config{SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15")
+	if err != nil {
+		t.Fatalf("NewPacker() error = %v", err)
+	}
+
+	p := rawPacker.(*packer)
+	defer func() {
+		p.removeFile = os.Remove
+		_ = p.Close()
+	}()
+
+	if err := p.AddArticle(context.Background(), domain.KindleArticle{
+		ID:       "a-1",
+		Title:    "文章 1",
+		HTMLBody: "<p>hello</p>",
+	}); err != nil {
+		t.Fatalf("AddArticle() error = %v", err)
+	}
+
+	if _, err := p.Finish(context.Background()); err != nil {
+		t.Fatalf("Finish() error = %v", err)
+	}
+
+	p.removeFile = func(string) error {
+		return errors.New("transient remove failure")
+	}
+
+	if _, err := p.ReadBook(context.Background(), 0); err == nil {
+		t.Fatal("expected ReadBook() error when spool removal fails")
+	}
+
+	if _, err := p.ReadBook(context.Background(), 0); err == nil || !strings.Contains(err.Error(), "already consumed") {
+		t.Fatalf("expected consumed error on second ReadBook(), got %v", err)
+	}
+
+	entries, err := os.ReadDir(spoolDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("spool files after failed ReadBook remove = %d, want 1 retained for Close retry", len(entries))
+	}
+
+	p.removeFile = os.Remove
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	entries, err = os.ReadDir(spoolDir)
+	if err != nil {
+		t.Fatalf("ReadDir() after Close error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("leftover spool files after Close retry: %v", entries)
+	}
+}
+
+func TestChapterNavOpfUncompressedBytesMatchesRenderedDelta(t *testing.T) {
+	t.Parallel()
+
+	identity := newBookIdentity()
+	meta := archiveMeta{
+		title:    "拾叶 2026-03-15 (987654/987654)",
+		identity: identity,
+	}
+
+	testCases := []struct {
+		index  int
+		title  string
+		images []imageManifestItem
+	}{
+		{index: 0, title: "Plain title"},
+		{index: 1, title: "Title & <escaped> > text", images: []imageManifestItem{{number: 1, fileName: "img-0001.jpg", mediaType: "image/jpeg"}}},
+		{index: 9998, title: "Four digits"},
+		{index: 9999, title: "Five digits", images: []imageManifestItem{{number: 10000, fileName: "img-10000.png", mediaType: "image/png"}}},
+	}
+
+	for _, tc := range testCases {
+		for len(meta.chapters) < tc.index {
+			meta.chapters = append(meta.chapters, chapterMeta{title: "filler"})
+		}
+
+		before := len(renderNav(meta.title, meta.chapters)) + len(renderNCX(meta)) + len(renderOPF(meta))
+		meta.chapters = append(meta.chapters, chapterMeta{title: tc.title})
+		meta.images = append(meta.images, tc.images...)
+		after := len(renderNav(meta.title, meta.chapters)) + len(renderNCX(meta)) + len(renderOPF(meta))
+
+		got := chapterNavOpfUncompressedBytes(tc.index, tc.title, tc.images)
+		want := int64(after - before)
+		if got != want {
+			t.Fatalf("index %d: chapterNavOpfUncompressedBytes() = %d, want %d", tc.index, got, want)
+		}
+	}
+}
+
+func TestPackerPacks5000TinyArticlesWithSublinearMeasurements(t *testing.T) {
+	const articleCount = 5000
+	articles := make([]domain.KindleArticle, articleCount)
+	for i := range articles {
+		articles[i] = domain.KindleArticle{
+			ID:       fmt.Sprintf("tiny-%d", i+1),
+			Title:    fmt.Sprintf("Tiny %d", i+1),
+			HTMLBody: "<p>ok</p>",
+		}
+	}
+
+	t.Run("single 20 MiB book skips intermediate measurements", func(t *testing.T) {
+		rawPacker, err := NewBuilder(Config{}).NewPacker(context.Background(), "2026-03-15")
+		if err != nil {
+			t.Fatalf("NewPacker() error = %v", err)
+		}
+		p := rawPacker.(*packer)
+		defer func() { _ = p.Close() }()
+
+		for _, art := range articles {
+			if err := p.AddArticle(context.Background(), art); err != nil {
+				t.Fatalf("AddArticle(%s) error = %v", art.ID, err)
+			}
+		}
+
+		count, err := p.Finish(context.Background())
+		if err != nil {
+			t.Fatalf("Finish() error = %v", err)
+		}
+		if count != 1 {
+			t.Fatalf("Finish() count = %d, want 1", count)
+		}
+
+		if p.measureCount != 0 {
+			t.Fatalf("measureCount = %d for 5000 tiny articles in 1 book, want 0", p.measureCount)
+		}
+
+		book, err := p.ReadBook(context.Background(), 0)
+		if err != nil {
+			t.Fatalf("ReadBook() error = %v", err)
+		}
+		if len(book.Data) > domain.MaxKindleEPUBBytes {
+			t.Fatalf("book size = %d > %d", len(book.Data), domain.MaxKindleEPUBBytes)
+		}
+		if book.ArticleCount != articleCount {
+			t.Fatalf("ArticleCount = %d, want %d", book.ArticleCount, articleCount)
+		}
+	})
+
+	t.Run("multi-book split runs O(n/books) measurements", func(t *testing.T) {
+		const maxBytes = 256 * 1024
+		rawPacker, err := NewBuilder(Config{MaxEPUBBytes: maxBytes}).NewPacker(context.Background(), "2026-03-15")
+		if err != nil {
+			t.Fatalf("NewPacker() error = %v", err)
+		}
+		p := rawPacker.(*packer)
+		defer func() { _ = p.Close() }()
+
+		for _, art := range articles {
+			if err := p.AddArticle(context.Background(), art); err != nil {
+				t.Fatalf("AddArticle(%s) error = %v", art.ID, err)
+			}
+		}
+
+		bookCount, err := p.Finish(context.Background())
+		if err != nil {
+			t.Fatalf("Finish() error = %v", err)
+		}
+		if bookCount < 2 {
+			t.Fatalf("bookCount = %d, want >= 2", bookCount)
+		}
+
+		if p.measureCount >= articleCount/5 {
+			t.Fatalf("measureCount = %d for %d articles across %d books, expected O(n/books) << %d", p.measureCount, articleCount, bookCount, articleCount/5)
+		}
+
+		packedArticles := 0
+		for i := range bookCount {
+			book, err := p.ReadBook(context.Background(), i)
+			if err != nil {
+				t.Fatalf("ReadBook(%d) error = %v", i, err)
+			}
+			if len(book.Data) > maxBytes {
+				t.Fatalf("book %d size = %d > %d", i, len(book.Data), maxBytes)
+			}
+			packedArticles += book.ArticleCount
+			openArchive(t, book.Data)
+		}
+
+		if packedArticles != articleCount {
+			t.Fatalf("packedArticles = %d, want %d", packedArticles, articleCount)
+		}
+	})
+}
+
+func TestPackerBoundaryNearLimitNeverExceedsMaxBytes(t *testing.T) {
+	t.Parallel()
+
+	const baseMaxBytes = 128 * 1024
+	articles := make([]domain.KindleArticle, 120)
+	for i := range articles {
+		articles[i] = domain.KindleArticle{
+			ID:       fmt.Sprintf("b-%d", i+1),
+			Title:    "Title &" + randomText(t, 40),
+			HTMLBody: "<p>" + randomText(t, 1800) + "</p>",
+		}
+	}
+
+	// Probe multiple byte limits around the multi-book and margin boundaries.
+	for _, maxBytes := range []int{baseMaxBytes, baseMaxBytes + 7, baseMaxBytes + 513, baseMaxBytes - 4093} {
+		books, err := NewBuilder(Config{MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
+		if err != nil {
+			t.Fatalf("BuildBooks(maxBytes=%d) error = %v", maxBytes, err)
+		}
+		if len(books) < 2 {
+			t.Fatalf("BuildBooks(maxBytes=%d) returned %d books, want >= 2", maxBytes, len(books))
+		}
+
+		packed := 0
+		for i, book := range books {
+			if len(book.Data) > maxBytes {
+				t.Fatalf("maxBytes=%d book %d size = %d exceeds limit", maxBytes, i, len(book.Data))
+			}
+			packed += book.ArticleCount
+			openArchive(t, book.Data)
+		}
+
+		if packed != len(articles) {
+			t.Fatalf("maxBytes=%d packed = %d, want %d", maxBytes, packed, len(articles))
+		}
+	}
+}
+
+func TestPackerSharesBookIdentityBetweenMeasureAndFinalArchive(t *testing.T) {
+	t.Parallel()
+
+	rawPacker, err := NewBuilder(Config{MaxEPUBBytes: 64 * 1024}).NewPacker(context.Background(), "2026-03-15")
+	if err != nil {
+		t.Fatalf("NewPacker() error = %v", err)
+	}
+	p := rawPacker.(*packer)
+	defer func() { _ = p.Close() }()
+
+	if err := p.AddArticle(context.Background(), domain.KindleArticle{
+		ID:       "a-1",
+		Title:    "唯一标识",
+		HTMLBody: "<p>" + randomText(t, 12*1024) + "</p>",
+	}); err != nil {
+		t.Fatalf("AddArticle() error = %v", err)
+	}
+
+	if _, err := p.Finish(context.Background()); err != nil {
+		t.Fatalf("Finish() error = %v", err)
+	}
+
+	finished := p.finished[0]
+	exactMeasured, err := measureArchiveSize(
+		context.Background(),
+		archiveMeta{
+			title:    "拾叶 2026-03-15",
+			identity: finished.identity,
+			chapters: finished.chapters,
+			images:   finished.images,
+		},
+		finished.entries,
+		nil,
+		64*1024,
+	)
+	if err != nil {
+		t.Fatalf("measureArchiveSize() error = %v", err)
+	}
+
+	book, err := p.ReadBook(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("ReadBook() error = %v", err)
+	}
+
+	if int64(len(book.Data)) != exactMeasured {
+		t.Fatalf("final book len = %d, want exact measured size %d", len(book.Data), exactMeasured)
+	}
+
+	reader := openArchive(t, book.Data)
+	ncx := string(entryBody(t, entryByName(t, reader, "OEBPS/toc.ncx")))
+	opf := string(entryBody(t, entryByName(t, reader, "OEBPS/content.opf")))
+	if !strings.Contains(ncx, finished.identity.identifier) {
+		t.Fatalf("toc.ncx missing shared identifier %q:\n%s", finished.identity.identifier, ncx)
+	}
+	if !strings.Contains(opf, finished.identity.identifier) {
+		t.Fatalf("content.opf missing shared identifier %q:\n%s", finished.identity.identifier, opf)
+	}
+	wantMod := finished.identity.modifiedAt.UTC().Format("2006-01-02T15:04:05Z")
+	if !strings.Contains(opf, wantMod) {
+		t.Fatalf("content.opf missing shared modifiedAt %q:\n%s", wantMod, opf)
+	}
+}
+
+func encodeTestInterlacedPNG(t *testing.T, width int, height int, sixteenBit bool) []byte {
+	t.Helper()
+
+	bitDepth := byte(8)
+	bytesPerPixel := 4
+	if sixteenBit {
+		bitDepth = 16
+		bytesPerPixel = 8
+	}
+
+	var ihdr [13]byte
+	binary.BigEndian.PutUint32(ihdr[0:4], uint32(width))
+	binary.BigEndian.PutUint32(ihdr[4:8], uint32(height))
+	ihdr[8] = bitDepth
+	ihdr[9] = 6 // truecolour with alpha (NRGBA / NRGBA64)
+	ihdr[10] = 0
+	ihdr[11] = 0
+	ihdr[12] = 1 // Adam7
+
+	var rawPixels bytes.Buffer
+	passes := [7]struct{ xFactor, yFactor, xOffset, yOffset int }{
+		{8, 8, 0, 0},
+		{8, 8, 4, 0},
+		{4, 8, 0, 4},
+		{4, 4, 2, 0},
+		{2, 4, 0, 2},
+		{2, 2, 1, 0},
+		{1, 2, 0, 1},
+	}
+
+	noise := make([]byte, width*bytesPerPixel)
+	if _, err := rand.Read(noise); err != nil {
+		t.Fatalf("rand.Read() error = %v", err)
+	}
+
+	for _, p := range passes {
+		pw := (width - p.xOffset + p.xFactor - 1) / p.xFactor
+		ph := (height - p.yOffset + p.yFactor - 1) / p.yFactor
+		if pw <= 0 || ph <= 0 {
+			continue
+		}
+
+		rowLen := pw * bytesPerPixel
+		for range ph {
+			rawPixels.WriteByte(0) // None filter
+			rawPixels.Write(noise[:rowLen])
+		}
+	}
+
+	var compressed bytes.Buffer
+	zw, err := zlib.NewWriterLevel(&compressed, zlib.NoCompression)
+	if err != nil {
+		t.Fatalf("zlib.NewWriterLevel() error = %v", err)
+	}
+	if _, err := zw.Write(rawPixels.Bytes()); err != nil {
+		t.Fatalf("zlib.Write() error = %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zlib.Close() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	out.WriteString("\x89PNG\r\n\x1a\n")
+	writePNGChunk(&out, "IHDR", ihdr[:])
+	writePNGChunk(&out, "IDAT", compressed.Bytes())
+	writePNGChunk(&out, "IEND", nil)
+
+	return out.Bytes()
+}
+
+func writePNGChunk(out *bytes.Buffer, chunkType string, data []byte) {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+	out.Write(lenBuf[:])
+	out.WriteString(chunkType)
+	out.Write(data)
+
+	crc := crc32.NewIEEE()
+	_, _ = crc.Write([]byte(chunkType))
+	_, _ = crc.Write(data)
+	binary.BigEndian.PutUint32(lenBuf[:], crc.Sum32())
+	out.Write(lenBuf[:])
 }

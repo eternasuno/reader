@@ -25,6 +25,8 @@ const (
 	sqliteConstraint    = 19
 	foreignKeyFailed    = "FOREIGN KEY constraint failed"
 	uniqueFailedPrefix  = "UNIQUE constraint failed: "
+	dataDirMode         = 0o700
+	dbFileMode          = 0o600
 )
 
 //go:embed migrations/*.sql
@@ -47,8 +49,8 @@ func Open(ctx context.Context, dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("resolve database path: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o750); err != nil {
-		return nil, fmt.Errorf("create database directory: %w", err)
+	if err := ensureDatabasePermissions(absPath); err != nil {
+		return nil, err
 	}
 
 	writeDB, err := sql.Open("sqlite", sqliteDSN(absPath, true))
@@ -72,6 +74,10 @@ func Open(ctx context.Context, dbPath string) (*Store, error) {
 func initialize(ctx context.Context, dbPath string, writeDB *sql.DB) (*Store, error) {
 	if _, err := writeDB.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
 		return nil, fmt.Errorf("enable write-ahead logging: %w", err)
+	}
+
+	if err := tightenSidecarPermissions(dbPath); err != nil {
+		return nil, err
 	}
 
 	if err := applyMigrations(ctx, writeDB); err != nil {
@@ -178,6 +184,44 @@ func (s *Store) Settings() *SettingRepo {
 
 func (s *Store) KindleSends() *KindleSendRepo {
 	return s.kindleSends
+}
+
+func ensureDatabasePermissions(absPath string) error {
+	dataDir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dataDir, dataDirMode); err != nil {
+		return fmt.Errorf("create database directory: %w", err)
+	}
+
+	//nolint:gosec // absPath is the caller-configured SQLite database file path.
+	file, err := os.OpenFile(absPath, os.O_CREATE|os.O_RDONLY, dbFileMode)
+	if err != nil {
+		return fmt.Errorf("create database file: %w", err)
+	}
+
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close database file: %w", err)
+	}
+
+	if err := os.Chmod(absPath, dbFileMode); err != nil {
+		return fmt.Errorf("chmod database file: %w", err)
+	}
+
+	return tightenSidecarPermissions(absPath)
+}
+
+func tightenSidecarPermissions(absPath string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecar := absPath + suffix
+		if err := os.Chmod(sidecar, dbFileMode); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("chmod database sidecar %s: %w", filepath.Base(sidecar), err)
+		}
+	}
+
+	return nil
+}
+
+type rowsQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 func withTx(ctx context.Context, db *sql.DB, apply func(tx *sql.Tx) error) error {
@@ -294,6 +338,23 @@ func encodeIDs(ids []string) (string, error) {
 	}
 
 	return string(payload), nil
+}
+
+func markIDsRead(ctx context.Context, db *sql.DB, query string, ids []string, code domain.ErrorCode) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	payload, err := encodeIDs(ids)
+	if err != nil {
+		return domain.NewError(code, err)
+	}
+
+	if _, err := db.ExecContext(ctx, query, payload); err != nil {
+		return domain.NewError(code, err)
+	}
+
+	return nil
 }
 
 func closeRows(rows *sql.Rows) {

@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from '@solidjs/router';
 import type { JSX } from '@solidjs/web';
 import { createEffect, createSignal, onSettled, Show, untrack } from 'solid-js';
-import { authApi } from '../api';
+import { authApi, errorCodeOf } from '../api';
 import { t, toggleLocale, translateErrorCode } from '../i18n';
 import {
   checkSession,
@@ -10,7 +10,6 @@ import {
   sessionStatus,
 } from '../state';
 import { Button, Icon, Input } from '../ui';
-import { errorCodeOf } from './viewHelpers';
 
 function LoginBrand(): JSX.Element {
   return (
@@ -95,38 +94,31 @@ const useLoginRedirects = (nextParam: () => string | null): void => {
   createEffect(
     () => sessionStatus(),
     (status) => {
-      if (status === 'checking') void checkSession();
-    }
-  );
-
-  createEffect(
-    () => sessionStatus(),
-    (status) => {
-      if (status !== 'authenticated') return;
-
-      const target = untrack(() => sanitizeNextPath(nextParam()));
-      navigate(target, { replace: true });
+      if (status === 'checking') {
+        void checkSession();
+        return;
+      }
+      if (status === 'authenticated') {
+        const target = untrack(() => sanitizeNextPath(nextParam()));
+        navigate(target, { replace: true });
+      }
     }
   );
 };
 
-const useLoginSubmit = (nextParam: () => string | null) => {
-  const navigate = useNavigate();
+const useLoginSubmit = () => {
   const [password, setPassword] = createSignal('');
   const [submitting, setSubmitting] = createSignal(false);
   // Keep the code, not the translated text, so a locale switch re-translates the message.
   const [errorCode, setErrorCode] = createSignal<string | null>(null);
 
   const attempt = async (value: string): Promise<void> => {
-    // Resolve the destination before the guard effect reacts to `markAuthenticated()`.
-    const destination = untrack(() => sanitizeNextPath(nextParam()));
     setSubmitting(true);
     setErrorCode(null);
 
     try {
       await authApi.login(value);
       markAuthenticated();
-      navigate(destination, { replace: true });
     } catch (caught) {
       setErrorCode(errorCodeOf(caught));
     } finally {
@@ -158,7 +150,7 @@ export function LoginPage(): JSX.Element {
   const location = useLocation();
   const nextParam = (): string | null =>
     new URLSearchParams(location.search).get('next');
-  const login = useLoginSubmit(nextParam);
+  const login = useLoginSubmit();
 
   useLoginRedirects(nextParam);
 

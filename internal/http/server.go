@@ -23,11 +23,13 @@ const (
 	maxRequestBodyBytes            = 10 << 20
 	maxLoginBodyBytes              = 4 << 10
 	maxConcurrentForegroundFetches = 4
+	defaultForegroundFetchTimeout  = 30 * time.Second
 	minSessionSecretBytes          = 32
 
 	apiCacheControl       = "no-store"
 	immutableCacheControl = "public, max-age=31536000, immutable"
 	indexCacheControl     = "no-cache"
+	indexCSP              = "frame-ancestors 'none'"
 )
 
 // FeedRefresher schedules background refreshes without exposing the worker
@@ -46,13 +48,14 @@ type KindleDispatcher interface {
 // Config carries the settings, repositories, adapters, and workers the HTTP
 // layer needs.
 type Config struct {
-	AppPassword   string
-	AppURL        string
-	SessionSecret []byte
-	Location      *time.Location
-	Now           func() time.Time
-	HealthCheck   func(ctx context.Context) error
-	StaticFS      fs.FS
+	AppPassword            string
+	AppURL                 string
+	SessionSecret          []byte
+	Location               *time.Location
+	Now                    func() time.Time
+	ForegroundFetchTimeout time.Duration
+	HealthCheck            func(ctx context.Context) error
+	StaticFS               fs.FS
 
 	Folders     domain.FolderRepository
 	Feeds       domain.FeedRepository
@@ -75,7 +78,7 @@ type server struct {
 	appOrigin domain.Origin
 	secure    bool
 	limiter   *loginLimiter
-	fetchSem  chan struct{}
+	fetchSem  slotSemaphore
 	extracts  *extractGroup
 	mux       *http.ServeMux
 }
@@ -90,32 +93,27 @@ func NewServer(cfg Config) (http.Handler, error) {
 		cfg.Location = time.UTC
 	}
 
+	if cfg.ForegroundFetchTimeout <= 0 {
+		cfg.ForegroundFetchTimeout = defaultForegroundFetchTimeout
+	}
+
 	if len(cfg.SessionSecret) < minSessionSecretBytes {
 		return nil, fmt.Errorf("http: session secret must be at least %d bytes", minSessionSecretBytes)
 	}
 
-	appURL, err := url.Parse(strings.TrimSpace(cfg.AppURL))
+	appOrigin, err := parseAppOrigin(cfg.AppURL)
 	if err != nil {
-		// The raw URL may embed credentials, so never echo it or the parse error.
-		return nil, errors.New("http: invalid APP_URL")
+		return nil, err
 	}
 
-	if appURL.User != nil || appURL.Host == "" {
-		return nil, errors.New("http: invalid APP_URL")
-	}
-
-	appOrigin, ok := domain.OriginFromURL(appURL)
-	if !ok {
-		return nil, errors.New("http: invalid APP_URL")
-	}
-
+	fetchSem := newSlotSemaphore(maxConcurrentForegroundFetches)
 	s := &server{
 		cfg:       cfg,
 		appOrigin: appOrigin,
 		secure:    appOrigin.Scheme == "https",
 		limiter:   newLoginLimiter(cfg.Now),
-		fetchSem:  make(chan struct{}, maxConcurrentForegroundFetches),
-		extracts:  newExtractGroup(),
+		fetchSem:  fetchSem,
+		extracts:  newExtractGroup(fetchSem, cfg.ForegroundFetchTimeout),
 	}
 
 	s.mux = s.routes()
@@ -123,7 +121,28 @@ func NewServer(cfg Config) (http.Handler, error) {
 	return s, nil
 }
 
+func parseAppOrigin(rawAppURL string) (domain.Origin, error) {
+	appURL, err := url.Parse(strings.TrimSpace(rawAppURL))
+	if err != nil {
+		// The raw URL may embed credentials, so never echo it or the parse error.
+		return domain.Origin{}, errors.New("http: invalid APP_URL")
+	}
+
+	if appURL.User != nil || appURL.Host == "" {
+		return domain.Origin{}, errors.New("http: invalid APP_URL")
+	}
+
+	appOrigin, ok := domain.OriginFromURL(appURL)
+	if !ok {
+		return domain.Origin{}, errors.New("http: invalid APP_URL")
+	}
+
+	return appOrigin, nil
+}
+
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
 	if isAPIPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", apiCacheControl)
 
@@ -254,7 +273,7 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
-	if name == "" || !hasFileExtension(name) {
+	if name == "" || name == "index.html" || path.Ext(name) == "" {
 		s.serveIndex(w, r)
 
 		return
@@ -282,36 +301,47 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", indexCacheControl)
+	w.Header().Set("Content-Security-Policy", indexCSP)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeFileFS(w, r, s.cfg.StaticFS, "index.html")
 }
 
-func hasFileExtension(name string) bool {
-	return path.Ext(name) != ""
+type slotSemaphore chan struct{}
+
+func newSlotSemaphore(capacity int) slotSemaphore {
+	return make(slotSemaphore, capacity)
 }
 
-func (s *server) acquireFetchSlot(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
+func (s slotSemaphore) tryAcquire() bool {
 	select {
-	case s.fetchSem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	case s <- struct{}{}:
+		return true
+	default:
+		return false
 	}
 }
 
-func (s *server) releaseFetchSlot() {
-	<-s.fetchSem
+func (s slotSemaphore) release() {
+	<-s
+}
+
+func (s *server) withForegroundFetchTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, s.cfg.ForegroundFetchTimeout)
 }
 
 func (s *server) extractWebpage(ctx context.Context, pageURL domain.NormalizedURL) (domain.ExtractedArticle, error) {
-	if err := s.acquireFetchSlot(ctx); err != nil {
-		return domain.ExtractedArticle{}, err
+	if !s.fetchSem.tryAcquire() {
+		return domain.ExtractedArticle{}, domain.NewError(domain.ErrTooManyRequests, nil)
 	}
-	defer s.releaseFetchSlot()
+	defer s.fetchSem.release()
 
+	fetchCtx, cancel := s.withForegroundFetchTimeout(ctx)
+	defer cancel()
+
+	return s.extractWebpageWithSlot(fetchCtx, pageURL)
+}
+
+func (s *server) extractWebpageWithSlot(ctx context.Context, pageURL domain.NormalizedURL) (domain.ExtractedArticle, error) {
 	htmlBody, finalURL, err := s.cfg.WebpageFetcher.FetchWebpage(ctx, pageURL)
 	if err != nil {
 		return domain.ExtractedArticle{}, err
@@ -456,6 +486,34 @@ func parseUnreadFlag(values url.Values) (bool, error) {
 	default:
 		return false, domain.NewError(domain.ErrRequestFailed, nil)
 	}
+}
+
+func parseDefaultPageParams(r *http.Request) (domain.PageParams, error) {
+	query, err := parsePageQuery(r)
+	if err != nil {
+		return domain.PageParams{}, err
+	}
+
+	return query.params(query.orderOrDefault())
+}
+
+func mapSlice[In, Out any](items []In, convert func(In) Out) []Out {
+	converted := make([]Out, 0, len(items))
+	for _, item := range items {
+		converted = append(converted, convert(item))
+	}
+
+	return converted
+}
+
+func toPtr[In, Out any](item *In, convert func(In) Out) *Out {
+	if item == nil {
+		return nil
+	}
+
+	converted := convert(*item)
+
+	return &converted
 }
 
 func (q pageQuery) orderOrDefault() domain.SortOrder {

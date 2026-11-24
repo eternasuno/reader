@@ -168,5 +168,3 @@ body {
   overflow-wrap: anywhere;
   word-break: break-word;
 }${READER_ELEMENT_STYLES}`;
-
-export const READER_STYLES = buildReaderStyles(DEFAULT_APPEARANCE);

@@ -6,7 +6,7 @@ Feed fetching, parsing (`FD-PARSE`), item selection/retention (`FD-SEL`), sync (
 
 ### FD-FETCH & FD-PARSE — Fetching and Parsing
 - `FD-FETCH-1`: Fetches feed URLs with SSRF IP filtering (`CM-FETCH-2`), redirect re-validation, `15s` timeout, and `10 MiB` max body. Non-2xx fails `FetchFeedError`; invalid feed fails `FeedParserError`. Entry URLs resolve against the final response URL.
-- `FD-PARSE-1`: Supports RSS, Atom, RDF, and JSON Feed (stripping leading UTF-8 BOM). Failure is total.
+- `FD-PARSE-1`: Supports RSS, Atom, RDF, and JSON Feed (stripping leading UTF-8 BOM), bounded to at most 1000 items, XML nesting depth `<= 64`, and a `40 MiB` cumulative sanitized output budget. Failure is total.
 - `FD-PARSE-2`: Entry URL takes RSS/RDF `link`, JSON Feed `url` (ignoring `external_url`), or Atom `rel="alternate"` (preferring `text/html`, then untyped, then any alternate). Entries missing a valid `http`/`https` `NormalizedUrl` are dropped silently.
 - `FD-PARSE-3`: Plain text summaries/contents in Atom (`text`, `text/plain`, untyped) and JSON Feed (`summary`, `content_text`) are HTML-escaped before sanitization. RSS/RDF use `content:encoded` for content (never `description` as content); Atom ignores `content[src]`; JSON Feed prefers non-blank `content_html` over `content_text`.
 - `FD-PARSE-4`: Publish time uses RSS `pubDate`, Atom `published` (ignoring `updated`), RDF `dc:date`, or JSON Feed `date_published` (ignoring `date_modified`). Unparseable or missing dates remain absent.

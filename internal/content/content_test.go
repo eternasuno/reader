@@ -2,6 +2,8 @@ package content
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -906,4 +908,334 @@ func (f failingSanitizer) SanitizeHTML(rawHTML string, baseURL string) (string, 
 	}
 
 	return "<p>sanitized</p>", nil
+}
+
+func TestSanitizeHTMLRemovesUnusedURLAttrsAndRestrictsDataURLs(t *testing.T) {
+	t.Parallel()
+
+	raw := `<map name="m"><area shape="rect" coords="0,0,10,10" href="https://user:pw@example.com/area"></map>` +
+		`<img src="/pic.png" usemap="#m">` +
+		`<blockquote cite="https://user:pw@example.com/quote"><p>quote</p></blockquote>` +
+		`<q cite="https://user:pw@example.com/q">short</q>` +
+		`<del cite="https://user:pw@example.com/del">old</del>` +
+		`<ins cite="https://user:pw@example.com/ins">new</ins>` +
+		`<a href="data:image/png;base64,iVBORw0KGgo=">data link</a>` +
+		`<video src="data:image/png;base64,iVBORw0KGgo=" controls></video>` +
+		`<audio src="data:image/png;base64,iVBORw0KGgo=" controls></audio>` +
+		`<picture><source src="data:image/png;base64,iVBORw0KGgo=" type="image/png"><img src="data:image/png;base64,iVBORw0KGgo="></picture>` +
+		`<a href="mailto://user:pw@example.com">bad mailto</a>` +
+		`<source src="https://media:pw@example.com/clip.mp4" type="video/mp4">` +
+		`<video src="https://vid:pw@example.com/clip.mp4"></video>` +
+		`<audio src="https://aud:pw@example.com/clip.mp3"></audio>`
+
+	sanitized, err := NewSanitizer().SanitizeHTML(raw, "https://baseuser:basepw@example.com/dir/post")
+	if err != nil {
+		t.Fatalf("SanitizeHTML() error = %v", err)
+	}
+
+	for _, unwanted := range []string{
+		"<map",
+		"<area",
+		"usemap",
+		"cite=",
+		"user:",
+		"pw@",
+		"baseuser:",
+		"basepw@",
+		"media:",
+		"vid:",
+		"aud:",
+		`<a href="data:`,
+		`<video src="data:`,
+		`<audio src="data:`,
+		`<source src="data:`,
+		"mailto://",
+	} {
+		requireNotContains(t, sanitized, unwanted)
+	}
+
+	requireContains(t, sanitized, "<blockquote><p>quote</p></blockquote>")
+	requireContains(t, sanitized, "<q>short</q>")
+	requireContains(t, sanitized, "<del>old</del>")
+	requireContains(t, sanitized, "<ins>new</ins>")
+	requireContains(t, sanitized, `<img src="https://example.com/pic.png"`)
+	requireContains(t, sanitized, `<img src="data:image/png;base64,iVBORw0KGgo="`)
+	requireContains(t, sanitized, `<video src="https://example.com/clip.mp4"`)
+	requireContains(t, sanitized, `<audio src="https://example.com/clip.mp3"`)
+}
+
+func TestParseFeedRejectsExcessiveXMLDepth(t *testing.T) {
+	t.Parallel()
+
+	buildDeepRSS := func(extraDepth int) string {
+		openTags := strings.Repeat("<ext:wrap>", extraDepth)
+		closeTags := strings.Repeat("</ext:wrap>", extraDepth)
+
+		return `<?xml version="1.0" encoding="UTF-8"?>` +
+			`<rss version="2.0" xmlns:ext="https://example.com/ext"><channel><title>Deep</title>` +
+			`<item><title>Item</title><link>https://example.com/1</link>` +
+			openTags + `<ext:leaf>x</ext:leaf>` + closeTags +
+			`</item></channel></rss>`
+	}
+
+	parser := NewFeedParser(NewSanitizer())
+
+	// Depth = rss(1) -> channel(2) -> item(3) -> 60 wraps(63) -> leaf(64) fits maxFeedXMLDepth(64).
+	if _, err := parser.ParseFeed([]byte(buildDeepRSS(60)), "https://example.com/feed.xml"); err != nil {
+		t.Fatalf("expected depth 64 to succeed, got %v", err)
+	}
+
+	// Depth = 65 exceeds maxFeedXMLDepth(64).
+	if _, err := parser.ParseFeed([]byte(buildDeepRSS(61)), "https://example.com/feed.xml"); err == nil {
+		t.Fatal("expected depth 65 to fail, got nil")
+	} else {
+		requireErrorCode(t, err, domain.ErrFeedParserError)
+	}
+}
+
+func TestParseFeedLimitsItemCount(t *testing.T) {
+	t.Parallel()
+
+	parser := NewFeedParser(NewSanitizer())
+	limits := feedLimits{maxItems: 3, maxOutputBytes: 64 * 1024}
+
+	t.Run("rss", func(t *testing.T) {
+		var items strings.Builder
+		for i := range 4 {
+			fmt.Fprintf(&items, `<item><title>Item %d</title><link>https://example.com/%d</link></item>`, i, i)
+		}
+
+		body := `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Feed</title>` + items.String() + `</channel></rss>`
+		parsed, err := parser.parseFeedWithLimits([]byte(body), "https://example.com/feed.xml", limits)
+		requireErrorCode(t, err, domain.ErrFeedParserError)
+
+		if len(parsed.Entries) != 0 {
+			t.Fatalf("expected zero partial entries on failure, got %d", len(parsed.Entries))
+		}
+	})
+
+	t.Run("atom", func(t *testing.T) {
+		var entries strings.Builder
+		for i := range 4 {
+			fmt.Fprintf(&entries, `<entry><title>Item %d</title><link href="https://example.com/%d"/></entry>`, i, i)
+		}
+
+		body := `<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Feed</title>` + entries.String() + `</feed>`
+		parsed, err := parser.parseFeedWithLimits([]byte(body), "https://example.com/atom.xml", limits)
+		requireErrorCode(t, err, domain.ErrFeedParserError)
+
+		if len(parsed.Entries) != 0 {
+			t.Fatalf("expected zero partial entries on failure, got %d", len(parsed.Entries))
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		var items []string
+		for i := range 4 {
+			items = append(items, fmt.Sprintf(`{"url":"https://example.com/%d","title":"Item %d"}`, i, i))
+		}
+
+		body := `{"version":"https://jsonfeed.org/version/1.1","title":"Feed","items":[` + strings.Join(items, ",") + `]}`
+		parsed, err := parser.parseFeedWithLimits([]byte(body), "https://example.com/feed.json", limits)
+		requireErrorCode(t, err, domain.ErrFeedParserError)
+
+		if len(parsed.Entries) != 0 {
+			t.Fatalf("expected zero partial entries on failure, got %d", len(parsed.Entries))
+		}
+	})
+}
+
+type streamingJSONFeedReader struct {
+	totalItems   int
+	itemsEmitted int
+	bytesRead    int
+	buf          []byte
+	offset       int
+	closed       bool
+}
+
+func newStreamingJSONFeedReader(totalItems int) *streamingJSONFeedReader {
+	return &streamingJSONFeedReader{
+		totalItems: totalItems,
+		buf:        []byte(`{"version":"https://jsonfeed.org/version/1.1","title":"Feed","items":[`),
+	}
+}
+
+func (r *streamingJSONFeedReader) Read(p []byte) (int, error) {
+	if r.offset >= len(r.buf) {
+		if r.closed {
+			return 0, io.EOF
+		}
+
+		r.offset = 0
+		if r.itemsEmitted < r.totalItems {
+			prefix := ""
+			if r.itemsEmitted > 0 {
+				prefix = ","
+			}
+
+			r.buf = fmt.Appendf(r.buf[:0], `%s{"url":"https://example.com/%d","title":"Item %d"}`, prefix, r.itemsEmitted, r.itemsEmitted)
+			r.itemsEmitted++
+		} else {
+			r.buf = append(r.buf[:0], "]}"...)
+			r.closed = true
+		}
+	}
+
+	n := copy(p, r.buf[r.offset:])
+	r.offset += n
+	r.bytesRead += n
+
+	return n, nil
+}
+
+func TestParseJSONFeedAbortsEarlyOnItemLimit(t *testing.T) {
+	t.Parallel()
+
+	parser := NewFeedParser(NewSanitizer())
+	base := parseBaseURL("https://example.com/feed.json")
+
+	const totalItems = 100_000
+	for _, maxItems := range []int{3, maxFeedItems} {
+		t.Run(fmt.Sprintf("maxItems_%d", maxItems), func(t *testing.T) {
+			t.Parallel()
+
+			reader := newStreamingJSONFeedReader(totalItems)
+			limits := feedLimits{maxItems: maxItems, maxOutputBytes: maxFeedOutputBytes}
+
+			parsed, err := parser.parseJSONFeedReader(reader, base, limits)
+			requireErrorCode(t, err, domain.ErrFeedParserError)
+
+			if len(parsed.Entries) != 0 {
+				t.Fatalf("expected zero partial entries on failure, got %d", len(parsed.Entries))
+			}
+
+			if reader.itemsEmitted > maxItems+64 {
+				t.Fatalf("expected streaming abort near limit %d, but reader emitted %d of %d items", maxItems, reader.itemsEmitted, totalItems)
+			}
+
+			if reader.bytesRead >= 128*1024 {
+				t.Fatalf("expected bounded read before abort, read %d bytes", reader.bytesRead)
+			}
+		})
+	}
+}
+
+func TestParseJSONFeedEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	parser := NewFeedParser(NewSanitizer())
+
+	t.Run("items before header fields", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"items":[{"url":"https://example.com/1","title":"One"}],"description":"Desc","title":"Before Header","version":"https://jsonfeed.org/version/1.1"}`
+		feed, err := parser.ParseFeed([]byte(body), "https://example.com/feed.json")
+		if err != nil {
+			t.Fatalf("ParseFeed failed: %v", err)
+		}
+
+		if feed.Title != "Before Header" || feed.Description == nil || *feed.Description != "Desc" || len(feed.Entries) != 1 {
+			t.Fatalf("unexpected parsed feed: %+v", feed)
+		}
+	})
+
+	t.Run("null items array", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"version":"https://jsonfeed.org/version/1.1","title":"Empty","items":null}`
+		feed, err := parser.ParseFeed([]byte(body), "https://example.com/feed.json")
+		if err != nil {
+			t.Fatalf("ParseFeed failed: %v", err)
+		}
+
+		if len(feed.Entries) != 0 {
+			t.Fatalf("expected 0 entries, got %d", len(feed.Entries))
+		}
+	})
+
+	t.Run("skips unknown nested fields", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"version":"https://jsonfeed.org/version/1.1","title":"Ext","expired":true,"authors":[{"name":"Alice"}],"_ext":{"nested":[1,true,{"k":"v"}]},"items":[{"url":"https://example.com/1","title":"One"}]}`
+		feed, err := parser.ParseFeed([]byte(body), "https://example.com/feed.json")
+		if err != nil {
+			t.Fatalf("ParseFeed failed: %v", err)
+		}
+
+		if len(feed.Entries) != 1 {
+			t.Fatalf("expected 1 entry, got %d", len(feed.Entries))
+		}
+	})
+
+	t.Run("rejects null item element and non-array items", func(t *testing.T) {
+		t.Parallel()
+
+		for _, body := range []string{
+			`{"version":"https://jsonfeed.org/version/1.1","title":"Bad","items":[null]}`,
+			`{"version":"https://jsonfeed.org/version/1.1","title":"Bad","items":"oops"}`,
+			`{"version":"https://jsonfeed.org/version/1.1","title":"Bad","authors":[null],"items":[]}`,
+		} {
+			_, err := parser.ParseFeed([]byte(body), "https://example.com/feed.json")
+			requireErrorCode(t, err, domain.ErrFeedParserError)
+		}
+	})
+}
+
+func TestParseFeedCumulativeOutputBudgetFailsWholeFeed(t *testing.T) {
+	t.Parallel()
+
+	var items strings.Builder
+	chunk := `<p>` + strings.Repeat("a", 120) + `</p>`
+	for i := range 5 {
+		fmt.Fprintf(
+			&items,
+			`<item><title>Item %d</title><link>https://example.com/%d</link><description><![CDATA[%s]]></description></item>`,
+			i,
+			i,
+			chunk,
+		)
+	}
+
+	body := `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Feed</title>` + items.String() + `</channel></rss>`
+
+	t.Run("concrete sanitizer", func(t *testing.T) {
+		parser := NewFeedParser(NewSanitizer())
+		// Each item alone fits 400 bytes, but 5 items cumulatively exceed 400 bytes.
+		parsed, err := parser.parseFeedWithLimits([]byte(body), "https://example.com/feed.xml", feedLimits{
+			maxItems:       10,
+			maxOutputBytes: 400,
+		})
+		requireErrorCode(t, err, domain.ErrFeedParserError)
+
+		if len(parsed.Entries) != 0 {
+			t.Fatalf("expected zero partial entries, got %d", len(parsed.Entries))
+		}
+	})
+
+	t.Run("custom sanitizer interface", func(t *testing.T) {
+		parser := NewFeedParser(failingSanitizer{failOn: "never"})
+		parsed, err := parser.parseFeedWithLimits([]byte(body), "https://example.com/feed.xml", feedLimits{
+			maxItems:       10,
+			maxOutputBytes: 80,
+		})
+		requireErrorCode(t, err, domain.ErrFeedParserError)
+
+		if len(parsed.Entries) != 0 {
+			t.Fatalf("expected zero partial entries, got %d", len(parsed.Entries))
+		}
+	})
+}
+
+func TestExtractArticleRenderHTMLBound(t *testing.T) {
+	t.Parallel()
+
+	article, err := extractReadableArticle(articleFixture, "https://example.com/posts/article")
+	if err != nil {
+		t.Fatalf("extractReadableArticle() error = %v", err)
+	}
+
+	extractor := NewArticleExtractor(NewSanitizer())
+	_, err = extractor.renderSanitizedArticleWithLimit(article, "https://example.com/posts/article", 64)
+	requireErrorCode(t, err, domain.ErrArticleExtractorError)
 }

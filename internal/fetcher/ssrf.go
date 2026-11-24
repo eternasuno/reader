@@ -37,6 +37,8 @@ var (
 		netip.MustParsePrefix("198.18.0.0/15"),
 		netip.MustParsePrefix("240.0.0.0/4"),
 		netip.MustParsePrefix("255.255.255.255/32"),
+		netip.MustParsePrefix("64:ff9b::/96"),
+		netip.MustParsePrefix("64:ff9b:1::/48"),
 		netip.MustParsePrefix("fc00::/7"),
 		netip.MustParsePrefix("fe80::/10"),
 		netip.MustParsePrefix("ff00::/8"),
@@ -196,5 +198,5 @@ func sanitizedURL(parsed *url.URL) string {
 	stripped := *parsed
 	stripped.User = nil
 
-	return stripCredentialText(stripped.String())
+	return domain.SanitizeErrorText(stripped.String())
 }

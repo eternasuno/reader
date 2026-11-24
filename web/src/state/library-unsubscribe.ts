@@ -1,9 +1,10 @@
 /** Unsubscribing a feed from the sidebar or feed-list menu (`FD-UNSUB-1`). */
 
 import type { Feed } from '../api';
-import { errorCodeOf, feedsApi } from '../api';
-import { t, translateErrorCode } from '../i18n';
+import { feedsApi } from '../api';
+import { t } from '../i18n';
 import { showToast } from '../ui';
+import { errorText } from './errorText';
 import {
   activeScope,
   activeUnreadOnly,
@@ -20,7 +21,7 @@ export const unsubscribeFeed = async (feed: Feed): Promise<boolean> => {
   try {
     await feedsApi.remove(feed.id);
   } catch (error) {
-    showToast(translateErrorCode(errorCodeOf(error)), 'error');
+    showToast(errorText(error), 'error');
     return false;
   }
 

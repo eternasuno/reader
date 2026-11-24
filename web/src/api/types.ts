@@ -1,46 +1,9 @@
-export type ErrorCode =
-  | 'Unauthorized'
-  | 'Forbidden'
-  | 'InvalidCredentials'
-  | 'TooManyRequests'
-  | 'RequestFailed'
-  | 'NetworkError'
-  | 'ArticleEmptyContent'
-  | 'WebpageFetcherError'
-  | 'ArticleExtractorError'
-  | 'InvalidPageUrl'
-  | 'SavedPageAlreadyExists'
-  | 'SavedPageRepositoryError'
-  | 'FeedUrlInvalid'
-  | 'FetchFeedError'
-  | 'FeedParserError'
-  | 'FeedAlreadyExists'
-  | 'FeedItemNotFound'
-  | 'FeedRepositoryError'
-  | 'FeedItemRepositoryError'
-  | 'InvalidOpml'
-  | 'InvalidFolderName'
-  | 'FolderAlreadyExists'
-  | 'FolderNotFound'
-  | 'FolderRepositoryError'
-  | 'InvalidRetention'
-  | 'InvalidProvider'
-  | 'InvalidJinaKey'
-  | 'InvalidEndpoint'
-  | 'BrowserEndpointRequired'
-  | 'InvalidSMTPSetting'
-  | 'SMTPNotConfigured'
-  | 'InvalidKindleSetting'
-  | 'SettingRepositoryError'
-  | 'KindleNotConfigured'
-  | 'KindleSendInProgress';
-
 export type ReaderMode = 'default' | 'extracted' | 'embedded';
 export type SortOrder = 'newest' | 'oldest';
 export type ExtractorProvider = 'direct' | 'jina' | 'browser';
 export type SMTPSecurity = 'tls' | 'starttls';
-export type KindleTrigger = 'manual' | 'scheduled';
-export type KindleStatus = 'running' | 'succeeded' | 'failed';
+type KindleTrigger = 'manual' | 'scheduled';
+type KindleStatus = 'running' | 'succeeded' | 'failed';
 
 export interface ErrorResponse {
   error: string;
