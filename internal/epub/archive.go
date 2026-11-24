@@ -22,7 +22,7 @@ import (
 
 const (
 	epubMimetype        = "application/epub+zip"
-	bookCreator         = "拾叶"
+	bookCreator         = "Lantern"
 	chapterSourcePrefix = "chapters/"
 	oebpsPrefix         = "OEBPS/"
 	imagesPrefix        = "OEBPS/images/"

@@ -97,12 +97,12 @@ func TestBuildBooksProducesSingleValidBook(t *testing.T) {
 	}
 
 	book := books[0]
-	if book.Title != "拾叶 2026-03-15" {
-		t.Fatalf("Title = %q, want %q", book.Title, "拾叶 2026-03-15")
+	if book.Title != "Lantern 2026-03-15" {
+		t.Fatalf("Title = %q, want %q", book.Title, "Lantern 2026-03-15")
 	}
 
-	if book.Filename != "leaf-2026-03-15.epub" {
-		t.Fatalf("Filename = %q, want %q", book.Filename, "leaf-2026-03-15.epub")
+	if book.Filename != "lantern-2026-03-15.epub" {
+		t.Fatalf("Filename = %q, want %q", book.Filename, "lantern-2026-03-15.epub")
 	}
 
 	if book.ArticleCount != 2 {
@@ -162,7 +162,7 @@ func TestBuildBooksProducesSingleValidBook(t *testing.T) {
 	}
 
 	opf := string(entryBody(t, entryByName(t, reader, "OEBPS/content.opf")))
-	if !strings.Contains(opf, "<dc:title>拾叶 2026-03-15</dc:title>") {
+	if !strings.Contains(opf, "<dc:title>Lantern 2026-03-15</dc:title>") {
 		t.Fatalf("content.opf missing book title:\n%s", opf)
 	}
 
@@ -405,8 +405,8 @@ func TestBuildBooksSplitsOversizedLibrariesInOrder(t *testing.T) {
 		t.Fatalf("BuildBooks() returned %d books, want 2", len(books))
 	}
 
-	wantTitles := []string{"拾叶 2026-03-15 (1/2)", "拾叶 2026-03-15 (2/2)"}
-	wantFilenames := []string{"leaf-2026-03-15-1.epub", "leaf-2026-03-15-2.epub"}
+	wantTitles := []string{"Lantern 2026-03-15 (1/2)", "Lantern 2026-03-15 (2/2)"}
+	wantFilenames := []string{"lantern-2026-03-15-1.epub", "lantern-2026-03-15-2.epub"}
 	wantSavedPageIDs := [][]string{{"article-1", "article-2"}, {}}
 	wantFeedItemIDs := [][]string{{}, {"article-3", "article-4"}}
 	wantChapterTitles := [][]string{{"第一篇", "第二篇"}, {"第三篇", "第四篇"}}
@@ -512,12 +512,12 @@ func TestBuildBooksRetriesTextOnlyForOversizedImage(t *testing.T) {
 	}
 
 	book := books[0]
-	if book.Title != "拾叶 2026-03-15" {
-		t.Fatalf("Title = %q, want %q", book.Title, "拾叶 2026-03-15")
+	if book.Title != "Lantern 2026-03-15" {
+		t.Fatalf("Title = %q, want %q", book.Title, "Lantern 2026-03-15")
 	}
 
-	if book.Filename != "leaf-2026-03-15.epub" {
-		t.Fatalf("Filename = %q, want %q", book.Filename, "leaf-2026-03-15.epub")
+	if book.Filename != "lantern-2026-03-15.epub" {
+		t.Fatalf("Filename = %q, want %q", book.Filename, "lantern-2026-03-15.epub")
 	}
 
 	if len(book.Data) > maxBytes {
@@ -1327,7 +1327,7 @@ func TestPackerOverLimitTrialAbortsEarly(t *testing.T) {
 	measured, err := measureArchiveSize(
 		context.Background(),
 		archiveMeta{
-			title:    "拾叶 2026-03-15 (1/2)",
+			title:    "Lantern 2026-03-15 (1/2)",
 			identity: newBookIdentity(),
 			chapters: []chapterMeta{{title: "Oversize"}},
 		},
@@ -1768,7 +1768,7 @@ func TestChapterNavOpfUncompressedBytesMatchesRenderedDelta(t *testing.T) {
 
 	identity := newBookIdentity()
 	meta := archiveMeta{
-		title:    "拾叶 2026-03-15 (987654/987654)",
+		title:    "Lantern 2026-03-15 (987654/987654)",
 		identity: identity,
 	}
 
@@ -1960,7 +1960,7 @@ func TestPackerSharesBookIdentityBetweenMeasureAndFinalArchive(t *testing.T) {
 	exactMeasured, err := measureArchiveSize(
 		context.Background(),
 		archiveMeta{
-			title:    "拾叶 2026-03-15",
+			title:    "Lantern 2026-03-15",
 			identity: finished.identity,
 			chapters: finished.chapters,
 			images:   finished.images,

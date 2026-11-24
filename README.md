@@ -1,8 +1,8 @@
-# 拾叶
+# Lantern
 
 > **Target Architecture Notice**: This README and `.agents/skills/` define the **target Go + SQLite + SolidJS 2 single-binary architecture** for the upcoming rewrite. Until that migration lands, the repository tree still holds the previous Node/TypeScript workspace (`apps/reader`, `packages/*`).
 
-拾叶 (Leaf) is a lightweight, single-user self-hosted RSS reader and read-later app with scheduled Send-to-Kindle support.
+Lantern is a lightweight, single-user self-hosted RSS reader and read-later app with scheduled Send-to-Kindle support.
 
 - **Read later**: save web URLs (or browser bookmarklet quick-save) with automatic article extraction and clean reading typography.
 - **RSS / Atom / RDF / JSON Feed**: organize feeds into single-level folders, import/export OPML, read with per-feed sort order and default display mode, and auto-prune to the latest N articles per feed.

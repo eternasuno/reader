@@ -1,6 +1,6 @@
 # Project Guide
 
-拾叶 is a single-user self-hosted RSS reader, read-later app, and Kindle EPUB mailer built as a single Go binary with an embedded SolidJS 2 SPA (`web/`) and SQLite.
+Lantern is a single-user self-hosted RSS reader, read-later app, and Kindle EPUB mailer built as a single Go binary with an embedded SolidJS 2 SPA (`web/`) and SQLite.
 
 ## Repository Layout
 

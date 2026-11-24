@@ -24,7 +24,7 @@ const (
 	defaultImageTimeout   = 15 * time.Second
 	defaultMaxBodyBytes   = 10 * 1024 * 1024
 	defaultJinaBaseURL    = "https://r.jina.ai/"
-	defaultUserAgent      = "LeafReader/1.0"
+	defaultUserAgent      = "LanternReader/1.0"
 
 	feedAccept    = "application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, */*"
 	webpageAccept = "text/html, application/xhtml+xml, application/xml;q=0.9, */*;q=0.8"
@@ -451,7 +451,7 @@ func createSnapshotWorld(ctx context.Context) (runtime.ExecutionContextID, error
 		page.CreateIsolatedWorld,
 		page.CreateIsolatedWorldParams{
 			FrameID:   frameTree.FrameTree.Frame.ID,
-			WorldName: "leaf-snapshot",
+			WorldName: "lantern-snapshot",
 		},
 	)
 	if err != nil {

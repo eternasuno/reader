@@ -1,11 +1,11 @@
 ---
 name: reader-spec
-description: What the 拾叶 personal reader does. Read before changing or verifying any product behavior — saved pages, feeds, folders, OPML, background refresh, the reader view, settings, Kindle delivery, authentication, or the library screen — or any HTTP endpoint, user-visible copy, or acceptance scenario.
+description: What the Lantern personal reader does. Read before changing or verifying any product behavior — saved pages, feeds, folders, OPML, background refresh, the reader view, settings, Kindle delivery, authentication, or the library screen — or any HTTP endpoint, user-visible copy, or acceptance scenario.
 ---
 
 # Reader Spec
 
-拾叶 is a single-user self-hosted read-later and RSS/Atom/RDF/JSON Feed reader with scheduled Send-to-Kindle delivery. The UI is bilingual (`zh-CN` Simplified Chinese and `en` English) via lightweight client-side dictionaries.
+Lantern is a single-user self-hosted read-later and RSS/Atom/RDF/JSON Feed reader with scheduled Send-to-Kindle delivery. The UI is bilingual (`zh-CN` Simplified Chinese and `en` English) via lightweight client-side dictionaries.
 
 ## Domain Index
 
@@ -74,7 +74,7 @@ Every scope and open article has its own URL so reloads and browser history rest
 - `CM-FETCH-3`: Nothing is saved if fetch, parse, extraction, or empty-content check fails.
 
 ### CM-PWA — Installable App
-- `CM-PWA-1`: The SPA is an installable PWA named `拾叶 Leaf` (`web/public/manifest.webmanifest`, standalone display, icons incl. maskable). `web/public/sw.js` (registered in production builds only, with a build-generated precache manifest and `leaf-<hash>` cache name covering the manifest and `sw.js` source injected by `web/vite.config.ts`) atomically precaches only public shell/assets (`/`, hashed `/assets/*`, icons, `manifest.webmanifest`) during `install` (`credentials: 'omit'`, `redirect: 'error'`, `response.ok && response.type === 'basic' && !response.redirected`), deleting any partial cache and failing the install on error, allows updates to wait until the previous worker has no clients, prunes obsolete `leaf-*` caches and claims clients on `activate`, serves only exact manifest pathnames without query strings cache-first from that build cache (bypassing query-string variants and non-manifest paths), and uses network-first with cached-shell fallback for navigation; it never intercepts `/api/*`, `/healthz`, non-GET, or cross-origin requests, so authenticated data is never cached. Offline navigation falls back to the cached shell, which then shows the normal network-error state.
+- `CM-PWA-1`: The SPA is an installable PWA named `Lantern` (`web/public/manifest.webmanifest`, standalone display, icons incl. maskable). `web/public/sw.js` (registered in production builds only, with a build-generated precache manifest and `lantern-<hash>` cache name covering the manifest and `sw.js` source injected by `web/vite.config.ts`) atomically precaches only public shell/assets (`/`, hashed `/assets/*`, icons, `manifest.webmanifest`) during `install` (`credentials: 'omit'`, `redirect: 'error'`, `response.ok && response.type === 'basic' && !response.redirected`), deleting any partial cache and failing the install on error, allows updates to wait until the previous worker has no clients, prunes obsolete `lantern-*` caches and claims clients on `activate`, serves only exact manifest pathnames without query strings cache-first from that build cache (bypassing query-string variants and non-manifest paths), and uses network-first with cached-shell fallback for navigation; it never intercepts `/api/*`, `/healthz`, non-GET, or cross-origin requests, so authenticated data is never cached. Offline navigation falls back to the cached shell, which then shows the normal network-error state.
 - `CM-PWA-2`: Static files outside `/assets/` (including `sw.js` and `manifest.webmanifest`) are served `Cache-Control: no-cache`; `.webmanifest` is served as `application/manifest+json`.
 
 ## Shared Messages & Localization (`CM-I18N`)

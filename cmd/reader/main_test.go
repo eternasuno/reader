@@ -386,7 +386,7 @@ func TestRecoverStartupStateCleansSpoolAndRecoversRunningSends(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(spoolDir, "leaf-epub-crashed.spool"), []byte("leftover"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(spoolDir, "lantern-epub-crashed.spool"), []byte("leftover"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 

@@ -1877,8 +1877,8 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 
 	builder := &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
 		return []domain.EPUBBook{{
-			Title:        "拾叶 " + dateStr,
-			Filename:     "leaf.epub",
+			Title:        "Lantern " + dateStr,
+			Filename:     "lantern.epub",
 			SavedPageIDs: []string{"page-1"},
 			FeedItemIDs:  []string{"item-1"},
 			ArticleCount: 2,

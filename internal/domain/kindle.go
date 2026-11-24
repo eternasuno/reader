@@ -54,8 +54,8 @@ func OversizeKindleArticleError(id string, size int, maxBytes int, textOnly bool
 
 func FormatKindleBookMeta(dateStr string, index int, total int) (title string, filename string) {
 	if total <= 1 {
-		return fmt.Sprintf("拾叶 %s", dateStr), fmt.Sprintf("leaf-%s.epub", dateStr)
+		return fmt.Sprintf("Lantern %s", dateStr), fmt.Sprintf("lantern-%s.epub", dateStr)
 	}
 
-	return fmt.Sprintf("拾叶 %s (%d/%d)", dateStr, index, total), fmt.Sprintf("leaf-%s-%d.epub", dateStr, index)
+	return fmt.Sprintf("Lantern %s (%d/%d)", dateStr, index, total), fmt.Sprintf("lantern-%s-%d.epub", dateStr, index)
 }

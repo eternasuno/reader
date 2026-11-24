@@ -1,6 +1,6 @@
-const CACHE_PREFIX = 'leaf-';
-const CACHE = '__LEAF_SW_CACHE__';
-const PRECACHE_URLS = /* __LEAF_PRECACHE_URLS__ */ [];
+const CACHE_PREFIX = 'lantern-';
+const CACHE = '__LANTERN_SW_CACHE__';
+const PRECACHE_URLS = /* __LANTERN_PRECACHE_URLS__ */ [];
 const PRECACHE_SET = new Set(PRECACHE_URLS);
 
 const isCacheableBasic = (response) =>

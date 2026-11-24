@@ -125,7 +125,7 @@ describe('app entry', () => {
     await import('../src/main');
     await settle(4);
 
-    expect(root.textContent).toContain('拾叶');
+    expect(root.textContent).toContain('Lantern');
     expect(root.textContent).toContain('登录');
     expect(root.querySelector('input[type="password"]')).not.toBeNull();
 
@@ -282,7 +282,7 @@ describe('library layout', () => {
     const navToggle = must(container, '[aria-label="切换导航"]');
     expect(navToggle.closest('[data-panel="list"]')).not.toBeNull();
     expect(navToggle.className).toContain('md:hidden');
-    expect(container.textContent).not.toContain('拾叶 / 全部订阅');
+    expect(container.textContent).not.toContain('Lantern / 全部订阅');
 
     const urls = requestUrls();
     expect(listPages()).toHaveLength(1);

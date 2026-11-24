@@ -6,7 +6,7 @@ export type Dict = typeof zhDict;
 export const enDict: Dict = {
   errors: enErrors,
   common: {
-    brand: 'Leaf',
+    brand: 'Lantern',
     checkingSession: 'Checking your session…',
     close: 'Close',
     cancel: 'Cancel',
@@ -201,7 +201,7 @@ export const enDict: Dict = {
     bookmarkletHeading: 'Quick-save bookmarklet',
     bookmarkletHint:
       'Drag the button to your browser bookmarks bar, then click it on any page to save to Read Later.',
-    bookmarkletLabel: 'Save to Leaf',
+    bookmarkletLabel: 'Save to Lantern',
     statusConfigured: 'Saved',
     statusNotConfigured: 'Not saved',
     providerLabel: 'Extraction method',

@@ -24,7 +24,7 @@ const (
 	defaultTimeout      = 3 * time.Minute
 	defaultMaxReadBytes = 1 << 20 // 1 MiB cap on server responses per message
 	epubContentType     = gomail.ContentType("application/epub+zip")
-	defaultSubject      = "拾叶"
+	defaultSubject      = "Lantern"
 	dialStep            = "dial smtp server"
 	sendStep            = "send epub mail"
 	minValidSMTPCode    = 400

@@ -3,7 +3,7 @@ import { zhErrors } from './zh-errors';
 export const zhDict = {
   errors: zhErrors,
   common: {
-    brand: '拾叶',
+    brand: 'Lantern',
     checkingSession: '正在确认登录状态…',
     close: '关闭',
     cancel: '取消',
@@ -189,7 +189,7 @@ export const zhDict = {
     bookmarkletHeading: '快速保存 Bookmarklet',
     bookmarkletHint:
       '将按钮拖拽到浏览器书签栏，在任意网页点击即可保存到稍后阅读。',
-    bookmarkletLabel: '保存到拾叶',
+    bookmarkletLabel: '保存到 Lantern',
     statusConfigured: '已保存',
     statusNotConfigured: '未保存',
     providerLabel: '正文提取方式',

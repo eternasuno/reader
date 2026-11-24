@@ -3,8 +3,8 @@ import { runInNewContext } from 'node:vm';
 import { expect, it, vi } from 'vitest';
 
 const source = readFileSync('public/sw.js', 'utf8')
-  .replace('__LEAF_SW_CACHE__', 'leaf-new')
-  .replace('/* __LEAF_PRECACHE_URLS__ */ []', "['/', '/assets/app.js']");
+  .replace('__LANTERN_SW_CACHE__', 'lantern-new')
+  .replace('/* __LANTERN_PRECACHE_URLS__ */ []', "['/', '/assets/app.js']");
 
 it('leaves an installed update waiting and cleans old caches on activation', async () => {
   const listeners = new Map<
@@ -24,7 +24,7 @@ it('leaves an installed update waiting and cleans old caches on activation', asy
     },
     caches: {
       open: async () => ({ put }),
-      keys: async () => ['leaf-old', 'leaf-new', 'other'],
+      keys: async () => ['lantern-old', 'lantern-new', 'other'],
       delete: remove,
     },
     fetch: async () => ({ ok: true, type: 'basic', redirected: false }),
@@ -43,7 +43,7 @@ it('leaves an installed update waiting and cleans old caches on activation', asy
   expect(claim).not.toHaveBeenCalled();
   listeners.get('activate')?.(event);
   await pending;
-  expect(remove).toHaveBeenCalledExactlyOnceWith('leaf-old');
+  expect(remove).toHaveBeenCalledExactlyOnceWith('lantern-old');
   expect(claim).toHaveBeenCalledOnce();
 });
 
@@ -75,5 +75,5 @@ it('rejects a failed install and deletes its partial cache', async () => {
     },
   });
   await expect(pending).rejects.toThrow('write failed');
-  expect(remove).toHaveBeenCalledExactlyOnceWith('leaf-new');
+  expect(remove).toHaveBeenCalledExactlyOnceWith('lantern-new');
 });

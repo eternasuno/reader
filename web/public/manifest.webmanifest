@@ -1,6 +1,6 @@
 {
-  "name": "拾叶 Leaf",
-  "short_name": "拾叶",
+  "name": "Lantern",
+  "short_name": "Lantern",
   "description": "Self-hosted RSS reader, read-later and Send-to-Kindle",
   "id": "/",
   "start_url": "/",

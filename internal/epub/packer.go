@@ -524,7 +524,7 @@ func (p *packer) ensureSpoolFile(book *draftBook) error {
 		return nil
 	}
 
-	file, err := os.CreateTemp(p.builder.spoolDir, "leaf-epub-*.spool")
+	file, err := os.CreateTemp(p.builder.spoolDir, "lantern-epub-*.spool")
 	if err != nil {
 		return fmt.Errorf("create epub spool: %s", domain.SanitizeErrorText(err.Error()))
 	}

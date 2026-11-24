@@ -1,6 +1,6 @@
 ---
 name: reader-engineering
-description: How the 拾叶 target Go + SQLite + SolidJS 2 SPA reader is built. Read before writing or reviewing Go packages, HTTP handlers, background workers, webpage/feed fetchers, EPUB/SMTP adapters, frontend state, or tests. Database, UI styling, and Docker build details live in conditional files.
+description: How the Lantern target Go + SQLite + SolidJS 2 SPA reader is built. Read before writing or reviewing Go packages, HTTP handlers, background workers, webpage/feed fetchers, EPUB/SMTP adapters, frontend state, or tests. Database, UI styling, and Docker build details live in conditional files.
 ---
 
 # Reader Engineering

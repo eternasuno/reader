@@ -6,8 +6,8 @@ import tailwindcss from '@tailwindcss/vite';
 import type { Plugin, ResolvedConfig } from 'vite';
 import { defineConfig } from 'vitest/config';
 
-const SW_CACHE_PLACEHOLDER = "'__LEAF_SW_CACHE__'";
-const SW_MANIFEST_PLACEHOLDER = '/* __LEAF_PRECACHE_URLS__ */ []';
+const SW_CACHE_PLACEHOLDER = "'__LANTERN_SW_CACHE__'";
+const SW_MANIFEST_PLACEHOLDER = '/* __LANTERN_PRECACHE_URLS__ */ []';
 
 interface DistEntry {
   url: string;
@@ -61,7 +61,7 @@ const writeSwManifest = (outDir: string): void => {
     hash.update(entry.bytes);
     hash.update('\0');
   }
-  const cacheName = `leaf-${hash.digest('hex').slice(0, 16)}`;
+  const cacheName = `lantern-${hash.digest('hex').slice(0, 16)}`;
   const urls = entries.map((entry) => entry.url);
   const output = source
     .replace(SW_CACHE_PLACEHOLDER, JSON.stringify(cacheName))
@@ -72,7 +72,7 @@ const writeSwManifest = (outDir: string): void => {
 const swPrecachePlugin = (): Plugin => {
   let outDir = '';
   return {
-    name: 'leaf-sw-precache',
+    name: 'lantern-sw-precache',
     apply: 'build',
     configResolved(config: ResolvedConfig) {
       outDir = resolve(config.root, config.build.outDir);

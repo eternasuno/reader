@@ -63,7 +63,7 @@ describe('dictionaries', () => {
 
   it('mirrors Chinese keys in English and keeps the copy', () => {
     expect(flattenKeys(enDict).sort()).toEqual(flattenKeys(zhDict).sort());
-    expect(zhDict.common.brand).toBe('拾叶');
+    expect(zhDict.common.brand).toBe('Lantern');
     expect(zhDict.common.justNow).toBe('刚刚');
     expect(zhDict.library.laterScope).toBe('稍后阅读');
     expect(translateErrorCode('SomethingElse')).toBe('操作失败，请稍后重试');
