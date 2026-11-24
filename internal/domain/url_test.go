@@ -61,10 +61,31 @@ func TestURLParseNormalized(t *testing.T) {
 			wantHost:     "example.com",
 		},
 		{
+			name:         "strips leading zero default https port",
+			raw:          "https://example.com:0443/a",
+			wantRaw:      "https://example.com/a",
+			wantRedacted: "https://example.com/a",
+			wantHost:     "example.com",
+		},
+		{
+			name:         "strips leading zero default http port",
+			raw:          "http://example.com:080/a",
+			wantRaw:      "http://example.com/a",
+			wantRedacted: "http://example.com/a",
+			wantHost:     "example.com",
+		},
+		{
 			name:         "preserves non default port",
 			raw:          "http://example.com:8080/x",
 			wantRaw:      "http://example.com:8080/x",
 			wantRedacted: "http://example.com:8080/x",
+			wantHost:     "example.com",
+		},
+		{
+			name:         "preserves https non default port and strips leading zeros",
+			raw:          "https://example.com:08080/x",
+			wantRaw:      "https://example.com:8080/x",
+			wantRedacted: "https://example.com:8080/x",
 			wantHost:     "example.com",
 		},
 		{
@@ -184,6 +205,10 @@ func TestURLParseNormalizedInvalid(t *testing.T) {
 		"//example.com/feed",
 		"/relative/path",
 		"not a url at all",
+		"https://example.com:65536/feed",
+		"http://example.com:0/feed",
+		"https://example.com:00/feed",
+		"https://example.com:99999999999999999999/feed",
 	}
 
 	for _, raw := range cases {
@@ -219,6 +244,24 @@ func TestParseStoredNormalizedURL(t *testing.T) {
 		t.Fatalf("expected malformed stored url to fail")
 	} else {
 		requireDomainError(t, err, ErrFeedUrlInvalid)
+	}
+
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{raw: "https://user:secret@example.com:65536/feed", want: "https://example.com:65536/feed"},
+		{raw: "http://example.com:0/feed", want: "http://example.com:0/feed"},
+		{raw: "https://example.com:0443/feed", want: "https://example.com/feed"},
+	} {
+		parsed, err := ParseStoredNormalizedURL(tc.raw)
+		if err != nil {
+			t.Fatalf("ParseStoredNormalizedURL(%q) unexpected error: %v", tc.raw, err)
+		}
+
+		if parsed.RedactedString() != tc.want {
+			t.Fatalf("ParseStoredNormalizedURL(%q) redacted = %q, want %q", tc.raw, parsed.RedactedString(), tc.want)
+		}
 	}
 }
 
@@ -272,6 +315,8 @@ func TestURLParseNormalizedErrorRedactsCredentials(t *testing.T) {
 	for _, input := range []string{
 		"http://secretuser:secretpass@example.com:badport/feed",
 		"http://secretuser:secret pass@example.com/feed",
+		"http://secretuser:secretpass@example.com:65536/feed",
+		"https://secretuser:secretpass@example.com:0/feed",
 	} {
 		_, err := ParseNormalizedURL(input, ErrFeedUrlInvalid)
 		if err == nil {
@@ -305,6 +350,10 @@ func TestURLSanitizeErrorText(t *testing.T) {
 		{name: "multiple urls", in: "https://a:b@one.com/x and http://c@two.com/y", want: "https://one.com/x and http://two.com/y"},
 		{name: "path with at sign", in: "https://example.com/user@example.com", want: "https://example.com/user@example.com"},
 		{name: "apostrophe in password prose", in: "see http://u:p'w@host/x", want: "see http://host/x"},
+		{name: "closing paren in password prose", in: "see https://user:pa)ss@example.com/feed failed", want: "see https://example.com/feed failed"},
+		{name: "parenthesized url with closing paren in password", in: "feed (https://user:pa)ss@example.com/feed) failed", want: "feed (https://example.com/feed) failed"},
+		{name: "multiple closing parens in password without path", in: "see (https://user:pa))ss@example.com) failed", want: "see (https://example.com) failed"},
+		{name: "special chars in password prose", in: "see https://user:p!$&'()*+,;=%40ss@example.com/feed failed", want: "see https://example.com/feed failed"},
 		{name: "single quoted url with apostrophe in password", in: "failed 'http://u:p'w@host/x'", want: "failed 'http://host/x'"},
 		{name: "double quoted url with apostrophe in password", in: `failed "https://u:p'w@host/x"`, want: `failed "https://host/x"`},
 		{name: "trailing punctuation", in: "check (https://u:p'w@host/x), then http://a:b'c@other.example.", want: "check (https://host/x), then http://other.example."},
@@ -319,6 +368,8 @@ func TestURLSanitizeErrorText(t *testing.T) {
 		{name: "whole url label with closing paren in password", in: "HTTPS://user:p)w@Example.com/feed", want: "HTTPS://Example.com/feed"},
 		{name: "url without userinfo unchanged", in: "https://example.com/feed?email=a@b.com#c@d", want: "https://example.com/feed?email=a@b.com#c@d"},
 		{name: "bracketed url without userinfo followed by email", in: "(https://example.com) contact user@example.com", want: "(https://example.com) contact user@example.com"},
+		{name: "parenthesized plain url", in: "see (https://example.com/feed) for details", want: "see (https://example.com/feed) for details"},
+		{name: "parenthesized plain url followed by path at sign", in: "(https://example.com)/user@example.com", want: "(https://example.com)/user@example.com"},
 		{name: "email addresses in prose unchanged", in: "contact alice@example.com or bob@host.local", want: "contact alice@example.com or bob@host.local"},
 		{name: "non-matching scheme prefix untouched", in: "myhttp://user:secret@example.com/x and news://user:secret@example.com/y", want: "myhttp://user:secret@example.com/x and news://user:secret@example.com/y"},
 	}

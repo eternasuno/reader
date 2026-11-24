@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,105 +24,48 @@ func getenvFrom(values map[string]string) func(string) string {
 }
 
 func TestLoadConfigDefaults(t *testing.T) {
-	cfg, err := loadConfig(getenvFrom(map[string]string{"APP_PASSWORD": "secret"}))
-	if err != nil {
-		t.Fatalf("load config: %v", err)
+	tests := []struct {
+		name                                       string
+		env                                        map[string]string
+		password, url, port, dir, secret, location string
+		private                                    bool
+	}{
+		{name: "defaults", env: map[string]string{"APP_PASSWORD": "secret"}, password: "secret", url: "http://localhost:8080", port: "8080", dir: ".data"},
+		{name: "overrides", env: map[string]string{"APP_PASSWORD": "hunter2", "APP_URL": "https://reader.example.com", "PORT": "9000", "DATA_DIR": "/var/lib/reader", "SESSION_SECRET": "fixed-secret-0123456789abcdef01234", "TZ": "Asia/Shanghai", "ALLOW_PRIVATE_NETWORK": "TRUE"}, password: "hunter2", url: "https://reader.example.com", port: "9000", dir: "/var/lib/reader", secret: "fixed-secret-0123456789abcdef01234", location: "Asia/Shanghai", private: true},
 	}
-
-	if cfg.AppPassword != "secret" {
-		t.Fatalf("app password = %q, want secret", cfg.AppPassword)
-	}
-
-	if cfg.AppURL != "http://localhost:8080" {
-		t.Fatalf("app url = %q, want default", cfg.AppURL)
-	}
-
-	if cfg.Port != "8080" {
-		t.Fatalf("port = %q, want 8080", cfg.Port)
-	}
-
-	if cfg.DataDir != ".data" {
-		t.Fatalf("data dir = %q, want .data", cfg.DataDir)
-	}
-
-	if len(cfg.SessionSecret) != 32 {
-		t.Fatalf("session secret length = %d, want 32", len(cfg.SessionSecret))
-	}
-
-	if bytes.Equal(cfg.SessionSecret, make([]byte, 32)) {
-		t.Fatal("session secret must not be all zero bytes")
-	}
-
-	if cfg.Location != time.Local {
-		t.Fatalf("location = %v, want time.Local", cfg.Location)
-	}
-
-	if cfg.AllowPrivateNetwork {
-		t.Fatal("allow private network = true, want false")
-	}
-}
-
-func TestLoadConfigOverrides(t *testing.T) {
-	cfg, err := loadConfig(getenvFrom(map[string]string{
-		"APP_PASSWORD":          "hunter2",
-		"APP_URL":               "https://reader.example.com",
-		"PORT":                  "9000",
-		"DATA_DIR":              "/var/lib/reader",
-		"SESSION_SECRET":        "fixed-secret-0123456789abcdef01234",
-		"TZ":                    "Asia/Shanghai",
-		"ALLOW_PRIVATE_NETWORK": "TRUE",
-	}))
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-
-	if cfg.AppPassword != "hunter2" {
-		t.Fatalf("app password = %q", cfg.AppPassword)
-	}
-
-	if cfg.AppURL != "https://reader.example.com" {
-		t.Fatalf("app url = %q", cfg.AppURL)
-	}
-
-	if cfg.Port != "9000" {
-		t.Fatalf("port = %q", cfg.Port)
-	}
-
-	if cfg.DataDir != "/var/lib/reader" {
-		t.Fatalf("data dir = %q", cfg.DataDir)
-	}
-
-	if string(cfg.SessionSecret) != "fixed-secret-0123456789abcdef01234" {
-		t.Fatalf("session secret = %q, want fixed-secret-0123456789abcdef01234", cfg.SessionSecret)
-	}
-
-	if cfg.Location == nil || cfg.Location.String() != "Asia/Shanghai" {
-		t.Fatalf("location = %v, want Asia/Shanghai", cfg.Location)
-	}
-
-	if !cfg.AllowPrivateNetwork {
-		t.Fatal("allow private network = false, want true")
-	}
-}
-
-func TestLoadConfigRequiresPassword(t *testing.T) {
-	if _, err := loadConfig(getenvFrom(map[string]string{})); err == nil {
-		t.Fatal("expected error for missing APP_PASSWORD")
-	}
-}
-
-func TestLoadConfigRejectsShortSessionSecret(t *testing.T) {
-	shortSecret := "too-short-secret-value"
-	_, err := loadConfig(getenvFrom(map[string]string{
-		"APP_PASSWORD":   "secret",
-		"SESSION_SECRET": shortSecret,
-	}))
-	if err == nil {
-		t.Fatal("expected error for short SESSION_SECRET")
-	}
-
-	if strings.Contains(err.Error(), shortSecret) {
-		t.Fatalf("error leaked SESSION_SECRET value: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := loadConfig(getenvFrom(tt.env))
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.AppPassword != tt.password || cfg.AppURL != tt.url || cfg.Port != tt.port || cfg.DataDir != tt.dir || cfg.AllowPrivateNetwork != tt.private {
+				t.Fatalf("unexpected config: password, URL, port, directory or private network setting")
+			}
+			if tt.secret != "" {
+				if string(cfg.SessionSecret) != tt.secret {
+					t.Fatal("configured session secret changed")
+				}
+			} else {
+				if len(cfg.SessionSecret) != 32 || bytes.Equal(cfg.SessionSecret, make([]byte, 32)) {
+					t.Fatal("generated session secret must be 32 nonzero bytes")
+				}
+				second, err := loadConfig(getenvFrom(tt.env))
+				if err != nil {
+					t.Fatalf("load second config: %v", err)
+				}
+				if bytes.Equal(cfg.SessionSecret, second.SessionSecret) {
+					t.Fatal("generated session secrets must differ between startups")
+				}
+			}
+			if tt.location == "" {
+				if cfg.Location != time.Local {
+					t.Fatalf("location = %v, want time.Local", cfg.Location)
+				}
+			} else if cfg.Location == nil || cfg.Location.String() != tt.location {
+				t.Fatalf("location = %v, want %s", cfg.Location, tt.location)
+			}
+		})
 	}
 }
 
@@ -138,6 +82,7 @@ func TestLoadConfigChecksPasswordAgainstLoginBodyBudget(t *testing.T) {
 		password string
 		wantOK   bool
 	}{
+		{name: "missing password", password: "", wantOK: false},
 		{name: "ascii at the budget", password: strings.Repeat("a", bodyBudget-envelope), wantOK: true},
 		{name: "ascii one byte over", password: strings.Repeat("a", bodyBudget-envelope+1), wantOK: false},
 		{name: "quotes at the budget", password: strings.Repeat(`"`, (bodyBudget-envelope)/2), wantOK: true},
@@ -169,7 +114,7 @@ func TestLoadConfigChecksPasswordAgainstLoginBodyBudget(t *testing.T) {
 				t.Fatal("expected an error for an APP_PASSWORD exceeding the login body budget")
 			}
 
-			if strings.Contains(err.Error(), tt.password) {
+			if tt.password != "" && strings.Contains(err.Error(), tt.password) {
 				t.Fatalf("error leaked APP_PASSWORD value: %v", err)
 			}
 		})
@@ -181,37 +126,128 @@ func TestServeUntilExitDrainsAndStopsWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
-	stopped := false
+	defer cancel()
+	started, release, finished, stopped := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
 		w.WriteHeader(http.StatusOK)
+		close(finished)
 	})
-
 	done := make(chan error, 1)
 	go func() {
-		done <- serveUntilExit(ctx, listener, handler, func() { stopped = true })
+		done <- serveUntilExit(ctx, listener, handler, func() {
+			select {
+			case <-finished:
+			default:
+				t.Error("workers stopped before handler completed")
+			}
+			close(stopped)
+		})
 	}()
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+listener.Addr().String()+"/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
+	responses := make(chan error, 1)
+	go func() {
+		resp, err := http.Get("http://" + listener.Addr().String() + "/")
+		if err == nil {
+			if resp.StatusCode != http.StatusOK {
+				err = errors.New("unexpected response status")
+			}
+			_ = resp.Body.Close()
+		}
+		responses <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not start")
 	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("get server: %v", err)
-	}
-	_ = resp.Body.Close()
-
 	cancel()
+	select {
+	case <-stopped:
+		t.Fatal("workers stopped while handler was blocked")
+	case <-done:
+		t.Fatal("server returned while handler was blocked")
+	default:
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case err := <-responses:
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not finish")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveUntilExit: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not stop")
+	}
+	select {
+	case <-finished:
+	default:
+		t.Fatal("handler did not finish")
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("workers did not stop")
+	}
+}
 
-	if err := <-done; err != nil {
-		t.Fatalf("serveUntilExit error = %v", err)
+type extractionWaitHandler struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (h *extractionWaitHandler) ServeHTTP(http.ResponseWriter, *http.Request) {}
+
+func (h *extractionWaitHandler) WaitExtractions(ctx context.Context) error {
+	close(h.entered)
+	select {
+	case <-h.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestServeUntilExitWaitsForExtractionsBeforeWorkers(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if !stopped {
-		t.Fatal("expected stopWorkers to run on shutdown")
+	ctx, cancel := context.WithCancel(context.Background())
+	handler := &extractionWaitHandler{entered: make(chan struct{}), release: make(chan struct{})}
+	stopped := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- serveUntilExit(ctx, listener, handler, func() { close(stopped) })
+	}()
+	cancel()
+	<-handler.entered
+	select {
+	case <-stopped:
+		t.Fatal("workers stopped before extractions finished")
+	default:
+	}
+
+	close(handler.release)
+	if err := <-done; err != nil {
+		t.Fatalf("serveUntilExit: %v", err)
+	}
+
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("workers did not stop")
 	}
 }
 
@@ -294,34 +330,6 @@ func TestServeUntilExitWaitsForForcedHandler(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsInvalidTimeZone(t *testing.T) {
-	_, err := loadConfig(getenvFrom(map[string]string{
-		"APP_PASSWORD": "secret",
-		"TZ":           "Mars/Olympus_Mons",
-	}))
-	if err == nil {
-		t.Fatal("expected error for invalid TZ")
-	}
-}
-
-func TestLoadConfigGeneratesDistinctSecrets(t *testing.T) {
-	getenv := getenvFrom(map[string]string{"APP_PASSWORD": "secret"})
-
-	first, err := loadConfig(getenv)
-	if err != nil {
-		t.Fatalf("load first config: %v", err)
-	}
-
-	second, err := loadConfig(getenv)
-	if err != nil {
-		t.Fatalf("load second config: %v", err)
-	}
-
-	if bytes.Equal(first.SessionSecret, second.SessionSecret) {
-		t.Fatal("generated session secrets must differ between startups")
-	}
-}
-
 func TestLoadConfigAllowPrivateNetworkValues(t *testing.T) {
 	cases := map[string]bool{
 		"true":  true,
@@ -345,6 +353,63 @@ func TestLoadConfigAllowPrivateNetworkValues(t *testing.T) {
 
 			if cfg.AllowPrivateNetwork != want {
 				t.Fatalf("allow private network = %v, want %v", cfg.AllowPrivateNetwork, want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigAppURLValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		appURL string
+		env    map[string]string
+		secret string
+		wantOK bool
+	}{
+		{name: "short session secret", env: map[string]string{"SESSION_SECRET": "too-short-secret-value"}, secret: "too-short-secret-value"},
+		{name: "invalid timezone", env: map[string]string{"TZ": "Mars/Olympus_Mons"}},
+		{name: "http localhost", appURL: "http://localhost:8080", wantOK: true},
+		{name: "https host", appURL: "https://reader.example.com", wantOK: true},
+		{name: "uppercase HTTP", appURL: "HTTP://EXAMPLE.COM", wantOK: true},
+		{name: "mixed-case HTTPS with port", appURL: "HtTpS://reader.example.com:8443", wantOK: true},
+		{name: "ftp scheme", appURL: "ftp://reader.example.com", wantOK: false},
+		{name: "javascript scheme", appURL: "javascript://reader.example.com", wantOK: false},
+		{name: "ws scheme", appURL: "ws://reader.example.com", wantOK: false},
+		{name: "malformed url", appURL: "://bad", wantOK: false},
+		{name: "relative url", appURL: "/relative", wantOK: false},
+		{name: "missing hostname", appURL: "http://:8080", wantOK: false},
+		{name: "embedded credentials", appURL: "https://user:topsecret@reader.example.com", wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := map[string]string{"APP_PASSWORD": "secret", "APP_URL": tt.appURL}
+			for key, value := range tt.env {
+				env[key] = value
+			}
+			cfg, err := loadConfig(getenvFrom(env))
+			if tt.wantOK {
+				if err != nil {
+					t.Fatalf("load config: %v", err)
+				}
+
+				if cfg.AppURL != tt.appURL {
+					t.Fatalf("app url = %q, want %q", cfg.AppURL, tt.appURL)
+				}
+
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("expected error for APP_URL %q", tt.appURL)
+			}
+
+			if (tt.appURL != "" && strings.Contains(err.Error(), tt.appURL)) || strings.Contains(err.Error(), "topsecret") || (tt.secret != "" && strings.Contains(err.Error(), tt.secret)) {
+				t.Fatalf("error leaked raw APP_URL or credentials: %v", err)
 			}
 		})
 	}
