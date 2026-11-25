@@ -33,6 +33,7 @@ export interface Feed {
   updatedAt?: string;
   failureCount: number;
   lastError?: string;
+  iconUrl?: string;
   readerMode: ReaderMode;
   order: SortOrder;
 }

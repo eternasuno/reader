@@ -19,7 +19,6 @@ import {
   startFirstRefreshWait,
 } from '../state';
 import { useOpmlImport } from './importOpml';
-import { useLibraryShortcuts } from './useLibraryShortcuts';
 
 export interface FolderDialogState {
   mode: 'create' | 'rename';
@@ -42,7 +41,6 @@ export interface LibraryController {
   addFeedOpen: Accessor<boolean>;
   folderDialog: Accessor<FolderDialogState | null>;
   optionsFeed: Accessor<Feed | null>;
-  shortcutsOpen: Accessor<boolean>;
   toggleDrawer: () => void;
   dismissDrawer: () => void;
   closeDrawer: () => void;
@@ -57,8 +55,6 @@ export interface LibraryController {
   closeAddFeed: () => void;
   closeFolderDialog: () => void;
   closeFeedOptions: () => void;
-  openShortcuts: () => void;
-  closeShortcuts: () => void;
   handleSavedPage: (page: SavedPage) => void;
   openExistingPage: (page: SavedPage) => void;
   openFeed: (feed: Feed) => void;
@@ -153,7 +149,6 @@ const useDialogs = () => {
   const [folderDialog, setFolderDialog] =
     createSignal<FolderDialogState | null>(null);
   const [optionsFeed, setOptionsFeed] = createSignal<Feed | null>(null);
-  const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
 
   const folder = (
     mode: 'create' | 'rename',
@@ -168,7 +163,6 @@ const useDialogs = () => {
     addFeedOpen,
     folderDialog,
     optionsFeed,
-    shortcutsOpen,
     requestAddLink: () => setAddLinkOpen(true),
     requestAddFeed: () => setAddFeedOpen(true),
     requestNewFolder: (feed?: Feed) => folder('create', null, feed),
@@ -178,8 +172,6 @@ const useDialogs = () => {
     closeAddFeed: () => setAddFeedOpen(false),
     closeFolderDialog: () => setFolderDialog(null),
     closeFeedOptions: () => setOptionsFeed(null),
-    openShortcuts: () => setShortcutsOpen(true),
-    closeShortcuts: () => setShortcutsOpen(false),
   };
 };
 
@@ -305,27 +297,13 @@ export const createLibraryController = (): LibraryController => {
   const drawer = useDrawer();
   const dialogs = useDialogs();
   const opml = useOpmlImport();
-  const articles = useArticleActions(route.scope, route.unreadOnly, navigate);
-
-  useLibraryEffects(route.routeState);
-
   const onNavigate = (url: string): void => {
     drawer.dismissDrawer();
     navigate(url);
   };
+  const articles = useArticleActions(route.scope, route.unreadOnly, onNavigate);
 
-  useLibraryShortcuts({
-    scope: route.scope,
-    articleId: route.articleId,
-    unreadOnly: route.unreadOnly,
-    drawerOpen: drawer.drawerOpen,
-    shortcutsOpen: dialogs.shortcutsOpen,
-    toggleShortcuts: () =>
-      dialogs.shortcutsOpen()
-        ? dialogs.closeShortcuts()
-        : dialogs.openShortcuts(),
-    onNavigate,
-  });
+  useLibraryEffects(route.routeState);
 
   const handleFolderSaved = (folder?: Folder, moveFeed?: Feed): void => {
     void invalidateSidebar();

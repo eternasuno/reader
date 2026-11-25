@@ -217,8 +217,9 @@ describe('isValidImageMessage', () => {
 });
 
 describe('isValidKeyMessage', () => {
-  it('accepts bridged keys with a matching token', () => {
-    for (const key of ['j', 'k', '[', 'Escape', '?']) {
+  it('accepts Escape with a matching token', () => {
+    {
+      const key = 'Escape';
       expect(
         isValidKeyMessage(
           { type: 'article-frame-key', token: 'tok', key },
@@ -228,11 +229,12 @@ describe('isValidKeyMessage', () => {
     }
   });
 
-  it('rejects mismatched tokens, wrong types, and unbridged keys', () => {
+  it('rejects mismatched tokens, wrong types, and other keys', () => {
     const cases: Array<[unknown, string]> = [
-      [{ type: 'article-frame-key', token: 'wrong', key: 'j' }, 'tok'],
-      [{ type: 'article-frame-key', token: '', key: 'j' }, ''],
-      [{ type: 'article-frame-image', token: 'tok', key: 'j' }, 'tok'],
+      [{ type: 'article-frame-key', token: 'wrong', key: 'Escape' }, 'tok'],
+      [{ type: 'article-frame-key', token: '', key: 'Escape' }, ''],
+      [{ type: 'article-frame-image', token: 'tok', key: 'Escape' }, 'tok'],
+      [{ type: 'article-frame-key', token: 'tok', key: 'j' }, 'tok'],
       [{ type: 'article-frame-key', token: 'tok', key: 'Enter' }, 'tok'],
       [{ type: 'article-frame-key', token: 'tok', key: 'a' }, 'tok'],
       [{ type: 'article-frame-key', token: 'tok', key: 42 }, 'tok'],

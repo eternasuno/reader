@@ -198,7 +198,7 @@ func (q *RefreshQueue) syncFeed(ctx context.Context, feed domain.Feed) error {
 
 	newItems, deleteIDs := domain.PlanFeedSync(feed.ID, parsed.Entries, storedRefs, settings.Retention, domain.NewID)
 
-	return q.feeds.ApplySync(ctx, feed.ID, resolveFeedTitle(parsed.Title, feed), q.now().UTC(), newItems, deleteIDs)
+	return q.feeds.ApplySync(ctx, feed.ID, resolveFeedTitle(parsed.Title, feed), parsed.IconURL, q.now().UTC(), newItems, deleteIDs)
 }
 
 func resolveFeedTitle(parsedTitle string, feed domain.Feed) string {

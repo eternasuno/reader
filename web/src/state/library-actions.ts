@@ -1,144 +1,36 @@
 /**
- * Single-article optimistic read toggle (`LIB-READ-1`, `LIB-FILTER-1`). Tracks per-article
- * mutation ownership so a late failure never undoes a newer choice.
+ * Single-article read toggle (`LIB-READ-1`, `LIB-FILTER-1`) on top of the per-article read sync.
  */
 
-import { flush } from 'solid-js';
-import { feedItemsApi, savedPagesApi } from '../api';
-import { showToast } from '../ui';
-import { errorText } from './errorText';
-import { readTracker } from './library-mutations';
 import type { ArticleReadFallback, LibraryArticle } from './library-store';
-import {
-  activeScope,
-  articleById,
-  hasRow,
-  patchArticle,
-  requestState,
-} from './library-store';
-import * as sidebar from './sidebar';
+import { activeScope, articleById } from './library-store';
+import type { ReadTarget } from './read-sync';
+import { requestRead, targetOf } from './read-sync';
 
-const adjustUnread = (
-  kind: LibraryArticle['kind'],
-  feedId: string | null,
-  delta: number
-): void => {
-  if (kind === 'later') {
-    sidebar.adjustSavedUnread(delta);
-    return;
-  }
-
-  if (feedId !== null) sidebar.adjustFeedUnread(feedId, delta);
-};
-
-const rowKindOf = (
-  article: LibraryArticle | null,
-  fallback: ArticleReadFallback | undefined
-): LibraryArticle['kind'] => {
-  if (article !== null) return article.kind;
-  if (fallback !== undefined) return fallback.kind;
-
-  return activeScope().kind === 'later' ? 'later' : 'feed';
-};
-
-const rowFeedIdOf = (
-  article: LibraryArticle | null,
-  fallback: ArticleReadFallback | undefined
-): string | null => {
-  if (article !== null) return article.kind === 'feed' ? article.feedId : null;
-  if (fallback === undefined || fallback.kind !== 'feed') return null;
-
-  return fallback.feedId ?? null;
-};
-
-const setReadRequest = async (
-  kind: LibraryArticle['kind'],
+const fallbackTarget = (
   articleId: string,
-  read: boolean
-): Promise<void> => {
-  if (kind === 'later') {
-    await savedPagesApi.setRead(articleId, read);
-    return;
-  }
-
-  await feedItemsApi.setRead(articleId, read);
-};
-
-const isReadUnchanged = (
-  existing: LibraryArticle | null,
   nextRead: boolean,
   fallback: ArticleReadFallback | undefined
-): boolean => {
-  if (existing !== null) return existing.read === nextRead;
-  return fallback !== undefined && fallback.read === nextRead;
-};
-
-const beginOptimisticRead = (
-  articleId: string,
-  existing: LibraryArticle | null,
-  nextRead: boolean,
-  kind: LibraryArticle['kind'],
-  feedId: string | null,
-  previousRead: boolean | undefined
-): number | undefined => {
-  if (previousRead === undefined) return undefined;
-
-  const token = readTracker.begin(articleId, previousRead, nextRead);
-  if (existing !== null) patchArticle(articleId, { read: nextRead });
-  adjustUnread(kind, feedId, nextRead ? -1 : 1);
-  flush();
-  return token;
-};
-
-const reconcileArticleRead = (
-  articleId: string,
-  targetRead: boolean,
-  kind: LibraryArticle['kind'],
-  feedId: string | null,
-  startGeneration: number
-): void => {
-  const current = articleById(articleId);
-  if (current === null) return;
-  if (hasRow(articleId) && requestState.generation !== startGeneration) return;
-  if (current.read === targetRead) return;
-
-  adjustUnread(kind, feedId, targetRead ? -1 : 1);
-  patchArticle(articleId, { read: targetRead });
-  flush();
-};
-
-const handleReadFailure = async (
-  error: unknown,
-  articleId: string,
-  token: number | undefined,
-  kind: LibraryArticle['kind'],
-  feedId: string | null,
-  startGeneration: number
-): Promise<void> => {
-  if (token !== undefined) {
-    const result = readTracker.fail(articleId, token);
-    if (result !== null) {
-      reconcileArticleRead(
-        articleId,
-        result.targetRead,
-        kind,
-        feedId,
-        startGeneration
-      );
-      if (!result.owns) return;
-      if (result.settledAll) await sidebar.invalidateSidebar();
-    }
-  } else {
-    await sidebar.invalidateSidebar();
+): ReadTarget => {
+  if (fallback !== undefined) {
+    return {
+      id: articleId,
+      kind: fallback.kind,
+      feedId: fallback.kind === 'feed' ? (fallback.feedId ?? null) : null,
+      read: fallback.read,
+    };
   }
 
-  showToast(errorText(error), 'error');
+  const kind: LibraryArticle['kind'] =
+    activeScope().kind === 'later' ? 'later' : 'feed';
+  return { id: articleId, kind, feedId: null, read: !nextRead };
 };
 
 /**
- * `LIB-FILTER-1` / `LIB-READ-1`: flips read state optimistically. Rows never leave the loaded list,
- * and the action is never gated by in-flight flags. `fallback` carries context when an article is
- * not yet in the record store.
+ * `LIB-FILTER-1` / `LIB-READ-1`: shows `nextRead` immediately and syncs it in the background. Rows
+ * never leave the loaded list, and the action is never gated by in-flight state. `fallback`
+ * carries context when an article is not in the record store. Resolves once the article's request
+ * queue is idle: `true` when the server-confirmed state equals `nextRead`, else `false`.
  */
 export const toggleArticleRead = async (
   articleId: string,
@@ -146,45 +38,10 @@ export const toggleArticleRead = async (
   fallback?: ArticleReadFallback
 ): Promise<boolean> => {
   const existing = articleById(articleId);
-  if (isReadUnchanged(existing, nextRead, fallback)) return true;
-
-  const kind = rowKindOf(existing, fallback);
-  const feedId = rowFeedIdOf(existing, fallback);
-  const previousRead = existing !== null ? existing.read : fallback?.read;
-  const startGeneration = requestState.generation;
-  const token = beginOptimisticRead(
-    articleId,
-    existing,
-    nextRead,
-    kind,
-    feedId,
-    previousRead
-  );
-
-  try {
-    await setReadRequest(kind, articleId, nextRead);
-    if (token !== undefined) {
-      const result = readTracker.succeed(articleId, token, nextRead);
-      if (result !== null) {
-        reconcileArticleRead(
-          articleId,
-          result.targetRead,
-          kind,
-          feedId,
-          startGeneration
-        );
-      }
-    }
-    return true;
-  } catch (error) {
-    await handleReadFailure(
-      error,
-      articleId,
-      token,
-      kind,
-      feedId,
-      startGeneration
-    );
-    return false;
-  }
+  const target =
+    existing !== null
+      ? targetOf(existing)
+      : fallbackTarget(articleId, nextRead, fallback);
+  const confirmed = await requestRead(target, nextRead);
+  return confirmed === nextRead;
 };

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createStateTestContext,
   jsonResponse,
@@ -116,8 +116,8 @@ describe('stale scope rollback guard', () => {
   });
 });
 
-describe('bulk vs toggle ownership: unread', () => {
-  it('does not let a failed bulk rollback overwrite a row claimed by a newer toggle', async () => {
+describe('bulk vs newer toggle: failure', () => {
+  it('does not let a failed bulk request overwrite a newer toggle on a row', async () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
@@ -125,32 +125,28 @@ describe('bulk vs toggle ownership: unread', () => {
       feeds: [],
       saved: 2,
     });
-
+    const before = ctx.fetchCount();
     const bulkReq = ctx.pending();
-    const toggleReq = ctx.pending();
 
     const marking = state.markLoadedRead();
     solid.flush();
-
     const toggling = state.toggleArticleRead('p1', false);
     solid.flush();
     expect(state.rows().find((row) => row.id === 'p1')?.read).toBe(false);
 
-    toggleReq.resolve(noContentResponse());
-    await expect(toggling).resolves.toBe(true);
-
-    ctx.queueSidebar({ saved: 2 });
     bulkReq.resolve(jsonResponse({ error: 'SavedPageRepositoryError' }, 500));
     await marking;
+    await expect(toggling).resolves.toBe(true);
     solid.flush();
 
-    expect(state.rows().find((row) => row.id === 'p1')?.read).toBe(false);
-    expect(state.rows().find((row) => row.id === 'p2')?.read).toBe(false);
+    expect(state.rows().map((row) => row.read)).toEqual([false, false]);
+    expect(state.savedUnreadCount()).toBe(2);
+    expect(ctx.fetchCount()).toBe(before + 1);
   });
 });
 
-describe('bulk vs toggle ownership: re-read', () => {
-  it('keeps a newer read-true toggle when an earlier markScopeAllRead fails', async () => {
+describe('bulk vs newer toggle: success', () => {
+  it('sends a toggle made during markScopeAllRead after the batch succeeds', async () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
@@ -158,28 +154,27 @@ describe('bulk vs toggle ownership: re-read', () => {
       feeds: [],
       saved: 2,
     });
-
+    const before = ctx.fetchCount();
     const bulkReq = ctx.pending();
-    const toggleUnreadReq = ctx.pending();
-    const toggleReadReq = ctx.pending();
+    const toggleReq = ctx.pending();
 
     const marking = state.markScopeAllRead({ kind: 'later' });
     solid.flush();
-
     const markUnread = state.toggleArticleRead('p1', false);
-    const markReadAgain = state.toggleArticleRead('p1', true);
     solid.flush();
+    expect(state.savedUnreadCount()).toBe(1);
 
-    toggleUnreadReq.resolve(noContentResponse());
-    toggleReadReq.resolve(noContentResponse());
-    await Promise.all([markUnread, markReadAgain]);
-
-    ctx.queueSidebar({ saved: 1 });
-    bulkReq.resolve(jsonResponse({ error: 'SavedPageRepositoryError' }, 500));
+    bulkReq.resolve(noContentResponse());
     await marking;
+    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(before + 2));
+    expect(ctx.requestUrl(before + 1)).toBe('/api/saved-pages/p1');
+    expect(ctx.requestBody(before + 1)).toEqual({ read: false });
+
+    toggleReq.resolve(noContentResponse());
+    await expect(markUnread).resolves.toBe(true);
     solid.flush();
 
-    expect(state.rows().find((row) => row.id === 'p1')?.read).toBe(true);
-    expect(state.rows().find((row) => row.id === 'p2')?.read).toBe(false);
+    expect(state.rows().map((row) => row.read)).toEqual([false, true]);
+    expect(state.savedUnreadCount()).toBe(1);
   });
 });

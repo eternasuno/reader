@@ -10,6 +10,7 @@ import {
   sessionStatus,
 } from '../state';
 import { Button, Icon, Input } from '../ui';
+import { GuardChecking } from './SessionGuard';
 
 function LoginBrand(): JSX.Element {
   return (
@@ -153,6 +154,21 @@ export function LoginPage(): JSX.Element {
   useLoginRedirects(nextParam);
 
   return (
+    <Show
+      when={
+        sessionStatus() === 'unauthenticated' || sessionStatus() === 'error'
+      }
+      fallback={<GuardChecking />}
+    >
+      <LoginCard login={login} />
+    </Show>
+  );
+}
+
+function LoginCard(props: {
+  login: ReturnType<typeof useLoginSubmit>;
+}): JSX.Element {
+  return (
     <div class="flex min-h-dvh items-center justify-center bg-base-100 p-4">
       <div class="card w-full max-w-sm rounded-box border border-base-300 bg-base-200/50 shadow-2xl">
         <div class="card-body gap-6 p-7">
@@ -160,14 +176,14 @@ export function LoginPage(): JSX.Element {
           <h1 class="text-base font-medium text-base-content/80">
             {t('auth.title')}
           </h1>
-          <Show when={login.errorCode()}>
+          <Show when={props.login.errorCode()}>
             {(code) => <LoginError code={code()} />}
           </Show>
           <LoginForm
-            password={login.password()}
-            submitting={login.submitting()}
-            onPassword={login.setPassword}
-            onSubmit={login.submit}
+            password={props.login.password()}
+            submitting={props.login.submitting()}
+            onPassword={props.login.setPassword}
+            onSubmit={props.login.submit}
           />
         </div>
       </div>

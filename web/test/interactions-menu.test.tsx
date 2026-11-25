@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Feed } from '../src/api';
-import { KeyboardShortcutsDialog } from '../src/components';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
 import { FeedMoveSubpanel } from '../src/components/FeedMoveSubpanel';
 import { ReaderMoreMenu } from '../src/components/ReaderMoreMenu';
@@ -63,28 +62,6 @@ describe('ArticleListHeader', () => {
     expect(c1.textContent).not.toContain('视图选项');
     expect(c1.textContent).not.toContain('摘要行数');
     expect(c1.textContent).not.toContain('刷新');
-  });
-});
-
-describe('KeyboardShortcutsDialog', () => {
-  it('renders shortcut keys when open is true', () => {
-    mount(() => <KeyboardShortcutsDialog open={true} onClose={vi.fn()} />);
-    const keys = Array.from(
-      document.querySelectorAll('[role="dialog"] kbd'),
-      (node) => node.textContent
-    );
-    expect(keys).toEqual([
-      'j',
-      'k',
-      'm',
-      's',
-      'f',
-      'v / o',
-      'u',
-      '[',
-      'Esc',
-      '?',
-    ]);
   });
 });
 

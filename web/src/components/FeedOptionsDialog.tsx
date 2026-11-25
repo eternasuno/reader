@@ -13,7 +13,12 @@ import {
 import type { Feed, ReaderMode } from '../api';
 import { browserHref } from '../api/url';
 import { t } from '../i18n';
-import { changeFeedReaderMode, feeds } from '../state';
+import {
+  changeFeedReaderMode,
+  feeds,
+  iconCandidates,
+  siteIconUrl,
+} from '../state';
 import { Button, Icon, useDialogFocus } from '../ui';
 import { createOpenReset } from './createOpenReset';
 import { SiteIcon } from './SiteIcon';
@@ -182,7 +187,14 @@ function FeedOptionsBody(props: {
   return (
     <div class="flex flex-1 flex-col gap-7 overflow-y-auto px-5 py-4">
       <div class="my-2 flex justify-center">
-        <SiteIcon url={props.feed.url} fallback="rss" size={56} />
+        <SiteIcon
+          srcs={iconCandidates([
+            props.feed.iconUrl,
+            siteIconUrl(props.feed.url),
+          ])}
+          fallback="rss"
+          size={56}
+        />
       </div>
       <div class="flex flex-col gap-1.5">
         <span class="text-xs text-base-content/60">

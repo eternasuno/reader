@@ -17,8 +17,6 @@ import {
   dropFeedRows,
   requestState,
   restoreFeedRows,
-  rowIds,
-  rows,
 } from './library-store';
 import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
@@ -75,17 +73,13 @@ export const moveFeedToFolder = async (
   const scope = activeScope();
 
   if (scope.kind === 'folder' && scope.folderId !== folderId) {
-    const orderIds = rowIds();
-    const removedRows = rows().filter(
-      (row) => row.kind === 'feed' && row.feedId === feed.id
-    );
+    const dropped = dropFeedRows(feed.id);
     feedMoveTracker.recordDrop(feed.id, {
       scopeGeneration: requestState.generation,
       folderId: scope.folderId,
-      rows: removedRows,
-      orderIds,
+      rows: dropped.rows,
+      orderIds: dropped.orderIds,
     });
-    dropFeedRows(feed.id);
   }
 
   sidebar.updateFeedLocal(feed.id, { folderId });

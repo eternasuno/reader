@@ -26,7 +26,7 @@ describe('first page load', () => {
     expect(state.rows()[0].kind).toBe('later');
     expect(state.articleSource(state.rows()[0])).toEqual({
       title: 'example.com',
-      url: state.rows()[0].url,
+      iconSrcs: ['https://example.com/favicon.ico'],
     });
     expect(state.cursor()).toBe('p2');
     expect(state.activeScope()).toEqual({ kind: 'later' });
@@ -75,16 +75,71 @@ describe('scope endpoints', () => {
 });
 
 describe('row labels', () => {
-  it('labels feed rows with the feed title', async () => {
+  it('labels feed rows with feed title and icon candidates', async () => {
     const { state } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
-      items: [makeItem({ id: 'i1', feedId: 'f1' })],
-      feeds: [makeFeed({ id: 'f1', title: 'Go Blog' })],
+      items: [
+        makeItem({ id: 'i1', feedId: 'f1' }),
+        makeItem({ id: 'i2', feedId: 'f2' }),
+      ],
+      feeds: [
+        makeFeed({
+          id: 'f1',
+          title: 'Go Blog',
+          url: 'https://go.dev/blog/feed.atom',
+          iconUrl: 'https://go.dev/images/go-logo.png',
+        }),
+        makeFeed({
+          id: 'f2',
+          title: 'Plain',
+          url: 'https://plain.example/rss',
+        }),
+      ],
     });
 
     expect(state.rows()[0].kind).toBe('feed');
-    expect(state.articleSource(state.rows()[0]).title).toBe('Go Blog');
+    expect(state.articleSource(state.rows()[0])).toEqual({
+      title: 'Go Blog',
+      iconSrcs: [
+        'https://go.dev/images/go-logo.png',
+        'https://go.dev/favicon.ico',
+      ],
+    });
+    expect(state.articleSource(state.rows()[1])).toEqual({
+      title: 'Plain',
+      iconSrcs: ['https://plain.example/favicon.ico'],
+    });
+  });
+});
+
+describe('feed icon candidates', () => {
+  it('deduplicates feed iconUrl and returns empty candidates when feed is unknown', async () => {
+    const { state } = ctx;
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'all' },
+      items: [
+        makeItem({ id: 'i1', feedId: 'f1' }),
+        makeItem({ id: 'i2', feedId: 'missing' }),
+      ],
+      feeds: [
+        makeFeed({
+          id: 'f1',
+          title: 'Favicon Feed',
+          url: 'https://fav.example/rss.xml',
+          iconUrl: 'https://fav.example/favicon.ico',
+        }),
+      ],
+    });
+
+    expect(state.articleSource(state.rows()[0])).toEqual({
+      title: 'Favicon Feed',
+      iconSrcs: ['https://fav.example/favicon.ico'],
+    });
+    expect(state.articleSource(state.rows()[1])).toEqual({
+      title: '',
+      iconSrcs: [],
+    });
   });
 });
 

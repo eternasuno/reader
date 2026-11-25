@@ -22,8 +22,9 @@ import {
 import { LatestTokenMap } from './library-mutations';
 import type { LibraryArticle, LibraryArticlePatch } from './library-store';
 import * as store from './library-store';
+import { beginRecordSnapshot } from './read-sync';
 import type { LibraryScope } from './scope';
-import { hostnameOf } from './scope';
+import { hostnameOf, iconCandidates, siteIconUrl } from './scope';
 import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
 
@@ -41,7 +42,6 @@ export {
   activeUnreadOnly,
   aggregateOrder,
   articleById,
-  captureMutationVersion,
   cursor,
   isLibraryMounted,
   loadError,
@@ -49,6 +49,7 @@ export {
   loadingMore,
   PAGE_SIZE,
   retainReaderArticle,
+  rowIds,
   rows,
   trackLibraryMount,
   upsertArticle,
@@ -58,7 +59,7 @@ const feedOrderTokens = new LatestTokenMap();
 
 export interface ArticleSource {
   title: string;
-  url: string;
+  iconSrcs: ReadonlyArray<string>;
 }
 
 /**
@@ -66,12 +67,17 @@ export interface ArticleSource {
  * reactively so rows loaded before the sidebar feeds still resolve.
  */
 export const articleSource = (article: LibraryArticle): ArticleSource => {
-  if (article.kind === 'later')
-    return { title: hostnameOf(article.url), url: article.url };
+  if (article.kind === 'later') {
+    const icon = siteIconUrl(article.url);
+    return { title: hostnameOf(article.url), iconSrcs: icon ? [icon] : [] };
+  }
 
   const feed = sidebar.feeds().find((entry) => entry.id === article.feedId);
 
-  return { title: feed?.title ?? '', url: feed?.url ?? article.url };
+  return {
+    title: feed?.title ?? '',
+    iconSrcs: feed ? iconCandidates([feed.iconUrl, siteIconUrl(feed.url)]) : [],
+  };
 };
 
 const toLibraryArticle = (
@@ -167,12 +173,12 @@ export const loadScopeFirstPage = async (
   store.requestState.generation += 1;
   store.requestState.pageInFlight = false;
   const requestGeneration = store.requestState.generation;
-  const dispatchVersion = store.captureMutationVersion();
   // `FD-PREF-1`: without an explicit order the server applies a single feed's stored order.
   const requestOrder = scope.kind === 'feed' ? order : aggregateRequestOrder();
 
   resetListState(scope, unreadOnly, effectiveOrderOf(scope, order));
 
+  const releaseSnapshot = beginRecordSnapshot();
   try {
     const page = await fetchPage({
       scope,
@@ -182,13 +188,14 @@ export const loadScopeFirstPage = async (
     });
     if (requestGeneration !== store.requestState.generation) return;
 
-    store.replaceRows(toRows(scope, page.items), dispatchVersion);
+    store.replaceRows(toRows(scope, page.items));
     store.setCursor(page.cursor);
   } catch (error) {
     if (requestGeneration !== store.requestState.generation) return;
 
     store.setLoadError(errorCodeOf(error));
   } finally {
+    releaseSnapshot();
     finishInitialLoad(requestGeneration);
   }
 };
@@ -245,7 +252,6 @@ export const loadNextPage = async (): Promise<void> => {
 
   store.requestState.pageInFlight = true;
   const requestGeneration = store.requestState.generation;
-  const dispatchVersion = store.captureMutationVersion();
   const scope = store.activeScope();
   const request: PageRequest = {
     scope,
@@ -259,17 +265,19 @@ export const loadNextPage = async (): Promise<void> => {
   store.setLoadingMore(true);
   flush();
 
+  const releaseSnapshot = beginRecordSnapshot();
   try {
     const page = await fetchPage(request);
     if (requestGeneration !== store.requestState.generation) return;
 
-    store.appendRows(toRows(request.scope, page.items), dispatchVersion);
+    store.appendRows(toRows(request.scope, page.items));
     store.setCursor(page.cursor);
   } catch (error) {
     if (requestGeneration !== store.requestState.generation) return;
 
     store.setLoadError(errorCodeOf(error));
   } finally {
+    releaseSnapshot();
     finishNextPage(requestGeneration);
   }
 };

@@ -26,14 +26,17 @@ export interface RedirectProps {
   to: string;
 }
 
-function GuardChecking(): JSX.Element {
+export function GuardChecking(): JSX.Element {
   return (
     <div
       role="status"
-      class="flex min-h-dvh items-center justify-center gap-2 bg-base-100 text-sm text-base-content/70"
+      aria-label={t('common.checkingSession')}
+      class="flex min-h-dvh items-center justify-center bg-base-100"
     >
-      <span class="loading loading-spinner loading-sm" aria-hidden="true" />
-      {t('common.checkingSession')}
+      <span
+        class="loading loading-spinner loading-lg text-base-content/60"
+        aria-hidden="true"
+      />
     </div>
   );
 }

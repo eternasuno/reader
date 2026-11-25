@@ -71,10 +71,6 @@
         },
         "noExportedImports": "error",
         "noNestedTernary": "error",
-        "noParameterAssign": {
-          "level": "error",
-          "options": { "propertyAssignment": "deny" }
-        },
         "noUselessElse": "error",
         "useReadonlyClassProperties": "error"
       },

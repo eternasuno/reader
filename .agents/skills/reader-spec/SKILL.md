@@ -94,4 +94,4 @@ Every scope and open article has its own URL so reloads and browser history rest
 | `ArticleEmptyContent` | 未能提取到文章内容 |
 | `WebpageFetcherError` | 网页抓取失败，请稍后重试 |
 | `ArticleExtractorError` | 正文提取失败，请稍后重试 |
-| checking session | 正在确认登录状态… |
+| checking session | centered loading spinner (no visible text); accessible name `正在确认登录状态…` |

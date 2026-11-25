@@ -60,15 +60,20 @@ export function ReaderView(props: ReaderViewProps): JSX.Element {
             class="min-h-0 w-full flex-1 overflow-y-auto overscroll-contain"
             onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 4)}
           >
-            <article
-              class={[
-                'mx-auto flex min-h-full w-full flex-col gap-4 py-5',
-                LINE_WIDTH_CLASSES[readerAppearance().lineWidth],
-              ]}
-            >
-              <ReaderArticleHeader article={props.article} />
-              <ReaderStoredBody article={props.article} />
-            </article>
+            <Show when={props.article.id || null} keyed>
+              {(articleId) => (
+                <article
+                  data-article-id={articleId}
+                  class={[
+                    'mx-auto flex min-h-full w-full flex-col gap-4 py-5 animate-fade-in',
+                    LINE_WIDTH_CLASSES[readerAppearance().lineWidth],
+                  ]}
+                >
+                  <ReaderArticleHeader article={props.article} />
+                  <ReaderStoredBody article={props.article} />
+                </article>
+              )}
+            </Show>
           </div>
         }
       >

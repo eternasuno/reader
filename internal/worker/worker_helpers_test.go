@@ -222,7 +222,7 @@ func (r *fakeFeedRepository) RecordRefreshFailure(ctx context.Context, id string
 	return nil
 }
 
-func (r *fakeFeedRepository) ApplySync(ctx context.Context, feedID string, newTitle string, updatedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
+func (r *fakeFeedRepository) ApplySync(ctx context.Context, feedID string, newTitle string, iconURL *string, updatedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

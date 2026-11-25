@@ -109,6 +109,7 @@ func (p *Parser) parseJSONFeedReader(r io.Reader, base *url.URL, limits feedLimi
 	return domain.ParsedFeed{
 		Title:       title,
 		Description: description,
+		IconURL:     feedIconURL(base, feed.Favicon, feed.Icon),
 		Entries:     entries,
 	}, nil
 }
@@ -154,6 +155,7 @@ func (p *Parser) parseRSSFeed(payload []byte, base *url.URL, root string, budget
 	return domain.ParsedFeed{
 		Title:       title,
 		Description: description,
+		IconURL:     feedIconURL(base, rssFeedIcon(feed)),
 		Entries:     entries,
 	}, nil
 }
@@ -179,6 +181,7 @@ func (p *Parser) parseAtomFeed(payload []byte, base *url.URL, scan payloadScan, 
 	return domain.ParsedFeed{
 		Title:       title,
 		Description: description,
+		IconURL:     feedIconURL(base, feed.Icon, feed.Logo),
 		Entries:     entries,
 	}, nil
 }
@@ -734,6 +737,10 @@ func decodeJSONFeedField(decoder *json.Decoder, state *jsonFeedDecodeState, key 
 		return decoder.Decode(&state.feed.Title)
 	case "description":
 		return decoder.Decode(&state.feed.Description)
+	case "icon":
+		return decodeJSONFeedString(decoder, &state.feed.Icon)
+	case "favicon":
+		return decodeJSONFeedString(decoder, &state.feed.Favicon)
 	case "authors":
 		return validateJSONAuthors(decoder)
 	case "items":
@@ -1088,4 +1095,74 @@ func xmlAttributeValue(element xml.StartElement, key string) string {
 	}
 
 	return ""
+}
+
+const maxFeedIconURLBytes = 2048
+
+func feedIconURL(base *url.URL, candidates ...string) *string {
+	for _, raw := range candidates {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || len(trimmed) > maxFeedIconURLBytes {
+			continue
+		}
+
+		resolved, err := base.Parse(trimmed)
+		if err != nil {
+			continue
+		}
+
+		normalized, err := domain.ParseNormalizedURL(resolved.String(), domain.ErrFeedParserError)
+		if err != nil || normalized.HasCredentials() || len(normalized.Raw()) > maxFeedIconURLBytes {
+			continue
+		}
+
+		icon := normalized.Raw()
+
+		return &icon
+	}
+
+	return nil
+}
+
+func rssFeedIcon(feed *rss.Feed) string {
+	if feed.Image == nil {
+		return ""
+	}
+
+	return feed.Image.URL
+}
+
+func decodeJSONFeedString(decoder *json.Decoder, target *string) error {
+	tok, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+
+	switch value := tok.(type) {
+	case string:
+		*target = value
+	case json.Delim:
+		depth := 0
+		if _, err := advanceJSONSkipDepth(tok, &depth); err != nil {
+			return err
+		}
+
+		return skipJSONContainer(decoder, depth)
+	}
+
+	return nil
+}
+
+func skipJSONContainer(decoder *json.Decoder, depth int) error {
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+
+		done, err := advanceJSONSkipDepth(tok, &depth)
+		if err != nil || done {
+			return err
+		}
+	}
 }

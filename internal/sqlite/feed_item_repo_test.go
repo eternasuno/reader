@@ -343,7 +343,7 @@ func TestFeedItemSaveExtractedContentIfEmpty(t *testing.T) {
 				ExtractedContent: tc.existing,
 			}
 
-			if err := store.Feeds().ApplySync(ctx, feed.ID, feed.Title, time.Now().UTC(), []domain.FeedItem{item}, nil); err != nil {
+			if err := store.Feeds().ApplySync(ctx, feed.ID, feed.Title, nil, time.Now().UTC(), []domain.FeedItem{item}, nil); err != nil {
 				t.Fatalf("seed item: %v", err)
 			}
 
@@ -446,7 +446,7 @@ func TestFeedItemStoredRefsAndRetention(t *testing.T) {
 		{ID: domain.NewID(), URL: mustURL(t, "https://example.com/first"), Title: "First"},
 		{ID: domain.NewID(), URL: mustURL(t, "https://user:secret@example.com/second"), Title: "Second"},
 	}
-	if err := store.Feeds().ApplySync(ctx, feed.ID, "Example", time.Now().UTC(), items, nil); err != nil {
+	if err := store.Feeds().ApplySync(ctx, feed.ID, "Example", nil, time.Now().UTC(), items, nil); err != nil {
 		t.Fatalf("apply sync: %v", err)
 	}
 

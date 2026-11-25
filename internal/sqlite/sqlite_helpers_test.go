@@ -121,7 +121,7 @@ func addItems(t *testing.T, store *Store, feed domain.Feed, count int) []domain.
 		}
 	}
 
-	err := store.Feeds().ApplySync(context.Background(), feed.ID, feed.Title, time.Now().UTC(), items, nil)
+	err := store.Feeds().ApplySync(context.Background(), feed.ID, feed.Title, nil, time.Now().UTC(), items, nil)
 	if err != nil {
 		t.Fatalf("sync items for feed %q: %v", feed.Title, err)
 	}

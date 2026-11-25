@@ -55,11 +55,17 @@ class Mirrors {
   element: HTMLDivElement | null = null;
   estimate = DEFAULT_ESTIMATE_SIZE;
   overscan = DEFAULT_OVERSCAN;
+  keys: ReadonlyArray<string> = [];
   triggered = -1;
 
-  configure(estimate: number, overscan: number): void {
+  configure(
+    estimate: number,
+    overscan: number,
+    keys: ReadonlyArray<string>
+  ): void {
     this.estimate = estimate;
     this.overscan = overscan;
+    this.keys = keys;
   }
 
   setElement(el: HTMLDivElement | null): void {
@@ -96,6 +102,7 @@ const optionsFor = (
   getScrollElement: () => mirrors.element,
   estimateSize: () => mirrors.estimate,
   overscan: mirrors.overscan,
+  getItemKey: (index) => mirrors.keys[index] ?? index,
   observeElementRect,
   observeElementOffset,
   scrollToFn: elementScroll,
@@ -103,7 +110,7 @@ const optionsFor = (
 });
 
 interface VirtualizerInput {
-  count: () => number;
+  keys: () => ReadonlyArray<string>;
   estimate: () => number;
   overscan: () => number;
   element: () => HTMLDivElement | null;
@@ -124,7 +131,7 @@ const useVirtualizerCore = (
 
   createEffect(
     () => ({
-      count: input.count(),
+      keys: [...input.keys()],
       estimate: input.estimate(),
       overscan: input.overscan(),
       element: input.element(),
@@ -132,8 +139,8 @@ const useVirtualizerCore = (
     (state) => {
       if (state.element === null) return;
       mirrors.setElement(state.element);
-      mirrors.configure(state.estimate, state.overscan);
-      virtualizer.setOptions(optionsFor(state.count, mirrors, sync));
+      mirrors.configure(state.estimate, state.overscan, state.keys);
+      virtualizer.setOptions(optionsFor(state.keys.length, mirrors, sync));
       virtualizer._willUpdate();
       sync(virtualizer);
     }
@@ -200,15 +207,15 @@ export interface ListState {
   setScrollElement: (el: HTMLDivElement) => void;
 }
 
-export const useVirtualList = <T>(props: VirtualListProps<T>): ListState => {
+export const useVirtualList = (props: VirtualListProps): ListState => {
   const mirrors = new Mirrors();
   const measurement = useMeasurements();
   const [element, setElement] = createSignal<HTMLDivElement | null>(null);
-  const count = () => props.items.length;
+  const count = () => props.keys.length;
 
   const virtualizer = useVirtualizerCore(
     {
-      count,
+      keys: () => props.keys,
       estimate: () => props.estimateSize ?? DEFAULT_ESTIMATE_SIZE,
       overscan: () => props.overscan ?? DEFAULT_OVERSCAN,
       element,

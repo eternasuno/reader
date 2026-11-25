@@ -109,13 +109,8 @@ describe('ArticleListHeader failure menu', () => {
   });
 });
 
-describe('ArticleRow feed quick actions', () => {
-  it('renders quick actions for feed items and calls save/open handlers', async () => {
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ item: { id: 'p1' } }), { status: 201 })
-    );
-
+describe('ArticleRow feed read toggle', () => {
+  it('renders a stable read toggle and no hover quick actions', () => {
     const container = mount(() => (
       <ArticleRow
         row={{
@@ -138,25 +133,13 @@ describe('ArticleRow feed quick actions', () => {
       'false'
     );
     expect(ariaBtn(container, '标为已读')).toBeNull();
-
-    ariaBtn(container, '保存到稍后阅读')?.click();
-    await Promise.resolve();
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/feed-items/i1/save',
-      expect.objectContaining({ method: 'POST' })
-    );
-
-    ariaBtn(container, '打开原文')?.click();
-    expect(openSpy).toHaveBeenCalledWith(
-      'https://example.com/i1',
-      '_blank',
-      'noopener,noreferrer'
-    );
+    expect(ariaBtn(container, '保存到稍后阅读')).toBeNull();
+    expect(ariaBtn(container, '打开原文')).toBeNull();
   });
 });
 
 describe('ArticleRow saved page and read toggle', () => {
-  it('hides save-to-later for saved pages and keeps read label stable', () => {
+  it('keeps the read label stable for saved pages', () => {
     const container = mount(() => (
       <ArticleRow
         row={{
@@ -178,7 +161,5 @@ describe('ArticleRow saved page and read toggle', () => {
       'true'
     );
     expect(ariaBtn(container, '标为未读')).toBeNull();
-    expect(ariaBtn(container, '保存到稍后阅读')).toBeNull();
-    expect(ariaBtn(container, '打开原文')).not.toBeNull();
   });
 });

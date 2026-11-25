@@ -228,3 +228,10 @@ export const siteIconUrl = (rawUrl: string): string | null => {
 
   return url === null ? null : `${url.origin}/favicon.ico`;
 };
+
+/** `LIB-ROW-1`: ordered, de-duplicated icon candidates with absent values dropped. */
+export const iconCandidates = (
+  candidates: ReadonlyArray<string | null | undefined>
+): ReadonlyArray<string> => [
+  ...new Set(candidates.filter((url): url is string => Boolean(url))),
+];

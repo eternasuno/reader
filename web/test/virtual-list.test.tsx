@@ -124,12 +124,12 @@ const mountList = (options: {
     render(
       () => (
         <VirtualList
-          items={options.items()}
+          keys={options.items()}
           estimateSize={options.estimateSize ?? 136}
           onEndReached={options.onEndReached}
           activeKey={options.activeKey?.()}
           activeIndex={options.activeIndex?.()}
-          renderItem={(item) => <div>{item}</div>}
+          renderItem={(key) => <div>{key}</div>}
         />
       ),
       wrapper

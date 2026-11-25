@@ -205,7 +205,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 	}
 
 	updatedAt := time.Date(2024, 3, 1, 11, 0, 0, 0, time.UTC).In(time.FixedZone("plus-two", 2*60*60))
-	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", updatedAt, items, nil); err != nil {
+	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", nil, updatedAt, items, nil); err != nil {
 		t.Fatalf("apply sync: %v", err)
 	}
 
@@ -240,7 +240,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 	}
 
 	duplicate := []domain.FeedItem{{ID: domain.NewID(), URL: mustURL(t, "https://example.com/a"), Title: "A again"}}
-	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", updatedAt, duplicate, nil); err != nil {
+	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", nil, updatedAt, duplicate, nil); err != nil {
 		t.Fatalf("apply sync with duplicate url: %v", err)
 	}
 
@@ -257,7 +257,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 		t.Fatalf("duplicate changed original item: %+v", got)
 	}
 
-	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", updatedAt, nil, []string{items[0].ID}); err != nil {
+	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", nil, updatedAt, nil, []string{items[0].ID}); err != nil {
 		t.Fatalf("apply sync with deletions: %v", err)
 	}
 

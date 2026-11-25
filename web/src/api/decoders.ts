@@ -129,6 +129,7 @@ export const isFeed: TypeGuard<Feed> = (value): value is Feed =>
   isOptionalString(value.updatedAt) &&
   isFiniteNumber(value.failureCount) &&
   isOptionalString(value.lastError) &&
+  (value.iconUrl === undefined || isServerHttpUrl(value.iconUrl)) &&
   isReaderMode(value.readerMode) &&
   isSortOrder(value.order);
 

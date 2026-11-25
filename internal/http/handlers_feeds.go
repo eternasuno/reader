@@ -22,6 +22,7 @@ type feedJSON struct {
 	UpdatedAt    *string           `json:"updatedAt,omitempty"`
 	FailureCount int               `json:"failureCount"`
 	LastError    *string           `json:"lastError,omitempty"`
+	IconURL      *string           `json:"iconUrl,omitempty"`
 	ReaderMode   domain.ReaderMode `json:"readerMode"`
 	Order        domain.SortOrder  `json:"order"`
 }
@@ -35,6 +36,7 @@ func toFeedJSON(feed domain.Feed) feedJSON {
 		UpdatedAt:    formatTimestampPtr(feed.UpdatedAt),
 		FailureCount: feed.FailureCount,
 		LastError:    feed.LastError,
+		IconURL:      feed.IconURL,
 		ReaderMode:   feed.ReaderMode,
 		Order:        feed.Order,
 	}

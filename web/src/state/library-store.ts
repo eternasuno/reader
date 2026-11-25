@@ -1,13 +1,15 @@
 /**
  * Shared reactive record store for library articles (`LIB-LIST-1`): articles are stored once by
- * ID, the list holds ordered IDs + cursor, and the reader derives from its selected ID.
+ * ID in a fine-grained store, the list holds ordered IDs + cursor, and the reader derives from its
+ * selected ID. Writes go through store drafts so a field change (for example `read`) only re-runs
+ * the bindings that read that field; server data is reconciled so record identity is preserved.
  * Deep-linked records are retained independently of list membership and evicted when neither view
  * needs them.
  */
 
-import { createSignal, flush } from 'solid-js';
+import { createSignal, createStore, flush, reconcile } from 'solid-js';
 import type { FeedItem, SavedPage, SortOrder } from '../api';
-import { articleSnapshotGuard } from './library-mutations';
+import { pendingRead } from './read-sync';
 import type { LibraryScope } from './scope';
 import { onSessionCleared } from './session';
 import { getItem, setItem } from './storage';
@@ -52,31 +54,24 @@ const setAggregateOrder = (next: SortOrder): void => {
   setItem(LIST_ORDER_STORAGE_KEY, next);
 };
 
-const [articlesById, setArticlesById] = createSignal<
-  Readonly<Record<string, LibraryArticle>>
->({});
-const [rowIds, setRowIdsSignal] = createSignal<ReadonlyArray<string>>([]);
+interface LibraryRecords {
+  /** Article records by ID. */
+  byId: Record<string, LibraryArticle>;
+  /** Ordered IDs of the loaded list. */
+  ids: Array<string>;
+  /** Deep-linked reader article kept even when it is not part of the list. */
+  retainedId: string | null;
+}
+
+const [records, setRecords] = createStore<LibraryRecords>({
+  byId: {},
+  ids: [],
+  retainedId: null,
+});
 const [cursor, setCursor] = createSignal<string | null>(null);
 const [loadingInitial, setLoadingInitial] = createSignal(false);
 const [loadingMore, setLoadingMore] = createSignal(false);
 const [loadError, setLoadError] = createSignal<string | null>(null);
-
-let latestRowIds: ReadonlyArray<string> = [];
-let retainedReaderId: string | null = null;
-
-export const captureMutationVersion = (): number =>
-  articleSnapshotGuard.capture();
-
-const setRowIds = (
-  next:
-    | ReadonlyArray<string>
-    | ((current: ReadonlyArray<string>) => ReadonlyArray<string>)
-): ReadonlyArray<string> => {
-  const resolved = typeof next === 'function' ? next(latestRowIds) : next;
-  latestRowIds = resolved;
-  setRowIdsSignal(resolved);
-  return resolved;
-};
 
 export {
   activeOrder,
@@ -87,7 +82,6 @@ export {
   loadError,
   loadingInitial,
   loadingMore,
-  rowIds,
   setActiveOrder,
   setActiveScope,
   setActiveUnreadOnly,
@@ -121,207 +115,203 @@ export const trackLibraryMount = (): (() => void) => {
 
 export const isLibraryMounted = (): boolean => libraryMounts > 0;
 
+/** Ordered IDs of the loaded list; a store array, so readers track only what they read. */
+export const rowIds = (): ReadonlyArray<string> => records.ids;
+
+/** The article record (a store proxy with stable identity), or `null`. */
 export const articleById = (articleId: string): LibraryArticle | null =>
-  articlesById()[articleId] ?? null;
+  records.byId[articleId] ?? null;
 
 export const hasRow = (articleId: string): boolean =>
-  latestRowIds.includes(articleId);
+  records.ids.includes(articleId);
 
 export const retainedArticle = (): LibraryArticle | null => {
-  if (retainedReaderId === null || hasRow(retainedReaderId)) return null;
-  return articleById(retainedReaderId);
+  const id = records.retainedId;
+  if (id === null || hasRow(id)) return null;
+  return articleById(id);
 };
 
+/** Loaded rows in list order. Allocates a new array: for one-off reads, not for rendering. */
 export const rows = (): ReadonlyArray<LibraryArticle> => {
-  const records = articlesById();
   const list: Array<LibraryArticle> = [];
-  for (const id of rowIds()) {
-    const article = records[id];
+  for (const id of records.ids) {
+    const article = records.byId[id];
     if (article !== undefined) list.push(article);
   }
   return list;
 };
 
-const evictUnusedArticles = (keepIds: ReadonlyArray<string>): void => {
-  const keep = new Set(keepIds);
-  if (retainedReaderId !== null) keep.add(retainedReaderId);
+const evictUnused = (draft: LibraryRecords): void => {
+  const keep = new Set(draft.ids);
+  if (draft.retainedId !== null) keep.add(draft.retainedId);
+  for (const id of Object.keys(draft.byId)) {
+    if (!keep.has(id)) delete draft.byId[id];
+  }
+};
 
-  setArticlesById((current) => {
-    let changed = false;
-    const next: Record<string, LibraryArticle> = {};
-    for (const [id, article] of Object.entries(current)) {
-      if (keep.has(id)) {
-        next[id] = article;
-      } else {
-        changed = true;
-        articleSnapshotGuard.evict(id);
-      }
-    }
-    return changed ? next : current;
-  });
+/**
+ * Merges a server snapshot into the store. The read state of an article with a pending read
+ * request stays at the user's latest intent, and extracted content fetched after the snapshot was
+ * dispatched is kept.
+ */
+const mergeRecord = (draft: LibraryRecords, incoming: LibraryArticle): void => {
+  const existing = draft.byId[incoming.id];
+  const intent = pendingRead(incoming.id);
+  const merged: LibraryArticle =
+    intent === undefined ? { ...incoming } : { ...incoming, read: intent };
+  if (
+    merged.kind === 'feed' &&
+    existing?.kind === 'feed' &&
+    merged.extractedContent === undefined &&
+    existing.extractedContent !== undefined
+  ) {
+    merged.extractedContent = existing.extractedContent;
+  }
+
+  if (existing === undefined) {
+    draft.byId[incoming.id] = merged;
+  } else {
+    reconcile(merged, 'id')(existing);
+  }
+};
+
+const appendUnique = (
+  draft: LibraryRecords,
+  items: ReadonlyArray<LibraryArticle>
+): void => {
+  const seen = new Set(draft.ids);
+  for (const item of items) {
+    mergeRecord(draft, item);
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    draft.ids.push(item.id);
+  }
 };
 
 export const retainReaderArticle = (articleId: string | null): void => {
-  if (retainedReaderId === articleId) return;
-  retainedReaderId = articleId;
-  evictUnusedArticles(latestRowIds);
-};
-
-const storeRecords = (
-  items: ReadonlyArray<LibraryArticle>,
-  dispatchVersion?: number
-): void => {
-  if (items.length === 0) return;
-
-  setArticlesById((current) => {
-    const next = { ...current };
-    for (const item of items) {
-      next[item.id] = articleSnapshotGuard.merge(
-        item,
-        current[item.id],
-        dispatchVersion
-      );
-    }
-    return next;
+  setRecords((draft) => {
+    if (draft.retainedId === articleId) return;
+    draft.retainedId = articleId;
+    evictUnused(draft);
   });
 };
 
-export const upsertArticle = (
-  article: LibraryArticle,
-  dispatchVersion?: number
-): void => {
-  storeRecords([article], dispatchVersion);
-};
-
-const dedupeItems = (
-  items: ReadonlyArray<LibraryArticle>,
-  exclude: ReadonlySet<string> = new Set()
-): Array<LibraryArticle> => {
-  const seen = new Set(exclude);
-  const unique: Array<LibraryArticle> = [];
-  for (const item of items) {
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    unique.push(item);
-  }
-  return unique;
+export const upsertArticle = (article: LibraryArticle): void => {
+  setRecords((draft) => {
+    mergeRecord(draft, article);
+  });
 };
 
 export const clearRows = (): void => {
-  const nextIds = setRowIds([]);
-  evictUnusedArticles(nextIds);
+  setRecords((draft) => {
+    draft.ids.length = 0;
+    evictUnused(draft);
+  });
 };
 
-export const replaceRows = (
-  items: ReadonlyArray<LibraryArticle>,
-  dispatchVersion?: number
-): void => {
-  const unique = dedupeItems(items);
-  storeRecords(unique, dispatchVersion);
-  const nextIds = setRowIds(unique.map((item) => item.id));
-  evictUnusedArticles(nextIds);
+export const replaceRows = (items: ReadonlyArray<LibraryArticle>): void => {
+  setRecords((draft) => {
+    draft.ids.length = 0;
+    appendUnique(draft, items);
+    evictUnused(draft);
+  });
 };
 
-export const appendRows = (
-  items: ReadonlyArray<LibraryArticle>,
-  dispatchVersion?: number
-): void => {
-  const unique = dedupeItems(items, new Set(latestRowIds));
-  if (unique.length === 0) return;
-
-  storeRecords(unique, dispatchVersion);
-  setRowIds((current) => [...current, ...unique.map((item) => item.id)]);
+export const appendRows = (items: ReadonlyArray<LibraryArticle>): void => {
+  setRecords((draft) => {
+    appendUnique(draft, items);
+  });
 };
 
 export const prependRow = (article: LibraryArticle): void => {
-  if (hasRow(article.id)) return;
-  storeRecords([article]);
-  setRowIds((current) => [article.id, ...current]);
+  setRecords((draft) => {
+    if (draft.ids.includes(article.id)) return;
+    mergeRecord(draft, article);
+    draft.ids.unshift(article.id);
+  });
 };
 
 export const appendRow = (article: LibraryArticle): void => {
-  if (hasRow(article.id)) return;
-  storeRecords([article]);
-  setRowIds((current) => [...current, article.id]);
+  setRecords((draft) => {
+    if (draft.ids.includes(article.id)) return;
+    mergeRecord(draft, article);
+    draft.ids.push(article.id);
+  });
 };
 
 export const removeRow = (articleId: string): void => {
-  if (!hasRow(articleId)) return;
-  const nextIds = setRowIds((current) =>
-    current.filter((id) => id !== articleId)
-  );
-  evictUnusedArticles(nextIds);
+  setRecords((draft) => {
+    const index = draft.ids.indexOf(articleId);
+    if (index < 0) return;
+    draft.ids.splice(index, 1);
+    evictUnused(draft);
+  });
 };
 
-export const dropFeedRows = (feedId: string): void => {
-  const records = articlesById();
-  const nextIds = setRowIds((current) =>
-    current.filter((id) => {
-      const article = records[id];
-      return !(article?.kind === 'feed' && article.feedId === feedId);
-    })
-  );
-  evictUnusedArticles(nextIds);
+/** Removes a feed's rows and returns them with the previous order, for a later restore. */
+export const dropFeedRows = (
+  feedId: string
+): {
+  rows: ReadonlyArray<LibraryArticle>;
+  orderIds: ReadonlyArray<string>;
+} => {
+  let orderIds: Array<string> = [];
+  const dropped: Array<LibraryArticle> = [];
+  setRecords((draft) => {
+    orderIds = [...draft.ids];
+    draft.ids = draft.ids.filter((id) => {
+      const article = draft.byId[id];
+      if (article?.kind !== 'feed' || article.feedId !== feedId) return true;
+      dropped.push({ ...article });
+      return false;
+    });
+    evictUnused(draft);
+  });
+  return { rows: dropped, orderIds };
 };
 
 export const restoreFeedRows = (
   removed: ReadonlyArray<LibraryArticle>,
   previousOrderIds: ReadonlyArray<string>
 ): void => {
-  const missing = dedupeItems(removed, new Set(latestRowIds));
-  if (missing.length === 0) return;
+  setRecords((draft) => {
+    const present = new Set(draft.ids);
+    const missing = removed.filter((item) => !present.has(item.id));
+    if (missing.length === 0) return;
 
-  storeRecords(missing);
-  const positions = new Map(previousOrderIds.map((id, index) => [id, index]));
-  setRowIds((current) =>
-    [...current, ...missing.map((item) => item.id)].sort(
-      (left, right) =>
-        (positions.get(left) ?? Number.MAX_SAFE_INTEGER) -
-        (positions.get(right) ?? Number.MAX_SAFE_INTEGER)
-    )
-  );
+    const positions = new Map(previousOrderIds.map((id, index) => [id, index]));
+    const position = (id: string): number =>
+      positions.get(id) ?? Number.MAX_SAFE_INTEGER;
+    for (const item of missing) {
+      mergeRecord(draft, item);
+      const at = draft.ids.findIndex((id) => position(id) > position(item.id));
+      draft.ids.splice(at < 0 ? draft.ids.length : at, 0, item.id);
+    }
+  });
 };
 
 export const patchArticle = (
   articleId: string,
   patch: LibraryArticlePatch
 ): void => {
-  setArticlesById((current) => {
-    const existing = current[articleId];
-    if (existing === undefined) return current;
-    articleSnapshotGuard.record(articleId, patch);
-    return {
-      ...current,
-      [articleId]: { ...existing, ...patch } as LibraryArticle,
-    };
-  });
-};
-
-export const patchManyArticles = (
-  updates: ReadonlyArray<{ id: string; patch: LibraryArticlePatch }>
-): void => {
-  if (updates.length === 0) return;
-
-  setArticlesById((current) => {
-    let next: Record<string, LibraryArticle> | null = null;
-    for (const { id, patch } of updates) {
-      const existing = (next ?? current)[id];
-      if (existing === undefined) continue;
-      articleSnapshotGuard.record(id, patch);
-      next ??= { ...current };
-      next[id] = { ...existing, ...patch } as LibraryArticle;
+  setRecords((draft) => {
+    const article = draft.byId[articleId];
+    if (article === undefined) return;
+    if (patch.read !== undefined) article.read = patch.read;
+    if (patch.extractedContent !== undefined && article.kind === 'feed') {
+      article.extractedContent = patch.extractedContent;
     }
-    return next ?? current;
   });
 };
 
 export const clearLibraryStoreState = (): void => {
   requestState.generation += 1;
   requestState.pageInFlight = false;
-  retainedReaderId = null;
-  articleSnapshotGuard.reset();
-  setRowIds([]);
-  setArticlesById({});
+  setRecords((draft) => {
+    draft.ids.length = 0;
+    draft.retainedId = null;
+    evictUnused(draft);
+  });
   setActiveScope({ kind: 'later' });
   setActiveUnreadOnly(false);
   setActiveOrder('newest');

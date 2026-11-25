@@ -12,6 +12,7 @@ import { showToast } from '../ui';
 import { errorText } from './errorText';
 import type { LibraryArticle } from './library';
 import * as library from './library';
+import { beginRecordSnapshot } from './read-sync';
 import type { LibraryScope } from './scope';
 import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
@@ -114,18 +115,23 @@ const fetchRemoteArticle = async (
 
 /**
  * `RD-ARTICLE-1`: `undefined` means a newer navigation won or the load failed (already toasted),
- * so the caller stops; `null` means the article does not exist anymore.
+ * so the caller stops; `null` means the article does not exist anymore. A loaded article is
+ * merged into the record store while its snapshot is still tracked by the read sync.
  */
 const loadArticle = async (
   scope: LibraryScope,
   articleId: string,
   requestGeneration: number
 ): Promise<LibraryArticle | null | undefined> => {
+  const releaseSnapshot = beginRecordSnapshot();
   try {
     const remote = await fetchRemoteArticle(scope, articleId);
     if (isStale(requestGeneration)) return undefined;
+    if (remote === null) return null;
 
-    return remote === null ? null : toLibraryArticle(scope, remote);
+    const loaded = toLibraryArticle(scope, remote);
+    library.upsertArticle(loaded);
+    return loaded;
   } catch (error) {
     if (isStale(requestGeneration)) return undefined;
 
@@ -133,6 +139,8 @@ const loadArticle = async (
     flush();
     showToast(errorText(error), 'error');
     return undefined;
+  } finally {
+    releaseSnapshot();
   }
 };
 
@@ -206,7 +214,6 @@ export const openArticleByRoute = async (
     cached !== null && (cached.kind === 'later' || hasKnownFeed(cached));
   showOpeningState(scope, articleId, cached, canCommitCached);
 
-  const dispatchVersion = library.captureMutationVersion();
   const loaded = await loadArticle(scope, articleId, requestGeneration);
   if (loaded === undefined) return;
 
@@ -219,7 +226,6 @@ export const openArticleByRoute = async (
     return;
   }
 
-  library.upsertArticle(loaded, dispatchVersion);
   setLoadingArticle(false);
   flush();
 

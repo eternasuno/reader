@@ -27,10 +27,18 @@ const FONT_FAMILIES: Record<ReaderFontFamily, string> = {
 };
 
 const READER_BASE_STYLES = `
+html {
+  color-scheme: dark;
+}
+html[data-theme="light"] {
+  color-scheme: light;
+  --fallback-bg: #ffffff;
+  --fallback-fg: #1f2328;
+}
 html,
 body {
-  background: var(--color-base-100);
-  color: var(--color-base-content);
+  background: var(--color-base-100, var(--fallback-bg, #1e1e1e));
+  color: var(--color-base-content, var(--fallback-fg, #dddddf));
 }`;
 
 const READER_ELEMENT_STYLES = `

@@ -16,22 +16,30 @@ const RedirectToLibrary: Component = () =>
 const ProtectedLibrary = withSession(LibraryPage);
 const ProtectedQuickSave = withSession(QuickSavePage);
 const ProtectedSettings = withSession(SettingsPage);
+const ScopeOutlet: Component = () => null;
 
 /**
- * `AC-AUTH-4`: only `/login` renders without the session guard. Scope routes use optional article
- * params (`/later/:pageId?`) so opening or closing an article keeps the same `LibraryPage`
- * instance mounted — that preserves loaded rows (`LIB-RELOAD-1`) and lets focus recovery
- * (`LIB-VIEW-1`) see which panel CSS just hid.
+ * `AC-AUTH-4`: only `/login` renders without the session guard. Every library scope is a child
+ * of one pathless layout route that renders the guarded `LibraryPage`, so switching between
+ * `/later`, `/all`, `/feed/:id`, and `/folder/:id` never remounts the page or re-verifies the
+ * session — that preserves loaded rows (`LIB-RELOAD-1`) and lets focus recovery (`LIB-VIEW-1`)
+ * see which panel CSS just hid. The children render nothing: the URL is the source of truth and
+ * `LibraryPage` reads it. Unknown paths redirect to `/later`.
  */
 export const appRoutes = defineRoutes([
   { path: '/', component: RedirectToLibrary },
   { path: '/login', component: LoginPage },
   { path: '/save', component: ProtectedQuickSave },
-  { path: '/later/:pageId?', component: ProtectedLibrary },
-  { path: '/all/:itemId?', component: ProtectedLibrary },
-  { path: '/feed/:feedId/:itemId?', component: ProtectedLibrary },
-  { path: '/folder/:folderId/:itemId?', component: ProtectedLibrary },
   { path: '/settings', component: ProtectedSettings },
+  {
+    component: ProtectedLibrary,
+    children: [
+      { path: '/later/:pageId?', component: ScopeOutlet },
+      { path: '/all/:itemId?', component: ScopeOutlet },
+      { path: '/feed/:feedId/:itemId?', component: ScopeOutlet },
+      { path: '/folder/:folderId/:itemId?', component: ScopeOutlet },
+    ],
+  },
   { path: '*404', component: RedirectToLibrary },
 ]);
 

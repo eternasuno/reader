@@ -11,7 +11,6 @@ import {
   saveOpenArticle,
 } from '../src/components/readerActions';
 import { setLocale } from '../src/i18n';
-import { useLibraryShortcuts } from '../src/routes/useLibraryShortcuts';
 import * as state from '../src/state';
 import { mount, setupInteractions } from './support/list-helpers';
 import {
@@ -128,8 +127,8 @@ describe('ArticleFrame height and image label', () => {
   });
 });
 
-describe('ReaderStoredBody extraction spinner', () => {
-  it('hides the spinner when switching back to original while extraction is in flight', async () => {
+describe('ReaderStoredBody extraction', () => {
+  it('keeps the original body without a spinner while extraction is in flight', async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ item: makeItem({ id: 'i1', feedId: 'f1', read: true }) })
     );
@@ -142,12 +141,9 @@ describe('ReaderStoredBody extraction spinner', () => {
     ));
     const running = state.toggleExtractedMode();
     flush();
-    expect(container.querySelector('[role="status"]')).not.toBeNull();
-
-    await state.toggleExtractedMode();
-    flush();
     expect(state.extracting()).toBe(true);
     expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector('iframe')).not.toBeNull();
 
     pending.resolve(
       jsonResponse({
@@ -163,8 +159,8 @@ describe('ReaderStoredBody extraction spinner', () => {
   });
 });
 
-describe('shared Read-Later saving guard: button + shortcut', () => {
-  it('deduplicates ReaderPane button click and s shortcut', async () => {
+describe('shared Read-Later saving guard: button', () => {
+  it('deduplicates repeated ReaderPane button clicks', async () => {
     const saveA = deferredResponse();
     fetchMock.mockImplementation((input: unknown) => {
       const url = String(input);
@@ -181,16 +177,6 @@ describe('shared Read-Later saving guard: button + shortcut', () => {
 
     await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i1');
     const container = mount(() => {
-      useLibraryShortcuts({
-        scope: () => ({ kind: 'feed', feedId: 'f1' }),
-        articleId: () => 'i1',
-        unreadOnly: () => false,
-        drawerOpen: () => false,
-        shortcutsOpen: () => false,
-        toggleShortcuts: vi.fn(),
-        onNavigate: vi.fn(),
-      });
-
       return (
         <ReaderPane
           scope={{ kind: 'feed', feedId: 'f1' }}
@@ -205,9 +191,7 @@ describe('shared Read-Later saving guard: button + shortcut', () => {
       'button[aria-label="保存到稍后阅读"]'
     );
     saveBtn?.click();
-    window.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 's', bubbles: true })
-    );
+    saveBtn?.click();
     expect(saveCallsCount()).toBe(1);
 
     saveA.resolve(jsonResponse({ item: makePage({ id: 'p1' }) }, 201));

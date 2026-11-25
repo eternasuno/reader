@@ -8,14 +8,15 @@ export interface PanelElements {
 }
 
 /**
- * `LIB-VIEW-1`: panels are hidden by CSS. `offsetParent` catches a hidden ancestor; the computed
- * `display`/`visibility` walk covers elements without a layout box (e.g. jsdom, `position: fixed`).
+ * `LIB-VIEW-1`: panels are hidden by CSS (`display`, `visibility`) or marked `inert` while
+ * collapsed. Walks ancestors in both browsers and jsdom so `offsetParent` never masks `inert`.
  */
 const isElementVisible = (element: HTMLElement): boolean => {
-  if (element.offsetParent !== null) return true;
+  if (!element.isConnected) return false;
 
   let node: HTMLElement | null = element;
   while (node !== null) {
+    if (node.inert || node.hasAttribute('inert')) return false;
     const style = window.getComputedStyle(node);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
     node = node.parentElement;

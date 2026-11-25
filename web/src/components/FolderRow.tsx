@@ -55,7 +55,7 @@ export function FolderRow(props: {
       <Show when={!collapsed()}>
         <div
           id={listId}
-          class="ml-4 flex flex-col gap-0.5 border-l border-base-300 pl-1"
+          class="ml-4 flex flex-col gap-0.5 border-l border-base-300 pl-1 animate-fade-in"
         >
           <For each={folderFeeds(props.folder.id)} keyed={(feed) => feed.id}>
             {(feed) => <FeedRow feed={feed()} state={props.state} />}

@@ -2,13 +2,7 @@ import type { JSX } from '@solidjs/web';
 import { Show } from 'solid-js';
 import { browserHref } from '../api/url';
 import { formatDateTime, locale, t } from '../i18n';
-import {
-  articleSource,
-  displayMode,
-  extracting,
-  hostnameOf,
-  type LibraryArticle,
-} from '../state';
+import { articleSource, hostnameOf, type LibraryArticle } from '../state';
 import { ArticleFrame } from './ArticleFrame';
 import { bodyHtml } from './readerBody';
 import { SiteIcon } from './SiteIcon';
@@ -49,7 +43,7 @@ export function ReaderArticleHeader(props: {
   return (
     <header class="flex flex-col gap-3">
       <p class="flex items-center gap-2 text-sm text-base-content/70">
-        <SiteIcon url={source().url} fallback="globe" size={16} />
+        <SiteIcon srcs={source().iconSrcs} fallback="globe" size={16} />
         <span class="truncate">{source().title}</span>
       </p>
       <h1 class="text-3xl leading-tight font-bold break-words sm:text-4xl">
@@ -79,27 +73,10 @@ export function ReaderArticleHeader(props: {
   );
 }
 
-/** `RD-EXTRACT-1`: extracting indicator or stored/extracted article body. */
+/** `RD-EXTRACT-1`: stored body; the original stays until extraction completes. */
 export function ReaderStoredBody(props: {
   article: LibraryArticle;
 }): JSX.Element {
-  return (
-    <Show
-      when={displayMode() === 'extracted' && extracting()}
-      fallback={<ReaderContent article={props.article} />}
-    >
-      <p
-        role="status"
-        class="flex items-center gap-2 text-sm text-base-content/60"
-      >
-        <span class="loading loading-spinner loading-sm" aria-hidden="true" />
-        {t('reader.extracting')}
-      </p>
-    </Show>
-  );
-}
-
-function ReaderContent(props: { article: LibraryArticle }): JSX.Element {
   return (
     <Show
       when={bodyHtml(props.article)}

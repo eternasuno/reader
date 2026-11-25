@@ -182,6 +182,7 @@ type Feed struct {
 	LastError    *string
 	ReaderMode   ReaderMode
 	Order        SortOrder
+	IconURL      *string
 }
 
 type FeedUnreadCount struct {
@@ -234,6 +235,7 @@ type ParsedFeedEntry struct {
 type ParsedFeed struct {
 	Title       string
 	Description *string
+	IconURL     *string
 	Entries     []ParsedFeedEntry
 }
 
@@ -348,7 +350,7 @@ type FeedRepository interface {
 	UpdateOrder(ctx context.Context, id string, order SortOrder) error
 	MoveToFolder(ctx context.Context, id string, folderID *string) error
 	RecordRefreshFailure(ctx context.Context, id string, errSummary string) error
-	ApplySync(ctx context.Context, feedID string, newTitle string, updatedAt time.Time, newItems []FeedItem, deleteIDs []string) error
+	ApplySync(ctx context.Context, feedID string, newTitle string, iconURL *string, updatedAt time.Time, newItems []FeedItem, deleteIDs []string) error
 	ImportOPML(ctx context.Context, doc OPMLDocument) (OPMLImportResult, []string, error)
 	ExportOPML(ctx context.Context) ([]OPMLExportFolder, []Feed, error)
 }

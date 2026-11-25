@@ -65,7 +65,7 @@ describe('ImageLightbox focus lifecycle and Tab trap', () => {
 });
 
 describe('ArticleFrame Escape & image keyboard script', () => {
-  it('closes lightbox on bridged Escape without forwarding to window', async () => {
+  it('closes lightbox on bridged Escape', async () => {
     const seen: Array<string> = [];
     const onKeyDown = (event: KeyboardEvent) => seen.push(event.key);
     window.addEventListener('keydown', onKeyDown);
