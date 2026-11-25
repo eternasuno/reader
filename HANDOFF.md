@@ -1,5 +1,7 @@
 # Handoff: read/unread sync rework + bounded mark-all
 
+> Temporary work handoff. Delete this file before merging the branch into `main`.
+
 Branch: `refactor/ui-and-fine-grained-state`. Status at handoff: plan revision 4 settled with the user; implementation NOT started. The committed frontend read-sync code is a prototype with known defects (see "Prototype state").
 
 ## Already done on this branch (committed)
