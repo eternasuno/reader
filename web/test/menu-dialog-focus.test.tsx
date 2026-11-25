@@ -68,3 +68,11 @@ it('focuses the main landmark when the menu trigger is removed', async () => {
   await harness.settle();
   expect(document.activeElement).toBe(document.querySelector('main'));
 });
+
+it('falls back to the main landmark when the menu trigger is not focusable', async () => {
+  const trigger = await openFolderDialog();
+  trigger.disabled = true;
+  button('关闭').click();
+  await harness.settle();
+  expect(document.activeElement).toBe(document.querySelector('main'));
+});

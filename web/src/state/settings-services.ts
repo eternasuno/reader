@@ -18,17 +18,26 @@ import {
   toastSettingsError,
 } from './settings-store';
 
+type ServiceToastKey =
+  | 'settings.jinaKeySavedToast'
+  | 'settings.jinaKeyDeletedToast'
+  | 'settings.browserEndpointSavedToast'
+  | 'settings.browserEndpointDeletedToast'
+  | 'settings.smtpSavedToast'
+  | 'settings.smtpPasswordDeletedToast'
+  | 'settings.smtpDeletedToast';
+
 const commitServiceCall = async (
   call: () => Promise<void>,
   onSuccess: () => void,
-  toastKey: Parameters<typeof t>[0]
+  toastKey: ServiceToastKey
 ): Promise<boolean> => {
   const startSession = sessionGeneration();
   try {
     await call();
     if (sessionGeneration() !== startSession) return false;
     onSuccess();
-    showToast(String(t(toastKey)), 'success');
+    showToast(t(toastKey), 'success');
     return true;
   } catch (error) {
     return sessionGeneration() === startSession

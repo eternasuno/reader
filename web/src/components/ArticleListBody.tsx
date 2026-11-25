@@ -48,7 +48,7 @@ export function ArticleListBody(props: ArticleListBodyProps): JSX.Element {
             class="px-3 py-3 text-center text-xs text-base-content/50"
             role="status"
           >
-            {String(t('library.loading'))}
+            {t('library.loading')}
           </p>
         </Show>
       }

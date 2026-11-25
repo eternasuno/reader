@@ -172,7 +172,7 @@ const commitSettingSave = async (
 
     const current = settings();
     if (current !== null) setSettings(patch(current));
-    showToast(String(t(toastKey)), 'success');
+    showToast(t(toastKey), 'success');
     return true;
   } catch (error) {
     if (sessionGeneration() !== startSession) return false;

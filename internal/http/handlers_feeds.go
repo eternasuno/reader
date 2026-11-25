@@ -239,9 +239,7 @@ func (s *server) createFeedSubscription(ctx context.Context, feedURL domain.Norm
 		return domain.Feed{}, err
 	}
 
-	if s.cfg.Refresher != nil {
-		s.cfg.Refresher.Enqueue(created.ID)
-	}
+	s.cfg.Refresher.Enqueue(created.ID)
 
 	return created, nil
 }
@@ -264,7 +262,7 @@ func (s *server) handleFeedRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if feed != nil && s.cfg.Refresher != nil {
+	if feed != nil {
 		s.cfg.Refresher.Enqueue(feed.ID)
 	}
 
@@ -478,7 +476,7 @@ func (s *server) handleFeedItemExtract(w http.ResponseWriter, r *http.Request) {
 	}
 
 	extracted := *item
-	if !hasText(item.ExtractedContent) {
+	if item.ExtractedContent == nil {
 		updated, err := s.extracts.do(r.Context(), item.ID, func(ctx context.Context) (*domain.FeedItem, error) {
 			return s.extractFeedItem(ctx, item.ID)
 		})
@@ -506,7 +504,7 @@ func (s *server) extractFeedItem(ctx context.Context, itemID string) (*domain.Fe
 		return nil, domain.NewError(domain.ErrFeedItemNotFound, nil)
 	}
 
-	if hasText(latest.ExtractedContent) {
+	if latest.ExtractedContent != nil {
 		return latest, nil
 	}
 
@@ -524,10 +522,6 @@ func (s *server) extractFeedItem(ctx context.Context, itemID string) (*domain.Fe
 		return nil, err
 	}
 
-	if updated == nil {
-		return nil, domain.NewError(domain.ErrFeedItemNotFound, nil)
-	}
-
 	return updated, nil
 }
 
@@ -542,7 +536,7 @@ type extractCall struct {
 type extractGroup struct {
 	mu         sync.Mutex
 	closed     bool
-	active     sync.WaitGroup
+	active     int
 	drained    chan struct{}
 	calls      map[string]*extractCall
 	inflight   map[*extractCall]struct{}
@@ -609,7 +603,7 @@ func (g *extractGroup) joinOrStart(ctx context.Context, key string, fn func(cont
 	call := &extractCall{done: make(chan struct{}), cancel: cancel, waiters: 1}
 	g.calls[key] = call
 	g.inflight[call] = struct{}{}
-	g.active.Add(1)
+	g.active++
 	g.mu.Unlock()
 
 	go g.run(callCtx, key, call, fn)
@@ -618,8 +612,6 @@ func (g *extractGroup) joinOrStart(ctx context.Context, key string, fn func(cont
 }
 
 func (g *extractGroup) run(callCtx context.Context, key string, call *extractCall, fn func(context.Context) (*domain.FeedItem, error)) {
-	defer g.active.Done()
-
 	item, err := runContained(callCtx, fn)
 	call.cancel()
 	g.sem.release()
@@ -633,6 +625,12 @@ func (g *extractGroup) run(callCtx context.Context, key string, call *extractCal
 	}
 
 	close(call.done)
+
+	g.active--
+	if g.closed && g.active == 0 {
+		close(g.drained)
+	}
+
 	g.mu.Unlock()
 }
 
@@ -659,6 +657,30 @@ func (g *extractGroup) abandon(key string, call *extractCall) {
 	if shouldCancel {
 		call.cancel()
 	}
+}
+
+func (g *extractGroup) closeAndDrained() <-chan struct{} {
+	g.mu.Lock()
+	if !g.closed {
+		g.closed = true
+		g.drained = make(chan struct{})
+		if g.active == 0 {
+			close(g.drained)
+		}
+	}
+
+	drained := g.drained
+	g.mu.Unlock()
+
+	return drained
+}
+
+func (g *extractGroup) cancelInflight() {
+	g.mu.Lock()
+	for call := range g.inflight {
+		call.cancel()
+	}
+	g.mu.Unlock()
 }
 
 type listResponse[T any] struct {

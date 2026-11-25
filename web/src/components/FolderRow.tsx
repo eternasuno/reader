@@ -72,11 +72,9 @@ function CollapseButton(props: {
   controlsId: string;
 }): JSX.Element {
   const label = () =>
-    String(
-      t(props.collapsed ? 'folders.expandFolder' : 'folders.collapseFolder', {
-        name: props.folder.name,
-      })
-    );
+    t(props.collapsed ? 'folders.expandFolder' : 'folders.collapseFolder', {
+      name: props.folder.name,
+    });
 
   return (
     <button
@@ -127,11 +125,7 @@ function FolderMenu(props: {
   state: SidebarProps;
 }): JSX.Element {
   return (
-    <Menu
-      label={String(t('library.moreActions'))}
-      align="end"
-      triggerClass="btn-xs"
-    >
+    <Menu label={t('library.moreActions')} triggerClass="btn-xs">
       <ScopeMenuItems
         scope={{ kind: 'folder', folderId: props.folder.id }}
         unreadOnly={props.state.unreadOnly}
@@ -139,15 +133,16 @@ function FolderMenu(props: {
       />
       <MenuDivider />
       <MenuItem
+        opensDialog
         onSelect={() => props.state.onRequestRenameFolder(props.folder)}
       >
-        {String(t('folders.renameFolder'))}
+        {t('folders.renameFolder')}
       </MenuItem>
       <MenuItem
         icon="trash"
         onSelect={() => void deleteFolder(props.state, props.folder)}
       >
-        {String(t('folders.deleteFolder'))}
+        {t('folders.deleteFolder')}
       </MenuItem>
     </Menu>
   );

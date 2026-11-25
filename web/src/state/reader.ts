@@ -240,12 +240,9 @@ export const openArticleByRoute = async (
 const shouldExtractCurrent = (article: LibraryArticle | null): boolean =>
   article !== null && article.kind === 'feed' && !article.extractedContent;
 
-export const isSavingToLater = (articleId: string): boolean =>
-  savingToLaterIds.has(articleId);
-
 const showSaveError = (error: unknown): void => {
   if (error instanceof ApiError && error.code === 'SavedPageAlreadyExists') {
-    showToast(String(t('errors.SavedPageAlreadyExists')), 'info');
+    showToast(t('errors.SavedPageAlreadyExists'), 'info');
 
     return;
   }
@@ -263,7 +260,7 @@ export const saveFeedItemToLater = async (articleId: string): Promise<void> => {
     await savedPagesApi.saveFeedItem(articleId);
     if (requestEpoch !== saveEpoch) return;
 
-    showToast(String(t('later.savedFromFeedToast')), 'success');
+    showToast(t('later.savedFromFeedToast'), 'success');
     void sidebar.refreshSidebar();
   } catch (error) {
     if (requestEpoch === saveEpoch) showSaveError(error);

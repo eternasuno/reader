@@ -15,8 +15,8 @@ import {
   scopeTitle,
   scopeUnreadCount,
 } from './articleListScope';
+import { FeedFailureMenu } from './FeedFailureMenu';
 import { FeedMoveSubpanel } from './FeedMoveSubpanel';
-import { retryRefresh } from './feedFailure';
 import { ScopeMenuItems } from './ScopeRow';
 
 const COUNT_CLASSES = 'text-sm font-normal tabular-nums text-base-content/50';
@@ -51,8 +51,8 @@ function SidebarExpandButton(): JSX.Element {
         size="sm"
         class="hidden md:inline-flex"
         data-sidebar-expand=""
-        aria-label={String(t('library.expandSidebar'))}
-        title={String(t('library.expandSidebar'))}
+        aria-label={t('library.expandSidebar')}
+        title={t('library.expandSidebar')}
         onClick={handleExpand}
       >
         <Icon name="sidebar" size={18} />
@@ -73,7 +73,11 @@ function ArticleListHeading(props: {
       </h2>
       <Show when={failingFeed(props.scope)}>
         {(feed) => (
-          <FeedFailureMenu feed={feed()} onDeleteFeed={props.onDeleteFeed} />
+          <FeedFailureMenu
+            feed={feed()}
+            align="start"
+            onDelete={props.onDeleteFeed}
+          />
         )}
       </Show>
     </div>
@@ -94,8 +98,8 @@ function UnreadToggleButton(props: {
           : 'max-md:size-10'
       }
       aria-pressed={props.unreadOnly ? 'true' : 'false'}
-      aria-label={String(t('library.unreadOnly'))}
-      title={String(t('library.unreadOnly'))}
+      aria-label={t('library.unreadOnly')}
+      title={t('library.unreadOnly')}
       onClick={props.onToggleUnread}
     >
       <Icon name="filter" size={18} />
@@ -112,7 +116,7 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
         variant="icon"
         size="sm"
         class="max-md:size-10 md:hidden"
-        aria-label={String(t('library.toggleNav'))}
+        aria-label={t('library.toggleNav')}
         aria-expanded={props.drawerOpen ? 'true' : 'false'}
         onClick={props.onToggleNav}
       >
@@ -131,8 +135,8 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
         variant="icon"
         size="sm"
         class="max-md:size-10"
-        aria-label={String(t('library.markLoadedRead'))}
-        title={String(t('library.markLoadedRead'))}
+        aria-label={t('library.markLoadedRead')}
+        title={t('library.markLoadedRead')}
         onClick={() => void markLoadedRead()}
       >
         <Icon name="check-up" size={18} />
@@ -168,8 +172,7 @@ function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
 
   return (
     <Menu
-      label={String(t('library.moreActions'))}
-      align="end"
+      label={t('library.moreActions')}
       triggerClass="btn-sm max-md:size-10"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
@@ -225,8 +228,8 @@ function ArticleHeaderMainItems(
       />
       <Show when={props.scope.kind === 'later'}>
         <MenuDivider />
-        <MenuItem icon="plus" onSelect={props.onRequestAddLink}>
-          {String(t('later.addLinkTitle'))}
+        <MenuItem opensDialog icon="plus" onSelect={props.onRequestAddLink}>
+          {t('later.addLinkTitle')}
         </MenuItem>
       </Show>
       <Show when={activeFeed(props.scope)}>
@@ -254,54 +257,18 @@ function FeedMenuOptions(props: FeedMenuOptionsProps): JSX.Element {
   return (
     <>
       <MenuDivider />
-      <MenuItem submenu keepOpen onSelect={props.onOpenMove}>
-        {String(t('feeds.moveTo'))}
-      </MenuItem>
-      <MenuItem onSelect={() => props.onRequestFeedOptions?.(props.feed)}>
-        {String(t('feeds.feedOptions'))}
-      </MenuItem>
-      <MenuItem icon="trash" onSelect={() => props.onDeleteFeed(props.feed)}>
-        {String(t('feeds.deleteFeedMenu'))}
-      </MenuItem>
-    </>
-  );
-}
-
-/** `FD-SCHED-3`: the heading warning exposes the stored error, retry, and unsubscribe. */
-function FeedFailureMenu(props: {
-  feed: Feed;
-  onDeleteFeed: (feed: Feed) => void;
-}): JSX.Element {
-  return (
-    <Menu
-      align="start"
-      label={String(t('feeds.retryRefresh'))}
-      triggerClass="btn-xs btn-square"
-      trigger={
-        <span
-          class="inline-flex items-center justify-center"
-          title={props.feed.lastError ?? undefined}
-        >
-          <Icon name="warning" size={14} class="text-warning" />
-        </span>
-      }
-    >
-      <div
-        role="presentation"
-        class="max-w-56 px-3 py-1.5 text-xs break-words text-base-content/70"
-      >
-        {props.feed.lastError ?? ''}
-      </div>
-      <MenuItem icon="refresh" onSelect={() => void retryRefresh(props.feed)}>
-        {String(t('feeds.retryRefresh'))}
+      <MenuItem submenu onSelect={props.onOpenMove}>
+        {t('feeds.moveTo')}
       </MenuItem>
       <MenuItem
-        danger
-        icon="trash"
-        onSelect={() => props.onDeleteFeed(props.feed)}
+        opensDialog
+        onSelect={() => props.onRequestFeedOptions?.(props.feed)}
       >
-        {String(t('feeds.deleteFeedMenu'))}
+        {t('feeds.feedOptions')}
       </MenuItem>
-    </Menu>
+      <MenuItem icon="trash" onSelect={() => props.onDeleteFeed(props.feed)}>
+        {t('feeds.deleteFeedMenu')}
+      </MenuItem>
+    </>
   );
 }

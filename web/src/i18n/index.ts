@@ -23,17 +23,14 @@ const detectLocale = (): Locale => {
   const stored = getItem(STORAGE_KEY);
   if (isLocale(stored)) return stored;
 
-  const language =
-    typeof navigator === 'undefined' ? '' : (navigator.language ?? '');
+  const language = navigator.language ?? '';
   return language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
 };
 
 const [locale, setLocaleSignal] = createSignal<Locale>(detectLocale());
 
 const applyDocumentLang = (next: Locale) => {
-  if (typeof document !== 'undefined') {
-    document.documentElement.lang = next;
-  }
+  document.documentElement.lang = next;
 };
 
 applyDocumentLang(locale());
@@ -41,8 +38,6 @@ applyDocumentLang(locale());
 export { locale };
 
 export const setLocale = (next: Locale) => {
-  if (!isLocale(next)) return;
-
   setLocaleSignal(next);
   applyDocumentLang(next);
   flush();
@@ -69,7 +64,7 @@ export const translateErrorCode = (code: string): string => {
   const message = translate(`errors.${code}`);
   if (typeof message === 'string' && message.length > 0) return message;
 
-  return String(t('errors.RequestFailed'));
+  return t('errors.RequestFailed');
 };
 
 /** `RD-CONTENT-1`: localized absolute date and time, e.g. `2026年11月22日 14:01`. */

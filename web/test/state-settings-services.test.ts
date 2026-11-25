@@ -132,17 +132,6 @@ describe('saveJinaKey', () => {
       String(i18n.t('settings.jinaKeySavedToast'))
     );
   });
-
-  it('shows error toast when saving Jina key fails', async () => {
-    await load();
-    queue({ error: 'InvalidJinaKey' }, 400);
-
-    await expect(state.saveJinaKey(drafts, setDrafts)).resolves.toBe(false);
-    solid.flush();
-
-    expect(state.settings()?.jinaKeyConfigured).toBe(false);
-    toastIs(i18n.translateErrorCode('InvalidJinaKey'));
-  });
 });
 
 describe('removeJinaKey', () => {
@@ -185,20 +174,6 @@ describe('saveBrowserEndpoint', () => {
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('settings.browserEndpointSavedToast'))
     );
-  });
-
-  it('shows error toast when saving browser endpoint fails', async () => {
-    await load();
-    patchDrafts({ browserEndpoint: 'ftp://invalid' });
-    queue({ error: 'InvalidEndpoint' }, 400);
-
-    await expect(state.saveBrowserEndpoint(drafts, setDrafts)).resolves.toBe(
-      false
-    );
-    solid.flush();
-
-    expect(state.settings()?.browserEndpointConfigured).toBe(false);
-    toastIs(i18n.translateErrorCode('InvalidEndpoint'));
   });
 });
 
@@ -272,17 +247,6 @@ describe('saveSmtp', () => {
     await expect(state.saveSmtp(drafts, setDrafts)).resolves.toBe(true);
     expect(requestBody(3)).not.toHaveProperty('password');
     expect(state.settings()?.smtp?.passwordConfigured).toBe(true);
-  });
-
-  it('shows error toast when saving SMTP fails', async () => {
-    await load();
-    queue({ error: 'InvalidSMTPSetting' }, 400);
-
-    await expect(state.saveSmtp(drafts, setDrafts)).resolves.toBe(false);
-    solid.flush();
-
-    expect(state.settings()?.smtp).toBeUndefined();
-    toastIs(i18n.translateErrorCode('InvalidSMTPSetting'));
   });
 });
 

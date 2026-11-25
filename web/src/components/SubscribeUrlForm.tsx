@@ -37,8 +37,8 @@ export function SubscribeUrlForm(props: SubscribeUrlFormProps): JSX.Element {
         }}
         type="url"
         required
-        label={String(t('feeds.feedUrlLabel'))}
-        placeholder={String(t('feeds.feedUrlPlaceholder'))}
+        label={t('feeds.feedUrlLabel')}
+        placeholder={t('feeds.feedUrlPlaceholder')}
         value={props.url}
         disabled={props.busy}
         error={props.error}
@@ -46,9 +46,9 @@ export function SubscribeUrlForm(props: SubscribeUrlFormProps): JSX.Element {
       />
       <DialogActions
         busy={props.busy}
-        cancelLabel={String(t('common.cancel'))}
-        submitLabel={String(
-          t(props.previewing ? 'feeds.previewing' : 'feeds.previewSubmit')
+        cancelLabel={t('common.cancel')}
+        submitLabel={t(
+          props.previewing ? 'feeds.previewing' : 'feeds.previewSubmit'
         )}
         submitLoading={props.previewing}
         onCancel={props.onCancel}

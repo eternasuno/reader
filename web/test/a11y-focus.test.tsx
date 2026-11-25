@@ -1,31 +1,15 @@
 import type { JSX } from '@solidjs/web';
-import { render } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  ArticleFrame,
-  buildArticleSrcdoc,
-} from '../src/components/ArticleFrame';
+import { describe, expect, it, vi } from 'vitest';
+import { ArticleFrame } from '../src/components/ArticleFrame';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
 import { ReaderAppearanceMenu } from '../src/components/ReaderAppearanceMenu';
 import { SidebarBrand } from '../src/components/SidebarBrand';
-import { setLocale } from '../src/i18n';
-import {
-  resetReaderAppearance,
-  setSidebarCollapsedState,
-  sidebarCollapsed,
-} from '../src/state';
+import { sidebarCollapsed } from '../src/state';
 import { Menu, MenuItem } from '../src/ui';
+import { mount, setupInteractions } from './support/list-helpers';
 
-let disposers: Array<() => void> = [];
-
-const mount = (component: () => JSX.Element): HTMLElement => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(render(component, container));
-  flush();
-  return container;
-};
+setupInteractions();
 
 const frameToken = (iframe: HTMLIFrameElement): string =>
   /var token = "([^"]+)"/.exec(iframe.getAttribute('srcdoc') ?? '')?.[1] ?? '';
@@ -52,23 +36,6 @@ const openLightbox = async (
   await Promise.resolve();
   return { iframe, token };
 };
-
-beforeEach(() => {
-  localStorage.clear();
-  setLocale('zh-CN');
-  resetReaderAppearance();
-  setSidebarCollapsedState(false);
-  if (typeof HTMLElement.prototype.showPopover !== 'function') {
-    HTMLElement.prototype.showPopover = () => undefined;
-  }
-});
-
-afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  document.body.innerHTML = '';
-  vi.restoreAllMocks();
-});
 
 describe('ImageLightbox focus lifecycle and Tab trap', () => {
   it('focuses close button on open, traps Tab, and restores focus on close', async () => {
@@ -113,19 +80,6 @@ describe('ArticleFrame Escape & image keyboard script', () => {
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(seen).toEqual([]);
-  });
-
-  it('includes image tabindex/role enhancement and Enter/Space handlers in srcdoc', () => {
-    const srcdoc = buildArticleSrcdoc({
-      html: '<img src="https://example.com/a.jpg">',
-      nonce: 'n1',
-      token: 't1',
-      appOrigin: 'https://app.example',
-    });
-    expect(srcdoc).toContain('function enhanceImages()');
-    expect(srcdoc).toContain('img.tabIndex = 0');
-    expect(srcdoc).toContain("img.setAttribute('role', 'button')");
-    expect(srcdoc).toContain("event.key === 'Enter' || event.key === ' '");
   });
 });
 
@@ -189,33 +143,15 @@ describe('ReaderAppearanceMenu keyboard accessibility', () => {
     const restored = menuButtons(container);
     expect(document.activeElement).toBe(restored[1]);
     expect(Array.from(restored).at(-1)?.textContent).toBe('恢复默认');
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="正文宽度 增大"]'
+      )?.disabled
+    ).toBe(true);
   });
 });
 
 describe('Menu disabled items navigation', () => {
-  it('skips disabled stepper buttons on End, ArrowDown, and ArrowUp', async () => {
-    const { container, panel } = await openMenu(
-      () => <ReaderAppearanceMenu />,
-      '视图选项'
-    );
-    const decrease = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="正文宽度 减小"]'
-    );
-    const increase = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="正文宽度 增大"]'
-    );
-    expect(decrease).not.toBeNull();
-    expect(increase).not.toBeNull();
-    expect(increase?.disabled).toBe(true);
-
-    pressMenuKey(panel, 'End');
-    expect(document.activeElement).toBe(decrease);
-    pressMenuKey(panel, 'ArrowDown');
-    expect(document.activeElement).toBe(menuButtons(container)[0]);
-    pressMenuKey(panel, 'ArrowUp');
-    expect(document.activeElement).toBe(decrease);
-  });
-
   it('skips disabled and aria-disabled items on entry, Arrow, Home, and End', async () => {
     const { container, panel } = await openMenu(
       () => (

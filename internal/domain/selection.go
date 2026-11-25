@@ -1,18 +1,11 @@
 package domain
 
-const selectionDefaultRetention = 100
-
 // PlanFeedSync selects new items and pruned IDs from storedRefs ordered newest first.
 func PlanFeedSync(feedID string, sourceEntries []ParsedFeedEntry, storedRefs []StoredRef, retention int, newID func() string) (newItems []FeedItem, deleteIDs []string) {
-	limit := retention
-	if limit < 1 {
-		limit = selectionDefaultRetention
-	}
-
-	topEntries := dedupeTopEntries(sourceEntries, limit)
+	topEntries := dedupeTopEntries(sourceEntries, retention)
 	retained, pending := planRetainedItems(topEntries, storedRefs)
 	newItems = buildNewFeedItems(feedID, pending, newID)
-	deleteIDs = planPrunedIDs(storedRefs, retained, limit, len(newItems)+len(retained))
+	deleteIDs = planPrunedIDs(storedRefs, retained, retention, len(newItems)+len(retained))
 
 	return newItems, deleteIDs
 }

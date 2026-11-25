@@ -255,13 +255,13 @@ func TestOpenResolvesRelativePaths(t *testing.T) {
 
 			defer reopened.Close()
 
-			got, err := reopened.Folders().GetByID(ctx, folder.ID)
+			folders, err := reopened.Folders().List(ctx)
 			if err != nil {
-				t.Fatalf("get folder after reopen: %v", err)
+				t.Fatalf("list folders after reopen: %v", err)
 			}
 
-			if got == nil || got.Name != "Relative" {
-				t.Fatalf("folder after reopen = %+v, want Relative", got)
+			if !slices.Contains(folders, folder) {
+				t.Fatalf("folders after reopen = %+v, want %+v", folders, folder)
 			}
 		})
 	}

@@ -83,8 +83,6 @@ type NormalizedURL struct {
 	redacted string
 	host     string
 	hasCreds bool
-	username string
-	password string
 }
 
 func (u NormalizedURL) Raw() string {
@@ -101,14 +99,6 @@ func (u NormalizedURL) Host() string {
 
 func (u NormalizedURL) HasCredentials() bool {
 	return u.hasCreds
-}
-
-func (u NormalizedURL) BasicAuth() (username string, password string, ok bool) {
-	if !u.hasCreds {
-		return "", "", false
-	}
-
-	return u.username, u.password, true
 }
 
 func (u NormalizedURL) Parsed() (*url.URL, error) {
@@ -344,7 +334,6 @@ type EPUBBook struct {
 
 type FolderRepository interface {
 	List(ctx context.Context) ([]Folder, error)
-	GetByID(ctx context.Context, id string) (*Folder, error)
 	Create(ctx context.Context, id string, name string) (Folder, error)
 	Rename(ctx context.Context, id string, name string) error
 	Delete(ctx context.Context, id string) error

@@ -78,6 +78,9 @@ describe('extraction deduplication', () => {
   });
 });
 
+const makeExtractedItem = (id: string, extractedContent: string) =>
+  makeItem({ id, feedId: 'f1', read: true, extractedContent });
+
 describe('extraction stale request guard', () => {
   it('does not let a stale extraction finally clear a newer extraction flag', async () => {
     const { state, solid } = ctx;
@@ -102,17 +105,23 @@ describe('extraction stale request guard', () => {
     const runningB = state.toggleExtractedMode();
     expect(state.extracting()).toBe(true);
 
-    const itemA = makeItem({ id: 'i1', feedId: 'f1', read: true });
-    extractA.resolve(jsonResponse({ item: itemA }));
+    extractA.resolve(
+      jsonResponse({ item: makeExtractedItem('i1', '<p>extracted A</p>') })
+    );
     await runningA;
     solid.flush();
     expect(state.extracting()).toBe(true);
+    expect(state.openArticleId()).toBe('i2');
+    expect(state.displayMode()).toBe('extracted');
 
-    const itemB = makeItem({ id: 'i2', feedId: 'f1', read: true });
-    extractB.resolve(jsonResponse({ item: itemB }));
+    extractB.resolve(
+      jsonResponse({ item: makeExtractedItem('i2', '<p>extracted B</p>') })
+    );
     await runningB;
     solid.flush();
     expect(state.extracting()).toBe(false);
+    expect(state.openArticleId()).toBe('i2');
+    expect(state.displayMode()).toBe('extracted');
   });
 });
 

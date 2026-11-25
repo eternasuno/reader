@@ -30,11 +30,9 @@ export interface MenuProps {
   children?: JSX.Element;
   trigger?: JSX.Element;
   icon?: IconName;
-  label?: string;
+  label: string;
   align?: 'start' | 'end';
-  class?: string;
   triggerClass?: string;
-  disabled?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
 
@@ -51,7 +49,7 @@ const useMenuState = (props: MenuProps, refs: MenuRefs) => {
     if (restoreFocus) refs.trigger?.focus();
   };
   const toggle = () => {
-    if (!props.disabled) open() ? dismiss() : setOpenState(true);
+    open() ? dismiss() : setOpenState(true);
   };
 
   useMenuDismiss(open, () => refs.container, dismiss);
@@ -71,7 +69,7 @@ export function Menu(props: MenuProps): JSX.Element {
       ref={(el) => {
         refs.container = el;
       }}
-      class={['relative inline-block', props.class]}
+      class="relative inline-block"
     >
       <button
         ref={(el) => {
@@ -82,8 +80,7 @@ export function Menu(props: MenuProps): JSX.Element {
         style={{ 'anchor-name': anchor }}
         aria-haspopup="menu"
         aria-expanded={menu.open() ? 'true' : 'false'}
-        aria-label={props.label ?? '菜单'}
-        disabled={props.disabled}
+        aria-label={props.label}
         onClick={menu.toggle}
       >
         <Show
@@ -167,6 +164,12 @@ export interface MenuItemProps extends BaseMenuItemProps {
   danger?: boolean;
   submenu?: boolean;
   keepOpen?: boolean;
+  /**
+   * Marks an action that opens a dialog; focus returns to the menu trigger on close.
+   * The item must open its dialog synchronously within the same task for focus return
+   * to the trigger to work.
+   */
+  opensDialog?: boolean;
 }
 
 /** Standard action or submenu trigger inside a {@link Menu}. */
@@ -178,6 +181,7 @@ export const MenuItem = (props: MenuItemProps): JSX.Element => (
     disabled={props.disabled}
     aria-disabled={props['aria-disabled']}
     data-keep-open={props.submenu || props.keepOpen ? 'true' : undefined}
+    data-opens-dialog={props.opensDialog ? 'true' : undefined}
     class={[
       ITEM_CLASSES,
       { 'text-error hover:bg-error/10': Boolean(props.danger) },

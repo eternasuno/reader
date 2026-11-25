@@ -39,9 +39,6 @@ func (e *Extractor) ExtractArticle(htmlBody string, pageURL string) (domain.Extr
 	}
 
 	title, description, content := domain.NormalizeArticleValues(article.Title(), description, &sanitized)
-	if content == nil || *content == "" {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleEmptyContent, nil)
-	}
 
 	return domain.ExtractedArticle{
 		Title:       title,

@@ -32,20 +32,12 @@ const json = (body: unknown, status = 200): Response =>
     headers: { 'Content-Type': 'application/json' },
   });
 
-const noContent = (): Response => new Response(null, { status: 204 });
-
 const queue = (body: unknown, status = 200): void => {
   fetchMock.mockResolvedValueOnce(json(body, status));
 };
 
-const _queueEmpty = (): void => {
-  fetchMock.mockResolvedValueOnce(noContent());
-};
 const requestUrl = (call = 0): string =>
   String(fetchMock.mock.calls[call]?.[0]);
-
-const _requestInit = (call = 0): RequestInit =>
-  (fetchMock.mock.calls[call]?.[1] ?? {}) as RequestInit;
 
 const fetchCount = (): number => fetchMock.mock.calls.length;
 const pending = (): { resolve: (response: Response) => void } => {

@@ -171,7 +171,7 @@ func scanSavedPage(row interface{ Scan(...any) error }) (domain.SavedPage, error
 		return domain.SavedPage{}, err
 	}
 
-	parsedURL, err := domain.ParseStoredNormalizedURL(rawURL)
+	parsedURL, err := domain.ParseNormalizedURL(rawURL, domain.ErrFeedUrlInvalid)
 	if err != nil {
 		return domain.SavedPage{}, errors.New("invalid stored saved page url")
 	}

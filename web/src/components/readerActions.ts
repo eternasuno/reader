@@ -1,6 +1,7 @@
 import { savedPagesApi } from '../api';
 import { t } from '../i18n';
 import {
+  errorText,
   isLibraryMounted,
   type LibraryArticle,
   openArticleId,
@@ -10,7 +11,6 @@ import {
   toggleOpenArticleRead,
 } from '../state';
 import { showToast } from '../ui';
-import { errorText } from './errorText';
 import type { ReaderNav } from './readerNav';
 
 /** `RD-READ-1`: the store owns the read state, so the header flips synchronously. */
@@ -33,7 +33,7 @@ export const deleteOpenArticle = async (
   article: LibraryArticle
 ): Promise<void> => {
   if (article.kind !== 'later') return;
-  if (!window.confirm(String(t('later.deleteConfirm')))) return;
+  if (!window.confirm(t('later.deleteConfirm'))) return;
 
   try {
     await savedPagesApi.remove(article.id);

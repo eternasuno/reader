@@ -112,7 +112,7 @@ function SidebarColumn(props: LibraryViewProps): JSX.Element {
         <button
           type="button"
           class="fixed inset-0 z-30 bg-black/60 md:hidden"
-          aria-label={String(t('common.close'))}
+          aria-label={t('common.close')}
           onClick={props.ctl.closeDrawer}
         />
       </Show>

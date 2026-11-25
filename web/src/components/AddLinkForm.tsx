@@ -19,8 +19,8 @@ export function AddLinkForm(props: AddLinkFormProps): JSX.Element {
       <Input
         type="url"
         required
-        label={String(t('later.urlLabel'))}
-        placeholder={String(t('later.urlPlaceholder'))}
+        label={t('later.urlLabel')}
+        placeholder={t('later.urlPlaceholder')}
         value={props.url}
         disabled={props.busy}
         error={props.error}
@@ -28,8 +28,8 @@ export function AddLinkForm(props: AddLinkFormProps): JSX.Element {
       />
       <DialogActions
         busy={props.busy}
-        cancelLabel={String(t('common.cancel'))}
-        submitLabel={String(t(props.busy ? 'later.adding' : 'later.addSubmit'))}
+        cancelLabel={t('common.cancel')}
+        submitLabel={t(props.busy ? 'later.adding' : 'later.addSubmit')}
         onCancel={props.onCancel}
       />
     </form>

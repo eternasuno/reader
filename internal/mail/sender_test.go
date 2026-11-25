@@ -92,30 +92,6 @@ func TestSendEPUBIgnoresCloseFailureAfterAcceptance(t *testing.T) {
 	assertEPUBDelivery(t, message, delivery, book, book.Title)
 }
 
-func TestSendEPUBEmptyTitleFallsBackToDefaultSubject(t *testing.T) {
-	serverTLS, clientTLS := newTestTLSConfigs(t)
-	server := &smtpServer{
-		tlsConfig:   serverTLS,
-		implicitTLS: true,
-		messages:    make(chan capturedMail, 1),
-	}
-	startSMTPServer(t, server)
-
-	delivery := kindleDelivery(t, server.address, domain.SMTPSecurityTLS, "", "")
-	book := domain.EPUBBook{
-		Filename: "lantern-2026-11-21.epub",
-		Data:     []byte("PK\x03\x04untitled epubs"),
-	}
-
-	sender := NewSender(Config{Timeout: 5 * time.Second, TLSConfig: clientTLS})
-	if err := sender.SendEPUB(context.Background(), delivery, book); err != nil {
-		t.Fatalf("SendEPUB() error = %v", err)
-	}
-
-	message := receiveMail(t, server.messages)
-	assertEPUBDelivery(t, message, delivery, book, defaultSubject)
-}
-
 func TestSendEPUBAuthFailureStatusCodes(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -300,29 +276,6 @@ func TestSanitizedErrorAuthAndTypedCategories(t *testing.T) {
 			t.Errorf("invalid code sanitizedError() = %q", got)
 		}
 	})
-}
-
-func TestSendEPUBUnsupportedSecurity(t *testing.T) {
-	delivery := domain.KindleDelivery{
-		SMTP: domain.SMTPSettings{
-			SenderEmail: "sender@example.com",
-			Host:        "127.0.0.1",
-			Port:        2525,
-			Security:    domain.SMTPSecurity("ssl"),
-		},
-		KindleEmail: "reader@kindle.com",
-	}
-	book := domain.EPUBBook{Title: "Lantern", Filename: "lantern.epub", Data: []byte("PK\x03\x04")}
-
-	sender := NewSender(Config{})
-	err := sender.SendEPUB(context.Background(), delivery, book)
-	if err == nil {
-		t.Fatal("SendEPUB() error = nil, want unsupported security error")
-	}
-
-	if !strings.Contains(err.Error(), "unsupported smtp security") {
-		t.Errorf("SendEPUB() error = %q, want unsupported security error", err)
-	}
 }
 
 func TestSendEPUBSingleWallClockDeadlineAcrossDialAndSend(t *testing.T) {

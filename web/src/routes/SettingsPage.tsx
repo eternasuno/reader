@@ -8,12 +8,12 @@ import {
   onSettled,
   untrack,
 } from 'solid-js';
-import { errorText } from '../components/errorText';
 import { t } from '../i18n';
 import type { SettingsDrafts, SettingsSection } from '../state';
 import {
   clearSecretDrafts,
   draftsFromSettings,
+  errorText,
   hasAnyUnsavedChanges,
   isSaving,
   isSectionDirty,
@@ -58,13 +58,13 @@ function SettingsHeader(props: { onLeave: () => void }): JSX.Element {
       <Button
         variant="icon"
         size="sm"
-        aria-label={String(t('settings.backToLibrary'))}
-        title={String(t('settings.backToLibrary'))}
+        aria-label={t('settings.backToLibrary')}
+        title={t('settings.backToLibrary')}
         onClick={props.onLeave}
       >
         <Icon name="arrow-left" size={18} />
       </Button>
-      <h1 class="text-base font-semibold">{String(t('settings.title'))}</h1>
+      <h1 class="text-base font-semibold">{t('settings.title')}</h1>
     </header>
   );
 }
@@ -79,7 +79,7 @@ function SettingsNav(props: SettingsNavProps): JSX.Element {
   return (
     <nav
       class="grid shrink-0 grid-cols-4 gap-1 md:sticky md:top-6 md:flex md:w-52 md:flex-col md:self-start"
-      aria-label={String(t('settings.title'))}
+      aria-label={t('settings.title')}
     >
       <For each={SECTIONS}>
         {(section) => (
@@ -96,7 +96,7 @@ function SettingsNav(props: SettingsNavProps): JSX.Element {
             onClick={() => props.onSelect(section)}
           >
             <Icon name={SECTION_ICONS[section]} size={18} class="opacity-70" />
-            {String(t(SECTION_LABEL_KEYS[section]))}
+            {t(SECTION_LABEL_KEYS[section])}
           </button>
         )}
       </For>
@@ -115,13 +115,13 @@ function SettingsPanels(
     <>
       <section
         class={sectionPanelClass(props.active === 'articles')}
-        aria-label={String(t('settings.sectionArticles'))}
+        aria-label={t('settings.sectionArticles')}
       >
         <ArticlesSection drafts={props.drafts} setDrafts={props.setDrafts} />
       </section>
       <section
         class={sectionPanelClass(props.active === 'extraction')}
-        aria-label={String(t('settings.sectionExtraction'))}
+        aria-label={t('settings.sectionExtraction')}
       >
         <ExtractionSection
           drafts={props.drafts}
@@ -131,7 +131,7 @@ function SettingsPanels(
       </section>
       <section
         class={sectionPanelClass(props.active === 'kindle')}
-        aria-label={String(t('settings.sectionKindle'))}
+        aria-label={t('settings.sectionKindle')}
       >
         <KindleSection
           drafts={props.drafts}
@@ -141,7 +141,7 @@ function SettingsPanels(
       </section>
       <section
         class={sectionPanelClass(props.active === 'services')}
-        aria-label={String(t('settings.sectionServices'))}
+        aria-label={t('settings.sectionServices')}
       >
         <ServicesSection drafts={props.drafts} setDrafts={props.setDrafts} />
       </section>
@@ -169,7 +169,7 @@ const useLeaveGuards = (isDirty: () => boolean): void => {
   useBeforeLeave((event) => {
     if (event.defaultPrevented || !isDirty()) return;
 
-    if (!window.confirm(String(t('settings.unsavedLeaveConfirm')))) {
+    if (!window.confirm(t('settings.unsavedLeaveConfirm'))) {
       event.preventDefault();
     }
   });
@@ -210,7 +210,7 @@ export function SettingsPage(): JSX.Element {
 
     const loaded = settings();
     if (isSectionDirty(current, drafts, loaded)) {
-      if (!window.confirm(String(t('settings.unsavedSectionConfirm')))) return;
+      if (!window.confirm(t('settings.unsavedSectionConfirm'))) return;
       // `settings.md:20`: the discarded draft is reset from the saved settings.
       resetSectionDraft(current, setDrafts, loaded);
     }

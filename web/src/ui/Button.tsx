@@ -1,12 +1,7 @@
 import type { JSX } from '@solidjs/web';
 import { omit, Show } from 'solid-js';
 
-export type ButtonVariant =
-  | 'primary'
-  | 'secondary'
-  | 'ghost'
-  | 'danger'
-  | 'icon';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'icon';
 export type ButtonSize = 'sm' | 'md';
 
 export interface ButtonProps
@@ -22,7 +17,6 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary: 'btn-primary',
   secondary: 'btn-secondary',
   ghost: 'btn-ghost',
-  danger: 'btn-error',
   icon: 'btn-ghost btn-square',
 };
 

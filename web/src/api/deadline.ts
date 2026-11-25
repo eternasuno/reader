@@ -20,11 +20,6 @@ export const toAbortError = (cause?: unknown): Error => {
   return new RequestAbortedError(cause);
 };
 
-export const resolveTimeoutMs = (timeoutMs?: number): number =>
-  timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs >= 0
-    ? timeoutMs
-    : DEFAULT_TIMEOUT_MS;
-
 export const createRequestDeadline = (
   timeoutMs: number,
   callerSignal?: AbortSignal
@@ -32,18 +27,6 @@ export const createRequestDeadline = (
   const controller = new AbortController();
   let timedOut = false;
   let callerAborted = false;
-
-  if (callerSignal?.aborted) {
-    callerAborted = true;
-    controller.abort(callerSignal.reason);
-
-    return {
-      signal: controller.signal,
-      isCallerAborted: () => callerAborted,
-      isTimedOut: () => timedOut,
-      cleanup: () => {},
-    };
-  }
 
   const onCallerAbort = (): void => {
     if (timedOut) return;

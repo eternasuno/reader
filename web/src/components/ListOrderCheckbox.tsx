@@ -28,7 +28,7 @@ export function ListOrderCheckbox(props: { feed: Feed | null }): JSX.Element {
 
   return (
     <MenuCheckbox icon="sort" checked={oldest()} onSelect={toggle}>
-      {String(t('feeds.oldestFirst'))}
+      {t('feeds.oldestFirst')}
     </MenuCheckbox>
   );
 }

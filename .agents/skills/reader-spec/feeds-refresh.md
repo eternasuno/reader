@@ -22,7 +22,7 @@ Feed fetching, parsing (`FD-PARSE`), item selection/retention (`FD-SEL`), sync (
 ### FD-SCHED — Refresh Queue & Scheduler
 - `FD-SCHED-1`: Enqueues every feed once at startup and on a fixed `30 minutes` interval, plus immediately upon subscription or OPML import.
 - `FD-SCHED-2`: At most one refresh runs per feed at a time (duplicate enqueues while running are dropped). Refreshes across feeds run through a bounded worker pool (default concurrency `5`).
-- `FD-SCHED-3`: On a refresh failure, `failureCount` increments by 1 and a sanitized summary is saved in `lastError` (never exposing internal stack traces or credentials). Once `failureCount >= 3`, the UI shows a warning indicator on that feed so the user can inspect the error, manually trigger a retry (`POST /api/feeds/:id/refresh`), or unsubscribe. Below 3 consecutive failures, failures remain silent in the UI.
+- `FD-SCHED-3`: On an external refresh failure (fetch or parse), `failureCount` increments by 1 and a sanitized summary is saved in `lastError` (never exposing internal stack traces or credentials). Once `failureCount >= 3`, the UI shows a warning indicator on that feed so the user can inspect the error, manually trigger a retry (`POST /api/feeds/:id/refresh`), or unsubscribe. Below 3 consecutive failures, failures remain silent in the UI. Database errors in the refresh path are logged without incrementing `failureCount` (or changing `lastError`), and `3` consecutive database failures make the process exit non-zero.
 
 ## Acceptance
 

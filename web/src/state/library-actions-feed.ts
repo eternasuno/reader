@@ -97,7 +97,7 @@ export const moveFeedToFolder = async (
     if (outcome !== null) {
       reconcileFeedMove(feed.id, outcome.targetFolderId, outcome.dropped);
       if (outcome.owns) {
-        showToast(String(t('folders.movedToast')), 'success');
+        showToast(t('folders.movedToast'), 'success');
       }
     }
     return true;

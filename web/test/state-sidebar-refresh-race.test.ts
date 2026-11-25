@@ -14,75 +14,81 @@ beforeEach(async () => {
   await ctx.reset();
 });
 
-describe('sidebar refresh race on feed removal', () => {
-  it('re-fetches instead of restoring a feed removed while refresh is in flight', async () => {
-    const { state, solid } = ctx;
-    const staleRound = ctx.queueDeferredSidebar({
+const REMOVAL_RACE_CASES = [
+  {
+    kind: 'feed',
+    stale: {
       feeds: [makeFeed({ id: 'A' }), makeFeed({ id: 'B' })],
       counts: [
         { feedId: 'A', count: 3 },
         { feedId: 'B', count: 1 },
       ],
-    });
-    const freshRound = ctx.queueDeferredSidebar({
+    },
+    fresh: {
       feeds: [makeFeed({ id: 'B' })],
       counts: [{ feedId: 'B', count: 1 }],
-    });
-
-    const pending = state.refreshSidebar();
-    state.removeFeedLocal('A');
-
-    staleRound.resolve();
-    await vi.waitFor(() => {
-      expect(feedsListCallCount()).toBe(2);
-    });
-    expect(state.feeds().some((feed) => feed.id === 'A')).toBe(false);
-    expect(state.feedUnreadCount('A')).toBe(0);
-
-    freshRound.resolve();
-    await pending;
-    solid.flush();
-
-    expect(state.feeds().map((feed) => feed.id)).toEqual(['B']);
-    expect(state.feedUnreadCount('A')).toBe(0);
-    expect(state.feedUnreadCount('B')).toBe(1);
-    expect(feedsListCallCount()).toBe(2);
-  });
-});
-
-describe('sidebar refresh race on folder removal', () => {
-  it('re-fetches instead of restoring a folder removed while refresh is in flight', async () => {
-    const { state, solid } = ctx;
-    const staleRound = ctx.queueDeferredSidebar({
+    },
+    remove: (s: typeof ctx.state) => s.removeFeedLocal('A'),
+    assertCleared: (s: typeof ctx.state) => {
+      expect(s.feeds().some((feed) => feed.id === 'A')).toBe(false);
+      expect(s.feedUnreadCount('A')).toBe(0);
+    },
+    assertFinal: (s: typeof ctx.state) => {
+      expect(s.feeds().map((feed) => feed.id)).toEqual(['B']);
+      expect(s.feedUnreadCount('A')).toBe(0);
+      expect(s.feedUnreadCount('B')).toBe(1);
+    },
+  },
+  {
+    kind: 'folder',
+    stale: {
       feeds: [makeFeed({ id: 'A', folderId: 'F1' })],
       folders: [makeFolder('F1')],
       counts: [{ feedId: 'A', count: 3 }],
-    });
-    const freshRound = ctx.queueDeferredSidebar({
+    },
+    fresh: {
       feeds: [makeFeed({ id: 'A', folderId: null })],
       folders: [],
       counts: [{ feedId: 'A', count: 3 }],
-    });
+    },
+    remove: (s: typeof ctx.state) => s.removeFolderLocal('F1'),
+    assertCleared: (s: typeof ctx.state) => {
+      expect(s.folders()).toEqual([]);
+    },
+    assertFinal: (s: typeof ctx.state) => {
+      expect(s.folders()).toEqual([]);
+      expect(s.folderFeeds('F1')).toEqual([]);
+      expect(s.topLevelFeeds().map((feed) => feed.id)).toEqual(['A']);
+      expect(s.feedUnreadCount('A')).toBe(3);
+    },
+  },
+];
 
-    const pending = state.refreshSidebar();
-    state.removeFolderLocal('F1');
+describe('sidebar refresh race on removal', () => {
+  it.each(REMOVAL_RACE_CASES)(
+    're-fetches instead of restoring a $kind removed while refresh is in flight',
+    async ({ stale, fresh, remove, assertCleared, assertFinal }) => {
+      const { state, solid } = ctx;
+      const staleRound = ctx.queueDeferredSidebar(stale);
+      const freshRound = ctx.queueDeferredSidebar(fresh);
 
-    staleRound.resolve();
-    await vi.waitFor(() => {
+      const pending = state.refreshSidebar();
+      remove(state);
+
+      staleRound.resolve();
+      await vi.waitFor(() => {
+        expect(feedsListCallCount()).toBe(2);
+      });
+      assertCleared(state);
+
+      freshRound.resolve();
+      await pending;
+      solid.flush();
+
+      assertFinal(state);
       expect(feedsListCallCount()).toBe(2);
-    });
-    expect(state.folders()).toEqual([]);
-
-    freshRound.resolve();
-    await pending;
-    solid.flush();
-
-    expect(state.folders()).toEqual([]);
-    expect(state.folderFeeds('F1')).toEqual([]);
-    expect(state.topLevelFeeds().map((feed) => feed.id)).toEqual(['A']);
-    expect(state.feedUnreadCount('A')).toBe(3);
-    expect(feedsListCallCount()).toBe(2);
-  });
+    }
+  );
 });
 
 describe('sidebar refresh coalescing', () => {

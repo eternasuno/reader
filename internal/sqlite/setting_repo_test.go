@@ -54,16 +54,6 @@ func TestSettingRepoProvider(t *testing.T) {
 		t.Fatalf("settings after failed browser switch = %+v", settings)
 	}
 
-	if err := repo.UpdateBrowserEndpoint(ctx, "   "); err != nil {
-		t.Fatalf("update blank browser endpoint: %v", err)
-	}
-
-	if err := repo.UpdateProvider(ctx, domain.ProviderBrowser); err == nil {
-		t.Fatal("expected a required browser endpoint error for blank endpoint")
-	} else {
-		requireCode(t, err, domain.ErrBrowserEndpointRequired)
-	}
-
 	if err := repo.UpdateBrowserEndpoint(ctx, "wss://browser.internal:3000"); err != nil {
 		t.Fatalf("update browser endpoint: %v", err)
 	}

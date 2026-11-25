@@ -264,6 +264,14 @@ func TestKindleSendRepoPruneKeepsRunningSendWithNewerHistory(t *testing.T) {
 	if err := repo.CompleteSend(ctx, domain.NewID(), domain.KindleStatusSucceeded, nil, now); !errors.Is(err, domain.ErrKindleSendNotFound) {
 		t.Fatalf("completing nonexistent send: got %v, want ErrKindleSendNotFound", err)
 	}
+
+	if err := repo.RecordBookAccepted(ctx, domain.NewID(), 0, nil, nil, 1); !errors.Is(err, domain.ErrKindleSendNotFound) {
+		t.Fatalf("recording book on nonexistent send: got %v, want ErrKindleSendNotFound", err)
+	}
+
+	if err := repo.RecordBookAccepted(ctx, claimed.Record.ID, 1, nil, nil, 1); !errors.Is(err, domain.ErrKindleSendNotFound) {
+		t.Fatalf("recording book on completed send: got %v, want ErrKindleSendNotFound", err)
+	}
 }
 
 func TestKindleSendRepoListUnreadForKindle(t *testing.T) {

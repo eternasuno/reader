@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"reader/internal/domain"
 )
@@ -201,9 +200,9 @@ func (s *server) savedPageFromFeedItem(ctx context.Context, item *domain.FeedIte
 	}
 
 	switch {
-	case hasText(item.ExtractedContent):
+	case item.ExtractedContent != nil:
 		page.Content = *item.ExtractedContent
-	case hasText(item.Content):
+	case item.Content != nil:
 		page.Content = *item.Content
 	default:
 		article, err := s.extractWebpage(ctx, item.URL)
@@ -212,9 +211,7 @@ func (s *server) savedPageFromFeedItem(ctx context.Context, item *domain.FeedIte
 		}
 
 		page.Content = article.Content
-		if strings.TrimSpace(article.Title) != "" {
-			page.Title = article.Title
-		}
+		page.Title = article.Title
 
 		if article.Description != nil {
 			page.Description = article.Description
@@ -226,10 +223,6 @@ func (s *server) savedPageFromFeedItem(ctx context.Context, item *domain.FeedIte
 	}
 
 	return page, nil
-}
-
-func hasText(value *string) bool {
-	return value != nil && strings.TrimSpace(*value) != ""
 }
 
 type countResponse struct {

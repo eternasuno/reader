@@ -21,7 +21,7 @@ function LaterScopeRow(props: { state: SidebarProps }): JSX.Element {
     <ScopeRow
       active={isSameScope(props.state.scope, { kind: 'later' })}
       icon="bookmark"
-      label={String(t('library.laterScope'))}
+      label={t('library.laterScope')}
       count={savedUnreadCount()}
       onSelect={() => selectScope(props.state, { kind: 'later' })}
     >
@@ -31,8 +31,8 @@ function LaterScopeRow(props: { state: SidebarProps }): JSX.Element {
         onToggleUnread={() => toggleUnread(props.state)}
       />
       <MenuDivider />
-      <MenuItem icon="plus" onSelect={props.state.onRequestAddLink}>
-        {String(t('later.addLinkTitle'))}
+      <MenuItem opensDialog icon="plus" onSelect={props.state.onRequestAddLink}>
+        {t('later.addLinkTitle')}
       </MenuItem>
     </ScopeRow>
   );
@@ -43,7 +43,7 @@ function AllScopeRow(props: { state: SidebarProps }): JSX.Element {
     <ScopeRow
       active={isSameScope(props.state.scope, { kind: 'all' })}
       icon="inbox"
-      label={String(t('library.allFeedsScope'))}
+      label={t('library.allFeedsScope')}
       count={allFeedsUnreadCount()}
       onSelect={() => selectScope(props.state, { kind: 'all' })}
     >

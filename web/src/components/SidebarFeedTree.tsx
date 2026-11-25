@@ -30,31 +30,26 @@ function FeedTreeHeader(props: { state: SidebarProps }): JSX.Element {
   return (
     <div class="mt-3 flex items-center justify-between gap-2 px-2">
       <h2 class="text-xs font-semibold tracking-wider text-base-content/50 uppercase">
-        {String(t('library.feedsSection'))}
+        {t('library.feedsSection')}
       </h2>
       <div class="flex items-center gap-0.5">
         <button
           type="button"
           class="btn btn-ghost btn-xs btn-square"
-          aria-label={String(t('library.addFeed'))}
-          title={String(t('library.addFeed'))}
+          aria-label={t('library.addFeed')}
+          title={t('library.addFeed')}
           onClick={props.state.onRequestAddFeed}
         >
           <Icon name="plus" size={16} />
         </button>
-        <Menu
-          icon="dots"
-          label={String(t('library.moreActions'))}
-          align="end"
-          triggerClass="btn-xs"
-        >
+        <Menu label={t('library.moreActions')} triggerClass="btn-xs">
           <MenuItem onSelect={props.state.onRequestImportOpml}>
-            {String(t('library.importOpmlMenu'))}
+            {t('library.importOpmlMenu')}
           </MenuItem>
           <MenuItem
             onSelect={() => window.location.assign(feedsApi.exportOpmlUrl)}
           >
-            {String(t('library.exportOpmlMenu'))}
+            {t('library.exportOpmlMenu')}
           </MenuItem>
         </Menu>
       </div>

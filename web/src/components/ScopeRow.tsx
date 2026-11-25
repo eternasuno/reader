@@ -46,11 +46,7 @@ export function ScopeRow(props: ScopeRowProps): JSX.Element {
         <span class="flex-1 truncate">{props.label}</span>
       </button>
       <SidebarRowEnd count={props.count}>
-        <Menu
-          label={String(t('library.moreActions'))}
-          align="end"
-          triggerClass="btn-xs"
-        >
+        <Menu label={t('library.moreActions')} triggerClass="btn-xs">
           {props.children}
         </Menu>
       </SidebarRowEnd>
@@ -73,14 +69,14 @@ export function ScopeMenuItems(props: ScopeMenuItemsProps): JSX.Element {
         icon="check-double"
         onSelect={() => void markScopeAllRead(props.scope)}
       >
-        {String(t('library.markAllRead'))}
+        {t('library.markAllRead')}
       </MenuItem>
       <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
-        {String(t('reader.sendAsEbook'))}
+        {t('reader.sendAsEbook')}
       </MenuItem>
       <MenuDivider />
       <MenuCheckbox checked={props.unreadOnly} onSelect={props.onToggleUnread}>
-        {String(t('library.unreadOnly'))}
+        {t('library.unreadOnly')}
       </MenuCheckbox>
       <ListOrderCheckbox feed={props.feed ?? null} />
     </>

@@ -1,13 +1,13 @@
 import {
   createRequestDeadline,
+  DEFAULT_TIMEOUT_MS,
   type RequestDeadline,
   raceWithAbort,
-  resolveTimeoutMs,
   toAbortError,
 } from './deadline';
 import type { Decoder, TypeGuard } from './decoders';
-import { decodeItem } from './decoders';
-import type { ErrorResponse, ListParams, RequestCallOptions } from './types';
+import { decodeField } from './decoders';
+import type { ErrorResponse, RequestCallOptions } from './types';
 import { ApiError, RequestTimeoutError } from './types';
 
 /** Query-string value accepted by `request`; `null`/`undefined` are dropped. */
@@ -17,7 +17,6 @@ export type RequestOptions = RequestCallOptions & {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   rawBody?: BodyInit;
-  headers?: Record<string, string>;
   params?: Record<string, QueryValue>;
   login?: boolean;
 };
@@ -108,8 +107,6 @@ const readBodyText = (
   awaitWithDeadline(() => response.text(), deadline, callerSignal);
 
 const parseJsonSafely = (text: string): unknown => {
-  if (text.trim().length === 0) return undefined;
-
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -150,7 +147,6 @@ const buildRequestInit = (
 ): RequestInit => {
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    ...options.headers,
   };
 
   const init: RequestInit = {
@@ -247,7 +243,7 @@ const executeRequest = async <T>(
   }
 
   const deadline = createRequestDeadline(
-    resolveTimeoutMs(options.timeoutMs),
+    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     options.signal
   );
   try {
@@ -270,16 +266,12 @@ const executeRequest = async <T>(
   }
 };
 
-export const request = async <T>(
+export const request = <T>(
   path: string,
   decode: Decoder<T>,
   options: RequestOptions = {}
 ): Promise<T> =>
-  await executeRequest(path, options, async (response, deadline) => {
-    if (response.status === 204) {
-      throw new ApiError('InvalidResponse', response.status);
-    }
-
+  executeRequest(path, options, async (response, deadline) => {
     const text = await readBodyText(response, deadline, options.signal);
     if (text.trim().length === 0) {
       throw new ApiError('InvalidResponse', response.status);
@@ -295,26 +287,19 @@ export const request = async <T>(
     return decode(payload, response.status);
   });
 
-export const requestNoContent = async (
+export const requestNoContent = (
   path: string,
   options: RequestOptions = {},
   expectedStatus = 204
 ): Promise<void> =>
-  await executeRequest(path, options, async (response) => {
+  executeRequest(path, options, async (response) => {
     if (response.status !== expectedStatus) {
       throw new ApiError('InvalidResponse', response.status);
     }
   });
 
-export const pageParams = (params: ListParams): Record<string, QueryValue> => ({
-  limit: params.limit,
-  unread: params.unread,
-  cursor: params.cursor,
-  order: params.order,
-});
-
-export const item = async <T>(
+export const item = <T>(
   path: string,
   guard: TypeGuard<T>,
   options?: RequestOptions
-): Promise<T> => await request(path, decodeItem(guard), options);
+): Promise<T> => request(path, decodeField('item', guard), options);

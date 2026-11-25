@@ -57,7 +57,7 @@ const applySavedKindle = (
     kindleEmail: input.kindleEmail,
     sendTime: input.sendTime ?? '',
   }));
-  showToast(String(t('settings.kindleSavedToast')), 'success');
+  showToast(t('settings.kindleSavedToast'), 'success');
 };
 
 const performKindleSave = async (
@@ -156,7 +156,7 @@ export const triggerKindleSend = async (): Promise<boolean> => {
 
     setKindleSends((current) => [record, ...current]);
     setKindleRunning(record.status === 'running');
-    showToast(String(t('kindle.queuedToast')), 'success');
+    showToast(t('kindle.queuedToast'), 'success');
 
     return true;
   } catch (error) {

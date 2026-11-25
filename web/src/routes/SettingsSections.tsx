@@ -45,7 +45,7 @@ function RetentionGroup(props: SettingsDraftProps): JSX.Element {
 
   return (
     <SettingsGroup
-      title={String(t('settings.retentionHeading'))}
+      title={t('settings.retentionHeading')}
       footer={
         <Button
           variant="primary"
@@ -54,14 +54,14 @@ function RetentionGroup(props: SettingsDraftProps): JSX.Element {
           disabled={controlsDisabled()}
           onClick={() => void saveRetention(props.drafts)}
         >
-          {String(t('settings.saveArticles'))}
+          {t('settings.saveArticles')}
         </Button>
       }
     >
       <SettingsRow
-        label={String(t('settings.retentionLabel'))}
+        label={t('settings.retentionLabel')}
         labelFor={inputId}
-        description={String(t('settings.retentionHint'))}
+        description={t('settings.retentionHint')}
       >
         <Input
           id={inputId}
@@ -86,8 +86,8 @@ function OpmlGroup(): JSX.Element {
   const opml = useOpmlImport();
 
   return (
-    <SettingsGroup title={String(t('settings.opmlHeading'))}>
-      <SettingsRow description={String(t('settings.opmlHint'))}>
+    <SettingsGroup title={t('settings.opmlHeading')}>
+      <SettingsRow description={t('settings.opmlHint')}>
         <div class="flex flex-wrap items-center gap-2">
           <input
             ref={opml.inputRef}
@@ -97,14 +97,14 @@ function OpmlGroup(): JSX.Element {
             onChange={opml.onChange}
           />
           <Button variant="secondary" size="sm" onClick={opml.openPicker}>
-            {String(t('library.importOpml'))}
+            {t('library.importOpml')}
           </Button>
           <a
             class="btn btn-secondary btn-sm"
             href={feedsApi.exportOpmlUrl}
             download="subscriptions.opml"
           >
-            {String(t('library.exportOpml'))}
+            {t('library.exportOpml')}
           </a>
         </div>
       </SettingsRow>
@@ -117,8 +117,8 @@ function BookmarkletGroup(): JSX.Element {
     `javascript:location.href='${window.location.origin}/save#url='+encodeURIComponent(location.href)`;
 
   return (
-    <SettingsGroup title={String(t('settings.bookmarkletHeading'))}>
-      <SettingsRow description={String(t('settings.bookmarkletHint'))}>
+    <SettingsGroup title={t('settings.bookmarkletHeading')}>
+      <SettingsRow description={t('settings.bookmarkletHint')}>
         <a
           class="btn btn-sm cursor-grab border-dashed border-base-content/30 bg-base-100 active:cursor-grabbing"
           href={href()}
@@ -126,7 +126,7 @@ function BookmarkletGroup(): JSX.Element {
           onClick={(event) => event.preventDefault()}
         >
           <Icon name="bookmark" size={16} class="text-brand" />
-          {String(t('settings.bookmarkletLabel'))}
+          {t('settings.bookmarkletLabel')}
         </a>
       </SettingsRow>
     </SettingsGroup>
@@ -150,7 +150,7 @@ function BrowserUnavailableHint(props: {
   return (
     <span class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-warning">
       <Icon name="warning" size={14} />
-      {String(t('settings.browserUnavailableHint'))}
+      {t('settings.browserUnavailableHint')}
       <Button
         variant="ghost"
         size="sm"
@@ -158,7 +158,7 @@ function BrowserUnavailableHint(props: {
         disabled={controlsDisabled()}
         onClick={props.onGoToServices}
       >
-        {String(t('settings.goToServices'))}
+        {t('settings.goToServices')}
       </Button>
     </span>
   );
@@ -200,10 +200,10 @@ function ProviderOption(
               browserUnavailable() ? 'text-base-content/50' : '',
             ]}
           >
-            {String(t(props.provider.labelKey))}
+            {t(props.provider.labelKey)}
           </span>
           <span class="text-xs leading-relaxed text-base-content/60">
-            {String(t(props.provider.hintKey))}
+            {t(props.provider.hintKey)}
           </span>
         </span>
       </label>
@@ -224,9 +224,9 @@ export function ExtractionSection(
 ): JSX.Element {
   return (
     <fieldset disabled={controlsDisabled()}>
-      <legend class="sr-only">{String(t('settings.providerLabel'))}</legend>
+      <legend class="sr-only">{t('settings.providerLabel')}</legend>
       <SettingsGroup
-        title={String(t('settings.providerLabel'))}
+        title={t('settings.providerLabel')}
         footer={
           <Button
             variant="primary"
@@ -235,7 +235,7 @@ export function ExtractionSection(
             disabled={controlsDisabled()}
             onClick={() => void saveProvider(props.drafts)}
           >
-            {String(t('settings.saveExtraction'))}
+            {t('settings.saveExtraction')}
           </Button>
         }
       >

@@ -94,10 +94,12 @@ func createFeed(t *testing.T, store *Store, title string, folderID *string) doma
 	t.Helper()
 
 	feed, err := store.Feeds().Create(context.Background(), domain.Feed{
-		ID:       domain.NewID(),
-		URL:      mustURL(t, "https://example.com/feeds/"+domain.NewID()),
-		Title:    title,
-		FolderID: folderID,
+		ID:         domain.NewID(),
+		URL:        mustURL(t, "https://example.com/feeds/"+domain.NewID()),
+		Title:      title,
+		FolderID:   folderID,
+		ReaderMode: domain.ReaderModeDefault,
+		Order:      domain.SortOrderNewest,
 	})
 	if err != nil {
 		t.Fatalf("create feed %q: %v", title, err)

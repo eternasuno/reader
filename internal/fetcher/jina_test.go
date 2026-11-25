@@ -28,7 +28,7 @@ func TestFetchWebpageJina(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key := "  jina-secret-key  "
+	key := "jina-secret-key"
 	client := New(Config{
 		AllowPrivateNetwork: true,
 		Settings:            stubSettings(ExtractorSettings{Provider: domain.ProviderJina, JinaKey: &key}, nil),

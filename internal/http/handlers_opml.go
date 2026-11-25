@@ -67,9 +67,7 @@ func (s *server) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.cfg.Refresher != nil && len(newFeedIDs) > 0 {
-		s.cfg.Refresher.Enqueue(newFeedIDs...)
-	}
+	s.cfg.Refresher.Enqueue(newFeedIDs...)
 
 	writeJSON(w, http.StatusOK, opmlImportResponse{
 		ImportedFeeds:  result.ImportedFeeds,

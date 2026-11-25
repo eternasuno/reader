@@ -6,14 +6,13 @@ import { takeMenuTrigger } from './menu-focus';
 
 export interface DialogProps {
   open: boolean;
-  title?: string;
+  title: string;
   children?: JSX.Element;
-  footer?: JSX.Element;
   /** Extra classes for the dialog panel. */
   class?: string;
   /** While busy, the dialog cannot be dismissed by Escape, close button, or a backdrop click. */
   busy?: boolean;
-  onClose?: () => void;
+  onClose: () => void;
   /** Accessible label for the close button. */
   closeLabel: string;
 }
@@ -82,6 +81,24 @@ export interface DialogFocusOptions {
   onClose: () => void;
 }
 
+const tryFocus = (el: HTMLElement | null | undefined): boolean => {
+  if (!el?.isConnected || el === document.body) return false;
+
+  el.focus();
+
+  return document.activeElement === el;
+};
+
+const restoreFocus = (
+  candidates: ReadonlyArray<HTMLElement | null | undefined>
+): void => {
+  if (candidates.some(tryFocus)) return;
+
+  const mainLandmark = document.querySelector<HTMLElement>('main');
+  mainLandmark?.setAttribute('tabindex', '-1');
+  mainLandmark?.focus();
+};
+
 /** Focuses the first field (or the panel) on open, traps Tab, and restores focus on close. */
 export const useDialogFocus = (options: DialogFocusOptions): void => {
   createEffect(options.open, (open) => {
@@ -121,24 +138,13 @@ export const useDialogFocus = (options: DialogFocusOptions): void => {
 
     return () => {
       document.removeEventListener('keydown', onKeyDown);
-      if (
-        previouslyFocused?.isConnected &&
-        previouslyFocused !== document.body
-      ) {
-        previouslyFocused.focus();
-      } else if (menuTrigger?.isConnected) {
-        menuTrigger.focus();
-      } else {
-        const mainLandmark = document.querySelector<HTMLElement>('main');
-        mainLandmark?.setAttribute('tabindex', '-1');
-        mainLandmark?.focus();
-      }
+      restoreFocus([previouslyFocused, menuTrigger]);
     };
   });
 };
 
 interface DialogHeaderProps {
-  title?: string;
+  title: string;
   titleId: string;
   closeLabel: string;
   disabled?: boolean;
@@ -147,13 +153,9 @@ interface DialogHeaderProps {
 
 const DialogHeader = (props: DialogHeaderProps): JSX.Element => (
   <div class="flex items-center justify-between gap-3 px-5 pt-5 pb-1">
-    <Show when={props.title}>
-      {(title) => (
-        <h2 id={props.titleId} class="text-lg font-semibold">
-          {title()}
-        </h2>
-      )}
-    </Show>
+    <h2 id={props.titleId} class="text-lg font-semibold">
+      {props.title}
+    </h2>
     <button
       type="button"
       class={CLOSE_CLASSES}
@@ -171,7 +173,7 @@ export function Dialog(props: DialogProps): JSX.Element {
   const titleId = createUniqueId();
   const dismissable = () => !props.busy;
   const requestClose = () => {
-    if (dismissable()) props.onClose?.();
+    if (dismissable()) props.onClose();
   };
 
   useDialogFocus({
@@ -196,7 +198,7 @@ export function Dialog(props: DialogProps): JSX.Element {
             }}
             role="dialog"
             aria-modal="true"
-            aria-labelledby={props.title ? titleId : undefined}
+            aria-labelledby={titleId}
             aria-busy={props.busy ? 'true' : undefined}
             tabindex="-1"
             class={[PANEL_CLASSES, props.class]}
@@ -215,9 +217,6 @@ export function Dialog(props: DialogProps): JSX.Element {
             <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               {props.children}
             </div>
-            <Show when={props.footer}>
-              <div class="px-5 pt-1 pb-5">{props.footer}</div>
-            </Show>
           </div>
         </div>
       </Portal>

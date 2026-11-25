@@ -13,11 +13,6 @@ export interface PanelElements {
  */
 const isElementVisible = (element: HTMLElement): boolean => {
   if (element.offsetParent !== null) return true;
-  if (
-    typeof window === 'undefined' ||
-    typeof window.getComputedStyle !== 'function'
-  )
-    return false;
 
   let node: HTMLElement | null = element;
   while (node !== null) {

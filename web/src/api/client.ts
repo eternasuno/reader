@@ -1,16 +1,17 @@
 import { FETCH_TIMEOUT_MS } from './deadline';
 import {
-  decodeCount,
-  decodeItems,
+  decodeField,
   decodePage,
   decodeWith,
+  isArrayOf,
   isFeedItem,
+  isFiniteNumber,
   isFolder,
   isNullable,
   isSavedPage,
   isSession,
 } from './decoders';
-import { item, pageParams, request, requestNoContent } from './request';
+import { item, request, requestNoContent } from './request';
 import type {
   FeedItem,
   Folder,
@@ -44,17 +45,14 @@ export const savedPagesApi = {
   ): Promise<Page<SavedPage>> =>
     request('/api/saved-pages', decodePage(isSavedPage), {
       ...options,
-      params: pageParams(params),
+      params,
     }),
-  unreadCount: async (options?: RequestCallOptions): Promise<number> => {
-    const count = await request(
+  unreadCount: (options?: RequestCallOptions): Promise<number> =>
+    request(
       '/api/saved-pages/unread-count',
-      decodeCount,
+      decodeField('count', isFiniteNumber),
       options
-    );
-
-    return count;
-  },
+    ),
   getById: (
     id: string,
     options?: RequestCallOptions
@@ -112,11 +110,8 @@ export const savedPagesApi = {
 };
 
 export const foldersApi = {
-  list: async (options?: RequestCallOptions): Promise<Array<Folder>> => {
-    const items = await request('/api/folders', decodeItems(isFolder), options);
-
-    return items;
-  },
+  list: (options?: RequestCallOptions): Promise<Array<Folder>> =>
+    request('/api/folders', decodeField('items', isArrayOf(isFolder)), options),
   create: (name: string, options?: RequestCallOptions): Promise<Folder> =>
     item('/api/folders', isFolder, {
       ...options,
@@ -153,7 +148,7 @@ export const foldersApi = {
       decodePage(isFeedItem),
       {
         ...options,
-        params: pageParams(params),
+        params,
       }
     ),
 };

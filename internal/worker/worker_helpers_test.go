@@ -55,6 +55,63 @@ func requireErrorCode(t *testing.T, err error, code domain.ErrorCode) {
 	}
 }
 
+type fatalRecorder struct {
+	mu   sync.Mutex
+	errs []error
+}
+
+func (r *fatalRecorder) Record(err error) {
+	r.mu.Lock()
+	r.errs = append(r.errs, err)
+	r.mu.Unlock()
+}
+
+func (r *fatalRecorder) Count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return len(r.errs)
+}
+
+func (r *fatalRecorder) Errors() []error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]error(nil), r.errs...)
+}
+
+func newTestKindleSender(t *testing.T, cfg KindleConfig) *KindleSender {
+	t.Helper()
+
+	if cfg.BaseCtx == nil {
+		cfg.BaseCtx = context.Background()
+	}
+
+	if cfg.Location == nil {
+		cfg.Location = time.UTC
+	}
+
+	if cfg.OnFatal == nil {
+		cfg.OnFatal = func(err error) {
+			t.Errorf("unexpected fatal: %v", err)
+		}
+	}
+
+	return NewKindleSender(cfg)
+}
+
+func newTestRefreshQueue(t *testing.T, cfg RefreshConfig) *RefreshQueue {
+	t.Helper()
+
+	if cfg.OnFatal == nil {
+		cfg.OnFatal = func(err error) {
+			t.Errorf("unexpected fatal: %v", err)
+		}
+	}
+
+	return NewRefreshQueue(cfg)
+}
+
 type recordedFailure struct {
 	feedID  string
 	summary string
@@ -415,6 +472,7 @@ type fakeFeedParser struct {
 	mu     sync.Mutex
 	parsed domain.ParsedFeed
 	err    error
+	panics bool
 	calls  int
 }
 
@@ -423,6 +481,10 @@ func (p *fakeFeedParser) ParseFeed(body []byte, baseURL string) (domain.ParsedFe
 	defer p.mu.Unlock()
 
 	p.calls++
+
+	if p.panics {
+		panic("hostile feed")
+	}
 
 	return p.parsed, p.err
 }

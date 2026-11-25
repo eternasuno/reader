@@ -81,7 +81,7 @@ const randomToken = (): string => {
 };
 
 /** `RD-FRAME-1`: stored source classes must not leak into the isolated document. */
-export const stripSourceClasses = (html: string): string => {
+const stripSourceClasses = (html: string): string => {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   for (const element of Array.from(doc.querySelectorAll('[class]'))) {
     element.removeAttribute('class');
@@ -254,7 +254,7 @@ export const buildArticleSrcdoc = (options: ArticleSrcdocOptions): string => {
     .join('');
 
   const styles = buildReaderStyles(options.appearance ?? DEFAULT_APPEARANCE);
-  const imageLabel = options.imageLabel ?? String(t('reader.imagePreview'));
+  const imageLabel = options.imageLabel ?? t('reader.imagePreview');
   const htmlTag =
     options.theme && options.theme !== 'auto'
       ? `<html data-theme="${escapeAttribute(options.theme)}">`
@@ -342,7 +342,7 @@ const createFrameContent = (html: () => string) => {
           lineHeight: lineHeight(),
         },
         theme: readerTheme(),
-        imageLabel: String(t('reader.imagePreview')),
+        imageLabel: t('reader.imagePreview'),
       }),
     };
   });

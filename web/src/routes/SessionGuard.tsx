@@ -33,7 +33,7 @@ function GuardChecking(): JSX.Element {
       class="flex min-h-dvh items-center justify-center gap-2 bg-base-100 text-sm text-base-content/70"
     >
       <span class="loading loading-spinner loading-sm" aria-hidden="true" />
-      {String(t('common.checkingSession'))}
+      {t('common.checkingSession')}
     </div>
   );
 }
@@ -49,7 +49,7 @@ function GuardError(props: { onRetry: () => void }): JSX.Element {
         {translateErrorCode(sessionErrorCode() ?? 'NetworkError')}
       </p>
       <Button variant="secondary" size="sm" onClick={props.onRetry}>
-        {String(t('common.retry'))}
+        {t('common.retry')}
       </Button>
     </div>
   );

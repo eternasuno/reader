@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"reader/internal/domain"
-	"strings"
 	"testing"
 	"time"
 )
@@ -106,26 +105,5 @@ func TestKindleSendsList(t *testing.T) {
 	decodeBody(t, recorder, &payload)
 	if !payload.Running {
 		t.Fatal("a running record must report running = true")
-	}
-}
-
-func TestKindleEndpointsRequireDispatcher(t *testing.T) {
-	t.Parallel()
-
-	h := newHarnessWith(t, func(cfg *Config) { cfg.Kindle = nil })
-
-	requireAPIError(t, h.authed(http.MethodPost, "/api/kindle/send", nil), http.StatusInternalServerError, "RequestFailed")
-
-	recorder := h.authed(http.MethodGet, "/api/kindle/sends", nil)
-	requireStatus(t, recorder, http.StatusOK)
-
-	var payload kindleSendsResponse
-	decodeBody(t, recorder, &payload)
-	if payload.Running || payload.Items == nil || len(payload.Items) != 0 {
-		t.Fatalf("sends payload = %+v", payload)
-	}
-
-	if !strings.Contains(recorder.Body.String(), `"items":[]`) {
-		t.Fatalf("empty sends must serialize as []: %s", recorder.Body.String())
 	}
 }

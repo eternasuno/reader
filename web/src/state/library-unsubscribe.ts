@@ -26,7 +26,7 @@ export const unsubscribeFeed = async (feed: Feed): Promise<boolean> => {
   }
 
   removeFeedLocal(feed.id);
-  showToast(String(t('feeds.unsubscribedToast')), 'success');
+  showToast(t('feeds.unsubscribedToast'), 'success');
 
   const scope = activeScope();
   // `activeScope()` outlives the library page; don't reload a list the user already left.

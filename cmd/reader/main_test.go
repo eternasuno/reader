@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -69,58 +70,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadConfigChecksPasswordAgainstLoginBodyBudget(t *testing.T) {
-	// The login endpoint accepts a 4096 byte JSON body: {"password":"<escaped>"}
-	// has a 15 byte envelope, and JSON escaping makes some characters longer.
-	const (
-		bodyBudget = 4 << 10
-		envelope   = len(`{"password":""}`)
-	)
-
-	tests := []struct {
-		name     string
-		password string
-		wantOK   bool
-	}{
-		{name: "missing password", password: "", wantOK: false},
-		{name: "ascii at the budget", password: strings.Repeat("a", bodyBudget-envelope), wantOK: true},
-		{name: "ascii one byte over", password: strings.Repeat("a", bodyBudget-envelope+1), wantOK: false},
-		{name: "quotes at the budget", password: strings.Repeat(`"`, (bodyBudget-envelope)/2), wantOK: true},
-		{name: "quotes over while shorter than the ascii limit", password: strings.Repeat(`"`, (bodyBudget-envelope)/2+1), wantOK: false},
-		{name: "backslashes at the budget", password: strings.Repeat(`\`, (bodyBudget-envelope)/2), wantOK: true},
-		{name: "tabs over while shorter than the ascii limit", password: strings.Repeat("\t", (bodyBudget-envelope)/2+1), wantOK: false},
-		{name: "html characters at the budget", password: strings.Repeat("<", bodyBudget-envelope), wantOK: true},
-		{name: "html characters one byte over", password: strings.Repeat("<", bodyBudget-envelope+1), wantOK: false},
-		{name: "control characters over", password: strings.Repeat("\x01", (bodyBudget-envelope)/6+1), wantOK: false},
-		{name: "multibyte characters stay raw", password: strings.Repeat("日", (bodyBudget-envelope)/3), wantOK: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := loadConfig(getenvFrom(map[string]string{"APP_PASSWORD": tt.password}))
-			if tt.wantOK {
-				if err != nil {
-					t.Fatalf("load config: %v", err)
-				}
-
-				if cfg.AppPassword != tt.password {
-					t.Fatal("app password was altered")
-				}
-
-				return
-			}
-
-			if err == nil {
-				t.Fatal("expected an error for an APP_PASSWORD exceeding the login body budget")
-			}
-
-			if tt.password != "" && strings.Contains(err.Error(), tt.password) {
-				t.Fatalf("error leaked APP_PASSWORD value: %v", err)
-			}
-		})
-	}
-}
-
 func TestServeUntilExitDrainsAndStopsWorkers(t *testing.T) {
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -131,12 +80,12 @@ func TestServeUntilExitDrainsAndStopsWorkers(t *testing.T) {
 	started, release, finished, stopped := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := noopExtractionHandler{http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(started)
 		<-release
 		w.WriteHeader(http.StatusOK)
 		close(finished)
-	})
+	})}
 	done := make(chan error, 1)
 	go func() {
 		done <- serveUntilExit(ctx, listener, handler, func() {
@@ -146,7 +95,7 @@ func TestServeUntilExitDrainsAndStopsWorkers(t *testing.T) {
 				t.Error("workers stopped before handler completed")
 			}
 			close(stopped)
-		})
+		}, shutdownTimeout)
 	}()
 	responses := make(chan error, 1)
 	go func() {
@@ -201,6 +150,14 @@ func TestServeUntilExitDrainsAndStopsWorkers(t *testing.T) {
 	}
 }
 
+type noopExtractionHandler struct {
+	http.Handler
+}
+
+func (noopExtractionHandler) WaitExtractions(context.Context) error {
+	return nil
+}
+
 type extractionWaitHandler struct {
 	entered chan struct{}
 	release chan struct{}
@@ -229,7 +186,7 @@ func TestServeUntilExitWaitsForExtractionsBeforeWorkers(t *testing.T) {
 	stopped := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- serveUntilExit(ctx, listener, handler, func() { close(stopped) })
+		done <- serveUntilExit(ctx, listener, handler, func() { close(stopped) }, shutdownTimeout)
 	}()
 	cancel()
 	<-handler.entered
@@ -259,43 +216,26 @@ func TestServeUntilExitWaitsForForcedHandler(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	started := make(chan struct{})
 	canceled := make(chan struct{})
 	release := make(chan struct{})
-	released := false
-	defer func() {
-		if !released {
-			close(release)
-		}
-	}()
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+
 	stopped := make(chan struct{})
 	done := make(chan error, 1)
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := noopExtractionHandler{http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(started)
 		<-r.Context().Done()
 		close(canceled)
 		<-release
-	})
+	})}
 	go func() {
-		done <- serveUntilExitWithTimeout(ctx, listener, handler, func() { close(stopped) }, 20*time.Millisecond)
-	}()
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+listener.Addr().String()+"/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-
-	go func() {
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-		}
+		done <- serveUntilExit(ctx, listener, handler, func() { close(stopped) }, 1200*time.Millisecond)
 	}()
 
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("handler did not start")
-	}
+	startShutdownTestRequest(t, listener.Addr().String(), started)
 
 	cancel()
 	select {
@@ -312,12 +252,12 @@ func TestServeUntilExitWaitsForForcedHandler(t *testing.T) {
 	default:
 	}
 
-	close(release)
-	released = true
+	releaseOnce.Do(func() { close(release) })
+
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("serveUntilExit error = %v, want deadline exceeded", err)
+		if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errHandlersStillRunning) {
+			t.Fatalf("serveUntilExit error = %v, want deadline exceeded without handler timeout", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not stop after handler completed")
@@ -327,6 +267,203 @@ func TestServeUntilExitWaitsForForcedHandler(t *testing.T) {
 	case <-stopped:
 	default:
 		t.Fatal("workers did not stop")
+	}
+}
+
+func TestServeUntilExitTimesOutWithBlockedHandler(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handlerDone := make(chan struct{})
+	t.Cleanup(func() {
+		close(release)
+		waitForChannelCleanup(t, started, handlerDone, "handler")
+	})
+
+	const timeout = 150 * time.Millisecond
+	stopped := make(chan struct{})
+	done := make(chan error, 1)
+	handler := noopExtractionHandler{http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(handlerDone)
+		close(started)
+		<-release
+	})}
+	go func() {
+		done <- serveUntilExit(ctx, listener, handler, func() { close(stopped) }, timeout)
+	}()
+
+	startShutdownTestRequest(t, listener.Addr().String(), started)
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case err := <-done:
+		if elapsed := time.Since(start); elapsed >= 3*timeout {
+			t.Fatalf("shutdown took %v, want < %v (3x timeout)", elapsed, 3*timeout)
+		}
+
+		if !errors.Is(err, errHandlersStillRunning) || !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errShutdownDeadline) {
+			t.Fatalf("serveUntilExit error = %v, want handler timeout without worker deadline", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("serveUntilExit did not return within timeout")
+	}
+
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("workers did not stop")
+	}
+}
+
+type blockedShutdownHandler struct {
+	handlerStarted chan struct{}
+	releaseHandler chan struct{}
+	handlerDone    chan struct{}
+	extractEntered chan struct{}
+	releaseExtract chan struct{}
+}
+
+func (h *blockedShutdownHandler) ServeHTTP(http.ResponseWriter, *http.Request) {
+	defer close(h.handlerDone)
+	close(h.handlerStarted)
+	<-h.releaseHandler
+}
+
+func (h *blockedShutdownHandler) WaitExtractions(ctx context.Context) error {
+	close(h.extractEntered)
+	select {
+	case <-h.releaseExtract:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("blocked extractions: %w", ctx.Err())
+	}
+}
+
+func TestServeUntilExitEnforcesSingleDeadlineAcrossAllBlockedStages(t *testing.T) {
+	t.Parallel()
+
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	handler := &blockedShutdownHandler{
+		handlerStarted: make(chan struct{}),
+		releaseHandler: make(chan struct{}),
+		handlerDone:    make(chan struct{}),
+		extractEntered: make(chan struct{}),
+		releaseExtract: make(chan struct{}),
+	}
+	workerStarted := make(chan struct{})
+	releaseWorkers := make(chan struct{})
+	workerDone := make(chan struct{})
+	t.Cleanup(func() {
+		close(handler.releaseHandler)
+		close(handler.releaseExtract)
+		close(releaseWorkers)
+		waitForChannelCleanup(t, handler.handlerStarted, handler.handlerDone, "handler")
+		waitForChannelCleanup(t, workerStarted, workerDone, "workers")
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const timeout = 240 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		done <- serveUntilExit(ctx, listener, handler, func() {
+			defer close(workerDone)
+			close(workerStarted)
+			<-releaseWorkers
+		}, timeout)
+	}()
+
+	startShutdownTestRequest(t, listener.Addr().String(), handler.handlerStarted)
+
+	start := time.Now()
+	cancel()
+
+	var shutdownErr error
+	select {
+	case shutdownErr = <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("serveUntilExit did not return within single deadline")
+	}
+
+	if elapsed := time.Since(start); elapsed >= 3*timeout {
+		t.Fatalf("shutdown took %v, want < %v (3x timeout)", elapsed, 3*timeout)
+	}
+
+	assertAllStageErrors(t, shutdownErr, handler.extractEntered, workerStarted)
+}
+
+func startShutdownTestRequest(t *testing.T, addr string, started <-chan struct{}) {
+	t.Helper()
+
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	t.Cleanup(cancelReq)
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, "http://"+addr+"/", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	go func() {
+		resp, err := (&http.Client{}).Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not start")
+	}
+}
+
+func waitForChannelCleanup(t *testing.T, started <-chan struct{}, done <-chan struct{}, name string) {
+	t.Helper()
+
+	select {
+	case <-started:
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Errorf("blocked %s did not exit after release", name)
+		}
+	default:
+	}
+}
+
+func assertAllStageErrors(t *testing.T, err error, extractEntered <-chan struct{}, workerStarted <-chan struct{}) {
+	t.Helper()
+
+	for _, target := range []error{errHandlersStillRunning, errShutdownDeadline, context.DeadlineExceeded} {
+		if !errors.Is(err, target) {
+			t.Fatalf("shutdown error = %v, want errors.Is(_, %v)", err, target)
+		}
+	}
+
+	select {
+	case <-extractEntered:
+	default:
+		t.Fatal("WaitExtractions was not entered")
+	}
+
+	select {
+	case <-workerStarted:
+	default:
+		t.Fatal("stopWorkers was not started")
 	}
 }
 
@@ -358,58 +495,32 @@ func TestLoadConfigAllowPrivateNetworkValues(t *testing.T) {
 	}
 }
 
-func TestLoadConfigAppURLValidation(t *testing.T) {
+func TestLoadConfigValidationErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		appURL string
-		env    map[string]string
-		secret string
-		wantOK bool
+		name string
+		env  map[string]string
+		leak string
 	}{
-		{name: "short session secret", env: map[string]string{"SESSION_SECRET": "too-short-secret-value"}, secret: "too-short-secret-value"},
-		{name: "invalid timezone", env: map[string]string{"TZ": "Mars/Olympus_Mons"}},
-		{name: "http localhost", appURL: "http://localhost:8080", wantOK: true},
-		{name: "https host", appURL: "https://reader.example.com", wantOK: true},
-		{name: "uppercase HTTP", appURL: "HTTP://EXAMPLE.COM", wantOK: true},
-		{name: "mixed-case HTTPS with port", appURL: "HtTpS://reader.example.com:8443", wantOK: true},
-		{name: "ftp scheme", appURL: "ftp://reader.example.com", wantOK: false},
-		{name: "javascript scheme", appURL: "javascript://reader.example.com", wantOK: false},
-		{name: "ws scheme", appURL: "ws://reader.example.com", wantOK: false},
-		{name: "malformed url", appURL: "://bad", wantOK: false},
-		{name: "relative url", appURL: "/relative", wantOK: false},
-		{name: "missing hostname", appURL: "http://:8080", wantOK: false},
-		{name: "embedded credentials", appURL: "https://user:topsecret@reader.example.com", wantOK: false},
+		{name: "missing password", env: map[string]string{}},
+		{name: "invalid password", env: map[string]string{"APP_PASSWORD": strings.Repeat("a", 5000)}, leak: strings.Repeat("a", 5000)},
+		{name: "invalid app url", env: map[string]string{"APP_PASSWORD": "secret", "APP_URL": "https://user:topsecret@reader.example.com"}, leak: "topsecret"},
+		{name: "short session secret", env: map[string]string{"APP_PASSWORD": "secret", "SESSION_SECRET": "too-short-secret-value"}, leak: "too-short-secret-value"},
+		{name: "invalid timezone", env: map[string]string{"APP_PASSWORD": "secret", "TZ": "Mars/Olympus_Mons"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			env := map[string]string{"APP_PASSWORD": "secret", "APP_URL": tt.appURL}
-			for key, value := range tt.env {
-				env[key] = value
-			}
-			cfg, err := loadConfig(getenvFrom(env))
-			if tt.wantOK {
-				if err != nil {
-					t.Fatalf("load config: %v", err)
-				}
-
-				if cfg.AppURL != tt.appURL {
-					t.Fatalf("app url = %q, want %q", cfg.AppURL, tt.appURL)
-				}
-
-				return
-			}
-
+			_, err := loadConfig(getenvFrom(tt.env))
 			if err == nil {
-				t.Fatalf("expected error for APP_URL %q", tt.appURL)
+				t.Fatalf("loadConfig(%s) succeeded, want error", tt.name)
 			}
 
-			if (tt.appURL != "" && strings.Contains(err.Error(), tt.appURL)) || strings.Contains(err.Error(), "topsecret") || (tt.secret != "" && strings.Contains(err.Error(), tt.secret)) {
-				t.Fatalf("error leaked raw APP_URL or credentials: %v", err)
+			if tt.leak != "" && strings.Contains(err.Error(), tt.leak) {
+				t.Fatalf("error leaked secret/credential value: %v", err)
 			}
 		})
 	}
@@ -482,4 +593,40 @@ func TestRecoverStartupStateCleansSpoolAndRecoversRunningSends(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("leftover spool files after startup recovery: %v", entries)
 	}
+}
+
+func TestFatalExitError(t *testing.T) {
+	t.Parallel()
+
+	fatalErr := errors.New("fatal terminal status error")
+	shutdownErr := errors.New("shutdown failed")
+
+	t.Run("normal shutdown without fatal cause", func(t *testing.T) {
+		parentCtx, cancelParent := context.WithCancel(context.Background())
+		runCtx, cancelRun := context.WithCancelCause(parentCtx)
+		defer cancelRun(nil)
+
+		cancelParent()
+		if got := fatalExitError(runCtx, nil); got != nil {
+			t.Fatalf("fatalExitError() = %v, want nil", got)
+		}
+
+		if got := fatalExitError(runCtx, shutdownErr); !errors.Is(got, shutdownErr) {
+			t.Fatalf("fatalExitError() = %v, want %v", got, shutdownErr)
+		}
+	})
+
+	t.Run("fatal cause joined with shutdown error even if parent cancels later", func(t *testing.T) {
+		parentCtx, cancelParent := context.WithCancel(context.Background())
+		runCtx, cancelRun := context.WithCancelCause(parentCtx)
+		defer cancelRun(nil)
+
+		cancelRun(fatalErr)
+		cancelParent()
+
+		got := fatalExitError(runCtx, shutdownErr)
+		if !errors.Is(got, fatalErr) || !errors.Is(got, shutdownErr) {
+			t.Fatalf("fatalExitError() = %v, want both %v and %v", got, fatalErr, shutdownErr)
+		}
+	})
 }

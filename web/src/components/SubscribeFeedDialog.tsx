@@ -79,8 +79,8 @@ export function SubscribeFeedDialog(
   return (
     <Dialog
       open={props.open}
-      title={String(t('feeds.subscribeTitle'))}
-      closeLabel={String(t('common.close'))}
+      title={t('feeds.subscribeTitle')}
+      closeLabel={t('common.close')}
       busy={state.busy()}
       onClose={props.onClose}
     >

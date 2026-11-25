@@ -43,12 +43,12 @@ export function SubscribePreviewForm(
         ref={(el) => {
           selectEl = el;
         }}
-        label={String(t('feeds.folderLabel'))}
+        label={t('feeds.folderLabel')}
         value={props.folderId}
         disabled={props.busy}
         onChange={(event) => props.onFolder(event.currentTarget.value)}
       >
-        <option value="">{String(t('feeds.noFolder'))}</option>
+        <option value="">{t('feeds.noFolder')}</option>
         <For each={props.folders}>
           {(folder) => <option value={folder.id}>{folder.name}</option>}
         </For>
@@ -65,9 +65,9 @@ export function SubscribePreviewForm(
       </Show>
       <DialogActions
         busy={props.busy}
-        cancelLabel={String(t('feeds.backToEdit'))}
-        submitLabel={String(
-          t(props.submitting ? 'feeds.subscribing' : 'feeds.confirmSubscribe')
+        cancelLabel={t('feeds.backToEdit')}
+        submitLabel={t(
+          props.submitting ? 'feeds.subscribing' : 'feeds.confirmSubscribe'
         )}
         submitLoading={props.submitting}
         onCancel={props.onBack}

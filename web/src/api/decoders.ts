@@ -19,6 +19,7 @@ import type {
   SortOrder,
 } from './types';
 import { ApiError } from './types';
+import { isServerHttpUrl } from './url';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -34,25 +35,10 @@ const isString = (value: unknown): value is string => typeof value === 'string';
 const isNonEmptyString = (value: unknown): value is string =>
   isString(value) && value.trim().length > 0;
 
-const isHttpUrl = (value: unknown): value is string => {
-  if (!isNonEmptyString(value)) return false;
-
-  try {
-    const url = new URL(value);
-    return (
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      !url.username &&
-      !url.password
-    );
-  } catch {
-    return false;
-  }
-};
-
 const isBoolean = (value: unknown): value is boolean =>
   typeof value === 'boolean';
 
-const isFiniteNumber = (value: unknown): value is number =>
+export const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
 const isOptionalString = (value: unknown): value is string | undefined =>
@@ -63,9 +49,6 @@ const isNullableString = (value: unknown): value is string | null | undefined =>
 
 const isOptionalBoolean = (value: unknown): value is boolean | undefined =>
   value === undefined || typeof value === 'boolean';
-
-const isOptionalNumber = (value: unknown): value is number | undefined =>
-  value === undefined || isFiniteNumber(value);
 
 const isOptionalObject = <T>(
   value: unknown,
@@ -85,14 +68,30 @@ export const decodeWith =
     return payload;
   };
 
+export const isArrayOf =
+  <T>(guard: TypeGuard<T>): TypeGuard<Array<T>> =>
+  (value): value is Array<T> =>
+    Array.isArray(value) && value.every(guard);
+
+export const decodeField =
+  <T>(key: string, guard: TypeGuard<T>): Decoder<T> =>
+  (payload, status) => {
+    if (!isRecord(payload)) {
+      throw invalidResponse(status);
+    }
+
+    const value = payload[key];
+    if (!guard(value)) {
+      throw invalidResponse(status);
+    }
+
+    return value;
+  };
+
 export const decodePage =
   <T>(guard: TypeGuard<T>): Decoder<Page<T>> =>
   (payload, status) => {
-    if (
-      !isRecord(payload) ||
-      !Array.isArray(payload.items) ||
-      !payload.items.every(guard)
-    ) {
+    if (!isRecord(payload) || !isArrayOf(guard)(payload.items)) {
       throw invalidResponse(status);
     }
 
@@ -104,50 +103,10 @@ export const decodePage =
     return { items: payload.items, cursor };
   };
 
-export const decodeItems =
-  <T>(guard: TypeGuard<T>): Decoder<Array<T>> =>
-  (payload, status) => {
-    if (
-      !isRecord(payload) ||
-      !Array.isArray(payload.items) ||
-      !payload.items.every(guard)
-    ) {
-      throw invalidResponse(status);
-    }
-
-    return payload.items;
-  };
-
-export const decodeItem =
-  <T>(guard: TypeGuard<T>): Decoder<T> =>
-  (payload, status) => {
-    if (!isRecord(payload) || !guard(payload.item)) {
-      throw invalidResponse(status);
-    }
-
-    return payload.item;
-  };
-
 export const isNullable =
   <T>(guard: TypeGuard<T>): TypeGuard<T | null> =>
   (value): value is T | null =>
     value === null || guard(value);
-
-export const decodeCount: Decoder<number> = (payload, status) => {
-  if (!isRecord(payload) || !isFiniteNumber(payload.count)) {
-    throw invalidResponse(status);
-  }
-
-  return payload.count;
-};
-
-export const decodePreview: Decoder<FeedPreview> = (payload, status) => {
-  if (!isRecord(payload) || !isFeedPreview(payload.preview)) {
-    throw invalidResponse(status);
-  }
-
-  return payload.preview;
-};
 
 export const isSession: TypeGuard<Session> = (value): value is Session =>
   isRecord(value) && isBoolean(value.authenticated);
@@ -164,7 +123,7 @@ const isSortOrder = (value: unknown): value is SortOrder =>
 export const isFeed: TypeGuard<Feed> = (value): value is Feed =>
   isRecord(value) &&
   isString(value.id) &&
-  isHttpUrl(value.url) &&
+  isServerHttpUrl(value.url) &&
   isString(value.title) &&
   isNullableString(value.folderId) &&
   isOptionalString(value.updatedAt) &&
@@ -182,17 +141,16 @@ export const isFeedPreview: TypeGuard<FeedPreview> = (
   value
 ): value is FeedPreview =>
   isRecord(value) &&
-  isHttpUrl(value.url) &&
+  isServerHttpUrl(value.url) &&
   isString(value.title) &&
   isOptionalString(value.description) &&
-  Array.isArray(value.titles) &&
-  value.titles.every(isString);
+  isArrayOf(isString)(value.titles);
 
 export const isFeedItem: TypeGuard<FeedItem> = (value): value is FeedItem =>
   isRecord(value) &&
   isString(value.id) &&
   isString(value.feedId) &&
-  isHttpUrl(value.url) &&
+  isServerHttpUrl(value.url) &&
   isString(value.title) &&
   isOptionalString(value.description) &&
   isOptionalString(value.content) &&
@@ -208,7 +166,7 @@ export const isExtractedFeedItem: TypeGuard<FeedItem> = (
 export const isSavedPage: TypeGuard<SavedPage> = (value): value is SavedPage =>
   isRecord(value) &&
   isString(value.id) &&
-  isHttpUrl(value.url) &&
+  isServerHttpUrl(value.url) &&
   isString(value.title) &&
   isOptionalString(value.description) &&
   isString(value.content) &&
@@ -265,17 +223,11 @@ const isKindleTrigger = (
 const isKindleStatus = (value: unknown): value is KindleSendRecord['status'] =>
   value === 'running' || value === 'succeeded' || value === 'failed';
 
-const hasValidSendCounts = (record: UnknownRecord): boolean => {
-  if (record.status === 'succeeded') {
-    return (
-      isFiniteNumber(record.articleCount) && isFiniteNumber(record.bookCount)
-    );
-  }
+const RFC3339 =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-  return (
-    isOptionalNumber(record.articleCount) && isOptionalNumber(record.bookCount)
-  );
-};
+const isRfc3339 = (value: unknown): value is string =>
+  isString(value) && RFC3339.test(value) && Number.isFinite(Date.parse(value));
 
 export const isKindleSendRecord: TypeGuard<KindleSendRecord> = (
   value
@@ -284,16 +236,15 @@ export const isKindleSendRecord: TypeGuard<KindleSendRecord> = (
   isNonEmptyString(value.id) &&
   isKindleTrigger(value.trigger) &&
   isKindleStatus(value.status) &&
-  hasValidSendCounts(value) &&
+  isFiniteNumber(value.articleCount) &&
+  isFiniteNumber(value.bookCount) &&
   isOptionalString(value.error) &&
-  isNonEmptyString(value.startedAt) &&
-  Number.isFinite(Date.parse(value.startedAt)) &&
-  isOptionalString(value.finishedAt);
+  isRfc3339(value.startedAt) &&
+  (value.finishedAt === undefined || isRfc3339(value.finishedAt));
 
 export const isKindleSends: TypeGuard<KindleSends> = (
   value
 ): value is KindleSends =>
   isRecord(value) &&
   isBoolean(value.running) &&
-  Array.isArray(value.items) &&
-  value.items.every(isKindleSendRecord);
+  isArrayOf(isKindleSendRecord)(value.items);

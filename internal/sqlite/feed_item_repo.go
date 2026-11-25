@@ -47,7 +47,7 @@ func (r *FeedItemRepo) ListStoredRefsByFeed(ctx context.Context, feedID string) 
 			return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 		}
 
-		parsedURL, err := domain.ParseStoredNormalizedURL(rawURL)
+		parsedURL, err := domain.ParseNormalizedURL(rawURL, domain.ErrFeedUrlInvalid)
 		if err != nil {
 			return nil, domain.NewError(domain.ErrFeedItemRepositoryError, errors.New("invalid stored feed item url"))
 		}
@@ -171,7 +171,7 @@ func saveExtractedContentIfEmptyInTx(ctx context.Context, tx *sql.Tx, id string,
 		return domain.FeedItem{}, false, err
 	}
 
-	if existing.ExtractedContent != nil && strings.TrimSpace(*existing.ExtractedContent) != "" {
+	if existing.ExtractedContent != nil {
 		return existing, false, nil
 	}
 
@@ -276,7 +276,7 @@ func (r *feedItemRow) dest() []any {
 }
 
 func (r *feedItemRow) toDomain() (domain.FeedItem, error) {
-	parsedURL, err := domain.ParseStoredNormalizedURL(r.rawURL)
+	parsedURL, err := domain.ParseNormalizedURL(r.rawURL, domain.ErrFeedUrlInvalid)
 	if err != nil {
 		return domain.FeedItem{}, errors.New("invalid stored feed item url")
 	}

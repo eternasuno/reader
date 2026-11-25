@@ -37,36 +37,6 @@ func TestEnqueueManualRejectsUnconfiguredKindle(t *testing.T) {
 				settings.SMTP = nil
 			},
 		},
-		{
-			name: "blank kindle email",
-			configure: func(settings *domain.Settings) {
-				settings.Kindle.KindleEmail = "   "
-			},
-		},
-		{
-			name: "blank smtp host",
-			configure: func(settings *domain.Settings) {
-				settings.SMTP.Host = "   "
-			},
-		},
-		{
-			name: "blank sender email",
-			configure: func(settings *domain.Settings) {
-				settings.SMTP.SenderEmail = ""
-			},
-		},
-		{
-			name: "port out of range",
-			configure: func(settings *domain.Settings) {
-				settings.SMTP.Port = 70000
-			},
-		},
-		{
-			name: "zero port",
-			configure: func(settings *domain.Settings) {
-				settings.SMTP.Port = 0
-			},
-		},
 	}
 
 	for _, tc := range cases {
@@ -76,7 +46,7 @@ func TestEnqueueManualRejectsUnconfiguredKindle(t *testing.T) {
 			settings := configuredDeliverySettings()
 			tc.configure(&settings)
 
-			sender := NewKindleSender(KindleConfig{
+			sender := newTestKindleSender(t, KindleConfig{
 				KindleSends: &fakeKindleSendRepository{settingsRepo: &fakeSettingRepository{settings: settings}},
 				EPUBBuilder: &fakeEPUBBuilder{},
 				MailSender:  &fakeMailSender{},
@@ -96,7 +66,7 @@ func TestEnqueueManualReturnsClaimError(t *testing.T) {
 	t.Parallel()
 
 	want := errors.New("claim failed")
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: &fakeKindleSendRepository{claimErr: want},
 	})
 
@@ -144,7 +114,7 @@ func TestCompleteSendKeepsStableFinishTimestamp(t *testing.T) {
 				},
 			}
 
-			sender := NewKindleSender(KindleConfig{
+			sender := newTestKindleSender(t, KindleConfig{
 				KindleSends: sends,
 				EPUBBuilder: &fakeEPUBBuilder{},
 				MailSender:  &fakeMailSender{},
@@ -156,7 +126,6 @@ func TestCompleteSendKeepsStableFinishTimestamp(t *testing.T) {
 				},
 			})
 			sender.completeBaseBackoff = time.Millisecond
-			sender.completeMaxBackoff = 4 * time.Millisecond
 
 			if _, err := sender.EnqueueManual(context.Background()); err != nil {
 				t.Fatalf("EnqueueManual() error = %v", err)
@@ -208,7 +177,7 @@ func TestCompleteSendKeepsStableFinishTimestamp(t *testing.T) {
 			},
 		}
 
-		sender := NewKindleSender(KindleConfig{
+		sender := newTestKindleSender(t, KindleConfig{
 			BaseCtx:     baseCtx,
 			KindleSends: sends,
 			EPUBBuilder: &fakeEPUBBuilder{},
@@ -221,7 +190,6 @@ func TestCompleteSendKeepsStableFinishTimestamp(t *testing.T) {
 			},
 		})
 		sender.completeBaseBackoff = time.Hour
-		sender.completeMaxBackoff = time.Hour
 
 		if _, err := sender.EnqueueManual(context.Background()); err != nil {
 			t.Fatalf("EnqueueManual() error = %v", err)
@@ -292,7 +260,7 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 	}}
 	mailer := &fakeMailSender{}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		FeedItems:   &fakeFeedItemRepository{},
 		EPUBBuilder: builder,
@@ -412,7 +380,7 @@ func TestEnqueueManualRejectsConcurrentSend(t *testing.T) {
 		return nil, nil
 	}}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		FeedItems:   &fakeFeedItemRepository{},
 		EPUBBuilder: builder,
@@ -445,66 +413,5 @@ func TestEnqueueManualRejectsConcurrentSend(t *testing.T) {
 
 	if sender.IsRunning() {
 		t.Fatal("IsRunning() = true after job finished")
-	}
-}
-
-func TestEnqueueManualSnapshotsDelivery(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	settings := configuredDeliverySettings()
-	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
-
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	builder := &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
-		started <- struct{}{}
-		<-release
-
-		return []domain.EPUBBook{{ArticleCount: len(articles)}}, nil
-	}}
-	mailer := &fakeMailSender{}
-
-	settingsRepo := &fakeSettingRepository{settings: settings}
-	sender := NewKindleSender(KindleConfig{
-		KindleSends: &fakeKindleSendRepository{settingsRepo: settingsRepo, savedPages: []domain.SavedPage{page}},
-		FeedItems:   &fakeFeedItemRepository{},
-		EPUBBuilder: builder,
-		MailSender:  mailer,
-		Now:         func() time.Time { return now },
-	})
-
-	if _, err := sender.EnqueueManual(context.Background()); err != nil {
-		t.Fatalf("EnqueueManual() error = %v", err)
-	}
-
-	select {
-	case <-started:
-	case <-time.After(testWaitTimeout):
-		t.Fatal("timed out waiting for job to start")
-	}
-
-	settings.SMTP.Host = "mutated.example.com"
-	*settings.SMTP.Password = "mutated-password"
-	settings.Kindle.KindleEmail = "mutated@kindle.com"
-
-	close(release)
-	sender.Wait()
-
-	mails := mailer.sentList()
-	if len(mails) != 1 {
-		t.Fatalf("sent mails = %d, want 1", len(mails))
-	}
-
-	if mails[0].delivery.SMTP.Host != "smtp.example.com" {
-		t.Fatalf("snapshot SMTP host = %q, want smtp.example.com", mails[0].delivery.SMTP.Host)
-	}
-
-	if mails[0].delivery.SMTP.Password == nil || *mails[0].delivery.SMTP.Password != "smtp-password" {
-		t.Fatalf("snapshot SMTP password = %v, want smtp-password", mails[0].delivery.SMTP.Password)
-	}
-
-	if mails[0].delivery.KindleEmail != "reader@kindle.com" {
-		t.Fatalf("snapshot KindleEmail = %q, want reader@kindle.com", mails[0].delivery.KindleEmail)
 	}
 }

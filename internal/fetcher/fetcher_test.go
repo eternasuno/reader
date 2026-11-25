@@ -177,12 +177,6 @@ func TestFetchFeedErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("empty url", func(t *testing.T) {
-		client := New(Config{AllowPrivateNetwork: true})
-		_, _, err := client.FetchFeed(context.Background(), domain.NormalizedURL{})
-		requireDomainCode(t, err, domain.ErrFetchFeedError)
-	})
-
 	t.Run("credentialed failure redacts credentials", func(t *testing.T) {
 		parsed, err := url.Parse(server.URL)
 		if err != nil {

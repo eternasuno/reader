@@ -98,10 +98,6 @@ func (s *Sanitizer) sanitizeHTMLWithBudget(rawHTML string, baseURL string, maxBy
 		return "", nil
 	}
 
-	if maxBytes <= 0 {
-		return "", sanitizerError(errHTMLBudgetExceeded)
-	}
-
 	if len(rawHTML) > maxBytes {
 		return "", sanitizerError(errHTMLBudgetExceeded)
 	}

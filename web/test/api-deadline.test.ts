@@ -5,8 +5,6 @@ import {
   errorCodeOf,
   feedsApi,
   foldersApi,
-  isAbortError,
-  isTimeoutError,
   onUnauthorized,
   RequestTimeoutError,
   savedPagesApi,
@@ -18,14 +16,9 @@ import {
   UPLOAD_TIMEOUT_MS,
 } from '../src/api/deadline';
 import { request } from '../src/api/request';
+import { jsonResponse } from './support/state-fixture';
 
 let fetchMock: ReturnType<typeof vi.fn>;
-
-const jsonResponse = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 
 const neverSettlingResponse = (status = 200): Response => {
   const response = new Response(null, { status });
@@ -65,7 +58,13 @@ afterEach(() => {
 const DEADLINE_CASES: Array<[() => Promise<unknown>, number]> = [
   [() => authApi.getSession(), DEFAULT_TIMEOUT_MS],
   [() => savedPagesApi.create('https://example.com/a'), FETCH_TIMEOUT_MS],
-  [() => feedsApi.importOpml('<opml/>'), UPLOAD_TIMEOUT_MS],
+  [
+    () =>
+      feedsApi.importOpml(
+        new File(['<opml/>'], 'a.opml', { type: 'text/xml' })
+      ),
+    UPLOAD_TIMEOUT_MS,
+  ],
 ];
 
 describe('request initialization', () => {
@@ -100,8 +99,8 @@ describe('request timeouts', () => {
     const error = await settled;
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toBeInstanceOf(RequestTimeoutError);
-    expect(isTimeoutError(error)).toBe(true);
-    expect(isAbortError(error)).toBe(false);
+    expect(error).toBeInstanceOf(RequestTimeoutError);
+    expect(error).not.toMatchObject({ name: 'AbortError' });
     expect(errorCodeOf(error)).toBe('RequestTimeout');
     expect(unauthorized).not.toHaveBeenCalled();
     unsubscribe();
@@ -115,8 +114,8 @@ describe('request timeouts', () => {
     await vi.advanceTimersByTimeAsync(100);
 
     const error = await settled;
-    expect(isTimeoutError(error)).toBe(true);
-    expect(isAbortError(error)).toBe(false);
+    expect(error).toBeInstanceOf(RequestTimeoutError);
+    expect(error).not.toMatchObject({ name: 'AbortError' });
     expect(errorCodeOf(error)).toBe('RequestTimeout');
   });
 
@@ -132,7 +131,7 @@ describe('request timeouts', () => {
         Promise.race([settled, Promise.resolve(pending)])
       ).resolves.toBe(pending);
       await vi.advanceTimersByTimeAsync(1);
-      expect(isTimeoutError(await settled)).toBe(true);
+      expect(await settled).toBeInstanceOf(RequestTimeoutError);
     }
   });
 });
@@ -147,8 +146,8 @@ describe('external AbortSignal', () => {
     );
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(isAbortError(error)).toBe(true);
-    expect(isTimeoutError(error)).toBe(false);
+    expect(error).toMatchObject({ name: 'AbortError' });
+    expect(error).not.toBeInstanceOf(RequestTimeoutError);
     expect(error).not.toBeInstanceOf(ApiError);
   });
 
@@ -165,8 +164,8 @@ describe('external AbortSignal', () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     const error = await settled;
-    expect(isAbortError(error)).toBe(true);
-    expect(isTimeoutError(error)).toBe(false);
+    expect(error).toMatchObject({ name: 'AbortError' });
+    expect(error).not.toBeInstanceOf(RequestTimeoutError);
     expect(error).not.toBeInstanceOf(ApiError);
   });
 });
@@ -182,7 +181,7 @@ describe('external AbortSignal vs response and timeout', () => {
     await Promise.resolve();
     controller.abort();
 
-    expect(isAbortError(await settled)).toBe(true);
+    expect(await settled).toMatchObject({ name: 'AbortError' });
     expect(unauthorized).not.toHaveBeenCalled();
     unsubscribe();
   });
@@ -199,8 +198,8 @@ describe('external AbortSignal vs response and timeout', () => {
     controller.abort();
 
     const error = await settled;
-    expect(isTimeoutError(error)).toBe(true);
-    expect(isAbortError(error)).toBe(false);
+    expect(error).toBeInstanceOf(RequestTimeoutError);
+    expect(error).not.toMatchObject({ name: 'AbortError' });
   });
 });
 

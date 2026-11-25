@@ -30,13 +30,13 @@ import { type SettingsDraftProps, statusKey } from './settingsHelpers';
 const controlsDisabled = (): boolean => isSaving() || !isSettingsReady();
 
 const confirmClearBrowser = (setDrafts: StoreSetter<SettingsDrafts>): void => {
-  if (window.confirm(String(t('settings.clearBrowserEndpointConfirm')))) {
+  if (window.confirm(t('settings.clearBrowserEndpointConfirm'))) {
     void removeBrowserEndpoint(setDrafts);
   }
 };
 
 const confirmClearSmtp = (setDrafts: StoreSetter<SettingsDrafts>): void => {
-  if (window.confirm(String(t('settings.clearSmtpConfirm')))) {
+  if (window.confirm(t('settings.clearSmtpConfirm'))) {
     void removeSmtp(setDrafts);
   }
 };
@@ -85,26 +85,24 @@ function JinaCard(props: SettingsDraftProps): JSX.Element {
       }}
     >
       <SettingsGroup
-        title={String(t('settings.jinaHeading'))}
+        title={t('settings.jinaHeading')}
         aside={
           <StatusBadge on={configured()}>
-            {String(
-              t('settings.jinaStatus', {
-                status: String(t(statusKey(configured()))),
-              })
-            )}
+            {t('settings.jinaStatus', {
+              status: String(t(statusKey(configured()))),
+            })}
           </StatusBadge>
         }
         footer={
           <>
             <Show when={configured()}>
               <RemoveButton
-                label={String(t('settings.deleteJinaKey'))}
+                label={t('settings.deleteJinaKey')}
                 onClick={() => void removeJinaKey(props.setDrafts)}
               />
             </Show>
             <SaveButton
-              label={String(t('settings.saveJinaKey'))}
+              label={t('settings.saveJinaKey')}
               loading={savingAction() === 'jina-key'}
             />
           </>
@@ -115,8 +113,8 @@ function JinaCard(props: SettingsDraftProps): JSX.Element {
             type="password"
             required
             autocomplete="off"
-            label={String(t('settings.jinaKeyLabel'))}
-            placeholder={String(t('settings.jinaKeyPlaceholder'))}
+            label={t('settings.jinaKeyLabel')}
+            placeholder={t('settings.jinaKeyPlaceholder')}
             value={props.drafts.jinaKey}
             disabled={controlsDisabled()}
             onInput={(event) => {
@@ -142,26 +140,24 @@ function BrowserCard(props: SettingsDraftProps): JSX.Element {
       }}
     >
       <SettingsGroup
-        title={String(t('settings.browserHeading'))}
+        title={t('settings.browserHeading')}
         aside={
           <StatusBadge on={configured()}>
-            {String(
-              t('settings.browserStatus', {
-                status: String(t(statusKey(configured()))),
-              })
-            )}
+            {t('settings.browserStatus', {
+              status: String(t(statusKey(configured()))),
+            })}
           </StatusBadge>
         }
         footer={
           <>
             <Show when={configured()}>
               <RemoveButton
-                label={String(t('settings.clearBrowserEndpoint'))}
+                label={t('settings.clearBrowserEndpoint')}
                 onClick={() => confirmClearBrowser(props.setDrafts)}
               />
             </Show>
             <SaveButton
-              label={String(t('settings.saveBrowserEndpoint'))}
+              label={t('settings.saveBrowserEndpoint')}
               loading={savingAction() === 'browser-endpoint'}
             />
           </>
@@ -171,8 +167,8 @@ function BrowserCard(props: SettingsDraftProps): JSX.Element {
           <Input
             type="url"
             required
-            label={String(t('settings.browserEndpointLabel'))}
-            placeholder={String(t('settings.browserEndpointPlaceholder'))}
+            label={t('settings.browserEndpointLabel')}
+            placeholder={t('settings.browserEndpointPlaceholder')}
             value={props.drafts.browserEndpoint}
             disabled={controlsDisabled()}
             onInput={(event) => {
@@ -192,7 +188,7 @@ function SmtpServerFields(props: SettingsDraftProps): JSX.Element {
       <Input
         type="text"
         required
-        label={String(t('settings.smtpHostLabel'))}
+        label={t('settings.smtpHostLabel')}
         value={props.drafts.smtpHost}
         disabled={controlsDisabled()}
         onInput={(event) => {
@@ -206,7 +202,7 @@ function SmtpServerFields(props: SettingsDraftProps): JSX.Element {
         min={1}
         max={65535}
         class="tabular-nums"
-        label={String(t('settings.smtpPortLabel'))}
+        label={t('settings.smtpPortLabel')}
         value={props.drafts.smtpPort === 0 ? '' : String(props.drafts.smtpPort)}
         disabled={controlsDisabled()}
         onInput={(event) => {
@@ -225,7 +221,7 @@ function SmtpSenderFields(props: SettingsDraftProps): JSX.Element {
       <Input
         type="email"
         required
-        label={String(t('settings.smtpSenderEmailLabel'))}
+        label={t('settings.smtpSenderEmailLabel')}
         value={props.drafts.smtpSenderEmail}
         disabled={controlsDisabled()}
         onInput={(event) => {
@@ -234,7 +230,7 @@ function SmtpSenderFields(props: SettingsDraftProps): JSX.Element {
         }}
       />
       <Select
-        label={String(t('settings.smtpSecurityLabel'))}
+        label={t('settings.smtpSecurityLabel')}
         value={props.drafts.smtpSecurity}
         disabled={controlsDisabled()}
         onChange={(event) => {
@@ -242,10 +238,8 @@ function SmtpSenderFields(props: SettingsDraftProps): JSX.Element {
           props.setDrafts((draft) => ({ ...draft, smtpSecurity }));
         }}
       >
-        <option value="tls">{String(t('settings.smtpSecurityTls'))}</option>
-        <option value="starttls">
-          {String(t('settings.smtpSecurityStarttls'))}
-        </option>
+        <option value="tls">{t('settings.smtpSecurityTls')}</option>
+        <option value="starttls">{t('settings.smtpSecurityStarttls')}</option>
       </Select>
     </>
   );
@@ -257,7 +251,7 @@ function SmtpCredentialFields(props: SettingsDraftProps): JSX.Element {
       <Input
         type="text"
         autocomplete="off"
-        label={String(t('settings.smtpUserLabel'))}
+        label={t('settings.smtpUserLabel')}
         value={props.drafts.smtpUser}
         disabled={controlsDisabled()}
         onInput={(event) => {
@@ -268,13 +262,11 @@ function SmtpCredentialFields(props: SettingsDraftProps): JSX.Element {
       <Input
         type="password"
         autocomplete="new-password"
-        label={String(t('settings.smtpPasswordLabel'))}
-        placeholder={String(t('settings.smtpPasswordPlaceholder'))}
-        hint={String(
-          t('settings.smtpPasswordStatus', {
-            status: String(t(statusKey(settings()?.smtp?.passwordConfigured))),
-          })
-        )}
+        label={t('settings.smtpPasswordLabel')}
+        placeholder={t('settings.smtpPasswordPlaceholder')}
+        hint={t('settings.smtpPasswordStatus', {
+          status: String(t(statusKey(settings()?.smtp?.passwordConfigured))),
+        })}
         value={props.drafts.smtpPassword}
         disabled={controlsDisabled()}
         onInput={(event) => {
@@ -293,18 +285,18 @@ function SmtpFooter(props: {
     <>
       <Show when={settings()?.smtp?.passwordConfigured}>
         <RemoveButton
-          label={String(t('settings.deleteSmtpPassword'))}
+          label={t('settings.deleteSmtpPassword')}
           onClick={() => void removeSmtpPassword(props.setDrafts)}
         />
       </Show>
       <Show when={isSmtpConfigured()}>
         <RemoveButton
-          label={String(t('settings.clearSmtp'))}
+          label={t('settings.clearSmtp')}
           onClick={() => confirmClearSmtp(props.setDrafts)}
         />
       </Show>
       <SaveButton
-        label={String(t('settings.saveSmtp'))}
+        label={t('settings.saveSmtp')}
         loading={savingAction() === 'smtp'}
       />
     </>
@@ -321,14 +313,12 @@ function SmtpCard(props: SettingsDraftProps): JSX.Element {
       }}
     >
       <SettingsGroup
-        title={String(t('settings.smtpHeading'))}
+        title={t('settings.smtpHeading')}
         aside={
           <StatusBadge on={isSmtpConfigured()}>
-            {String(
-              t('settings.smtpStatus', {
-                status: String(t(statusKey(isSmtpConfigured()))),
-              })
-            )}
+            {t('settings.smtpStatus', {
+              status: String(t(statusKey(isSmtpConfigured()))),
+            })}
           </StatusBadge>
         }
         footer={<SmtpFooter setDrafts={props.setDrafts} />}

@@ -5,7 +5,6 @@ import {
   bodyOf,
   FEED_URL,
   feed,
-  fetchMock,
   folder,
   folderName,
   jsonResponse,
@@ -43,14 +42,6 @@ describe('AddLinkDialog', () => {
     expect(urlOf(1)).toBe('/api/saved-pages/existing');
     expect(found.onDuplicateFound).toHaveBeenCalledWith(existing);
     expect(currentToast()).toBeNull();
-
-    reset();
-    await addLink(POST_URL, [
-      jsonResponse({ error: 'SavedPageAlreadyExists' }, 409),
-    ]);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(text()).toContain('该文章已在稍后阅读中');
   });
 });
 

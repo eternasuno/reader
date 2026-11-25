@@ -120,8 +120,9 @@ describe('delayed Kindle history after logout', () => {
     fetchMock.mockResolvedValueOnce(json(makeSettings()));
     const sendsSlot = pending();
     const loading = state.loadSettings();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
 
     state.markUnauthenticated();
     state.markAuthenticated();

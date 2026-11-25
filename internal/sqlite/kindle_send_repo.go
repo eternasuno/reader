@@ -81,30 +81,20 @@ func (r *KindleSendRepo) ClaimManualSend(ctx context.Context, sendID string, now
 }
 
 func (r *KindleSendRepo) ClaimDueSend(ctx context.Context, sendID string, now time.Time, loc *time.Location, slotBusy bool) (domain.ClaimedKindleSend, error) {
-	location := loc
-	if location == nil {
-		location = time.Local
-	}
-
 	return r.claimSend(ctx, claimKindleSendParams{
 		sendID:   sendID,
 		trigger:  domain.KindleTriggerScheduled,
 		now:      now.UTC(),
-		loc:      location,
+		loc:      loc,
 		slotBusy: slotBusy,
 	})
 }
 
 func (r *KindleSendRepo) claimSend(ctx context.Context, params claimKindleSendParams) (domain.ClaimedKindleSend, error) {
-	id := params.sendID
-	if id == "" {
-		id = domain.NewID()
-	}
-
 	var claimed domain.ClaimedKindleSend
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
 		var txErr error
-		claimed, txErr = claimSendInTx(ctx, tx, id, params)
+		claimed, txErr = claimSendInTx(ctx, tx, params)
 
 		return txErr
 	})
@@ -115,7 +105,7 @@ func (r *KindleSendRepo) claimSend(ctx context.Context, params claimKindleSendPa
 	return claimed, nil
 }
 
-func claimSendInTx(ctx context.Context, tx *sql.Tx, sendID string, params claimKindleSendParams) (domain.ClaimedKindleSend, error) {
+func claimSendInTx(ctx context.Context, tx *sql.Tx, params claimKindleSendParams) (domain.ClaimedKindleSend, error) {
 	row, err := scanSettingsRow(tx.QueryRowContext(ctx, `SELECT `+settingColumns+` FROM setting WHERE id = 1`))
 	if err != nil {
 		return domain.ClaimedKindleSend{}, err
@@ -143,7 +133,7 @@ func claimSendInTx(ctx context.Context, tx *sql.Tx, sendID string, params claimK
 	}
 
 	created := domain.KindleSendRecord{
-		ID:        sendID,
+		ID:        params.sendID,
 		Trigger:   params.trigger,
 		Status:    domain.KindleStatusRunning,
 		StartedAt: params.now,
@@ -155,12 +145,12 @@ func claimSendInTx(ctx context.Context, tx *sql.Tx, sendID string, params claimK
 	return domain.ClaimedKindleSend{
 		Claimed:  true,
 		Record:   created,
-		Delivery: domain.CloneKindleDelivery(*settings.SMTP, settings.Kindle.KindleEmail),
+		Delivery: domain.KindleDelivery{SMTP: *settings.SMTP, KindleEmail: settings.Kindle.KindleEmail},
 	}, nil
 }
 
 func prepareSendClaimInTx(ctx context.Context, tx *sql.Tx, settings domain.Settings, params claimKindleSendParams) (bool, error) {
-	usable := domain.IsKindleDeliveryUsable(settings)
+	usable := settings.SMTP != nil && settings.Kindle != nil
 	if params.trigger == domain.KindleTriggerManual {
 		if !usable {
 			return false, domain.NewError(domain.ErrKindleNotConfigured, nil)
@@ -201,15 +191,11 @@ func hasRunningKindleSendInTx(ctx context.Context, tx *sql.Tx) (bool, error) {
 func insertRunningKindleSendInTx(ctx context.Context, tx *sql.Tx, created domain.KindleSendRecord) error {
 	_, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO kindle_send (id, trigger, status, article_count, book_count, error, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO kindle_send (id, trigger, status, article_count, book_count, error, started_at, finished_at) VALUES (?, ?, ?, 0, 0, NULL, ?, NULL)`,
 		created.ID,
 		string(created.Trigger),
 		string(domain.KindleStatusRunning),
-		created.ArticleCount,
-		created.BookCount,
-		optionalString(created.Error),
 		timeToMillis(created.StartedAt),
-		optionalTime(created.FinishedAt),
 	)
 	if err != nil {
 		return err
@@ -353,7 +339,7 @@ func requireRunningKindleSendInTx(ctx context.Context, tx *sql.Tx, sendID string
 	var exists int
 	err := tx.QueryRowContext(ctx, `SELECT 1 FROM kindle_send WHERE id = ? AND status = 'running'`, sendID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("kindle send %s is not running", sendID)
+		return fmt.Errorf("kindle send %s is not running: %w", sendID, domain.ErrKindleSendNotFound)
 	}
 
 	return err
@@ -380,7 +366,7 @@ func requireSingleKindleSendRow(result sql.Result, sendID string, reason string)
 	}
 
 	if affected != 1 {
-		return fmt.Errorf("kindle send %s %s", sendID, reason)
+		return fmt.Errorf("kindle send %s %s: %w", sendID, reason, domain.ErrKindleSendNotFound)
 	}
 
 	return nil

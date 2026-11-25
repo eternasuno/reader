@@ -1,17 +1,18 @@
 import { FETCH_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './deadline';
 import {
-  decodeItems,
+  decodeField,
   decodePage,
-  decodePreview,
   decodeWith,
+  isArrayOf,
   isExtractedFeedItem,
   isFeed,
   isFeedItem,
+  isFeedPreview,
   isFeedUnreadCount,
   isNullable,
   isOPMLImportResult,
 } from './decoders';
-import { item, pageParams, request, requestNoContent } from './request';
+import { item, request, requestNoContent } from './request';
 import type {
   Feed,
   FeedCreateInput,
@@ -27,24 +28,15 @@ import type {
 
 export const feedsApi = {
   exportOpmlUrl: '/api/opml',
-  list: async (options?: RequestCallOptions): Promise<Array<Feed>> => {
-    const items = await request('/api/feeds', decodeItems(isFeed), options);
-
-    return items;
-  },
-  preview: async (
-    url: string,
-    options?: RequestCallOptions
-  ): Promise<FeedPreview> => {
-    const preview = await request('/api/feeds/preview', decodePreview, {
+  list: (options?: RequestCallOptions): Promise<Array<Feed>> =>
+    request('/api/feeds', decodeField('items', isArrayOf(isFeed)), options),
+  preview: (url: string, options?: RequestCallOptions): Promise<FeedPreview> =>
+    request('/api/feeds/preview', decodeField('preview', isFeedPreview), {
       timeoutMs: FETCH_TIMEOUT_MS,
       ...options,
       method: 'POST',
       body: { url },
-    });
-
-    return preview;
-  },
+    }),
   create: (
     input: FeedCreateInput,
     options?: RequestCallOptions
@@ -94,17 +86,14 @@ export const feedsApi = {
       method: 'PATCH',
       body: { folderId },
     }),
-  unreadCounts: async (
+  unreadCounts: (
     options?: RequestCallOptions
-  ): Promise<Array<FeedUnreadCount>> => {
-    const items = await request(
+  ): Promise<Array<FeedUnreadCount>> =>
+    request(
       '/api/feeds/unread-counts',
-      decodeItems(isFeedUnreadCount),
+      decodeField('items', isArrayOf(isFeedUnreadCount)),
       options
-    );
-
-    return items;
-  },
+    ),
   markAllRead: (id: string, options?: RequestCallOptions): Promise<void> =>
     requestNoContent(`/api/feeds/${encodeURIComponent(id)}/read-all`, {
       ...options,
@@ -120,25 +109,15 @@ export const feedsApi = {
       decodePage(isFeedItem),
       {
         ...options,
-        params: pageParams(params),
+        params,
       }
     ),
   importOpml: (
-    fileOrXml: File | string,
+    file: File,
     options?: RequestCallOptions
   ): Promise<OPMLImportResult> => {
-    if (typeof fileOrXml === 'string') {
-      return request('/api/opml', decodeWith(isOPMLImportResult), {
-        timeoutMs: UPLOAD_TIMEOUT_MS,
-        ...options,
-        method: 'POST',
-        rawBody: fileOrXml,
-        headers: { 'Content-Type': 'application/xml' },
-      });
-    }
-
     const form = new FormData();
-    form.append('file', fileOrXml);
+    form.append('file', file);
 
     return request('/api/opml', decodeWith(isOPMLImportResult), {
       timeoutMs: UPLOAD_TIMEOUT_MS,
@@ -156,7 +135,7 @@ export const feedItemsApi = {
   ): Promise<Page<FeedItem>> =>
     request('/api/feed-items', decodePage(isFeedItem), {
       ...options,
-      params: pageParams(params),
+      params,
     }),
   getById: (
     id: string,

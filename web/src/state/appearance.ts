@@ -190,7 +190,6 @@ export const resetReaderAppearance = (): void => {
 };
 
 const applyTheme = (next: ReaderTheme): void => {
-  if (typeof document === 'undefined') return;
   if (next === 'auto') {
     delete document.documentElement.dataset.theme;
   } else {

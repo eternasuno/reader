@@ -142,3 +142,32 @@ func TestKindleSendRepoClaimDueSendRaceWithSettingsUpdate(t *testing.T) {
 		t.Fatalf("settings after skipped claim = %+v, want new@kindle.com at %v", settings.Kindle, futureAt)
 	}
 }
+
+func TestKindleSendRepoClaimSnapshotsDelivery(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "old@kindle.com"})
+
+	claimed, err := store.KindleSends().ClaimManualSend(ctx, domain.NewID(), time.Date(2024, 5, 1, 9, 30, 0, 0, time.UTC))
+	if err != nil || !claimed.Claimed {
+		t.Fatalf("ClaimManualSend() = (%+v, %v), want a claim", claimed, err)
+	}
+
+	if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{KindleEmail: "new@kindle.com"}); err != nil {
+		t.Fatalf("update kindle: %v", err)
+	}
+
+	if err := store.Settings().UpdateSMTP(ctx, domain.SMTPSettings{
+		SenderEmail: "other@example.com",
+		Host:        "smtp.other.example.com",
+		Port:        465,
+		Security:    domain.SMTPSecurityTLS,
+	}); err != nil {
+		t.Fatalf("update smtp: %v", err)
+	}
+
+	if claimed.Delivery.KindleEmail != "old@kindle.com" || claimed.Delivery.SMTP.Host != "smtp.example.com" {
+		t.Fatalf("claimed delivery = %+v, want the settings snapshotted at claim time", claimed.Delivery)
+	}
+}

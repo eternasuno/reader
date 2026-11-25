@@ -3,6 +3,7 @@ import { t } from '../i18n';
 import {
   activeScope,
   buildLibraryUrl,
+  errorText,
   expandFolder,
   isLibraryMounted,
   type LibraryScope,
@@ -10,7 +11,6 @@ import {
   removeFolderLocal,
 } from '../state';
 import { showToast } from '../ui';
-import { errorText } from './errorText';
 import type { SidebarProps } from './sidebarProps';
 
 /** `LIB-SCOPE-1`: the filter toggles the `?unread` flag of the viewed scope. */
@@ -36,7 +36,7 @@ export const deleteFolder = async (
   props: SidebarProps,
   folder: Folder
 ): Promise<void> => {
-  const message = String(t('folders.deleteConfirm', { name: folder.name }));
+  const message = t('folders.deleteConfirm', { name: folder.name });
   if (!window.confirm(message)) return;
 
   try {
@@ -49,7 +49,7 @@ export const deleteFolder = async (
 
   removeFolderLocal(folder.id);
   await refreshSidebar();
-  showToast(String(t('folders.deletedToast')), 'success');
+  showToast(t('folders.deletedToast'), 'success');
   if (!isLibraryMounted()) return;
 
   const scope = activeScope();

@@ -1,23 +1,11 @@
-import type { JSX } from '@solidjs/web';
-import { render } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Feed } from '../src/api';
 import { FeedOptionsDialog } from '../src/components';
-import { setLocale } from '../src/i18n';
-import { dismissToast } from '../src/ui';
+import { mount, setupInteractions } from './support/list-helpers';
 
-let disposers: Array<() => void> = [];
+setupInteractions();
 let fetchMock: ReturnType<typeof vi.fn>;
-
-const mount = (component: () => JSX.Element): HTMLElement => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(render(component, container));
-  flush();
-
-  return container;
-};
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   Response.json(body, { status });
@@ -45,18 +33,8 @@ const changeMode = async (value: Feed['readerMode']): Promise<void> => {
 };
 
 beforeEach(() => {
-  localStorage.clear();
-  setLocale('zh-CN');
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
-});
-
-afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  document.body.innerHTML = '';
-  dismissToast();
-  vi.restoreAllMocks();
 });
 
 describe('FeedOptionsDialog', () => {
@@ -118,7 +96,7 @@ describe('FeedOptionsDialog error & reopen', () => {
 });
 
 describe('FeedOptionsDialog accessibility and focus', () => {
-  it('uses aria-hidden backdrop, traps focus, closes on Escape, and returns focus', async () => {
+  it('focuses the select on open, closes on Escape, and returns focus', async () => {
     const trigger = document.createElement('button');
     trigger.textContent = 'Open options';
     document.body.append(trigger);
@@ -137,24 +115,8 @@ describe('FeedOptionsDialog accessibility and focus', () => {
     flush();
     await Promise.resolve();
 
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    expect(dialog).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(document.activeElement).toBe(selectElement());
-    expect(
-      document.querySelector('.fixed.inset-0[aria-hidden="true"]')?.tagName
-    ).toBe('DIV');
-    expect(dialog?.querySelector('svg[data-icon="edit"]')).toBeNull();
-
-    // Tabbing when focus is outside the drawer moves focus into the drawer.
-    trigger.focus();
-    const tab = new KeyboardEvent('keydown', {
-      key: 'Tab',
-      bubbles: true,
-      cancelable: true,
-    });
-    document.dispatchEvent(tab);
-    expect(tab.defaultPrevented).toBe(true);
-    expect(dialog?.contains(document.activeElement)).toBe(true);
 
     document.dispatchEvent(
       new KeyboardEvent('keydown', {

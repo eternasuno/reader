@@ -23,14 +23,14 @@ export interface ReaderToolbarProps {
 }
 
 const readLabel = (article: LibraryArticle): string =>
-  String(t(article.read ? 'reader.markUnread' : 'reader.markRead'));
+  t(article.read ? 'reader.markUnread' : 'reader.markRead');
 
 /** `RD-READ-1`, `RD-EXTRACT-1`, `RD-NAV-1`: the icon-only article action bar. */
 export function ReaderToolbar(props: ReaderToolbarProps): JSX.Element {
   return (
     <div
       role="toolbar"
-      aria-label={String(t('reader.articleActions'))}
+      aria-label={t('reader.articleActions')}
       class={[
         'flex min-h-13 flex-wrap items-center gap-1 border-b border-base-300 px-2 py-1.5 transition-shadow',
         props.scrolled ? 'shadow-md' : '',
@@ -83,7 +83,7 @@ function ReaderNavButtons(props: { nav: ReaderNav }): JSX.Element {
   return (
     <>
       <ToolbarButton
-        label={String(t('reader.backToList'))}
+        label={t('reader.backToList')}
         onClick={() => props.nav.onNavigate(props.nav.listUrl())}
       >
         <span class="inline-flex lg:hidden">
@@ -94,14 +94,14 @@ function ReaderNavButtons(props: { nav: ReaderNav }): JSX.Element {
         </span>
       </ToolbarButton>
       <ToolbarButton
-        label={String(t('reader.prevArticle'))}
+        label={t('reader.prevArticle')}
         disabled={adjacentArticleIds().prevId === null}
         onClick={() => goAdjacent(props.nav, 'prevId')}
       >
         <Icon name="chevron-up" size={18} />
       </ToolbarButton>
       <ToolbarButton
-        label={String(t('reader.nextArticle'))}
+        label={t('reader.nextArticle')}
         disabled={adjacentArticleIds().nextId === null}
         onClick={() => goAdjacent(props.nav, 'nextId')}
       >
@@ -124,10 +124,7 @@ function ReaderActionButtons(props: {
         >
           <Icon name="extract" size={18} />
         </ToolbarButton>
-        <ToolbarButton
-          label={String(t('reader.saveToLater'))}
-          onClick={props.onSave}
-        >
+        <ToolbarButton label={t('reader.saveToLater')} onClick={props.onSave}>
           <Icon name="bookmark" size={18} />
         </ToolbarButton>
       </Show>

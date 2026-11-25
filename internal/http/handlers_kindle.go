@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"errors"
 	"net/http"
 
 	"reader/internal/domain"
@@ -37,12 +36,6 @@ type kindleSendsResponse struct {
 }
 
 func (s *server) handleKindleSend(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.Kindle == nil {
-		writeError(w, errors.New("kindle dispatcher is not configured"))
-
-		return
-	}
-
 	record, err := s.cfg.Kindle.EnqueueManual(r.Context())
 	if err != nil {
 		writeError(w, err)
@@ -63,7 +56,7 @@ func (s *server) handleKindleSends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	running := s.cfg.Kindle != nil && s.cfg.Kindle.IsRunning()
+	running := s.cfg.Kindle.IsRunning()
 	items := make([]kindleSendRecordJSON, 0, len(records))
 	for _, record := range records {
 		if record.Status == domain.KindleStatusRunning {

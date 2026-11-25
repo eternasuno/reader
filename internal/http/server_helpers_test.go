@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -278,6 +279,7 @@ func newHarnessWith(t *testing.T, configure func(*Config)) *harness {
 		Location:      time.UTC,
 		Now:           h.clock.Now,
 		HealthCheck:   func(ctx context.Context) error { return db.ReadDB().PingContext(ctx) },
+		StaticFS:      fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")}},
 
 		Folders:     db.Folders(),
 		Feeds:       db.Feeds(),
@@ -557,12 +559,18 @@ func (h *harness) seedSavedPage(rawURL string, read bool) domain.SavedPage {
 func (h *harness) folderByID(id string) *domain.Folder {
 	h.t.Helper()
 
-	folder, err := h.db.Folders().GetByID(context.Background(), id)
+	folders, err := h.db.Folders().List(context.Background())
 	if err != nil {
 		h.t.Fatalf("folderByID %s: %v", id, err)
 	}
 
-	return folder
+	for i := range folders {
+		if folders[i].ID == id {
+			return &folders[i]
+		}
+	}
+
+	return nil
 }
 
 func (h *harness) feedByID(id string) *domain.Feed {

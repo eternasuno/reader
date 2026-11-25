@@ -3,10 +3,11 @@ import { createSignal, Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
 import { feedUnreadCount, isSameScope } from '../state';
-import { Icon, Menu, MenuDivider, MenuItem } from '../ui';
+import { Menu, MenuDivider, MenuItem } from '../ui';
 import { deleteFeed } from './articleListActions';
+import { FeedFailureMenu } from './FeedFailureMenu';
 import { FeedMoveSubpanel } from './FeedMoveSubpanel';
-import { hasRefreshFailures, retryRefresh } from './feedFailure';
+import { hasRefreshFailures } from './feedFailure';
 import { ScopeMenuItems } from './ScopeRow';
 import { SidebarRowEnd } from './SidebarRowEnd';
 import { SiteIcon } from './SiteIcon';
@@ -41,7 +42,19 @@ export function FeedRow(props: {
     >
       <FeedRowButton feed={props.feed} state={props.state} />
       <Show when={hasRefreshFailures(props.feed)}>
-        <FeedFailureMenu feed={props.feed} state={props.state} />
+        <FeedFailureMenu
+          feed={props.feed}
+          align="end"
+          onDelete={(feed) =>
+            void deleteFeed(
+              {
+                unreadOnly: () => props.state.unreadOnly,
+                onNavigate: props.state.onNavigate,
+              },
+              feed
+            )
+          }
+        />
       </Show>
       <SidebarRowEnd count={feedUnreadCount(props.feed.id)}>
         <FeedRowMenu feed={props.feed} state={props.state} />
@@ -70,59 +83,12 @@ function FeedRowButton(props: {
   );
 }
 
-function FeedFailureMenu(props: {
-  feed: Feed;
-  state: SidebarProps;
-}): JSX.Element {
-  return (
-    <Menu
-      align="end"
-      label={String(t('feeds.retryRefresh'))}
-      triggerClass="btn-xs btn-square"
-      trigger={
-        <span
-          class="inline-flex items-center justify-center"
-          title={props.feed.lastError ?? undefined}
-        >
-          <Icon name="warning" size={14} class="text-warning" />
-        </span>
-      }
-    >
-      <div
-        role="presentation"
-        class="max-w-56 px-3 py-1.5 text-xs break-words text-base-content/70"
-      >
-        {props.feed.lastError ?? ''}
-      </div>
-      <MenuItem icon="refresh" onSelect={() => void retryRefresh(props.feed)}>
-        {String(t('feeds.retryRefresh'))}
-      </MenuItem>
-      <MenuItem
-        danger
-        icon="trash"
-        onSelect={() =>
-          void deleteFeed(
-            {
-              unreadOnly: () => props.state.unreadOnly,
-              onNavigate: props.state.onNavigate,
-            },
-            props.feed
-          )
-        }
-      >
-        {String(t('feeds.deleteFeedMenu'))}
-      </MenuItem>
-    </Menu>
-  );
-}
-
 function FeedRowMenu(props: { feed: Feed; state: SidebarProps }): JSX.Element {
   const [panel, setPanel] = createSignal<'main' | 'move'>('main');
 
   return (
     <Menu
-      label={String(t('library.moreActions'))}
-      align="end"
+      label={t('library.moreActions')}
       triggerClass="btn-xs"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
@@ -163,11 +129,14 @@ function FeedRowMainItems(props: {
         onToggleUnread={() => toggleUnread(props.state)}
       />
       <MenuDivider />
-      <MenuItem submenu keepOpen onSelect={props.onOpenMove}>
-        {String(t('feeds.moveTo'))}
+      <MenuItem submenu onSelect={props.onOpenMove}>
+        {t('feeds.moveTo')}
       </MenuItem>
-      <MenuItem onSelect={() => props.state.onRequestFeedOptions?.(props.feed)}>
-        {String(t('feeds.feedOptions'))}
+      <MenuItem
+        opensDialog
+        onSelect={() => props.state.onRequestFeedOptions?.(props.feed)}
+      >
+        {t('feeds.feedOptions')}
       </MenuItem>
       <MenuItem
         icon="trash"
@@ -181,7 +150,7 @@ function FeedRowMainItems(props: {
           )
         }
       >
-        {String(t('feeds.deleteFeedMenu'))}
+        {t('feeds.deleteFeedMenu')}
       </MenuItem>
     </>
   );

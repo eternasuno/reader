@@ -11,6 +11,7 @@ import {
   untrack,
 } from 'solid-js';
 import type { Feed, ReaderMode } from '../api';
+import { browserHref } from '../api/url';
 import { t } from '../i18n';
 import { changeFeedReaderMode, feeds } from '../state';
 import { Button, Icon, useDialogFocus } from '../ui';
@@ -137,20 +138,20 @@ function FeedOptionsDrawer(props: {
         ref={props.panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label={String(t('feeds.feedOptionsTitle'))}
+        aria-label={t('feeds.feedOptionsTitle')}
         aria-busy={props.busy ? 'true' : undefined}
         tabindex="-1"
         class="relative z-10 flex h-full w-[360px] max-w-full flex-col border-l border-base-300 bg-base-100 text-base-content shadow-2xl focus:outline-none"
       >
         <nav class="sticky top-0 z-20 flex h-13 shrink-0 items-center justify-between bg-base-100 px-5">
           <h2 class="text-base font-medium text-base-content">
-            {String(t('feeds.feedOptionsTitle'))}
+            {t('feeds.feedOptionsTitle')}
           </h2>
           <Button
             variant="icon"
             size="sm"
             class="rounded-full bg-base-200"
-            aria-label={String(t('common.close'))}
+            aria-label={t('common.close')}
             disabled={props.busy}
             onClick={props.onClose}
           >
@@ -185,7 +186,7 @@ function FeedOptionsBody(props: {
       </div>
       <div class="flex flex-col gap-1.5">
         <span class="text-xs text-base-content/60">
-          {String(t('feeds.titleLabel'))}
+          {t('feeds.titleLabel')}
         </span>
         <p class="text-sm font-medium break-words text-base-content">
           {props.feed.title}
@@ -197,7 +198,7 @@ function FeedOptionsBody(props: {
         onModeChange={props.onModeChange}
       />
       <FeedExternalLinkSection
-        label={String(t('feeds.websiteLabel'))}
+        label={t('feeds.websiteLabel')}
         href={siteUrl()}
       />
       <FeedExternalLinkSection label="RSS" href={props.feed.url} />
@@ -211,7 +212,7 @@ function FeedOptionsBody(props: {
               onClick={() => void unsubscribe()(props.feed)}
             >
               <Icon name="trash" size={16} />
-              {String(t('feeds.deleteFeed'))}
+              {t('feeds.deleteFeed')}
             </Button>
           </div>
         )}
@@ -230,7 +231,7 @@ function FeedDefaultViewSelect(props: {
   return (
     <div class="flex flex-col gap-1.5">
       <label for={selectId} class="text-xs text-base-content/60">
-        {String(t('feeds.defaultDisplay'))}
+        {t('feeds.defaultDisplay')}
       </label>
       <select
         id={selectId}
@@ -242,13 +243,11 @@ function FeedDefaultViewSelect(props: {
         }
       >
         <For each={READER_MODES}>
-          {(option) => (
-            <option value={option.mode}>{String(t(option.label))}</option>
-          )}
+          {(option) => <option value={option.mode}>{t(option.label)}</option>}
         </For>
       </select>
       <p class="text-xs text-base-content/60">
-        {String(t('feeds.defaultDisplayHint'))}
+        {t('feeds.defaultDisplayHint')}
       </p>
     </div>
   );
@@ -258,18 +257,28 @@ function FeedExternalLinkSection(props: {
   label: string;
   href: string;
 }): JSX.Element {
+  const linkClass =
+    'inline-flex items-center gap-1 text-sm break-all text-base-content/90 underline hover:text-base-content';
+
   return (
     <div class="flex flex-col gap-1">
       <span class="text-xs text-base-content/60">{props.label}</span>
-      <a
-        href={props.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="inline-flex items-center gap-1 text-sm break-all text-base-content/90 underline hover:text-base-content"
+      <Show
+        when={browserHref(props.href)}
+        fallback={<span class={linkClass}>{props.href}</span>}
       >
-        <span>{props.href}</span>
-        <Icon name="external-link" size={14} class="shrink-0 opacity-70" />
-      </a>
+        {(href) => (
+          <a
+            href={href()}
+            target="_blank"
+            rel="noopener noreferrer"
+            class={linkClass}
+          >
+            <span>{props.href}</span>
+            <Icon name="external-link" size={14} class="shrink-0 opacity-70" />
+          </a>
+        )}
+      </Show>
     </div>
   );
 }

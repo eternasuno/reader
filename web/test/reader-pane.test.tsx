@@ -1,5 +1,3 @@
-import type { JSX } from '@solidjs/web';
-import { render } from '@solidjs/web';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -15,7 +13,7 @@ import {
 import { setLocale } from '../src/i18n';
 import { useLibraryShortcuts } from '../src/routes/useLibraryShortcuts';
 import * as state from '../src/state';
-import { dismissToast } from '../src/ui';
+import { mount, setupInteractions } from './support/list-helpers';
 import {
   jsonResponse,
   makeItem,
@@ -23,17 +21,8 @@ import {
   noContentResponse,
 } from './support/state-fixture';
 
-let disposers: Array<() => void> = [];
+setupInteractions();
 let fetchMock: ReturnType<typeof vi.fn>;
-
-const mount = (component: () => JSX.Element): HTMLElement => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(render(component, container));
-  flush();
-
-  return container;
-};
 
 const iframeOf = (root: ParentNode): HTMLIFrameElement =>
   root.querySelector('iframe') as HTMLIFrameElement;
@@ -79,9 +68,6 @@ const makeNav = () => ({
 });
 
 beforeEach(() => {
-  localStorage.clear();
-  setLocale('zh-CN');
-  state.resetReaderAppearance();
   state.clearReaderState();
   state.clearLibraryState();
   fetchMock = vi.fn();
@@ -89,12 +75,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  document.body.innerHTML = '';
-  dismissToast();
   state.clearReaderState();
-  vi.restoreAllMocks();
 });
 
 describe('ArticleFrame theme and width', () => {
@@ -140,9 +121,6 @@ describe('ArticleFrame height and image label', () => {
   it('injects localized imageLabel and only adds aria-label when alt is blank', () => {
     const iframe = iframeOf(mount(() => <ArticleFrame html="<p>Post</p>" />));
     expect(srcdocOf(iframe)).toContain('var imageLabel = "图片预览"');
-    expect(srcdocOf(iframe)).toContain(
-      "!(img.getAttribute('alt') || '').trim()"
-    );
 
     setLocale('en');
     flush();
@@ -234,12 +212,11 @@ describe('shared Read-Later saving guard: button + shortcut', () => {
 
     saveA.resolve(jsonResponse({ item: makePage({ id: 'p1' }) }, 201));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(state.isSavingToLater('i1')).toBe(false);
   });
 });
 
 describe('shared Read-Later saving guard: per-article isolation', () => {
-  it('does not let article A finally clear article B saving flag', async () => {
+  it('does not let article A finally clear article B saving guard', async () => {
     const saveA = deferredResponse();
     const saveB = deferredResponse();
     fetchMock
@@ -253,19 +230,42 @@ describe('shared Read-Later saving guard: per-article isolation', () => {
 
     saveA.resolve(jsonResponse({ item: makePage({ id: 'p1' }) }, 201));
     await reqA;
-    expect(state.isSavingToLater('i2')).toBe(true);
 
     const reqB3 = saveOpenArticle(makeFeedArticle('i2'));
     expect(saveCallsCount()).toBe(2);
 
     saveB.resolve(jsonResponse({ item: makePage({ id: 'p2' }) }, 201));
     await Promise.all([reqB1, reqB2, reqB3]);
-    expect(state.isSavingToLater('i2')).toBe(false);
+  });
+});
+
+const expectDeleteSent = (): void => {
+  expect(fetchMock).toHaveBeenCalledWith(
+    '/api/saved-pages/p1',
+    expect.objectContaining({ method: 'DELETE' })
+  );
+};
+
+describe('deleteOpenArticle navigation', () => {
+  it('sends DELETE and navigates to /later when mounted on the deleted article', async () => {
+    vi.stubGlobal('confirm', () => true);
+    const nav = makeNav();
+    const stopMount = state.trackLibraryMount();
+    const p1 = jsonResponse({ item: makePage({ id: 'p1', read: true }) });
+    fetchMock
+      .mockResolvedValueOnce(p1)
+      .mockResolvedValueOnce(noContentResponse());
+    await state.openArticleByRoute({ kind: 'later' }, 'p1');
+    await deleteOpenArticle(nav, makeSavedArticle('p1'));
+    stopMount();
+
+    expectDeleteSent();
+    expect(nav.onNavigate).toHaveBeenCalledWith('/later');
   });
 });
 
 describe('deleteOpenArticle guard', () => {
-  it('skips navigating to /later when library unmounted during delete', async () => {
+  it('sends DELETE but skips navigating to /later when library unmounted during delete', async () => {
     vi.stubGlobal('confirm', () => true);
     const nav = makeNav();
     const stopMount = state.trackLibraryMount();
@@ -276,10 +276,12 @@ describe('deleteOpenArticle guard', () => {
     await state.openArticleByRoute({ kind: 'later' }, 'p1');
     stopMount();
     await deleteOpenArticle(nav, makeSavedArticle('p1'));
+
+    expectDeleteSent();
     expect(nav.onNavigate).not.toHaveBeenCalled();
   });
 
-  it('skips navigating to /later when another article opened during delete', async () => {
+  it('sends DELETE but skips navigating to /later when another article opened during delete', async () => {
     vi.stubGlobal('confirm', () => true);
     const nav = makeNav();
     const stopMount = state.trackLibraryMount();
@@ -296,6 +298,8 @@ describe('deleteOpenArticle guard', () => {
     delPending.resolve(noContentResponse());
     await deleting;
     stopMount();
+
+    expectDeleteSent();
     expect(nav.onNavigate).not.toHaveBeenCalled();
   });
 });

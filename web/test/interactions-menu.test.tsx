@@ -6,7 +6,6 @@ import { FeedMoveSubpanel } from '../src/components/FeedMoveSubpanel';
 import { ReaderMoreMenu } from '../src/components/ReaderMoreMenu';
 import * as state from '../src/state';
 import {
-  ariaBtn,
   clickAria,
   clickButton,
   mount,
@@ -64,17 +63,6 @@ describe('ArticleListHeader', () => {
     expect(c1.textContent).not.toContain('视图选项');
     expect(c1.textContent).not.toContain('摘要行数');
     expect(c1.textContent).not.toContain('刷新');
-  });
-
-  it('renders expand sidebar button when sidebarCollapsed is true', () => {
-    const container = mountHeader(false);
-    expect(ariaBtn(container, '展开侧边栏')).toBeNull();
-
-    state.setSidebarCollapsedState(true);
-    const expandBtn = ariaBtn(container, '展开侧边栏');
-    expect(expandBtn).not.toBeNull();
-    expandBtn?.click();
-    expect(state.sidebarCollapsed()).toBe(false);
   });
 });
 

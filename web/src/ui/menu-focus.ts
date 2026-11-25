@@ -12,15 +12,25 @@ export interface MenuRefs {
 
 type PendingClick = { index: number; prev: Array<HTMLElement> };
 
-let lastMenuTrigger: HTMLButtonElement | undefined;
+let pendingOpener: HTMLButtonElement | undefined;
+let expiry: ReturnType<typeof setTimeout> | undefined;
 
+/** Returns the opener recorded by the last dialog-opening menu action, once. */
 export const takeMenuTrigger = (): HTMLButtonElement | undefined => {
-  const trigger = lastMenuTrigger;
-  lastMenuTrigger = undefined;
+  const trigger = pendingOpener;
+  pendingOpener = undefined;
+  clearTimeout(expiry);
 
   return trigger;
 };
 
+/**
+ * Records the menu trigger only for enabled items marked `opensDialog`
+ * (`data-opens-dialog`). The record expires on the next task so an action that
+ * opens no dialog can never leak its trigger to a later, unrelated dialog; the
+ * item must open its dialog synchronously within the same task for focus return
+ * to the trigger to work.
+ */
 export const rememberMenuTrigger = (
   event: MouseEvent,
   refs: MenuRefs
@@ -29,7 +39,14 @@ export const rememberMenuTrigger = (
   if (!(target instanceof Element)) return;
 
   const item = target.closest<HTMLElement>('[role="menuitem"]');
-  if (item && isEnabledMenuItem(item)) lastMenuTrigger = refs.trigger;
+  if (!item || !isEnabledMenuItem(item)) return;
+  if (item.dataset.opensDialog !== 'true') return;
+
+  pendingOpener = refs.trigger;
+  clearTimeout(expiry);
+  expiry = setTimeout(() => {
+    pendingOpener = undefined;
+  }, 0);
 };
 
 const isEnabledMenuItem = (el: HTMLElement): boolean =>
@@ -107,7 +124,7 @@ export const useMenuDismiss = (
     const el = container();
     if (!open() || !el || event.composedPath().includes(el)) return;
 
-    if (!(event.target instanceof Node && el.contains(event.target))) dismiss();
+    dismiss();
   };
 
   const onKeyDown = (event: KeyboardEvent) => {

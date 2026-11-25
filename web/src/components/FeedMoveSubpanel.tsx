@@ -24,7 +24,7 @@ export function FeedMoveSubpanel(props: {
         <span class="flex size-5 shrink-0 items-center justify-center">
           <Icon name="arrow-left" size={18} />
         </span>
-        <span>{String(t('feeds.moveTo'))}</span>
+        <span>{t('feeds.moveTo')}</span>
       </button>
       <MenuDivider />
       <For each={folders()} keyed={(folder) => folder.id}>
@@ -44,10 +44,11 @@ export function FeedMoveSubpanel(props: {
       </For>
       <MenuDivider />
       <MenuItem
+        opensDialog
         icon="plus"
         onSelect={() => props.onRequestNewFolder(props.feed)}
       >
-        {String(t('library.newFolder'))}
+        {t('library.newFolder')}
       </MenuItem>
     </>
   );

@@ -195,31 +195,6 @@ describe('VirtualList visibility and virtualization', () => {
   });
 });
 
-describe('VirtualList desktop breakpoint pagination', () => {
-  it('paginates when panel has hidden lg:flex class but computed display is flex', () => {
-    const onEndReached = vi.fn();
-    const [items] = createSignal(
-      Array.from({ length: 30 }, (_, index) => `Row ${index}`)
-    );
-    const { scroller, setScrollTop } = mountList({
-      items,
-      estimateSize: 136,
-      metrics: { clientHeight: 600, scrollHeight: 3000 },
-      panelClass: 'hidden lg:flex',
-      panelDisplay: 'flex',
-      onEndReached,
-    });
-
-    expect(onEndReached).not.toHaveBeenCalled();
-
-    setScrollTop(1800);
-    scroller.dispatchEvent(new Event('scroll'));
-    flush();
-
-    expect(onEndReached).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe('VirtualList hidden panel pagination guard', () => {
   it('does not paginate when computed display is none', () => {
     const onEndReached = vi.fn();

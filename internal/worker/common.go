@@ -10,7 +10,10 @@ import (
 	"reader/internal/domain"
 )
 
-const maxLogErrorBytes = 512
+const (
+	fatalFailureStreak = 3
+	maxLogErrorBytes   = 512
+)
 
 // tickLoop calls fn on every interval tick until ctx is canceled.
 func tickLoop(ctx context.Context, interval time.Duration, fn func(context.Context)) {

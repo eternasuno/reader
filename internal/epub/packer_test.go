@@ -2,9 +2,11 @@ package epub
 
 import (
 	"archive/zip"
+	"compress/flate"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"reader/internal/domain"
 	"slices"
 	"strings"
@@ -117,9 +119,14 @@ func TestPackerOverLimitTrialAbortsEarly(t *testing.T) {
 		t.Fatalf("measureArchiveSize() wrote %d bytes before aborting, expected early abort near %d", measured, maxBytes)
 	}
 
-	_, compErr := compressDeflateBounded("OEBPS/chapters/chapter-0001.xhtml", randomBytes(t, addedEntrySize), maxBytes)
+	fw, err := flate.NewWriter(io.Discard, flate.DefaultCompression)
+	if err != nil {
+		t.Fatalf("flate.NewWriter() error = %v", err)
+	}
+
+	_, compErr := compressDeflateBoundedWith(fw, "OEBPS/chapters/chapter-0001.xhtml", randomBytes(t, addedEntrySize), maxBytes)
 	if !errors.Is(compErr, errArchiveTooLarge) {
-		t.Fatalf("compressDeflateBounded() err = %v, want errArchiveTooLarge", compErr)
+		t.Fatalf("compressDeflateBoundedWith() err = %v, want errArchiveTooLarge", compErr)
 	}
 }
 

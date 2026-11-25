@@ -8,9 +8,8 @@ import {
   Show,
   untrack,
 } from 'solid-js';
-import { errorText } from '../components/errorText';
 import { t, translateErrorCode } from '../i18n';
-import { sessionStatus } from '../state';
+import { errorText, sessionStatus } from '../state';
 import {
   clearQuickSaveDraft,
   consumeQuickSaveLocation,
@@ -76,7 +75,7 @@ const useQuickSave = () => {
     try {
       const { page, created } = await createOrFindSavedPage(target);
       clearQuickSaveDraft();
-      if (created) showToast(String(t('later.addedToast')), 'success');
+      if (created) showToast(t('later.addedToast'), 'success');
       navigate(savedPageUrl(page.id));
     } catch (caught) {
       setError(errorText(caught));
@@ -120,15 +119,15 @@ function QuickSaveForm(props: QuickSaveFormProps): JSX.Element {
       <Input
         type="url"
         required
-        label={String(t('later.urlLabel'))}
-        placeholder={String(t('later.urlPlaceholder'))}
+        label={t('later.urlLabel')}
+        placeholder={t('later.urlPlaceholder')}
         value={props.url}
         disabled={props.submitting}
         onInput={(event) => props.onUrl(event.currentTarget.value)}
       />
       <div class="flex items-center justify-between gap-2">
         <a class="link link-hover text-sm text-base-content/70" href="/later">
-          {String(t('common.cancel'))}
+          {t('common.cancel')}
         </a>
         <Button
           type="submit"
@@ -136,7 +135,7 @@ function QuickSaveForm(props: QuickSaveFormProps): JSX.Element {
           loading={props.submitting}
           disabled={props.submitting}
         >
-          {String(t(props.submitting ? 'later.saving' : 'later.confirmSave'))}
+          {t(props.submitting ? 'later.saving' : 'later.confirmSave')}
         </Button>
       </div>
     </form>
@@ -156,11 +155,9 @@ export function QuickSavePage(): JSX.Element {
         <div class="card-body gap-4">
           <div class="flex flex-col gap-1">
             <p class="text-xs tracking-wide text-base-content/60 uppercase">
-              {String(t('common.brand'))}
+              {t('common.brand')}
             </p>
-            <h1 class="text-lg font-medium">
-              {String(t('later.quickSaveTitle'))}
-            </h1>
+            <h1 class="text-lg font-medium">{t('later.quickSaveTitle')}</h1>
           </div>
 
           <Show when={save.error()}>

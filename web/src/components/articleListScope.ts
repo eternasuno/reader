@@ -35,9 +35,9 @@ export const failingFeed = (scope: LibraryScope): Feed | null => {
 export const scopeTitle = (scope: LibraryScope): string => {
   switch (scope.kind) {
     case 'later':
-      return String(t('library.laterScope'));
+      return t('library.laterScope');
     case 'all':
-      return String(t('library.allFeedsScope'));
+      return t('library.allFeedsScope');
     case 'feed':
       return activeFeed(scope)?.title ?? '';
     case 'folder':
@@ -69,36 +69,36 @@ export const emptyCopy = (
   switch (scope.kind) {
     case 'later':
       return {
-        title: String(t('later.emptyTitle')),
-        hint: String(t('later.emptyHint')),
+        title: t('later.emptyTitle'),
+        hint: t('later.emptyHint'),
         action: {
-          label: String(t('later.addLinkTitle')),
+          label: t('later.addLinkTitle'),
           run: onRequestAddLink,
         },
       };
     case 'all':
       return {
-        title: String(t('feeds.emptyAllTitle')),
-        hint: String(t('feeds.emptyAllHint')),
+        title: t('feeds.emptyAllTitle'),
+        hint: t('feeds.emptyAllHint'),
         action: {
-          label: String(t('library.addFeed')),
+          label: t('library.addFeed'),
           run: onRequestAddFeed,
         },
       };
     case 'feed':
       return {
-        title: String(t('feeds.emptyFeedTitle')),
-        hint: String(t('feeds.emptyFeedHint')),
+        title: t('feeds.emptyFeedTitle'),
+        hint: t('feeds.emptyFeedHint'),
       };
     case 'folder':
       return folderFeeds(scope.folderId).length === 0
         ? {
-            title: String(t('folders.emptyNoFeedsTitle')),
-            hint: String(t('folders.emptyNoFeedsHint')),
+            title: t('folders.emptyNoFeedsTitle'),
+            hint: t('folders.emptyNoFeedsHint'),
           }
         : {
-            title: String(t('folders.emptyNoItemsTitle')),
-            hint: String(t('folders.emptyNoItemsHint')),
+            title: t('folders.emptyNoItemsTitle'),
+            hint: t('folders.emptyNoItemsHint'),
           };
   }
 };

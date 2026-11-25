@@ -111,13 +111,6 @@ func buildNormalizedURL(parsed *url.URL, host string) NormalizedURL {
 	}
 
 	hasCreds := parsed.User != nil
-	username := ""
-	password := ""
-	if hasCreds {
-		username = parsed.User.Username()
-		password, _ = parsed.User.Password()
-	}
-
 	rawURL := parsed.String()
 	parsed.User = nil
 	redacted := parsed.String()
@@ -127,8 +120,6 @@ func buildNormalizedURL(parsed *url.URL, host string) NormalizedURL {
 		redacted: redacted,
 		host:     host,
 		hasCreds: hasCreds,
-		username: username,
-		password: password,
 	}
 }
 
@@ -162,22 +153,6 @@ func OriginFromURL(parsed *url.URL) (Origin, bool) {
 	}
 
 	return Origin{Scheme: scheme, Host: host, Port: port}, true
-}
-
-func ParseStoredNormalizedURL(raw string) (NormalizedURL, error) {
-	parsed, host, err := parseHTTPURL(raw, ErrFeedUrlInvalid)
-	if err != nil {
-		return NormalizedURL{}, err
-	}
-
-	port := parsed.Port()
-	if canonical, ok := normalizePort(port); ok {
-		port = canonical
-	}
-
-	parsed.Host = buildHost(host, port, parsed.Scheme)
-
-	return buildNormalizedURL(parsed, host), nil
 }
 
 func SanitizeErrorText(msg string) string {

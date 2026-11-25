@@ -75,7 +75,7 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 		return nil, nil
 	}}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		FeedItems:   feedItems,
 		Fetcher:     fetcher,
@@ -171,7 +171,7 @@ func TestExtractFeedItemContinuesOnCacheWriteError(t *testing.T) {
 	builder := &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
 		return nil, nil
 	}}
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		FeedItems:   &fakeFeedItemRepository{saveErr: errors.New("db busy for https://user:secret@example.com/db")},
 		Fetcher: &fakeWebpageFetcher{fetch: func(ctx context.Context, url domain.NormalizedURL) (string, string, error) {
@@ -227,7 +227,7 @@ func TestExtractFeedItemKeepsConcurrentWinnerContent(t *testing.T) {
 				return nil, nil
 			}}
 
-			sender := NewKindleSender(KindleConfig{
+			sender := newTestKindleSender(t, KindleConfig{
 				KindleSends: sends,
 				FeedItems:   feedItems,
 				Fetcher: &fakeWebpageFetcher{fetch: func(ctx context.Context, url domain.NormalizedURL) (string, string, error) {
@@ -333,7 +333,7 @@ func TestRunJobStreamsArticlesAndBooksWithBoundedLiveState(t *testing.T) {
 		return nil
 	}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{
 			newPacker: func(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {
@@ -395,7 +395,7 @@ func TestRunJobClosesPackerOnFailureAndCancellation(t *testing.T) {
 			},
 		}
 
-		sender := NewKindleSender(KindleConfig{
+		sender := newTestKindleSender(t, KindleConfig{
 			KindleSends: &fakeKindleSendRepository{savedPages: []domain.SavedPage{page}},
 			EPUBBuilder: &fakeEPUBBuilder{newPacker: func(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {
 				return packer, nil
@@ -427,7 +427,7 @@ func TestRunJobClosesPackerOnFailureAndCancellation(t *testing.T) {
 			},
 		}
 
-		sender := NewKindleSender(KindleConfig{
+		sender := newTestKindleSender(t, KindleConfig{
 			BaseCtx:     baseCtx,
 			KindleSends: sends,
 			EPUBBuilder: &fakeEPUBBuilder{newPacker: func(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {

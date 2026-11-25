@@ -29,8 +29,6 @@ func TestURLParseNormalized(t *testing.T) {
 		wantRedacted string
 		wantHost     string
 		wantCreds    bool
-		wantUser     string
-		wantPass     string
 	}{
 		{
 			name:         "empty path becomes root",
@@ -116,8 +114,6 @@ func TestURLParseNormalized(t *testing.T) {
 			wantRedacted: "https://example.com/feed",
 			wantHost:     "example.com",
 			wantCreds:    true,
-			wantUser:     "user",
-			wantPass:     "secret",
 		},
 		{
 			name:         "keeps username only credential",
@@ -126,7 +122,13 @@ func TestURLParseNormalized(t *testing.T) {
 			wantRedacted: "http://example.com/feed",
 			wantHost:     "example.com",
 			wantCreds:    true,
-			wantUser:     "token",
+		},
+		{
+			name:         "preserves non default port 443 on http",
+			raw:          "http://example.com:443/feed",
+			wantRaw:      "http://example.com:443/feed",
+			wantRedacted: "http://example.com:443/feed",
+			wantHost:     "example.com",
 		},
 		{
 			name:         "preserves www and apex distinction and trailing slash",
@@ -169,19 +171,6 @@ func TestURLParseNormalized(t *testing.T) {
 				t.Fatalf("hasCreds = %v, want %v", got.HasCredentials(), tc.wantCreds)
 			}
 
-			username, password, ok := got.BasicAuth()
-			if ok != tc.wantCreds {
-				t.Fatalf("BasicAuth ok = %v, want %v", ok, tc.wantCreds)
-			}
-
-			if username != tc.wantUser {
-				t.Fatalf("username = %q, want %q", username, tc.wantUser)
-			}
-
-			if password != tc.wantPass {
-				t.Fatalf("password = %q, want %q", password, tc.wantPass)
-			}
-
 			parsed, err := got.Parsed()
 			if err != nil {
 				t.Fatalf("parsed raw error: %v", err)
@@ -208,6 +197,8 @@ func TestURLParseNormalizedInvalid(t *testing.T) {
 		"https://example.com:65536/feed",
 		"http://example.com:0/feed",
 		"https://example.com:00/feed",
+		"http://example.com:99999/feed",
+		"http://example.com:abc/feed",
 		"https://example.com:99999999999999999999/feed",
 	}
 
@@ -222,47 +213,6 @@ func TestURLParseNormalizedInvalid(t *testing.T) {
 
 	_, err := ParseNormalizedURL("ftp://example.com", ErrInvalidPageUrl)
 	requireDomainError(t, err, ErrInvalidPageUrl)
-}
-
-func TestParseStoredNormalizedURL(t *testing.T) {
-	t.Parallel()
-
-	parsedStored, err := ParseStoredNormalizedURL("https://user:secret@example.com/feed")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if parsedStored.RedactedString() != "https://example.com/feed" {
-		t.Fatalf("parsed redacted = %q", parsedStored.RedactedString())
-	}
-
-	if !parsedStored.HasCredentials() {
-		t.Fatalf("expected credentials")
-	}
-
-	if _, err := ParseStoredNormalizedURL("not a url at all"); err == nil {
-		t.Fatalf("expected malformed stored url to fail")
-	} else {
-		requireDomainError(t, err, ErrFeedUrlInvalid)
-	}
-
-	for _, tc := range []struct {
-		raw  string
-		want string
-	}{
-		{raw: "https://user:secret@example.com:65536/feed", want: "https://example.com:65536/feed"},
-		{raw: "http://example.com:0/feed", want: "http://example.com:0/feed"},
-		{raw: "https://example.com:0443/feed", want: "https://example.com/feed"},
-	} {
-		parsed, err := ParseStoredNormalizedURL(tc.raw)
-		if err != nil {
-			t.Fatalf("ParseStoredNormalizedURL(%q) unexpected error: %v", tc.raw, err)
-		}
-
-		if parsed.RedactedString() != tc.want {
-			t.Fatalf("ParseStoredNormalizedURL(%q) redacted = %q, want %q", tc.raw, parsed.RedactedString(), tc.want)
-		}
-	}
 }
 
 func TestOriginFromURL(t *testing.T) {

@@ -18,7 +18,7 @@ func TestRunJobEmptyUnreadSucceedsWithoutMail(t *testing.T) {
 	builder := &fakeEPUBBuilder{}
 	mailer := &fakeMailSender{}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		EPUBBuilder: builder,
 		MailSender:  mailer,
@@ -53,7 +53,7 @@ func TestCompleteSendStopsRetryingWhenBaseCtxCanceled(t *testing.T) {
 	defer cancelBase()
 
 	sends := &fakeKindleSendRepository{completeFailure: 100}
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		BaseCtx:     baseCtx,
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{},
@@ -61,7 +61,6 @@ func TestCompleteSendStopsRetryingWhenBaseCtxCanceled(t *testing.T) {
 		Now:         func() time.Time { return now },
 	})
 	sender.completeBaseBackoff = 2 * time.Millisecond
-	sender.completeMaxBackoff = 5 * time.Millisecond
 
 	if _, err := sender.EnqueueManual(context.Background()); err != nil {
 		t.Fatalf("EnqueueManual() error = %v", err)
@@ -81,6 +80,10 @@ func TestCompleteSendStopsRetryingWhenBaseCtxCanceled(t *testing.T) {
 	case <-time.After(testWaitTimeout):
 		t.Fatal("Wait() did not return after BaseCtx cancellation")
 	}
+
+	if sender.IsRunning() {
+		t.Fatal("IsRunning() = true after shutdown")
+	}
 }
 
 func TestCompleteSendWritesKnownOutcomeWhenCanceledDuringBackoff(t *testing.T) {
@@ -95,7 +98,7 @@ func TestCompleteSendWritesKnownOutcomeWhenCanceledDuringBackoff(t *testing.T) {
 	sends := &fakeKindleSendRepository{savedPages: []domain.SavedPage{page}, completeFailure: 1}
 	mailer := &fakeMailSender{}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		BaseCtx:     baseCtx,
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
@@ -104,9 +107,7 @@ func TestCompleteSendWritesKnownOutcomeWhenCanceledDuringBackoff(t *testing.T) {
 		MailSender: mailer,
 		Now:        func() time.Time { return now },
 	})
-	// A backoff far longer than the test keeps the job asleep until cancellation.
-	sender.completeBaseBackoff = time.Hour
-	sender.completeMaxBackoff = time.Hour
+	sender.recordBaseBackoff = time.Millisecond
 
 	if _, err := sender.EnqueueManual(context.Background()); err != nil {
 		t.Fatalf("EnqueueManual() error = %v", err)
@@ -194,7 +195,7 @@ func TestDeliverBooksUsesDetachedRecordContextAndChecksCancelBeforeNextBook(t *t
 		},
 	}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		BaseCtx:     baseCtx,
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
@@ -244,7 +245,7 @@ func TestRunJobRetriesRecordBookAcceptedWithoutResendingMail(t *testing.T) {
 	}
 	mailer := &fakeMailSender{}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
 			return books, nil
@@ -253,7 +254,6 @@ func TestRunJobRetriesRecordBookAcceptedWithoutResendingMail(t *testing.T) {
 		Now:        func() time.Time { return now },
 	})
 	sender.recordBaseBackoff = time.Millisecond
-	sender.recordMaxBackoff = 4 * time.Millisecond
 
 	if _, err := sender.EnqueueManual(context.Background()); err != nil {
 		t.Fatalf("EnqueueManual() error = %v", err)
@@ -280,61 +280,6 @@ func TestRunJobRetriesRecordBookAcceptedWithoutResendingMail(t *testing.T) {
 	}
 }
 
-func TestRunJobFailsAfterRecordBookAcceptedRetriesExhausted(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
-	books := []domain.EPUBBook{
-		{Title: "book-1", SavedPageIDs: []string{"page-1"}, ArticleCount: 1},
-		{Title: "book-2", FeedItemIDs: []string{"item-1"}, ArticleCount: 1},
-	}
-
-	sends := &fakeKindleSendRepository{
-		savedPages: []domain.SavedPage{page},
-		recordErr:  errors.New("record failed for https://alice:secret@example.com/db"),
-	}
-	mailer := &fakeMailSender{}
-
-	sender := NewKindleSender(KindleConfig{
-		KindleSends: sends,
-		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
-			return books, nil
-		}},
-		MailSender: mailer,
-		Now:        func() time.Time { return now },
-	})
-	sender.recordBaseBackoff = time.Millisecond
-	sender.recordMaxBackoff = 4 * time.Millisecond
-
-	if _, err := sender.EnqueueManual(context.Background()); err != nil {
-		t.Fatalf("EnqueueManual() error = %v", err)
-	}
-
-	sender.Wait()
-
-	if sent := mailer.sentList(); len(sent) != 1 {
-		t.Fatalf("mails sent = %d, want 1", len(sent))
-	}
-
-	if calls := sends.recordCallsList(); calls != 3 {
-		t.Fatalf("RecordBookAccepted calls = %d, want 3", calls)
-	}
-
-	if accepted := sends.acceptedList(); len(accepted) != 0 {
-		t.Fatalf("accepted books = %+v, want none", accepted)
-	}
-
-	completed := sends.completedList()
-	if len(completed) != 1 || completed[0].status != domain.KindleStatusFailed {
-		t.Fatalf("completed sends = %+v, want failed", completed)
-	}
-
-	if completed[0].errSummary == nil || *completed[0].errSummary != "record failed for https://example.com/db" {
-		t.Fatalf("completed summary = %v, want sanitized error", completed[0].errSummary)
-	}
-}
-
 func TestRunJobCompletesWithoutCanceledContext(t *testing.T) {
 	t.Parallel()
 
@@ -345,7 +290,7 @@ func TestRunJobCompletesWithoutCanceledContext(t *testing.T) {
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		BaseCtx:     baseCtx,
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
@@ -407,14 +352,6 @@ func TestRunJobFailures(t *testing.T) {
 			wantSummary: "build failed",
 			wantCreated: 1,
 		},
-		{
-			name: "record accepted failure",
-			configure: func(sends *fakeKindleSendRepository, builder *fakeEPUBBuilder, mailer *fakeMailSender) {
-				sends.recordErr = errors.New("record failed")
-			},
-			wantSummary: "record failed",
-			wantCreated: 1,
-		},
 	}
 
 	for _, tc := range cases {
@@ -428,7 +365,7 @@ func TestRunJobFailures(t *testing.T) {
 			mailer := &fakeMailSender{}
 			tc.configure(sends, builder, mailer)
 
-			sender := NewKindleSender(KindleConfig{
+			sender := newTestKindleSender(t, KindleConfig{
 				KindleSends: sends,
 				EPUBBuilder: builder,
 				MailSender:  mailer,
@@ -492,7 +429,7 @@ func TestRunJobStopsAfterMailFailure(t *testing.T) {
 		return nil
 	}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		EPUBBuilder: builder,
 		MailSender:  mailer,
@@ -524,60 +461,286 @@ func TestRunJobStopsAfterMailFailure(t *testing.T) {
 	}
 }
 
-func TestRecordBookAcceptedRetriesAfterShutdown(t *testing.T) {
+func TestTerminalStatusRetriesTransientFailureWithinBudget(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sends := &fakeKindleSendRepository{recordFailure: 1, onRecord: func(context.Context) { cancel() }}
-	sender := NewKindleSender(KindleConfig{KindleSends: sends})
-	sender.recordBaseBackoff = time.Millisecond
+	sends := &fakeKindleSendRepository{completeFailure: 2}
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{},
+		MailSender:  &fakeMailSender{},
+	})
+	sender.completeRetryBudget = time.Second
+	sender.completeBaseBackoff = time.Millisecond
 
-	if err := sender.recordBookAccepted(ctx, "send", 0, domain.EPUBBook{ArticleCount: 1}); err != nil {
-		t.Fatalf("recordBookAccepted: %v", err)
+	if _, err := sender.EnqueueManual(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
-	if got := sends.recordCallsList(); got != 2 {
-		t.Fatalf("attempts = %d, want 2", got)
+	done := make(chan struct{})
+	go func() { sender.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(testWaitTimeout):
+		t.Fatal("Wait() did not finish after transient retries")
 	}
 
-	if got := len(sends.acceptedList()); got != 1 {
-		t.Fatalf("receipts = %d, want 1", got)
+	completed := sends.completedList()
+	if len(completed) != 3 || completed[2].status != domain.KindleStatusSucceeded {
+		t.Fatalf("completed = %+v, want 2 failed attempts then succeeded", completed)
+	}
+
+	if sender.IsRunning() || sends.hasRunningRow() {
+		t.Fatalf("running = %v, row running = %v, want both false", sender.IsRunning(), sends.hasRunningRow())
 	}
 }
 
-func TestTerminalStatusReleasesSlotOnMissingSendOrBudget(t *testing.T) {
+func TestTerminalStatusReportsFatalAfterBudgetExhaustion(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct {
-		name      string
-		err       error
-		budget    time.Duration
-		wantCalls int
-	}{
-		{name: "missing", err: domain.ErrKindleSendNotFound, budget: time.Second, wantCalls: 1},
-		{name: "budget", err: errors.New("transient"), budget: 10 * time.Millisecond, wantCalls: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			sends := &fakeKindleSendRepository{completeErr: tc.err}
-			sender := NewKindleSender(KindleConfig{KindleSends: sends})
-			sender.completeRetryBudget = tc.budget
-			sender.completeBaseBackoff = time.Hour
-			if _, err := sender.EnqueueManual(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+	repoErr := errors.New("db error for https://alice:secret@example.com/db")
+	var fatals fatalRecorder
 
-			done := make(chan struct{})
-			go func() { sender.Wait(); close(done) }()
-			select {
-			case <-done:
-			case <-time.After(testWaitTimeout):
-				t.Fatal("send did not release slot")
-			}
+	sends := &fakeKindleSendRepository{completeErr: repoErr}
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{},
+		MailSender:  &fakeMailSender{},
+		OnFatal:     fatals.Record,
+	})
+	sender.completeRetryBudget = 15 * time.Millisecond
+	sender.completeBaseBackoff = time.Millisecond
 
-			if sender.IsRunning() || sends.completeCallsList() != tc.wantCalls {
-				t.Fatalf("running = %v, attempts = %d", sender.IsRunning(), sends.completeCallsList())
-			}
-		})
+	record, err := sender.EnqueueManual(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() { sender.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(testWaitTimeout):
+		t.Fatal("Wait() did not return after retry budget exhausted")
+	}
+
+	gotFatal := fatals.Errors()
+	if len(gotFatal) != 1 {
+		t.Fatalf("OnFatal calls = %d, want 1", len(gotFatal))
+	}
+
+	fatalErr := gotFatal[0]
+	if !errors.Is(fatalErr, repoErr) {
+		t.Fatalf("fatal error = %v, want wrapping %v", fatalErr, repoErr)
+	}
+
+	if !strings.Contains(fatalErr.Error(), record.ID) || !strings.Contains(fatalErr.Error(), string(domain.KindleStatusSucceeded)) {
+		t.Fatalf("fatal error %q missing send_id %q or status", fatalErr.Error(), record.ID)
+	}
+
+	if strings.Contains(fatalErr.Error(), "alice:secret") {
+		t.Fatalf("fatal error leaks credentials: %q", fatalErr.Error())
+	}
+
+	if sender.IsRunning() {
+		t.Fatal("IsRunning() = true after fatal terminal write failure")
+	}
+}
+
+func TestTerminalStatusReleasesSlotWithoutFatalOnMissingSend(t *testing.T) {
+	t.Parallel()
+
+	sends := &fakeKindleSendRepository{completeErr: domain.ErrKindleSendNotFound}
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{},
+		MailSender:  &fakeMailSender{},
+	})
+	sender.completeRetryBudget = time.Second
+	sender.completeBaseBackoff = time.Hour
+
+	if _, err := sender.EnqueueManual(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() { sender.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(testWaitTimeout):
+		t.Fatal("send did not release slot")
+	}
+
+	if sends.completeCallsList() != 1 || sender.IsRunning() {
+		t.Fatalf("attempts = %d, running = %v, want 1 and false", sends.completeCallsList(), sender.IsRunning())
+	}
+}
+
+func TestRecordBookAcceptedReportsFatalAfterRetriesExhausted(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
+	books := []domain.EPUBBook{
+		{Title: "book-1", SavedPageIDs: []string{"page-1"}, ArticleCount: 1},
+		{Title: "book-2", FeedItemIDs: []string{"item-1"}, ArticleCount: 1},
+	}
+
+	repoErr := errors.New("record failed for https://alice:secret@example.com/db")
+	var fatals fatalRecorder
+
+	sends := &fakeKindleSendRepository{
+		savedPages: []domain.SavedPage{page},
+		recordErr:  repoErr,
+	}
+	mailer := &fakeMailSender{}
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
+			return books, nil
+		}},
+		MailSender: mailer,
+		Now:        func() time.Time { return now },
+		OnFatal:    fatals.Record,
+	})
+	sender.recordBaseBackoff = time.Millisecond
+
+	record, err := sender.EnqueueManual(context.Background())
+	if err != nil {
+		t.Fatalf("EnqueueManual() error = %v", err)
+	}
+
+	sender.Wait()
+
+	if sent := mailer.sentList(); len(sent) != 1 {
+		t.Fatalf("mails sent = %d, want 1", len(sent))
+	}
+
+	if calls := sends.recordCallsList(); calls != 3 {
+		t.Fatalf("RecordBookAccepted calls = %d, want 3", calls)
+	}
+
+	if accepted := sends.acceptedList(); len(accepted) != 0 {
+		t.Fatalf("accepted books = %+v, want none", accepted)
+	}
+
+	gotFatal := fatals.Errors()
+	if len(gotFatal) != 1 {
+		t.Fatalf("OnFatal calls = %d, want 1", len(gotFatal))
+	}
+
+	fatalErr := gotFatal[0]
+	if !errors.Is(fatalErr, repoErr) {
+		t.Fatalf("fatal error = %v, want wrapping %v", fatalErr, repoErr)
+	}
+
+	if !strings.Contains(fatalErr.Error(), record.ID) || !strings.Contains(fatalErr.Error(), "book_index=0") {
+		t.Fatalf("fatal error %q missing send_id %q or book_index=0", fatalErr.Error(), record.ID)
+	}
+
+	if strings.Contains(fatalErr.Error(), "alice:secret") {
+		t.Fatalf("fatal error leaks credentials: %q", fatalErr.Error())
+	}
+
+	completed := sends.completedList()
+	if len(completed) != 1 || completed[0].status != domain.KindleStatusFailed {
+		t.Fatalf("completed sends = %+v, want failed", completed)
+	}
+
+	if completed[0].errSummary == nil || *completed[0].errSummary != "record failed for https://example.com/db" {
+		t.Fatalf("completed summary = %v, want sanitized error", completed[0].errSummary)
+	}
+
+	if sender.IsRunning() {
+		t.Fatal("IsRunning() = true after fatal receipt failure")
+	}
+}
+
+func TestRecordBookAcceptedDoesNotReportFatalOnShutdown(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+	defer cancelBase()
+
+	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
+	book := domain.EPUBBook{Title: "book-1", SavedPageIDs: []string{"page-1"}, ArticleCount: 1}
+
+	sends := &fakeKindleSendRepository{
+		savedPages: []domain.SavedPage{page},
+		recordErr:  errors.New("record failed"),
+		onRecord: func(context.Context) {
+			cancelBase()
+		},
+	}
+	sender := newTestKindleSender(t, KindleConfig{
+		BaseCtx:     baseCtx,
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
+			return []domain.EPUBBook{book}, nil
+		}},
+		MailSender: &fakeMailSender{},
+		Now:        func() time.Time { return now },
+	})
+	sender.recordBaseBackoff = time.Millisecond
+
+	if _, err := sender.EnqueueManual(context.Background()); err != nil {
+		t.Fatalf("EnqueueManual() error = %v", err)
+	}
+
+	sender.Wait()
+
+	if calls := sends.recordCallsList(); calls != 3 {
+		t.Fatalf("RecordBookAccepted calls = %d, want 3", calls)
+	}
+
+	completed := sends.completedList()
+	if len(completed) != 1 || completed[0].status != domain.KindleStatusFailed {
+		t.Fatalf("completed sends = %+v, want failed", completed)
+	}
+
+	if sender.IsRunning() {
+		t.Fatal("IsRunning() = true after shutdown")
+	}
+}
+
+func TestRecordBookAcceptedDoesNotReportFatalOnMissingSend(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
+	book := domain.EPUBBook{Title: "book-1", SavedPageIDs: []string{"page-1"}, ArticleCount: 1}
+
+	sends := &fakeKindleSendRepository{
+		savedPages: []domain.SavedPage{page},
+		recordErr:  domain.ErrKindleSendNotFound,
+	}
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
+			return []domain.EPUBBook{book}, nil
+		}},
+		MailSender: &fakeMailSender{},
+		Now:        func() time.Time { return now },
+	})
+	sender.recordBaseBackoff = time.Millisecond
+
+	if _, err := sender.EnqueueManual(context.Background()); err != nil {
+		t.Fatalf("EnqueueManual() error = %v", err)
+	}
+
+	sender.Wait()
+
+	if calls := sends.recordCallsList(); calls != 1 {
+		t.Fatalf("RecordBookAccepted calls = %d, want 1 when send record is missing", calls)
+	}
+
+	completed := sends.completedList()
+	if len(completed) != 1 || completed[0].status != domain.KindleStatusFailed {
+		t.Fatalf("completed sends = %+v, want failed", completed)
+	}
+
+	if sender.IsRunning() {
+		t.Fatal("IsRunning() = true after missing send receipt failure")
 	}
 }

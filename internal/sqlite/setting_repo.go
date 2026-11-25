@@ -115,7 +115,7 @@ func (r *SettingRepo) UpdateProvider(ctx context.Context, provider domain.Extrac
 				return err
 			}
 
-			if !stored.Valid || strings.TrimSpace(stored.String) == "" {
+			if !stored.Valid {
 				return domain.NewError(domain.ErrBrowserEndpointRequired, nil)
 			}
 		}

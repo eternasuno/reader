@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -24,7 +25,6 @@ const (
 	defaultTimeout      = 3 * time.Minute
 	defaultMaxReadBytes = 1 << 20 // 1 MiB cap on server responses per message
 	epubContentType     = gomail.ContentType("application/epub+zip")
-	defaultSubject      = "Lantern"
 	dialStep            = "dial smtp server"
 	sendStep            = "send epub mail"
 	minValidSMTPCode    = 400
@@ -32,9 +32,8 @@ const (
 )
 
 var (
-	errUnsupportedSecurity = errors.New("unsupported smtp security")
-	errInvalidAddress      = errors.New("invalid email address")
-	errSMTPReplyTooLarge   = errors.New("smtp reply exceeded limit")
+	errInvalidAddress    = errors.New("invalid email address")
+	errSMTPReplyTooLarge = errors.New("smtp reply exceeded limit")
 
 	authSentinelErrors = []error{
 		gomail.ErrPlainAuthNotSupported,
@@ -77,13 +76,8 @@ type Sender struct {
 var _ domain.MailSender = (*Sender)(nil)
 
 func NewSender(cfg Config) *Sender {
-	timeout := cfg.Timeout
-	if timeout <= 0 {
-		timeout = defaultTimeout
-	}
-
 	return &Sender{
-		timeout:      timeout,
+		timeout:      cmp.Or(cfg.Timeout, defaultTimeout),
 		maxReadBytes: defaultMaxReadBytes,
 		dialContext:  cfg.DialContext,
 		tlsConfig:    cfg.TLSConfig,
@@ -146,28 +140,20 @@ func resolveSendFailure(msgCtx context.Context, tracker *connTracker, err error)
 }
 
 func (s *Sender) newClient(smtp domain.SMTPSettings, tracker *connTracker) (*gomail.Client, error) {
-	options, err := s.clientOptions(smtp, tracker)
-	if err != nil {
-		return nil, err
-	}
-
-	return gomail.NewClient(smtp.Host, options...)
+	return gomail.NewClient(smtp.Host, s.clientOptions(smtp, tracker)...)
 }
 
-func (s *Sender) clientOptions(smtp domain.SMTPSettings, tracker *connTracker) ([]gomail.Option, error) {
+func (s *Sender) clientOptions(smtp domain.SMTPSettings, tracker *connTracker) []gomail.Option {
 	options := []gomail.Option{
 		gomail.WithPort(smtp.Port),
 		gomail.WithTimeout(s.timeout),
 		gomail.WithDialContextFunc(s.makeDialContext(smtp, tracker)),
 	}
 
-	switch smtp.Security {
-	case domain.SMTPSecurityTLS:
+	if smtp.Security == domain.SMTPSecurityTLS {
 		options = append(options, gomail.WithSSL())
-	case domain.SMTPSecuritySTARTTLS:
+	} else {
 		options = append(options, gomail.WithTLSPolicy(gomail.TLSMandatory))
-	default:
-		return nil, errUnsupportedSecurity
 	}
 
 	if username := smtpUsername(smtp); username != "" {
@@ -184,7 +170,7 @@ func (s *Sender) clientOptions(smtp domain.SMTPSettings, tracker *connTracker) (
 		options = append(options, gomail.WithTLSConfig(s.tlsConfig))
 	}
 
-	return options, nil
+	return options
 }
 
 func (s *Sender) makeDialContext(smtp domain.SMTPSettings, tracker *connTracker) gomail.DialContextFunc {
@@ -253,11 +239,6 @@ func (s *Sender) tlsConfigForHost(host string) *tls.Config {
 }
 
 func buildMessage(delivery domain.KindleDelivery, book domain.EPUBBook) (*gomail.Msg, error) {
-	subject := book.Title
-	if subject == "" {
-		subject = defaultSubject
-	}
-
 	message := gomail.NewMsg()
 	if err := message.From(delivery.SMTP.SenderEmail); err != nil {
 		return nil, errInvalidAddress
@@ -267,8 +248,8 @@ func buildMessage(delivery domain.KindleDelivery, book domain.EPUBBook) (*gomail
 		return nil, errInvalidAddress
 	}
 
-	message.Subject(subject)
-	message.SetBodyString(gomail.TypeTextPlain, subject)
+	message.Subject(book.Title)
+	message.SetBodyString(gomail.TypeTextPlain, book.Title)
 	message.AttachReadSeeker(
 		book.Filename,
 		bytes.NewReader(book.Data),
@@ -449,8 +430,6 @@ func classifyLocalOrContextError(err error) (string, bool) {
 	switch {
 	case errors.Is(err, errSMTPReplyTooLarge):
 		return "smtp reply exceeded limit", true
-	case errors.Is(err, errUnsupportedSecurity):
-		return "unsupported smtp security", true
 	case errors.Is(err, errInvalidAddress):
 		return "invalid email address", true
 	case errors.Is(err, context.DeadlineExceeded):
@@ -551,7 +530,7 @@ func smtpUsername(smtp domain.SMTPSettings) string {
 		return ""
 	}
 
-	return strings.TrimSpace(*smtp.User)
+	return *smtp.User
 }
 
 func smtpPassword(smtp domain.SMTPSettings) string {

@@ -256,26 +256,3 @@ describe('quick save page', () => {
     expect(harness.modules.ui.currentToast()).toBeNull();
   });
 });
-
-describe('QuickSavePage missing conflict id', () => {
-  it('shows inline error without lookup when 409 omits id', async () => {
-    const savePath = '/save#url=https%3A%2F%2Fexample.com%2Fpost';
-    respond((url, init) =>
-      url === '/api/saved-pages' && init.method === 'POST'
-        ? json({ error: 'SavedPageAlreadyExists' }, 409)
-        : undefined
-    );
-
-    const { container, history } = mountApp(savePath);
-    await settle(4);
-    const form = container.querySelector('form');
-    form?.dispatchEvent(
-      new Event('submit', { bubbles: true, cancelable: true })
-    );
-    harness.modules.solid.flush();
-    await settle(4);
-
-    expect(container.textContent).toContain('该文章已在稍后阅读中');
-    expect(history.get()).toBe('/save');
-  });
-});

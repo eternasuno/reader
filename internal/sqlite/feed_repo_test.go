@@ -15,9 +15,11 @@ func TestFeedRepoCreate(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := store.Feeds().Create(ctx, domain.Feed{
-		ID:    domain.NewID(),
-		URL:   mustURL(t, "https://user:secret@example.com/feed.xml"),
-		Title: "Example",
+		ID:         domain.NewID(),
+		URL:        mustURL(t, "https://user:secret@example.com/feed.xml"),
+		Title:      "Example",
+		ReaderMode: domain.ReaderModeDefault,
+		Order:      domain.SortOrderNewest,
 	})
 	if err != nil {
 		t.Fatalf("create feed: %v", err)
@@ -31,15 +33,12 @@ func TestFeedRepoCreate(t *testing.T) {
 		t.Fatalf("created feed carries unexpected values: %+v", created)
 	}
 
-	username, password, ok := created.URL.BasicAuth()
-	if !ok || username != "user" || password != "secret" {
-		t.Fatalf("stored credentials = %q/%q/%v, want user/secret/true", username, password, ok)
-	}
-
 	_, err = store.Feeds().Create(ctx, domain.Feed{
-		ID:    domain.NewID(),
-		URL:   mustURL(t, "https://user:secret@example.com/feed.xml"),
-		Title: "Duplicate",
+		ID:         domain.NewID(),
+		URL:        mustURL(t, "https://user:secret@example.com/feed.xml"),
+		Title:      "Duplicate",
+		ReaderMode: domain.ReaderModeDefault,
+		Order:      domain.SortOrderNewest,
 	})
 	conflict := requireCode(t, err, domain.ErrFeedAlreadyExists)
 	if conflict.URL != "https://example.com/feed.xml" {
@@ -52,10 +51,12 @@ func TestFeedRepoCreate(t *testing.T) {
 
 	missingFolder := "missing-folder"
 	_, err = store.Feeds().Create(ctx, domain.Feed{
-		ID:       domain.NewID(),
-		URL:      mustURL(t, "https://example.com/other.xml"),
-		Title:    "Other",
-		FolderID: &missingFolder,
+		ID:         domain.NewID(),
+		URL:        mustURL(t, "https://example.com/other.xml"),
+		Title:      "Other",
+		FolderID:   &missingFolder,
+		ReaderMode: domain.ReaderModeDefault,
+		Order:      domain.SortOrderNewest,
 	})
 	requireCode(t, err, domain.ErrFolderNotFound)
 }
@@ -304,80 +305,6 @@ func TestStoreExportOPML(t *testing.T) {
 	}
 }
 
-func TestRejectsMalformedStoredURLs(t *testing.T) {
-	store := newTestStore(t)
-	ctx := context.Background()
-
-	badFeedID := domain.NewID()
-	badFeedURL := "not-a-valid-url-secretfeedmarker"
-	if _, err := store.WriteDB().ExecContext(
-		ctx,
-		`INSERT INTO feed (id, url, title) VALUES (?, ?, 'Broken Feed')`,
-		badFeedID,
-		badFeedURL,
-	); err != nil {
-		t.Fatalf("insert malformed feed: %v", err)
-	}
-
-	if _, err := store.Feeds().GetByID(ctx, badFeedID); err == nil {
-		t.Fatal("Feeds().GetByID() error = nil, want repository error")
-	} else {
-		requireCode(t, err, domain.ErrFeedRepositoryError)
-		if strings.Contains(err.Error(), "secretfeedmarker") {
-			t.Fatalf("Feeds().GetByID() error leaked stored text: %v", err)
-		}
-	}
-
-	if _, err := store.Feeds().List(ctx); err == nil {
-		t.Fatal("Feeds().List() error = nil, want repository error")
-	} else {
-		requireCode(t, err, domain.ErrFeedRepositoryError)
-		if strings.Contains(err.Error(), "secretfeedmarker") {
-			t.Fatalf("Feeds().List() error leaked stored text: %v", err)
-		}
-	}
-
-	validFeed := createFeed(t, store, "Valid Feed", nil)
-	badItemID := domain.NewID()
-	badItemURL := "ftp://secretitemmarker.example/item"
-	if _, err := store.WriteDB().ExecContext(
-		ctx,
-		`INSERT INTO feed_item (id, feed_id, url, title) VALUES (?, ?, ?, 'Broken Item')`,
-		badItemID,
-		validFeed.ID,
-		badItemURL,
-	); err != nil {
-		t.Fatalf("insert malformed feed item: %v", err)
-	}
-
-	if _, err := store.FeedItems().GetByID(ctx, badItemID); err == nil {
-		t.Fatal("FeedItems().GetByID() error = nil, want repository error")
-	} else {
-		requireCode(t, err, domain.ErrFeedItemRepositoryError)
-		if strings.Contains(err.Error(), "secretitemmarker") {
-			t.Fatalf("FeedItems().GetByID() error leaked stored text: %v", err)
-		}
-	}
-
-	if _, err := store.FeedItems().ListAll(ctx, domain.PageParams{Limit: 10}); err == nil {
-		t.Fatal("FeedItems().ListAll() error = nil, want repository error")
-	} else {
-		requireCode(t, err, domain.ErrFeedItemRepositoryError)
-		if strings.Contains(err.Error(), "secretitemmarker") {
-			t.Fatalf("FeedItems().ListAll() error leaked stored text: %v", err)
-		}
-	}
-
-	if _, err := store.FeedItems().ListStoredRefsByFeed(ctx, validFeed.ID); err == nil {
-		t.Fatal("FeedItems().ListStoredRefsByFeed() error = nil, want repository error")
-	} else {
-		requireCode(t, err, domain.ErrFeedItemRepositoryError)
-		if strings.Contains(err.Error(), "secretitemmarker") {
-			t.Fatalf("FeedItems().ListStoredRefsByFeed() error leaked stored text: %v", err)
-		}
-	}
-}
-
 func TestStoreImportOPML(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -386,9 +313,9 @@ func TestStoreImportOPML(t *testing.T) {
 	existing := createFeed(t, store, "Existing", &tech.ID)
 
 	doc := domain.OPMLDocument{
-		Folders: []string{"News", "Tech", "  News  "},
+		Folders: []string{"News", "Tech"},
 		Feeds: []domain.OPMLFeedInput{
-			{URL: mustURL(t, "https://example.com/news-1"), Title: "News 1", FolderName: ptr(" News ")},
+			{URL: mustURL(t, "https://example.com/news-1"), Title: "News 1", FolderName: ptr("News")},
 			{URL: mustURL(t, "https://example.com/news-2"), Title: "News 2", FolderName: ptr("News")},
 			{URL: mustURL(t, "https://example.com/top"), Title: "Top"},
 			{URL: existing.URL, Title: "Existing"},
@@ -486,18 +413,25 @@ func TestImportOPMLIsAtomic(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
+	if _, err := store.WriteDB().ExecContext(
+		ctx,
+		`CREATE TRIGGER fail_second_opml_feed BEFORE INSERT ON feed WHEN NEW.url = 'https://example.com/atomic-2' BEGIN SELECT RAISE(ABORT, 'boom'); END;`,
+	); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
 	doc := domain.OPMLDocument{
 		Folders: []string{"Atomic"},
 		Feeds: []domain.OPMLFeedInput{
 			{URL: mustURL(t, "https://example.com/atomic-1"), Title: "Atomic 1", FolderName: ptr("Atomic")},
-			{URL: mustURL(t, "https://example.com/atomic-2"), Title: "Atomic 2", FolderName: ptr("   ")},
+			{URL: mustURL(t, "https://example.com/atomic-2"), Title: "Atomic 2", FolderName: ptr("Atomic")},
 		},
 	}
 
 	if _, _, err := store.Feeds().ImportOPML(ctx, doc); err == nil {
 		t.Fatal("expected the import to fail")
 	} else {
-		requireCode(t, err, domain.ErrInvalidFolderName)
+		requireCode(t, err, domain.ErrFeedRepositoryError)
 	}
 
 	folders, err := store.Folders().List(ctx)
@@ -519,12 +453,11 @@ func TestImportOPMLIsAtomic(t *testing.T) {
 	}
 }
 
-func TestImportOPMLNoFoldersAndFeedReferencedFolders(t *testing.T) {
+func TestImportOPMLNoFolders(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
 	unrelated := createFolder(t, store, "Unrelated")
-	existing := createFolder(t, store, "Tech")
 
 	topResult, topIDs, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{
 		Feeds: []domain.OPMLFeedInput{
@@ -539,33 +472,25 @@ func TestImportOPMLNoFoldersAndFeedReferencedFolders(t *testing.T) {
 		t.Fatalf("top-level import = (%+v, %v)", topResult, topIDs)
 	}
 
-	refResult, refIDs, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{
-		Feeds: []domain.OPMLFeedInput{
-			{URL: mustURL(t, "https://example.com/feed-tech"), Title: "Feed Tech", FolderName: ptr("  Tech  ")},
-			{URL: mustURL(t, "https://example.com/feed-only"), Title: "Feed Only", FolderName: ptr("FeedOnly")},
-		},
-	})
+	folders, err := store.Folders().List(ctx)
 	if err != nil {
-		t.Fatalf("import opml with feed-referenced folders: %v", err)
+		t.Fatalf("list folders: %v", err)
 	}
 
-	if refResult.CreatedFolders != 1 || refResult.ImportedFeeds != 2 || len(refIDs) != 2 {
-		t.Fatalf("feed-referenced folder import = (%+v, %v)", refResult, refIDs)
+	if !slices.Contains(folders, unrelated) {
+		t.Fatalf("folders = %+v, want %+v intact", folders, unrelated)
+	}
+}
+
+func TestFeedRepoListRejectsStoredURLWithInvalidPort(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := store.WriteDB().ExecContext(ctx, `INSERT INTO feed (id, url, title) VALUES ('bad', 'http://example.com:99999/feed', 'Bad')`); err != nil {
+		t.Fatalf("insert feed: %v", err)
 	}
 
-	techFeed, err := store.Feeds().GetByID(ctx, refIDs[0])
-	if err != nil || techFeed == nil || techFeed.FolderID == nil || *techFeed.FolderID != existing.ID {
-		t.Fatalf("tech feed = (%+v, %v), want folder %s", techFeed, err, existing.ID)
-	}
-
-	feedOnlyID := folderIDByName(t, store, "FeedOnly")
-	feedOnly, err := store.Feeds().GetByID(ctx, refIDs[1])
-	if err != nil || feedOnly == nil || feedOnly.FolderID == nil || *feedOnly.FolderID != feedOnlyID {
-		t.Fatalf("feed-only feed = (%+v, %v), want folder %s", feedOnly, err, feedOnlyID)
-	}
-
-	stillThere, err := store.Folders().GetByID(ctx, unrelated.ID)
-	if err != nil || stillThere == nil {
-		t.Fatalf("unrelated folder = (%+v, %v), want intact", stillThere, err)
+	if _, err := store.Feeds().List(ctx); err == nil {
+		t.Fatal("List() error = nil, want an error for a stored URL with an invalid port")
 	}
 }

@@ -77,7 +77,7 @@ export function ImageLightbox(props: ImageLightboxProps): JSX.Element {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label={String(t('reader.imagePreview'))}
+          aria-label={t('reader.imagePreview')}
           class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
         >
           <div
@@ -92,7 +92,7 @@ export function ImageLightbox(props: ImageLightboxProps): JSX.Element {
             variant="icon"
             size="sm"
             class="absolute top-4 right-4 z-10 text-white/80 hover:text-white"
-            aria-label={String(t('common.close'))}
+            aria-label={t('common.close')}
             onClick={() => props.onClose()}
           >
             <Icon name="close" size={20} />

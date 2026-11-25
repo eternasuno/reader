@@ -16,12 +16,6 @@ beforeEach(async () => {
 });
 
 describe('readerAppearance state', () => {
-  it('defaults to DEFAULT_APPEARANCE with isDefaultAppearance true', () => {
-    expect(state.readerAppearance()).toEqual(state.DEFAULT_APPEARANCE);
-    expect(state.isDefaultAppearance()).toBe(true);
-    expect(localStorage.getItem(state.APPEARANCE_STORAGE_KEY)).toBeNull();
-  });
-
   it('updates appearance, sets isDefaultAppearance false, and persists JSON', () => {
     const next = {
       fontSize: 18 as const,

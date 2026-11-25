@@ -12,26 +12,22 @@ import (
 func TestNewServerValidatesConfig(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewServer(Config{AppURL: testAppURL, SessionSecret: []byte(testSessionSecret)}); err != nil {
-		t.Fatalf("expected valid config: %v", err)
+	for _, rawAppURL := range []string{testAppURL, "HTTP://EXAMPLE.COM", "HtTpS://reader.example.com:8443"} {
+		if _, err := NewServer(Config{
+			AppURL:        rawAppURL,
+			SessionSecret: []byte(testSessionSecret),
+			Now:           time.Now,
+			Location:      time.UTC,
+		}); err != nil {
+			t.Fatalf("expected valid config for %q: %v", rawAppURL, err)
+		}
 	}
 
-	if _, err := NewServer(Config{AppURL: testAppURL}); err == nil {
-		t.Fatal("expected error for missing session secret")
-	}
-
-	short := "too-short-secret"
-	if _, err := NewServer(Config{AppURL: testAppURL, SessionSecret: []byte(short)}); err == nil {
-		t.Fatal("expected error for short session secret")
-	} else if strings.Contains(err.Error(), short) {
-		t.Fatalf("error leaked session secret: %v", err)
-	}
-
-	if _, err := NewServer(Config{AppURL: "://bad", SessionSecret: []byte(testSessionSecret)}); err == nil {
+	if _, err := NewServer(Config{AppURL: "://bad", SessionSecret: []byte(testSessionSecret), Now: time.Now, Location: time.UTC}); err == nil {
 		t.Fatal("expected error for invalid app url")
 	}
 
-	if _, err := NewServer(Config{AppURL: "/relative", SessionSecret: []byte(testSessionSecret)}); err == nil {
+	if _, err := NewServer(Config{AppURL: "/relative", SessionSecret: []byte(testSessionSecret), Now: time.Now, Location: time.UTC}); err == nil {
 		t.Fatal("expected error for app url without host")
 	}
 
@@ -51,6 +47,8 @@ func TestNewServerValidatesConfig(t *testing.T) {
 		_, err := NewServer(Config{
 			AppURL:        rawAppURL,
 			SessionSecret: []byte(testSessionSecret),
+			Now:           time.Now,
+			Location:      time.UTC,
 		})
 		if err == nil {
 			t.Fatalf("NewServer(%q) succeeded, want error", rawAppURL)

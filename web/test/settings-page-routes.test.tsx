@@ -55,6 +55,8 @@ const SENDS = [
     startedAt: '2026-11-24T09:00:00Z',
     trigger: 'scheduled',
     status: 'failed',
+    articleCount: 0,
+    bookCount: 0,
     error: 'smtp: connection refused',
   },
 ];

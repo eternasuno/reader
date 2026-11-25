@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,10 @@ type roundTripFunc func(req *http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func noDNSLookup(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return nil, fmt.Errorf("unexpected DNS lookup for %q", host)
 }
 
 func TestBrowserDiscoveryURL(t *testing.T) {
@@ -61,11 +66,12 @@ func TestBrowserDiscoveryURL(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := browserDiscoveryURL(tc.endpoint)
+			parsed, err := url.Parse(tc.endpoint)
 			if err != nil {
-				t.Fatalf("browserDiscoveryURL(%q): %v", tc.endpoint, err)
+				t.Fatalf("url.Parse(%q): %v", tc.endpoint, err)
 			}
 
+			got := browserDiscoveryURL(parsed).String()
 			if got != tc.want {
 				t.Fatalf("browserDiscoveryURL(%q) = %q, want %q", tc.endpoint, got, tc.want)
 			}
@@ -87,7 +93,7 @@ func TestBrowserDiscoveryRedirects(t *testing.T) {
 		}))
 		defer source.Close()
 
-		_, err := resolveBrowserWSURL(context.Background(), newBrowserDiscoveryClient(), nil, source.URL+"?"+query, 2*time.Second)
+		_, err := resolveBrowserWSURL(context.Background(), newBrowserDiscoveryClient(), noDNSLookup, source.URL+"?"+query, 2*time.Second)
 		if !errors.Is(err, errBrowserFetchFailed) {
 			t.Fatalf("expected discovery failure, got %v", err)
 		}
@@ -117,7 +123,7 @@ func TestBrowserDiscoveryRedirects(t *testing.T) {
 		}))
 		defer server.Close()
 
-		got, err := resolveBrowserWSURL(context.Background(), newBrowserDiscoveryClient(), nil, server.URL+"?"+query, 2*time.Second)
+		got, err := resolveBrowserWSURL(context.Background(), newBrowserDiscoveryClient(), noDNSLookup, server.URL+"?"+query, 2*time.Second)
 		if err != nil {
 			t.Fatalf("discovery failed: %v", err)
 		}
@@ -133,12 +139,6 @@ func TestBrowserDiscoveryRedirects(t *testing.T) {
 }
 
 func TestResolveBrowserWSURL(t *testing.T) {
-	noDNSLookup := func(ctx context.Context, host string) ([]net.IPAddr, error) {
-		t.Fatalf("unexpected DNS lookup for %q", host)
-
-		return nil, nil
-	}
-
 	t.Run("https endpoint is discovered over TLS", func(t *testing.T) {
 		var sawTLS atomic.Bool
 		var sawPath atomic.Value

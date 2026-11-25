@@ -1,6 +1,7 @@
 package epub
 
 import (
+	"cmp"
 	"context"
 	"time"
 
@@ -38,43 +39,16 @@ type Builder struct {
 }
 
 func NewBuilder(cfg Config) *Builder {
-	maxEPUBBytes := positiveIntOr(cfg.MaxEPUBBytes, domain.MaxKindleEPUBBytes)
-	maxBookImageBytes := positiveInt64Or(cfg.MaxBookImageBytes, defaultMaxBookImageBytes)
-	maxJobSpoolBytes := positiveInt64Or(cfg.MaxJobSpoolBytes, defaultMaxJobSpoolBytes)
-	imageConcurrency := positiveIntOr(cfg.ImageConcurrency, defaultImageConcurrency)
-	decodeBudget := positiveInt64Or(cfg.ImageDecodeMemoryBudget, defaultDecodeMemoryBudget)
-
-	imagePrepTimeout := cfg.ImagePrepTimeout
-	if imagePrepTimeout <= 0 {
-		imagePrepTimeout = defaultImagePrepTimeout
-	}
-
 	return &Builder{
 		imageFetcher:       cfg.ImageFetcher,
-		maxEPUBBytes:       maxEPUBBytes,
-		maxBookImageBytes:  maxBookImageBytes,
-		maxJobSpoolBytes:   maxJobSpoolBytes,
+		maxEPUBBytes:       cmp.Or(cfg.MaxEPUBBytes, domain.MaxKindleEPUBBytes),
+		maxBookImageBytes:  cmp.Or(cfg.MaxBookImageBytes, defaultMaxBookImageBytes),
+		maxJobSpoolBytes:   cmp.Or(cfg.MaxJobSpoolBytes, defaultMaxJobSpoolBytes),
 		spoolDir:           cfg.SpoolDir,
-		imageConcurrency:   imageConcurrency,
-		imagePrepTimeout:   imagePrepTimeout,
-		decodeMemoryBudget: decodeBudget,
+		imageConcurrency:   cmp.Or(cfg.ImageConcurrency, defaultImageConcurrency),
+		imagePrepTimeout:   cmp.Or(cfg.ImagePrepTimeout, defaultImagePrepTimeout),
+		decodeMemoryBudget: cmp.Or(cfg.ImageDecodeMemoryBudget, defaultDecodeMemoryBudget),
 	}
-}
-
-func positiveIntOr(value int, fallback int) int {
-	if value <= 0 {
-		return fallback
-	}
-
-	return value
-}
-
-func positiveInt64Or(value int64, fallback int64) int64 {
-	if value <= 0 {
-		return fallback
-	}
-
-	return value
 }
 
 func (b *Builder) NewPacker(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {

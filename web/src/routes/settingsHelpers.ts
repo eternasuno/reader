@@ -69,19 +69,17 @@ export const sendResultText = (record: KindleSendRecord): string => {
   if (record.status === 'failed') {
     const summary = sanitizeError(record.error);
     return summary.length > 0
-      ? `${String(t('kindle.resultFailed'))}：${summary}`
-      : String(t('kindle.resultFailed'));
+      ? `${t('kindle.resultFailed')}：${summary}`
+      : t('kindle.resultFailed');
   }
 
   if (record.status === 'succeeded') {
     return record.articleCount > 0
-      ? String(
-          t('kindle.resultSent', {
-            articles: record.articleCount,
-            books: record.bookCount,
-          })
-        )
-      : String(t('kindle.resultEmpty'));
+      ? t('kindle.resultSent', {
+          articles: record.articleCount,
+          books: record.bookCount,
+        })
+      : t('kindle.resultEmpty');
   }
 
   return '';

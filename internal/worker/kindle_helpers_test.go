@@ -34,6 +34,7 @@ type fakeKindleSendRepository struct {
 	listErr         error
 	getErr          error
 	claimErr        error
+	claimFailure    int
 	recordErr       error
 	recordFailure   int
 	completeErr     error
@@ -85,7 +86,7 @@ func (r *fakeKindleSendRepository) ClaimManualSend(ctx context.Context, sendID s
 		return domain.ClaimedKindleSend{}, err
 	}
 
-	if !domain.IsKindleDeliveryUsable(settings) {
+	if settings.SMTP == nil || settings.Kindle == nil {
 		return domain.ClaimedKindleSend{}, domain.NewError(domain.ErrKindleNotConfigured, nil)
 	}
 
@@ -103,9 +104,12 @@ func (r *fakeKindleSendRepository) ClaimManualSend(ctx context.Context, sendID s
 	r.created = append(r.created, record)
 
 	return domain.ClaimedKindleSend{
-		Claimed:  true,
-		Record:   record,
-		Delivery: domain.CloneKindleDelivery(*settings.SMTP, settings.Kindle.KindleEmail),
+		Claimed: true,
+		Record:  record,
+		Delivery: domain.KindleDelivery{
+			SMTP:        *settings.SMTP,
+			KindleEmail: settings.Kindle.KindleEmail,
+		},
 	}, nil
 }
 
@@ -121,6 +125,15 @@ func (r *fakeKindleSendRepository) ClaimDueSend(ctx context.Context, sendID stri
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if r.claimFailure > 0 {
+		r.claimFailure--
+		if r.claimErr != nil {
+			return domain.ClaimedKindleSend{}, r.claimErr
+		}
+
+		return domain.ClaimedKindleSend{}, errors.New("claim failed")
+	}
+
 	if r.claimErr != nil {
 		return domain.ClaimedKindleSend{}, r.claimErr
 	}
@@ -130,7 +143,7 @@ func (r *fakeKindleSendRepository) ClaimDueSend(ctx context.Context, sendID stri
 		return domain.ClaimedKindleSend{}, err
 	}
 
-	if !domain.IsKindleDeliveryUsable(settings) || settings.Kindle.SendTime == nil || settings.Kindle.NextSendAt == nil {
+	if settings.SMTP == nil || settings.Kindle == nil || settings.Kindle.SendTime == nil || settings.Kindle.NextSendAt == nil {
 		return domain.ClaimedKindleSend{}, nil
 	}
 
@@ -168,10 +181,21 @@ func (r *fakeKindleSendRepository) ClaimDueSend(ctx context.Context, sendID stri
 	r.created = append(r.created, record)
 
 	return domain.ClaimedKindleSend{
-		Claimed:  true,
-		Record:   record,
-		Delivery: domain.CloneKindleDelivery(*settings.SMTP, settings.Kindle.KindleEmail),
+		Claimed: true,
+		Record:  record,
+		Delivery: domain.KindleDelivery{
+			SMTP:        *settings.SMTP,
+			KindleEmail: settings.Kindle.KindleEmail,
+		},
 	}, nil
+}
+
+func (r *fakeKindleSendRepository) setClaimFailure(count int, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.claimFailure = count
+	r.claimErr = err
 }
 
 func (r *fakeKindleSendRepository) advanceList() []time.Time {

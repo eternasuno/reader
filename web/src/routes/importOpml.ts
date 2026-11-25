@@ -1,7 +1,6 @@
 import { feedsApi } from '../api';
-import { errorText } from '../components/errorText';
 import { t } from '../i18n';
-import { invalidateSidebar } from '../state';
+import { errorText, invalidateSidebar } from '../state';
 import { showToast } from '../ui';
 
 export interface OpmlImport {
@@ -19,12 +18,10 @@ export const useOpmlImport = (): OpmlImport => {
     try {
       const result = await feedsApi.importOpml(file);
       showToast(
-        String(
-          t('feeds.opmlImportedToast', {
-            imported: result.importedFeeds,
-            skipped: result.skippedFeeds,
-          })
-        ),
+        t('feeds.opmlImportedToast', {
+          imported: result.importedFeeds,
+          skipped: result.skippedFeeds,
+        }),
         'success'
       );
       await invalidateSidebar();

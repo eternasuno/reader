@@ -22,7 +22,7 @@ export const deleteFeed = async (
   actions: FeedListActions,
   feed: Feed
 ): Promise<void> => {
-  if (!window.confirm(String(t('feeds.unsubscribeConfirm')))) return;
+  if (!window.confirm(t('feeds.unsubscribeConfirm'))) return;
 
   if (!(await unsubscribeFeed(feed))) return;
 

@@ -276,7 +276,6 @@ func TestNextSendAt(t *testing.T) {
 		{"next day", "08:30", localNow, fixed, time.Date(2026, 3, 2, 0, 30, 0, 0, time.UTC)},
 		{"equal time", "09:00", localNow, fixed, time.Date(2026, 3, 2, 1, 0, 0, 0, time.UTC)},
 		{"UTC now", "09:30", utcNow, fixed, time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)},
-		{"nil location", "09:30", utcNow, nil, time.Date(2026, 3, 1, 9, 30, 0, 0, time.UTC)},
 		{"spring missing time", "02:30", time.Date(2026, 3, 8, 1, 0, 0, 0, ny), ny, time.Date(2026, 3, 9, 6, 30, 0, 0, time.UTC)},
 		{"spring same day", "09:30", time.Date(2026, 3, 8, 1, 0, 0, 0, ny), ny, time.Date(2026, 3, 8, 13, 30, 0, 0, time.UTC)},
 		{"spring after transition", "02:30", time.Date(2026, 3, 8, 12, 0, 0, 0, ny), ny, time.Date(2026, 3, 9, 6, 30, 0, 0, time.UTC)},

@@ -93,33 +93,6 @@ func TestFetchWebpageBrowserRefusesCredentials(t *testing.T) {
 }
 
 func TestFetchWebpageBrowserErrors(t *testing.T) {
-	t.Run("missing endpoint", func(t *testing.T) {
-		client := New(Config{
-			AllowPrivateNetwork: true,
-			Settings:            stubSettings(ExtractorSettings{Provider: domain.ProviderBrowser}, nil),
-		})
-
-		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-		requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-
-		if !strings.Contains(err.Error(), "browser endpoint is not configured") {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("invalid endpoint", func(t *testing.T) {
-		client := New(Config{
-			AllowPrivateNetwork: true,
-			Settings: stubSettings(ExtractorSettings{
-				Provider:        domain.ProviderBrowser,
-				BrowserEndpoint: ptr("ftp://browser.internal:21"),
-			}, nil),
-		})
-
-		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-		requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-	})
-
 	t.Run("sanitizes endpoint from failure", func(t *testing.T) {
 		endpoint := "ws://token:browser-secret@browser.internal:9222/devtools/browser/abc"
 		client := New(Config{

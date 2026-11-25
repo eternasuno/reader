@@ -87,9 +87,9 @@ const scopeKey = (scope: LibraryScope): string => {
 const scopeTitleOf = (scope: LibraryScope): string => {
   switch (scope.kind) {
     case 'later':
-      return String(t('library.laterScope'));
+      return t('library.laterScope');
     case 'all':
-      return String(t('library.allFeedsScope'));
+      return t('library.allFeedsScope');
     case 'feed':
       return (
         sidebarFeeds().find((feed) => feed.id === scope.feedId)?.title ?? ''

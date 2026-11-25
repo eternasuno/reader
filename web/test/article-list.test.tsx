@@ -1,36 +1,18 @@
-import type { JSX } from '@solidjs/web';
-import { render } from '@solidjs/web';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Feed } from '../src/api';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
 import { ArticleRow } from '../src/components/ArticleRow';
-import { setLocale } from '../src/i18n';
 import * as state from '../src/state';
-import { dismissToast } from '../src/ui';
+import {
+  ariaBtn,
+  clickButton,
+  mount,
+  setupInteractions,
+} from './support/list-helpers';
 
-let disposers: Array<() => void> = [];
+setupInteractions();
 let fetchMock: ReturnType<typeof vi.fn>;
-
-const mount = (component: () => JSX.Element): HTMLElement => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(render(component, container));
-  flush();
-
-  return container;
-};
-
-const ariaBtn = (root: ParentNode, label: string): HTMLButtonElement | null =>
-  root.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-
-const clickButton = (root: ParentNode, text: string): void => {
-  const match = Array.from(root.querySelectorAll('button')).find((btn) =>
-    btn.textContent?.includes(text)
-  );
-  match?.click();
-  flush();
-};
 
 const makeFeed = (overrides: Partial<Feed> = {}): Feed => ({
   id: 'f1',
@@ -68,23 +50,12 @@ const mountHeader = (
   ));
 
 beforeEach(() => {
-  localStorage.clear();
-  setLocale('zh-CN');
-  state.setSidebarCollapsedState(false);
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
-  if (typeof HTMLElement.prototype.showPopover !== 'function') {
-    HTMLElement.prototype.showPopover = () => undefined;
-  }
 });
 
 afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  document.body.innerHTML = '';
-  dismissToast();
   state.clearSidebarState();
-  vi.restoreAllMocks();
 });
 
 describe('ArticleListHeader unread toggle', () => {

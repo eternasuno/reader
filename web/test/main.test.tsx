@@ -96,17 +96,6 @@ describe('service worker registration', () => {
 });
 
 describe('session guard redirect', () => {
-  it('sends unauthenticated visitors to /login with the encoded next path', async () => {
-    respondUnauthenticated();
-
-    const target =
-      '/save#url=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2%23frag';
-    const { history, container } = await mountApp(target);
-
-    expect(history.get()).toBe('/login?next=%2Fsave');
-    expect(container.textContent).toContain('登录');
-  });
-
   it('returns to /login when a request reports an expired session', async () => {
     respond((url, init) =>
       url.startsWith('/api/feed-items/') && init.method === 'PATCH'

@@ -2,11 +2,11 @@ import type { JSX } from '@solidjs/web';
 import { type Accessor, createSignal, type Setter } from 'solid-js';
 import type { SavedPage } from '../api';
 import { t } from '../i18n';
+import { errorText } from '../state';
 import { createOrFindSavedPage } from '../state/saved-page-create';
 import { Dialog, showToast } from '../ui';
 import { AddLinkForm } from './AddLinkForm';
 import { createOpenReset } from './createOpenReset';
-import { errorText } from './errorText';
 
 export interface AddLinkDialogProps {
   open: boolean;
@@ -49,8 +49,8 @@ export function AddLinkDialog(props: AddLinkDialogProps): JSX.Element {
   return (
     <Dialog
       open={props.open}
-      title={String(t('later.addLinkTitle'))}
-      closeLabel={String(t('common.close'))}
+      title={t('later.addLinkTitle')}
+      closeLabel={t('common.close')}
       busy={submitting()}
       onClose={props.onClose}
     >
@@ -80,7 +80,7 @@ const submitAddLink = async (
 
   try {
     const { page, created } = await createOrFindSavedPage(target);
-    if (created) showToast(String(t('later.addedToast')), 'success');
+    if (created) showToast(t('later.addedToast'), 'success');
 
     props.onClose();
     if (created) props.onSaved(page);

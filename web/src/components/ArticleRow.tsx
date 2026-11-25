@@ -102,8 +102,8 @@ function RowQuickActions(props: {
           variant="icon"
           size="sm"
           class="size-7 pointer-coarse:size-10"
-          aria-label={String(t('reader.saveToLater'))}
-          title={String(t('reader.saveToLater'))}
+          aria-label={t('reader.saveToLater')}
+          title={t('reader.saveToLater')}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -117,8 +117,8 @@ function RowQuickActions(props: {
         variant="icon"
         size="sm"
         class="size-7 pointer-coarse:size-10"
-        aria-label={String(t('reader.openOriginal'))}
-        title={String(t('reader.openOriginal'))}
+        aria-label={t('reader.openOriginal')}
+        title={t('reader.openOriginal')}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -195,7 +195,7 @@ function ReadToggle(props: {
   row: LibraryArticle;
   active: boolean;
 }): JSX.Element {
-  const label = (): string => String(t('library.readToggle'));
+  const label = (): string => t('library.readToggle');
 
   return (
     <button

@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,7 +22,6 @@ import (
 	_ "time/tzdata"
 
 	"reader/internal/content"
-	"reader/internal/domain"
 	"reader/internal/epub"
 	"reader/internal/fetcher"
 	httpserver "reader/internal/http"
@@ -34,17 +32,16 @@ import (
 )
 
 const (
-	defaultAppURL          = "http://localhost:8080"
-	defaultPort            = "8080"
-	defaultDataDir         = ".data"
-	sessionSecretBytes     = 32
-	readHeaderTimeout      = 10 * time.Second
-	readTimeout            = 30 * time.Second
-	foregroundFetchTimeout = 30 * time.Second
+	defaultAppURL      = "http://localhost:8080"
+	defaultPort        = "8080"
+	defaultDataDir     = ".data"
+	sessionSecretBytes = 32
+	readHeaderTimeout  = 10 * time.Second
+	readTimeout        = 30 * time.Second
 	// writeTimeout bounds full handler execution and response writing; 60s stays
-	// well above the 30s foreground fetch/extract timeout.
+	// well above the 30s default foreground fetch/extract timeout.
 	writeTimeout          = 60 * time.Second
-	shutdownTimeout       = 15 * time.Second
+	shutdownTimeout       = 3 * time.Second
 	databaseFileName      = "reader.db"
 	epubSpoolDirName      = "spool"
 	staticAssetsDirectory = "dist"
@@ -119,25 +116,40 @@ func run() (err error) {
 }
 
 func serveApp(ctx context.Context, cfg envConfig, store *sqlite.Store) error {
+	runCtx, cancelRun := context.WithCancelCause(ctx)
+	defer cancelRun(nil)
+
 	// Workers use an application-owned context so a canceled HTTP request can
 	// never abort a background job.
 	appCtx, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
 
-	deps := buildAppDependencies(appCtx, cfg, store)
+	deps := buildAppDependencies(appCtx, cfg, store, func(err error) {
+		slog.Error("fatal error; shutting down", "error", err)
+		cancelRun(err)
+	})
 	handler, err := buildAppHandler(cfg, store, deps)
 	if err != nil {
 		return err
 	}
 
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", ":"+cfg.Port)
+	listener, err := (&net.ListenConfig{}).Listen(runCtx, "tcp", ":"+cfg.Port)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", ":"+cfg.Port, err)
 	}
 
 	stopWorkers := startWorkers(appCtx, cancelApp, deps)
+	shutdownErr := serveUntilExit(runCtx, listener, handler, stopWorkers, shutdownTimeout)
 
-	return serveUntilExit(ctx, listener, handler, stopWorkers)
+	return fatalExitError(runCtx, shutdownErr)
+}
+
+func fatalExitError(runCtx context.Context, shutdownErr error) error {
+	if cause := context.Cause(runCtx); cause != nil && !errors.Is(cause, context.Canceled) {
+		return errors.Join(cause, shutdownErr)
+	}
+
+	return shutdownErr
 }
 
 func recoverStartupState(ctx context.Context, store *sqlite.Store, spoolDir string, now time.Time) error {
@@ -171,7 +183,7 @@ func startWorkers(appCtx context.Context, cancelApp context.CancelFunc, deps app
 	}
 }
 
-func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.Store) appDependencies {
+func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.Store, onFatal func(error)) appDependencies {
 	sanitizer := content.NewSanitizer()
 	feedParser := content.NewFeedParser(sanitizer)
 	articleExtractor := content.NewArticleExtractor(sanitizer)
@@ -188,6 +200,7 @@ func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.S
 			Settings:  settings,
 			Fetcher:   fetchClient,
 			Parser:    feedParser,
+			OnFatal:   onFatal,
 		}),
 		kindleSender: worker.NewKindleSender(worker.KindleConfig{
 			BaseCtx:     appCtx,
@@ -201,6 +214,7 @@ func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.S
 			}),
 			MailSender: mail.NewSender(mail.Config{}),
 			Location:   cfg.Location,
+			OnFatal:    onFatal,
 		}),
 	}
 }
@@ -223,33 +237,32 @@ func newFetchClient(allowPrivateNetwork bool, settings *sqlite.SettingRepo) *fet
 	})
 }
 
-func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (http.Handler, error) {
+func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (*httpserver.Server, error) {
 	staticFS, err := fs.Sub(web.DistFS, staticAssetsDirectory)
 	if err != nil {
 		return nil, fmt.Errorf("prepare static assets: %w", err)
 	}
 
 	handler, err := httpserver.NewServer(httpserver.Config{
-		AppPassword:            cfg.AppPassword,
-		AppURL:                 cfg.AppURL,
-		SessionSecret:          cfg.SessionSecret,
-		Location:               cfg.Location,
-		Now:                    time.Now,
-		ForegroundFetchTimeout: foregroundFetchTimeout,
-		HealthCheck:            func(ctx context.Context) error { return store.ReadDB().PingContext(ctx) },
-		StaticFS:               staticFS,
-		Folders:                store.Folders(),
-		Feeds:                  store.Feeds(),
-		FeedItems:              store.FeedItems(),
-		SavedPages:             store.SavedPages(),
-		Settings:               store.Settings(),
-		KindleSends:            store.KindleSends(),
-		FeedFetcher:            deps.fetchClient,
-		FeedParser:             deps.feedParser,
-		WebpageFetcher:         deps.fetchClient,
-		ArticleExtractor:       deps.articleExtractor,
-		Refresher:              deps.refreshQueue,
-		Kindle:                 deps.kindleSender,
+		AppPassword:      cfg.AppPassword,
+		AppURL:           cfg.AppURL,
+		SessionSecret:    cfg.SessionSecret,
+		Location:         cfg.Location,
+		Now:              time.Now,
+		HealthCheck:      func(ctx context.Context) error { return store.ReadDB().PingContext(ctx) },
+		StaticFS:         staticFS,
+		Folders:          store.Folders(),
+		Feeds:            store.Feeds(),
+		FeedItems:        store.FeedItems(),
+		SavedPages:       store.SavedPages(),
+		Settings:         store.Settings(),
+		KindleSends:      store.KindleSends(),
+		FeedFetcher:      deps.fetchClient,
+		FeedParser:       deps.feedParser,
+		WebpageFetcher:   deps.fetchClient,
+		ArticleExtractor: deps.articleExtractor,
+		Refresher:        deps.refreshQueue,
+		Kindle:           deps.kindleSender,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build http server: %w", err)
@@ -261,8 +274,39 @@ func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (
 type handlerTracker struct {
 	mu      sync.Mutex
 	closed  bool
-	active  sync.WaitGroup
+	active  int
+	drained chan struct{}
 	handler http.Handler
+}
+
+var (
+	errHandlersStillRunning = errors.New("http handlers still running after shutdown timeout")
+	errShutdownDeadline     = errors.New("shutdown deadline exceeded")
+)
+
+func (tracker *handlerTracker) finish() {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	tracker.active--
+	if tracker.closed && tracker.active == 0 {
+		close(tracker.drained)
+	}
+}
+
+func (tracker *handlerTracker) wait(ctx context.Context) error {
+	select {
+	case <-tracker.drained:
+		return nil
+	default:
+	}
+
+	select {
+	case <-tracker.drained:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("%w: %w", errHandlersStillRunning, ctx.Err())
+	}
 }
 
 func (tracker *handlerTracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -274,24 +318,31 @@ func (tracker *handlerTracker) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	tracker.active.Add(1)
+	tracker.active++
 	tracker.mu.Unlock()
-	defer tracker.active.Done()
+	defer tracker.finish()
 	tracker.handler.ServeHTTP(w, r)
 }
 
 func (tracker *handlerTracker) closeAdmission() {
 	tracker.mu.Lock()
-	tracker.closed = true
+	if !tracker.closed {
+		tracker.closed = true
+		if tracker.active == 0 {
+			close(tracker.drained)
+		}
+	}
+
 	tracker.mu.Unlock()
 }
 
-func serveUntilExit(ctx context.Context, listener net.Listener, handler http.Handler, stopWorkers func()) error {
-	return serveUntilExitWithTimeout(ctx, listener, handler, stopWorkers, shutdownTimeout)
+type shutdownHandler interface {
+	http.Handler
+	WaitExtractions(context.Context) error
 }
 
-func serveUntilExitWithTimeout(ctx context.Context, listener net.Listener, handler http.Handler, stopWorkers func(), timeout time.Duration) error {
-	trackedHandler := &handlerTracker{handler: handler}
+func serveUntilExit(ctx context.Context, listener net.Listener, handler shutdownHandler, stopWorkers func(), timeout time.Duration) error {
+	trackedHandler := &handlerTracker{handler: handler, drained: make(chan struct{})}
 	server := &http.Server{
 		Addr:              listener.Addr().String(),
 		Handler:           trackedHandler,
@@ -316,16 +367,7 @@ func serveUntilExitWithTimeout(ctx context.Context, listener net.Listener, handl
 		}
 	}
 
-	shutdownErr := drainHTTPServer(server, timeout, trackedHandler.closeAdmission)
-	trackedHandler.active.Wait()
-	extractionErr := waitExtractions(handler, timeout)
-	if extractionErr != nil {
-		slog.Error("extraction shutdown failed", "error", extractionErr)
-	}
-
-	shutdownErr = errors.Join(shutdownErr, extractionErr)
-	stopWorkers()
-
+	shutdownErr := shutdownAll(server, trackedHandler, handler, stopWorkers, timeout)
 	if serveErr != nil {
 		return errors.Join(fmt.Errorf("serve http: %w", serveErr), shutdownErr)
 	}
@@ -333,27 +375,65 @@ func serveUntilExitWithTimeout(ctx context.Context, listener net.Listener, handl
 	return shutdownErr
 }
 
-func waitExtractions(handler http.Handler, timeout time.Duration) error {
-	extractor, ok := handler.(interface{ WaitExtractions(context.Context) error })
-	if !ok {
-		return nil
+func shutdownAll(server *http.Server, tracker *handlerTracker, handler shutdownHandler, stopWorkers func(), timeout time.Duration) error {
+	start := time.Now()
+	rootCtx, cancelRoot := context.WithDeadline(context.Background(), start.Add(timeout))
+	defer cancelRoot()
+
+	httpCtx, cancelHTTP := context.WithDeadline(rootCtx, start.Add(timeout/2))
+	defer cancelHTTP()
+
+	shutdownErr := drainHTTPServer(httpCtx, server)
+	tracker.closeAdmission()
+
+	handlerCtx, cancelHandler := context.WithDeadline(rootCtx, start.Add(timeout*2/3))
+	defer cancelHandler()
+
+	handlerErr := tracker.wait(handlerCtx)
+	if handlerErr != nil {
+		slog.Error("http handler shutdown failed", "error", handlerErr)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	if err := extractor.WaitExtractions(ctx); err != nil {
-		return fmt.Errorf("wait for extractions: %w", err)
+	extractCtx, cancelExtract := context.WithDeadline(rootCtx, start.Add(timeout*5/6))
+	defer cancelExtract()
+
+	extractionErr := handler.WaitExtractions(extractCtx)
+	if extractionErr != nil {
+		extractionErr = fmt.Errorf("wait for extractions: %w", extractionErr)
+		slog.Error("extraction shutdown failed", "error", extractionErr)
 	}
 
-	return nil
+	workerErr := stopWorkersWithContext(rootCtx, stopWorkers)
+	if workerErr != nil {
+		slog.Error("worker shutdown failed", "error", workerErr)
+	}
+
+	return errors.Join(shutdownErr, handlerErr, extractionErr, workerErr)
 }
 
-func drainHTTPServer(server *http.Server, timeout time.Duration, closeAdmission func()) error {
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), timeout)
-	defer cancelShutdown()
+func stopWorkersWithContext(ctx context.Context, stopWorkers func()) error {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		stopWorkers()
+	}()
 
-	shutdownErr := server.Shutdown(shutdownCtx)
-	closeAdmission()
+	select {
+	case <-done:
+		return nil
+	default:
+	}
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("stop workers: %w: %w", errShutdownDeadline, ctx.Err())
+	}
+}
+
+func drainHTTPServer(ctx context.Context, server *http.Server) error {
+	shutdownErr := server.Shutdown(ctx)
 	if shutdownErr == nil {
 		return nil
 	}
@@ -370,16 +450,12 @@ func drainHTTPServer(server *http.Server, timeout time.Duration, closeAdmission 
 // is configured.
 func loadConfig(getenv func(string) string) (envConfig, error) {
 	appPassword := getenv("APP_PASSWORD")
-	if appPassword == "" {
-		return envConfig{}, errors.New("APP_PASSWORD is required")
-	}
-
 	if err := httpserver.ValidateAppPassword(appPassword); err != nil {
 		return envConfig{}, err
 	}
 
 	appURL := envOrDefault(getenv, "APP_URL", defaultAppURL)
-	if err := validateAppURL(appURL); err != nil {
+	if err := httpserver.ValidateAppURL(appURL); err != nil {
 		return envConfig{}, err
 	}
 
@@ -422,26 +498,6 @@ func loadSessionSecret(getenv func(string) string) ([]byte, error) {
 	}
 
 	return sessionSecret, nil
-}
-
-func validateAppURL(rawAppURL string) error {
-	appURL, err := url.Parse(strings.TrimSpace(rawAppURL))
-	if err != nil || appURL.User != nil || appURL.Host == "" {
-		// The raw URL may embed credentials, so never echo it or the parse error.
-		return errors.New("invalid APP_URL")
-	}
-
-	appOrigin, ok := domain.OriginFromURL(appURL)
-	if !ok {
-		return errors.New("invalid APP_URL")
-	}
-
-	switch appOrigin.Scheme {
-	case "http", "https":
-		return nil
-	default:
-		return errors.New("invalid APP_URL")
-	}
 }
 
 func envOrDefault(getenv func(string) string, key string, fallback string) string {

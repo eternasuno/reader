@@ -7,33 +7,21 @@ export interface EmbeddedWebpageFrameProps {
   title?: string;
 }
 
-export const isSafeEmbedUrl = (rawUrl: string, appOrigin?: string): boolean => {
-  const trimmed = rawUrl.trim();
-  if (trimmed.length === 0) return false;
+type EmbedNoticeKey = 'reader.embeddedInvalidUrl' | 'reader.embeddedUnsafeUrl';
 
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return false;
+const embedNoticeFor = (url: string): EmbedNoticeKey | undefined => {
+  if (!URL.canParse(url)) return 'reader.embeddedInvalidUrl';
+
+  const parsed = new URL(url);
+  if (
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.origin === window.location.origin
+  ) {
+    return 'reader.embeddedUnsafeUrl';
   }
 
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-  if (parsed.username !== '' || parsed.password !== '') return false;
-
-  const origin = appOrigin ?? window.location.origin;
-  if (!origin) return false;
-
-  let normalizedOrigin: string;
-  try {
-    normalizedOrigin = new URL(origin).origin;
-  } catch {
-    return false;
-  }
-
-  if (normalizedOrigin === 'null') return false;
-
-  return parsed.origin !== normalizedOrigin;
+  return undefined;
 };
 
 /**
@@ -43,28 +31,30 @@ export const isSafeEmbedUrl = (rawUrl: string, appOrigin?: string): boolean => {
 export function EmbeddedWebpageFrame(
   props: EmbeddedWebpageFrameProps
 ): JSX.Element {
-  const safe = createMemo(() => isSafeEmbedUrl(props.url));
+  const notice = createMemo(() => embedNoticeFor(props.url));
 
   return (
     <div class="flex h-full min-h-0 w-full flex-1 flex-col">
       <Show
-        when={safe()}
+        when={notice()}
         fallback={
+          <iframe
+            src={props.url}
+            title={props.title ?? t('reader.embeddedWebpageView')}
+            sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
+            referrerpolicy="no-referrer"
+            class="h-full w-full flex-1 border-0 bg-base-100"
+          />
+        }
+      >
+        {(key) => (
           <p
             role="alert"
             class="m-4 rounded-box border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
           >
-            {String(t('reader.embeddedUnsafeUrl'))}
+            {t(key())}
           </p>
-        }
-      >
-        <iframe
-          src={props.url}
-          title={props.title ?? String(t('reader.embeddedWebpageView'))}
-          sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
-          referrerpolicy="no-referrer"
-          class="h-full w-full flex-1 border-0 bg-base-100"
-        />
+        )}
       </Show>
     </div>
   );

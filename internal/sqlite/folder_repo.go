@@ -47,29 +47,10 @@ func queryFolders(ctx context.Context, querier rowsQuerier) ([]domain.Folder, er
 	return folders, nil
 }
 
-func (r *FolderRepo) GetByID(ctx context.Context, id string) (*domain.Folder, error) {
-	folder := domain.Folder{}
-	err := r.read.QueryRowContext(ctx, `SELECT id, name FROM folder WHERE id = ?`, id).Scan(&folder.ID, &folder.Name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-
-	if err != nil {
-		return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
-	}
-
-	return &folder, nil
-}
-
 func (r *FolderRepo) Create(ctx context.Context, id string, name string) (domain.Folder, error) {
-	trimmed, err := domain.ValidateFolderName(name)
-	if err != nil {
-		return domain.Folder{}, err
-	}
-
 	folder := domain.Folder{}
-	err = r.write.
-		QueryRowContext(ctx, `INSERT INTO folder (id, name) VALUES (?, ?) ON CONFLICT (name) DO NOTHING RETURNING id, name`, id, trimmed).
+	err := r.write.
+		QueryRowContext(ctx, `INSERT INTO folder (id, name) VALUES (?, ?) ON CONFLICT (name) DO NOTHING RETURNING id, name`, id, name).
 		Scan(&folder.ID, &folder.Name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Folder{}, domain.NewError(domain.ErrFolderAlreadyExists, nil)
@@ -83,16 +64,11 @@ func (r *FolderRepo) Create(ctx context.Context, id string, name string) (domain
 }
 
 func (r *FolderRepo) Rename(ctx context.Context, id string, name string) error {
-	trimmed, err := domain.ValidateFolderName(name)
-	if err != nil {
-		return err
-	}
-
 	var updatedID string
-	err = r.write.QueryRowContext(
+	err := r.write.QueryRowContext(
 		ctx,
 		`UPDATE folder SET name = ? WHERE id = ? RETURNING id`,
-		trimmed,
+		name,
 		id,
 	).Scan(&updatedID)
 	if errors.Is(err, sql.ErrNoRows) {

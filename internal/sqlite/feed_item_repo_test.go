@@ -309,7 +309,6 @@ func TestFeedItemUnreadCountsAndMarking(t *testing.T) {
 }
 
 func TestFeedItemSaveExtractedContentIfEmpty(t *testing.T) {
-	// Emptiness follows strings.TrimSpace (Unicode White_Space), not SQLite trim().
 	cases := []struct {
 		name      string
 		existing  *string
@@ -318,17 +317,7 @@ func TestFeedItemSaveExtractedContentIfEmpty(t *testing.T) {
 	}{
 		{name: "missing", missing: true},
 		{name: "null", existing: nil, wantWrote: true},
-		{name: "empty", existing: ptr(""), wantWrote: true},
-		{name: "spaces", existing: ptr("   "), wantWrote: true},
-		{name: "tab and newline", existing: ptr("\t\r\n"), wantWrote: true},
-		{name: "vertical tab and form feed", existing: ptr("\v\f"), wantWrote: true},
-		{name: "next line", existing: ptr("\u0085"), wantWrote: true},
-		{name: "no-break space", existing: ptr("\u00a0"), wantWrote: true},
-		{name: "em space and line separator", existing: ptr("\u2003\u2028\u2029"), wantWrote: true},
-		{name: "ideographic space", existing: ptr("\u3000 \n"), wantWrote: true},
 		{name: "text", existing: ptr("<p>first</p>"), wantWrote: false},
-		{name: "text with surrounding whitespace", existing: ptr("\n <p>first</p>\t"), wantWrote: false},
-		{name: "zero-width space is not whitespace", existing: ptr("\u200b"), wantWrote: false},
 	}
 
 	for _, tc := range cases {

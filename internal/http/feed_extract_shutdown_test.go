@@ -12,7 +12,7 @@ import (
 
 func TestWaitExtractionsTracksAbandonedCalls(t *testing.T) {
 	group := newExtractGroup(newSlotSemaphore(2), time.Minute)
-	s := &Server{extracts: group, extractionCancelGrace: 20 * time.Millisecond}
+	s := &Server{extracts: group}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	defer func() {
@@ -37,10 +37,16 @@ func TestWaitExtractionsTracksAbandonedCalls(t *testing.T) {
 	cancel()
 	<-finished
 
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer waitCancel()
-	if err := s.WaitExtractions(waitCtx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("WaitExtractions = %v, want deadline exceeded", err)
+
+	start := time.Now()
+	if err := s.WaitExtractions(waitCtx); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errExtractionsStillRunning) {
+		t.Fatalf("WaitExtractions = %v, want deadline exceeded and still running", err)
+	}
+
+	if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
+		t.Fatalf("WaitExtractions took %v, expected single-deadline cap below 100ms", elapsed)
 	}
 
 	_, err := group.do(context.Background(), "new", func(context.Context) (*domain.FeedItem, error) {
@@ -94,11 +100,10 @@ func TestWaitExtractionsCancelsFetchWithoutSaving(t *testing.T) {
 	}()
 	<-started
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	err := s.WaitExtractions(ctx)
-	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errExtractionsStillRunning) {
-		t.Fatalf("WaitExtractions = %v, want deadline exceeded and drained", err)
+	if err := s.WaitExtractions(ctx); err != nil {
+		t.Fatalf("WaitExtractions = %v, want nil", err)
 	}
 
 	<-finished
@@ -109,7 +114,7 @@ func TestWaitExtractionsCancelsFetchWithoutSaving(t *testing.T) {
 
 func TestWaitExtractionsReportsUncooperativeCall(t *testing.T) {
 	group := newExtractGroup(newSlotSemaphore(1), time.Minute)
-	s := &Server{extracts: group, extractionCancelGrace: 20 * time.Millisecond}
+	s := &Server{extracts: group}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	defer func() {

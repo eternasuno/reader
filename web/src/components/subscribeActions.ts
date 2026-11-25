@@ -1,7 +1,7 @@
 import { ApiError, type Feed, type FeedPreview, feedsApi } from '../api';
 import { t } from '../i18n';
+import { errorText } from '../state';
 import { showToast } from '../ui';
-import { errorText } from './errorText';
 import type { SubscribeState } from './subscribeState';
 
 /** Compares feed URLs after canonicalizing them, so form variants match. */
@@ -81,7 +81,7 @@ export const subscribeToPreviewed = async (
       title: current.title,
       folderId: state.folderId() === '' ? null : state.folderId(),
     });
-    showToast(String(t('feeds.subscribedToast')), 'success');
+    showToast(t('feeds.subscribedToast'), 'success');
     props.onClose();
     props.onSubscribed(feed);
   } catch (err) {
@@ -107,7 +107,7 @@ const handleSubscribeFailure = async (
     props.existingFeeds,
     err.url ?? current.url
   );
-  showToast(String(t('errors.FeedAlreadyExists')), 'info');
+  showToast(t('errors.FeedAlreadyExists'), 'info');
   props.onClose();
   if (existing) props.onDuplicateFound(existing);
 };

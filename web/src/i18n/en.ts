@@ -10,7 +10,6 @@ export const enDict: Dict = {
     checkingSession: 'Checking your session…',
     close: 'Close',
     cancel: 'Cancel',
-    confirm: 'Confirm',
     retry: 'Retry',
     justNow: 'just now',
     localeSwitchLabel: 'Language: 中文 / English',
@@ -98,7 +97,6 @@ export const enDict: Dict = {
     subscribedToast: 'Feed added',
     unsubscribedToast: 'Feed deleted',
     opmlImportedToast: 'Imported {{imported}} feeds, skipped {{skipped}}',
-    newestFirst: 'Newest first',
     oldestFirst: 'Oldest first',
     defaultDisplay: 'Default view',
     defaultDisplayHint: 'Default view when opening articles from this feed',
@@ -154,10 +152,10 @@ export const enDict: Dict = {
     extracting: 'Extracting article…',
     embeddedWebpageView: 'Embedded webpage view',
     fullscreen: 'Fullscreen',
-    embeddedNotice:
-      'Some sites cannot be embedded or require sign-in. If it displays incorrectly, open the original.',
     embeddedUnsafeUrl:
       'This address cannot be embedded safely. Use the link above to open the original.',
+    embeddedInvalidUrl:
+      'The browser cannot parse this address, so it cannot be embedded or opened.',
     markRead: 'Mark as read',
     markUnread: 'Mark as unread',
     prevArticle: 'Previous article',
@@ -168,6 +166,7 @@ export const enDict: Dict = {
     moreActions: 'More actions',
     openOriginal: 'Open original',
     openOriginalInNewTab: 'Open original webpage in new tab',
+    cannotOpenLinkToast: 'Cannot open this link in the browser',
     deleteArticle: 'Delete',
     appearance: 'View options',
     theme: 'Theme',
@@ -176,7 +175,6 @@ export const enDict: Dict = {
     themeDark: 'Dark',
     moreOptions: 'More options...',
     sendAsEbook: 'Send as eBook',
-    showThumbnail: 'Show thumbnail',
     fontSize: 'Font size',
     fontFamily: 'Font',
     fontSans: 'Sans-serif',
@@ -200,7 +198,6 @@ export const enDict: Dict = {
     retentionHint:
       'Takes effect on the next feed refresh; existing articles are not deleted immediately.',
     saveArticles: 'Save article settings',
-    saving: 'Saving…',
     opmlHeading: 'OPML import & export',
     opmlHint:
       'Move subscriptions from another reader, or back up your current list.',

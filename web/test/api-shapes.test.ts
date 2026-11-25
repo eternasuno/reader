@@ -9,6 +9,7 @@ import {
   settingsApi,
 } from '../src/api';
 import type { KindleSettings, SmtpSettingsInput } from '../src/api/types';
+import { jsonResponse } from './support/state-fixture';
 
 const SAVED = '/api/saved-pages';
 const FEEDS = '/api/feeds';
@@ -47,9 +48,9 @@ const VALID_SEND = {
   id: 's',
   trigger: 'manual',
   status: 'running',
+  startedAt: '2026-11-24T00:00:00Z',
   articleCount: 0,
   bookCount: 0,
-  startedAt: '2026-11-24T00:00:00Z',
 };
 
 const SHAPE_RESPONSES: Record<string, unknown> = {
@@ -86,12 +87,6 @@ const SHAPE_RESPONSES: Record<string, unknown> = {
 type Shape = [string, () => Promise<unknown>, string, string, unknown?];
 
 let fetchMock: ReturnType<typeof vi.fn>;
-
-const jsonResponse = (body: unknown): Response =>
-  new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
 
 const recorded = () =>
   fetchMock.mock.calls.map(([url, init]) => {

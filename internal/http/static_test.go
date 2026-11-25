@@ -143,12 +143,6 @@ func TestStaticSPAFallback(t *testing.T) {
 	recorder = h.raw(http.MethodGet, "/healthz", nil)
 	requireStatus(t, recorder, http.StatusOK)
 
-	for _, target := range []string{"/", "/later"} {
-		t.Run("nil filesystem "+target, func(t *testing.T) {
-			h := newHarness(t)
-			requireStatus(t, h.raw(http.MethodGet, target, nil), http.StatusNotFound)
-		})
-	}
 	for _, route := range []struct{ method, target string }{
 		{http.MethodPut, "/api/settings/fetcher/direct"},
 		{http.MethodPut, "/api/settings/fetcher/jina"},

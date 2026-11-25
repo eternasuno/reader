@@ -13,7 +13,7 @@ func TestFolderRepoLifecycle(t *testing.T) {
 	ctx := context.Background()
 	repo := store.Folders()
 
-	created, err := repo.Create(ctx, domain.NewID(), "  News  ")
+	created, err := repo.Create(ctx, domain.NewID(), "News")
 	if err != nil {
 		t.Fatalf("create folder: %v", err)
 	}
@@ -26,12 +26,6 @@ func TestFolderRepoLifecycle(t *testing.T) {
 		t.Fatal("expected a duplicate folder name error")
 	} else {
 		requireCode(t, err, domain.ErrFolderAlreadyExists)
-	}
-
-	if _, err := repo.Create(ctx, domain.NewID(), "   "); err == nil {
-		t.Fatal("expected an invalid folder name error")
-	} else {
-		requireCode(t, err, domain.ErrInvalidFolderName)
 	}
 
 	for _, name := range []string{"beta", "Alpha", "alpha"} {
@@ -54,22 +48,8 @@ func TestFolderRepoLifecycle(t *testing.T) {
 		t.Fatalf("folder names = %v, want %v", names, want)
 	}
 
-	missing, err := repo.GetByID(ctx, "missing")
-	if err != nil {
-		t.Fatalf("get missing folder: %v", err)
-	}
-
-	if missing != nil {
-		t.Fatalf("missing folder = %+v, want nil", missing)
-	}
-
-	fetched, err := repo.GetByID(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("get folder: %v", err)
-	}
-
-	if fetched == nil || fetched.Name != "News" {
-		t.Fatalf("fetched folder = %+v, want News", fetched)
+	if !slices.Contains(folders, created) {
+		t.Fatalf("folders = %+v, want %+v", folders, created)
 	}
 }
 
@@ -88,7 +68,7 @@ func TestFolderRepoRename(t *testing.T) {
 		t.Fatalf("create second folder: %v", err)
 	}
 
-	if err := repo.Rename(ctx, first.ID, " News "); err != nil {
+	if err := repo.Rename(ctx, first.ID, "News"); err != nil {
 		t.Fatalf("rename to the current name: %v", err)
 	}
 
@@ -104,17 +84,17 @@ func TestFolderRepoRename(t *testing.T) {
 		requireCode(t, err, domain.ErrFolderAlreadyExists)
 	}
 
-	if err := repo.Rename(ctx, second.ID, "  Technology  "); err != nil {
+	if err := repo.Rename(ctx, second.ID, "Technology"); err != nil {
 		t.Fatalf("rename folder: %v", err)
 	}
 
-	renamed, err := repo.GetByID(ctx, second.ID)
+	folders, err := repo.List(ctx)
 	if err != nil {
-		t.Fatalf("get renamed folder: %v", err)
+		t.Fatalf("list folders after rename: %v", err)
 	}
 
-	if renamed == nil || renamed.Name != "Technology" {
-		t.Fatalf("renamed folder = %+v, want Technology", renamed)
+	if !slices.Contains(folders, domain.Folder{ID: second.ID, Name: "Technology"}) {
+		t.Fatalf("folders after rename = %+v, want Technology", folders)
 	}
 }
 
@@ -134,13 +114,13 @@ func TestFolderRepoDeleteKeepsFeedsAtTopLevel(t *testing.T) {
 		t.Fatalf("delete missing folder: %v", err)
 	}
 
-	deleted, err := store.Folders().GetByID(ctx, folder.ID)
+	folders, err := store.Folders().List(ctx)
 	if err != nil {
-		t.Fatalf("get deleted folder: %v", err)
+		t.Fatalf("list folders after delete: %v", err)
 	}
 
-	if deleted != nil {
-		t.Fatalf("deleted folder = %+v, want nil", deleted)
+	if len(folders) != 0 {
+		t.Fatalf("folders after delete = %+v, want empty", folders)
 	}
 
 	moved, err := store.Feeds().GetByID(ctx, feed.ID)

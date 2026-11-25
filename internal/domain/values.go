@@ -138,15 +138,8 @@ func ValidateSendTime(raw string) (int, int, error) {
 		return 0, 0, NewError(ErrInvalidKindleSetting, nil)
 	}
 
-	hour, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0, 0, NewError(ErrInvalidKindleSetting, err)
-	}
-
-	minute, err := strconv.Atoi(match[2])
-	if err != nil {
-		return 0, 0, NewError(ErrInvalidKindleSetting, err)
-	}
+	hour, _ := strconv.Atoi(match[1])
+	minute, _ := strconv.Atoi(match[2])
 
 	return hour, minute, nil
 }
@@ -155,10 +148,6 @@ func ComputeNextSendAt(sendTime string, now time.Time, loc *time.Location) (time
 	hour, minute, err := ValidateSendTime(sendTime)
 	if err != nil {
 		return time.Time{}, err
-	}
-
-	if loc == nil {
-		loc = time.UTC
 	}
 
 	local := now.In(loc)
@@ -254,14 +243,18 @@ func ValidateKindleSettings(k KindleSettings, now time.Time, loc *time.Location)
 }
 
 func resolveKindleSchedule(rawSendTime *string, now time.Time, loc *time.Location) (*string, *time.Time, error) {
-	if rawSendTime == nil || strings.TrimSpace(*rawSendTime) == "" {
+	if rawSendTime == nil {
 		return nil, nil, nil
 	}
 
 	trimmed := strings.TrimSpace(*rawSendTime)
+	if trimmed == "" {
+		return nil, nil, nil
+	}
+
 	nextSendAt, err := ComputeNextSendAt(trimmed, now, loc)
 	if err != nil {
-		return nil, nil, NewError(ErrInvalidKindleSetting, nil)
+		return nil, nil, err
 	}
 
 	return &trimmed, &nextSendAt, nil

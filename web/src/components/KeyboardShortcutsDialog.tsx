@@ -28,19 +28,19 @@ export function KeyboardShortcutsDialog(
   return (
     <Dialog
       open={props.open}
-      title={String(t('library.shortcuts'))}
-      closeLabel={String(t('common.close'))}
+      title={t('library.shortcuts')}
+      closeLabel={t('common.close')}
       class="max-w-lg"
       onClose={props.onClose}
     >
       <p class="mb-3 text-xs text-base-content/60">
-        {String(t('library.shortcutsHint'))}
+        {t('library.shortcutsHint')}
       </p>
       <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <For each={SHORTCUTS}>
           {(item) => (
             <div class="flex items-center justify-between gap-2 rounded-field bg-base-200/60 px-3 py-2 text-sm">
-              <span class="text-base-content/80">{String(t(item.label))}</span>
+              <span class="text-base-content/80">{t(item.label)}</span>
               <kbd class="kbd kbd-sm font-mono">{item.key}</kbd>
             </div>
           )}

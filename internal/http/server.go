@@ -24,8 +24,6 @@ const (
 	maxLoginBodyBytes              = 4 << 10
 	maxConcurrentForegroundFetches = 4
 	defaultForegroundFetchTimeout  = 30 * time.Second
-	extractionCancelGrace          = 2 * time.Second
-	minSessionSecretBytes          = 32
 
 	apiCacheControl       = "no-store"
 	immutableCacheControl = "public, max-age=31536000, immutable"
@@ -77,34 +75,21 @@ type Config struct {
 var errExtractionsStillRunning = errors.New("extractions still running after cancellation grace")
 
 type Server struct {
-	extractionCancelGrace time.Duration
-	cfg                   Config
-	appOrigin             domain.Origin
-	secure                bool
-	limiter               *loginLimiter
-	fetchSem              slotSemaphore
-	extracts              *extractGroup
-	mux                   *http.ServeMux
+	cfg       Config
+	appOrigin domain.Origin
+	secure    bool
+	limiter   *loginLimiter
+	fetchSem  slotSemaphore
+	extracts  *extractGroup
+	mux       *http.ServeMux
 }
 
 type server = Server
 
 // NewServer validates the static configuration and wires the route table.
 func NewServer(cfg Config) (*Server, error) {
-	if cfg.Now == nil {
-		cfg.Now = time.Now
-	}
-
-	if cfg.Location == nil {
-		cfg.Location = time.UTC
-	}
-
 	if cfg.ForegroundFetchTimeout <= 0 {
 		cfg.ForegroundFetchTimeout = defaultForegroundFetchTimeout
-	}
-
-	if len(cfg.SessionSecret) < minSessionSecretBytes {
-		return nil, fmt.Errorf("http: session secret must be at least %d bytes", minSessionSecretBytes)
 	}
 
 	appOrigin, err := parseAppOrigin(cfg.AppURL)
@@ -128,46 +113,28 @@ func NewServer(cfg Config) (*Server, error) {
 }
 
 func (s *Server) WaitExtractions(ctx context.Context) error {
-	g := s.extracts
-	g.mu.Lock()
-	if !g.closed {
-		g.closed = true
-		g.drained = make(chan struct{})
-		go func() {
-			g.active.Wait()
-			close(g.drained)
-		}()
-	}
+	drained := s.extracts.closeAndDrained()
+	s.extracts.cancelInflight()
 
-	drained := g.drained
-	g.mu.Unlock()
+	select {
+	case <-drained:
+		return nil
+	default:
+	}
 
 	select {
 	case <-drained:
 		return nil
 	case <-ctx.Done():
-	}
-
-	g.mu.Lock()
-	for call := range g.inflight {
-		call.cancel()
-	}
-	g.mu.Unlock()
-
-	grace := s.extractionCancelGrace
-	if grace <= 0 {
-		grace = extractionCancelGrace
-	}
-
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-
-	select {
-	case <-drained:
-		return fmt.Errorf("extractions canceled and drained: %w", ctx.Err())
-	case <-timer.C:
 		return fmt.Errorf("%w: %w", errExtractionsStillRunning, ctx.Err())
 	}
+}
+
+// ValidateAppURL checks that APP_URL is an http or https origin without credentials.
+func ValidateAppURL(rawAppURL string) error {
+	_, err := parseAppOrigin(rawAppURL)
+
+	return err
 }
 
 func parseAppOrigin(rawAppURL string) (domain.Origin, error) {
@@ -292,12 +259,10 @@ func (s *server) registerFolderAndSettingRoutes(mux *http.ServeMux) {
 }
 
 func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.HealthCheck != nil {
-		if err := s.cfg.HealthCheck(r.Context()); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, statusResponse{Status: "error"})
+	if err := s.cfg.HealthCheck(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, statusResponse{Status: "error"})
 
-			return
-		}
+		return
 	}
 
 	writeJSON(w, http.StatusOK, statusResponse{Status: "ok"})
@@ -311,12 +276,6 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-
-		return
-	}
-
-	if s.cfg.StaticFS == nil {
-		http.NotFound(w, r)
 
 		return
 	}
@@ -647,6 +606,10 @@ func writeError(w http.ResponseWriter, err error) {
 		status = statusForCode(code)
 		redactedURL = domainErr.URL
 		conflictID = domainErr.ID
+	}
+
+	if status >= http.StatusInternalServerError {
+		logInternalError(code, err)
 	}
 
 	writeJSON(w, status, errorResponse{Error: string(code), ID: conflictID, URL: redactedURL})

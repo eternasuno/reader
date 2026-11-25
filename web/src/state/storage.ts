@@ -2,8 +2,7 @@
 
 const acquireStorage = (): Storage | null => {
   try {
-    if (typeof window !== 'undefined') return window.localStorage ?? null;
-    return typeof localStorage !== 'undefined' ? localStorage : null;
+    return window.localStorage ?? null;
   } catch {
     return null;
   }

@@ -62,7 +62,7 @@ const BackHeader = (props: {
 
 const ThemeSubpage = (props: { onBack: () => void }): JSX.Element => (
   <>
-    <BackHeader label={String(t('reader.theme'))} onBack={props.onBack} />
+    <BackHeader label={t('reader.theme')} onBack={props.onBack} />
     <div data-keep-open="true">
       <For each={THEME_OPTIONS}>
         {(opt) => (
@@ -70,7 +70,7 @@ const ThemeSubpage = (props: { onBack: () => void }): JSX.Element => (
             checked={readerTheme() === opt.value}
             onSelect={() => setReaderTheme(opt.value)}
           >
-            {String(t(opt.labelKey))}
+            {t(opt.labelKey)}
           </MenuRadio>
         )}
       </For>
@@ -80,7 +80,7 @@ const ThemeSubpage = (props: { onBack: () => void }): JSX.Element => (
 
 const FontSubpage = (props: { onBack: () => void }): JSX.Element => (
   <>
-    <BackHeader label={String(t('reader.fontFamily'))} onBack={props.onBack} />
+    <BackHeader label={t('reader.fontFamily')} onBack={props.onBack} />
     <div data-keep-open="true">
       <For each={FONT_OPTIONS}>
         {(opt) => (
@@ -88,7 +88,7 @@ const FontSubpage = (props: { onBack: () => void }): JSX.Element => (
             checked={readerAppearance().fontFamily === opt.value}
             onSelect={() => updateReaderAppearance({ fontFamily: opt.value })}
           >
-            {String(t(opt.labelKey))}
+            {t(opt.labelKey)}
           </MenuRadio>
         )}
       </For>
@@ -117,7 +117,7 @@ const StepperRow = (props: StepperRowProps): JSX.Element => (
         role="menuitem"
         data-keep-open="true"
         disabled={!props.canDecrease}
-        aria-label={`${props.label} ${String(t('reader.decrease'))}`}
+        aria-label={`${props.label} ${t('reader.decrease')}`}
         class="btn btn-ghost btn-xs btn-square disabled:opacity-30"
         onClick={props.onDecrease}
       >
@@ -131,7 +131,7 @@ const StepperRow = (props: StepperRowProps): JSX.Element => (
         role="menuitem"
         data-keep-open="true"
         disabled={!props.canIncrease}
-        aria-label={`${props.label} ${String(t('reader.increase'))}`}
+        aria-label={`${props.label} ${t('reader.increase')}`}
         class="btn btn-ghost btn-xs btn-square disabled:opacity-30"
         onClick={props.onIncrease}
       >
@@ -164,7 +164,7 @@ const SubpageRow = (props: {
 const AppearanceSteppers = (): JSX.Element => (
   <>
     <StepperRow
-      label={String(t('reader.fontSize'))}
+      label={t('reader.fontSize')}
       value={String(readerAppearance().fontSize)}
       canDecrease={readerAppearance().fontSize > 14}
       canIncrease={readerAppearance().fontSize < 22}
@@ -172,7 +172,7 @@ const AppearanceSteppers = (): JSX.Element => (
       onIncrease={() => stepFontSize(1)}
     />
     <StepperRow
-      label={String(t('reader.lineHeight'))}
+      label={t('reader.lineHeight')}
       value={readerAppearance().lineHeight.toFixed(1)}
       canDecrease={readerAppearance().lineHeight > 1.4}
       canIncrease={readerAppearance().lineHeight < 2.0}
@@ -180,7 +180,7 @@ const AppearanceSteppers = (): JSX.Element => (
       onIncrease={() => stepLineHeight(1)}
     />
     <StepperRow
-      label={String(t('reader.lineWidth'))}
+      label={t('reader.lineWidth')}
       value={String(readerAppearance().lineWidth)}
       canDecrease={readerAppearance().lineWidth > 1}
       canIncrease={readerAppearance().lineWidth < 6}
@@ -199,26 +199,21 @@ const RootViewOptions = (props: {
   <>
     <Show when={props.onBack}>
       {(onBack) => (
-        <BackHeader
-          label={String(t('reader.appearance'))}
-          onBack={() => onBack()()}
-        />
+        <BackHeader label={t('reader.appearance')} onBack={() => onBack()()} />
       )}
     </Show>
     <SubpageRow
-      label={String(t('reader.theme'))}
-      value={String(t(THEME_LABEL_KEYS[readerTheme()]))}
+      label={t('reader.theme')}
+      value={t(THEME_LABEL_KEYS[readerTheme()])}
       onOpen={props.onOpenTheme}
     />
     <MenuDivider />
     <SubpageRow
-      label={String(t('reader.fontFamily'))}
-      value={String(
-        t(
-          readerAppearance().fontFamily === 'serif'
-            ? 'reader.fontSerif'
-            : 'reader.fontSans'
-        )
+      label={t('reader.fontFamily')}
+      value={t(
+        readerAppearance().fontFamily === 'serif'
+          ? 'reader.fontSerif'
+          : 'reader.fontSans'
       )}
       onOpen={props.onOpenFont}
     />
@@ -230,7 +225,7 @@ const RootViewOptions = (props: {
         icon="refresh"
         onSelect={() => resetReaderAppearance()}
       >
-        {String(t('reader.resetAppearance'))}
+        {t('reader.resetAppearance')}
       </MenuItem>
     </Show>
     <Show when={props.onOpenSettings}>
@@ -238,7 +233,7 @@ const RootViewOptions = (props: {
         <>
           <MenuDivider />
           <MenuItem icon="settings" onSelect={() => openSettings()()}>
-            {String(t('reader.moreOptions'))}
+            {t('reader.moreOptions')}
           </MenuItem>
         </>
       )}
@@ -277,8 +272,7 @@ export function ReaderAppearanceMenu(): JSX.Element {
   return (
     <Menu
       icon="typography"
-      label={String(t('reader.appearance'))}
-      align="end"
+      label={t('reader.appearance')}
       triggerClass="btn-sm max-md:size-10"
     >
       <ReaderViewOptionsPanel />

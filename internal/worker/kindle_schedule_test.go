@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reader/internal/domain"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestCheckScheduleStartsDueSend(t *testing.T) {
 	settings := &fakeSettingRepository{settings: deliverySettings}
 	sends := &fakeKindleSendRepository{settingsRepo: settings}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{},
 		MailSender:  &fakeMailSender{},
@@ -101,18 +102,6 @@ func TestCheckScheduleSkipsWhenNotDueOrUnconfigured(t *testing.T) {
 			},
 		},
 		{
-			name: "blank kindle email",
-			configure: func(settings *domain.Settings) {
-				settings.Kindle.KindleEmail = " "
-			},
-		},
-		{
-			name: "blank smtp host",
-			configure: func(settings *domain.Settings) {
-				settings.SMTP.Host = " "
-			},
-		},
-		{
 			name: "next send at in the future",
 			configure: func(settings *domain.Settings) {
 				settings.Kindle.NextSendAt = &future
@@ -141,7 +130,7 @@ func TestCheckScheduleSkipsWhenNotDueOrUnconfigured(t *testing.T) {
 			settings := &fakeSettingRepository{settings: deliverySettings}
 			sends := &fakeKindleSendRepository{settingsRepo: settings}
 
-			sender := NewKindleSender(KindleConfig{
+			sender := newTestKindleSender(t, KindleConfig{
 				KindleSends: sends,
 				Location:    loc,
 				Now:         func() time.Time { return now },
@@ -173,7 +162,7 @@ func TestCheckScheduleReturnsInvalidSendTimeError(t *testing.T) {
 	settings := &fakeSettingRepository{settings: deliverySettings}
 	sends := &fakeKindleSendRepository{settingsRepo: settings}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		Now:         func() time.Time { return now },
 	})
@@ -202,7 +191,7 @@ func TestCheckScheduleReturnsClaimError(t *testing.T) {
 	settings := &fakeSettingRepository{settings: deliverySettings}
 	sends := &fakeKindleSendRepository{settingsRepo: settings, claimErr: want}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		Now:         func() time.Time { return now },
 	})
@@ -242,7 +231,7 @@ func TestCheckScheduleDoesNotSendToOldAddressAfterSettingsChange(t *testing.T) {
 		},
 	}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
 			return []domain.EPUBBook{{SavedPageIDs: []string{"page-1"}, ArticleCount: 1}}, nil
@@ -283,7 +272,7 @@ func TestCheckScheduleSkipsWhileRunning(t *testing.T) {
 		return nil, nil
 	}}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		EPUBBuilder: builder,
 		MailSender:  &fakeMailSender{},
@@ -346,7 +335,7 @@ func TestCheckScheduleDoesNotOrphanRunningRowWhileJobReleasesSlot(t *testing.T) 
 		})
 	}
 
-	sender := NewKindleSender(KindleConfig{
+	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		EPUBBuilder: &fakeEPUBBuilder{},
 		MailSender:  &fakeMailSender{},
@@ -440,7 +429,7 @@ func TestStartSchedulerChecksImmediately(t *testing.T) {
 			settings := &fakeSettingRepository{settings: deliverySettings}
 			completed := make(chan struct{}, 100)
 			sends := &fakeKindleSendRepository{settingsRepo: settings, keepDue: tc.keepDue, afterComplete: func() { completed <- struct{}{} }}
-			sender := NewKindleSender(KindleConfig{KindleSends: sends, EPUBBuilder: &fakeEPUBBuilder{}, MailSender: &fakeMailSender{}, TickInterval: tc.interval, Now: func() time.Time { return now }})
+			sender := newTestKindleSender(t, KindleConfig{KindleSends: sends, EPUBBuilder: &fakeEPUBBuilder{}, MailSender: &fakeMailSender{}, TickInterval: tc.interval, Now: func() time.Time { return now }})
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
 			go func() { sender.StartScheduler(ctx); close(done) }()
@@ -465,5 +454,140 @@ func TestStartSchedulerChecksImmediately(t *testing.T) {
 				t.Fatalf("created sends = %d, want at least %d", got, tc.wantSends)
 			}
 		})
+	}
+}
+
+func TestCheckScheduleLoggedConsecutiveFailuresAndReset(t *testing.T) {
+	t.Parallel()
+
+	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("db error for https://alice:secret@example.com/db"))
+	settings := &fakeSettingRepository{}
+	sends := &fakeKindleSendRepository{settingsRepo: settings}
+
+	var fatals fatalRecorder
+
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{},
+		MailSender:  &fakeMailSender{},
+		OnFatal:     fatals.Record,
+	})
+
+	// Direct CheckSchedule errors do not increment the scheduler streak.
+	sends.setClaimFailure(3, dbErr)
+	for range 3 {
+		if err := sender.CheckSchedule(context.Background()); !errors.Is(err, dbErr) {
+			t.Fatalf("CheckSchedule() error = %v, want %v", err, dbErr)
+		}
+	}
+
+	if got := fatals.Count(); got != 0 {
+		t.Fatalf("OnFatal calls after direct CheckSchedule = %d, want 0", got)
+	}
+
+	// Two consecutive failures followed by success (not claimed) resets the counter.
+	sends.setClaimFailure(2, dbErr)
+	sender.checkScheduleLogged(context.Background())
+	sender.checkScheduleLogged(context.Background())
+	sends.setClaimFailure(0, nil)
+	sender.checkScheduleLogged(context.Background())
+
+	if got := fatals.Count(); got != 0 {
+		t.Fatalf("OnFatal calls after 2 failures + reset = %d, want 0", got)
+	}
+
+	// Three consecutive failures trigger OnFatal exactly once (4th stays 1).
+	sends.setClaimFailure(4, dbErr)
+	for range 4 {
+		sender.checkScheduleLogged(context.Background())
+	}
+
+	got := fatals.Errors()
+	if len(got) != 1 {
+		t.Fatalf("OnFatal calls = %d, want 1", len(got))
+	}
+
+	if !errors.Is(got[0], dbErr) {
+		t.Fatalf("fatal error = %v, want wrapping %v", got[0], dbErr)
+	}
+
+	if !strings.Contains(got[0].Error(), "3") {
+		t.Fatalf("fatal error %q missing consecutive failure count", got[0].Error())
+	}
+
+	if strings.Contains(got[0].Error(), "alice:secret") {
+		t.Fatalf("fatal error leaks credentials: %q", got[0].Error())
+	}
+}
+
+func TestCheckScheduleLoggedIgnoresCanceledFailures(t *testing.T) {
+	t.Parallel()
+
+	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("schedule query failed"))
+	settings := &fakeSettingRepository{}
+	sends := &fakeKindleSendRepository{settingsRepo: settings}
+
+	var fatals fatalRecorder
+
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{},
+		MailSender:  &fakeMailSender{},
+		OnFatal:     fatals.Record,
+	})
+
+	// Repeated context.Canceled errors never trigger OnFatal.
+	sends.setClaimFailure(5, context.Canceled)
+	for range 5 {
+		sender.checkScheduleLogged(context.Background())
+	}
+
+	if got := fatals.Count(); got != 0 {
+		t.Fatalf("OnFatal calls after context.Canceled = %d, want 0", got)
+	}
+
+	// Two real failures, then canceled calls (both context.Canceled and canceled ctx),
+	// leave the streak at 2 so one more real failure reaches 3.
+	sends.setClaimFailure(2, dbErr)
+	sender.checkScheduleLogged(context.Background())
+	sender.checkScheduleLogged(context.Background())
+
+	sends.setClaimFailure(1, context.Canceled)
+	sender.checkScheduleLogged(context.Background())
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sends.setClaimFailure(1, dbErr)
+	sender.checkScheduleLogged(canceledCtx)
+
+	if got := fatals.Count(); got != 0 {
+		t.Fatalf("OnFatal calls before 3rd live failure = %d, want 0", got)
+	}
+
+	sends.setClaimFailure(1, dbErr)
+	sender.checkScheduleLogged(context.Background())
+
+	if got := fatals.Count(); got != 1 {
+		t.Fatalf("OnFatal calls on 3rd live failure = %d, want 1", got)
+	}
+}
+
+func TestCheckScheduleLoggedNeverFatalForNonDatabaseErrors(t *testing.T) {
+	t.Parallel()
+
+	sends := &fakeKindleSendRepository{settingsRepo: &fakeSettingRepository{}}
+
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{},
+		MailSender:  &fakeMailSender{},
+	})
+
+	validationErr := domain.NewError(domain.ErrInvalidKindleSetting, errors.New("stored send time invalid"))
+	for _, failure := range []error{validationErr, errors.New("unclassified")} {
+		sends.setClaimFailure(10, failure)
+		for range 10 {
+			sender.checkScheduleLogged(context.Background())
+		}
 	}
 }

@@ -175,23 +175,10 @@ func (l *limitCountWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func compressDeflateBounded(name string, raw []byte, maxBytes int64) (compressedEntry, error) {
-	return compressDeflateBoundedWith(nil, name, raw, maxBytes)
-}
-
 func compressDeflateBoundedWith(fw *flate.Writer, name string, raw []byte, maxBytes int64) (compressedEntry, error) {
 	var buf bytes.Buffer
 	lw := &limitCountWriter{limit: maxBytes, w: &buf}
-
-	if fw == nil {
-		var err error
-		fw, err = flate.NewWriter(lw, flate.DefaultCompression)
-		if err != nil {
-			return compressedEntry{}, err
-		}
-	} else {
-		fw.Reset(lw)
-	}
+	fw.Reset(lw)
 
 	if _, err := fw.Write(raw); err != nil {
 		_ = fw.Close()

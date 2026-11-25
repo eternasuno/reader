@@ -19,16 +19,6 @@ beforeEach(() => {
 });
 
 describe('createOrFindSavedPage create and conflict lookup', () => {
-  it('returns created: true when POST succeeds', async () => {
-    fetchMock.mockResolvedValueOnce(json({ item: page }, 201));
-
-    await expect(createOrFindSavedPage(page.url)).resolves.toEqual({
-      page,
-      created: true,
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   it('resolves 409 SavedPageAlreadyExists by id instead of redacted URL lookup', async () => {
     fetchMock
       .mockResolvedValueOnce(

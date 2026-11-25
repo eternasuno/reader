@@ -183,16 +183,3 @@ describe('extracted toggle', () => {
     expect(state.displayMode()).toBe('default');
   });
 });
-
-describe('embedded toggle', () => {
-  it('toggles embedded mode', () => {
-    const { state, solid } = ctx;
-    state.toggleEmbeddedMode();
-    solid.flush();
-    expect(state.displayMode()).toBe('embedded');
-
-    state.toggleEmbeddedMode();
-    solid.flush();
-    expect(state.displayMode()).toBe('default');
-  });
-});

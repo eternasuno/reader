@@ -76,12 +76,12 @@ export interface Page<T> {
   cursor: string | null;
 }
 
-export interface ListParams {
+export type ListParams = {
   limit?: number;
   unread?: boolean;
   cursor?: string | null;
   order?: SortOrder;
-}
+};
 
 export interface FeedCreateInput {
   url: string;
@@ -180,19 +180,6 @@ export class RequestTimeoutError extends ApiError {
     this.name = 'RequestTimeoutError';
   }
 }
-
-export const isAbortError = (error: unknown): error is Error =>
-  error !== null &&
-  typeof error === 'object' &&
-  'name' in error &&
-  error.name === 'AbortError' &&
-  (error instanceof Error ||
-    (typeof DOMException !== 'undefined' && error instanceof DOMException) ||
-    Object.prototype.toString.call(error) === '[object DOMException]');
-
-export const isTimeoutError = (error: unknown): error is RequestTimeoutError =>
-  error instanceof RequestTimeoutError ||
-  (error instanceof ApiError && error.code === 'RequestTimeout');
 
 export const errorCodeOf = (error: unknown): string =>
   error instanceof ApiError ? error.code : 'RequestFailed';

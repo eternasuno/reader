@@ -15,11 +15,8 @@ export const DEFAULT_END_THRESHOLD = 600;
 export type ScrollVirtualizer = Virtualizer<HTMLDivElement, HTMLDivElement>;
 type ScrollOptions = VirtualizerOptions<HTMLDivElement, HTMLDivElement>;
 
-const hiddenByStyle = (el: HTMLElement): boolean => {
-  if (typeof window === 'undefined') return false;
-  if (typeof window.getComputedStyle !== 'function') return false;
-  return window.getComputedStyle(el).display === 'none';
-};
+const hiddenByStyle = (el: HTMLElement): boolean =>
+  window.getComputedStyle(el).display === 'none';
 
 /** `LIB-VIEW-1`: only panels visible via computed style and measured client height may paginate. */
 const isVisible = (el: HTMLElement): boolean => {
