@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@solid-primitives/i18n':
-        specifier: 3.0.0-next.7
-        version: 3.0.0-next.7(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)
+        specifier: 3.0.0
+        version: 3.0.0(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)
       '@solidjs/router':
         specifier: ^2.0.0
         version: 2.0.0(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)
@@ -294,11 +294,11 @@ packages:
   '@rolldown/pluginutils@1.1.1':
     resolution: {integrity: sha512-glFIJDvLNDtJhT9qrMFWLPbvS+skxgt4L0K8Ei2YtnhPysAJnsI7nyxSJxKj4ADeKX0OLjC4ntRkwpLOoS3rwA==}
 
-  '@solid-primitives/i18n@3.0.0-next.7':
-    resolution: {integrity: sha512-sSg6fniwFh72FkAM3I4N79no17weqIVIPOgwQGlror98G6LFqc7N8tQX0Peb2FO2dlMqlbxskcxlIsUuUSuRxw==}
+  '@solid-primitives/i18n@3.0.0':
+    resolution: {integrity: sha512-f3FkhbnjvldpKWNaTM0ChBjWfHqgeX/f691Qp2Cib5F0LKg9k6reqoQdD4YpLgEDkqYEvGQPZwKViVJUmL0M1Q==}
     peerDependencies:
-      '@solidjs/web': ^2.0.0-rc.21
-      solid-js: 2.0.0-rc.21
+      '@solidjs/web': ^2.0.0
+      solid-js: ^2.0.0
 
   '@solidjs/compiler-darwin-arm64@2.0.0':
     resolution: {integrity: sha512-pPHERRXgCcsfCsaC8sgK94uVlp4WGUcHTfMeBiAfme2amQ7vFn7dpjSD3TIVKY4jeYQTKjIKOYP0c5mqIR1LeA==}
@@ -1209,7 +1209,7 @@ snapshots:
 
   '@rolldown/pluginutils@1.1.1': {}
 
-  '@solid-primitives/i18n@3.0.0-next.7(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)':
+  '@solid-primitives/i18n@3.0.0(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)':
     dependencies:
       '@solidjs/web': 2.0.0(solid-js@2.0.0)
       solid-js: 2.0.0
