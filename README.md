@@ -17,7 +17,6 @@ services:
   reader:
     image: ghcr.io/eternasuno/reader:latest
     restart: unless-stopped
-    stop_grace_period: 5s
     ports:
       - "8080:8080"
     environment:

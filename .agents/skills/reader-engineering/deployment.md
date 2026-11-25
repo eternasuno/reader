@@ -19,7 +19,7 @@ Operator setup, the `docker-compose.yml` example, and environment variables live
 - **Release**: pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`, which builds `linux/amd64` + `linux/arm64` and pushes `ghcr.io/<owner>/reader` tagged `X.Y.Z`, plus `latest` for non-prerelease versions (metadata-action default `latest=auto`). The README example uses `:latest`.
 - **Single instance**: startup holds an exclusive advisory lock on `<DATA_DIR>/lantern.lock`; a second process exits with `another Lantern instance is already using DATA_DIR`, so a failed rebind during manual tests leaves the old binary serving.
 - **Data**: `/data` must be a directory or named volume (SQLite needs `-wal`/`-shm`), writable by UID `65532`.
-- **Shutdown & restarts**: shutdown is hard-capped at `3s` (`shutdownTimeout`); recommended `stop_grace_period: 5s` is only the SIGKILL backstop. A persistent database failure exits non-zero and `restart: unless-stopped` restarts the container; `docker stop` never restarts it (`reader-engineering` Fail fast rule).
+- **Shutdown & restarts**: shutdown is hard-capped at `3s` (`shutdownTimeout`); Docker's default 10s `stop_grace_period` is only the SIGKILL backstop, so the compose example omits it (some deploy panels accept only an integer there). A persistent database failure exits non-zero and `restart: unless-stopped` restarts the container; `docker stop` never restarts it (`reader-engineering` Fail fast rule).
 - **Schema**: early development has no deployment and no legacy data; schema changes edit `001_init.sql` and the dev database is deleted, with no migration compatibility code.
 
 ## Static Serving & Routing (`internal/http`)
