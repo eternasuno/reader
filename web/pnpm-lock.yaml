@@ -12,8 +12,8 @@ importers:
         specifier: 3.0.0-next.7
         version: 3.0.0-next.7(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)
       '@solidjs/router':
-        specifier: ^2.0.0
-        version: 2.0.0(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)
+        specifier: ^2.0.1
+        version: 2.0.1(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)
       '@solidjs/web':
         specifier: ^2.0.0
         version: 2.0.0(solid-js@2.0.0)
@@ -334,8 +334,8 @@ packages:
   '@solidjs/compiler@2.0.0':
     resolution: {integrity: sha512-Spgqz1+eojQ2pDl4yajnajIjX/kSusjTK/6mC6Fm7sAZ3YBI0yP4/epRR1hV08TU3YAH4xLBmZ6wjb1zC134Sw==}
 
-  '@solidjs/router@2.0.0':
-    resolution: {integrity: sha512-Zpa9djVKDigR1PYd6K32OFN3N90wymPk2yIWhV+Sdrz/aRPpMIIohI5dsAqwx5WIjQ3lBlECZHGBEzaPdcmpCA==}
+  '@solidjs/router@2.0.1':
+    resolution: {integrity: sha512-XFmb2A08mcvSnhKoM4x16Kt6olZMlnDUlzHA3w8nX3gpxPxOs40YP07rH2uNuTliTU7lavkcKIlpQzWzRi4yDw==}
     peerDependencies:
       '@solidjs/web': ^2.0.0
       filesystem-routing: '>=0.4.0'
@@ -1245,7 +1245,7 @@ snapshots:
       '@solidjs/compiler-wasm32-wasi': 2.0.0
       '@solidjs/compiler-win32-x64-msvc': 2.0.0
 
-  '@solidjs/router@2.0.0(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)':
+  '@solidjs/router@2.0.1(@solidjs/web@2.0.0(solid-js@2.0.0))(solid-js@2.0.0)':
     dependencies:
       '@solidjs/web': 2.0.0(solid-js@2.0.0)
       solid-js: 2.0.0
