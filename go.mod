@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.3
-	github.com/chromedp/cdproto v0.160.1
+	github.com/chromedp/cdproto v0.160.8
 	github.com/chromedp/chromedp v0.24.0
 	github.com/google/uuid v1.6.0
 	github.com/microcosm-cc/bluemonday v1.0.27
