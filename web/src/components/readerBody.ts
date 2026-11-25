@@ -19,10 +19,8 @@ export const bodyHtml = (article: LibraryArticle): string => {
 
 /** `RD-EXTRACT-1`: the toolbar toggle reads as the action it performs. */
 export const extractLabel = (): string =>
-  String(
-    t(
-      displayMode() === 'extracted'
-        ? 'reader.backToOriginal'
-        : 'reader.extractContent'
-    )
+  t(
+    displayMode() === 'extracted'
+      ? 'reader.backToOriginal'
+      : 'reader.extractContent'
   );

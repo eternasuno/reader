@@ -5,14 +5,22 @@ description: Conditional file of reader-engineering. Read when modifying Dockerf
 
 # Deployment Engineering
 
-Operator setup, commands, environment variables, and `docker run` examples live in [README.md](../../../README.md); this file records build and runtime mechanics only.
+Operator setup, the `docker-compose.yml` example, and environment variables live in [README.md](../../../README.md) (human-facing; no compose file is committed and nothing is built locally); this file records build, runtime, and release mechanics for agents.
 
 ## Multi-Stage Build & Embedding
 
 - **Stage 1 (`node:24-alpine`)**: uses Node 24 LTS (`corepack enable`) and builds `web/` (`pnpm install --frozen-lockfile && pnpm build`) into `web/dist/`.
-- **Stage 2 (`golang:1.27-alpine`)**: copies Go source + `web/dist/`, prepares an empty `/empty-data` directory (`mkdir /empty-data && chown 65532:65532 /empty-data`), and compiles `CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/reader ./cmd/reader`.
-- **Stage 3 (`gcr.io/distroless/static-debian12:nonroot`)**: copies `/out/reader` and `COPY --from=build --chown=65532:65532 /empty-data /data` (explicit numeric UID/GID ownership since distroless has no shell). `cmd/reader` imports `_ "time/tzdata"` so `TZ` works without OS zoneinfo files.
+- **Stage 2 (`golang:1.27-alpine`)**: copies Go source + `web/dist/`, prepares an empty `/empty-data` directory (`mkdir -m 0700 -p /empty-data && chown 65532:65532 /empty-data`), and compiles `CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/reader ./cmd/reader`.
+- **Stage 3 (`gcr.io/distroless/static-debian12:nonroot`)**: copies `/out/reader` and `COPY --from=go-build --chown=65532:65532 --chmod=0700 /empty-data /data` (explicit numeric UID/GID ownership and `0700` mode since distroless has no shell). `cmd/reader` imports `_ "time/tzdata"` so `TZ` works without OS zoneinfo files.
 - **Container smoke check**: verify DB creation and a WAL write inside the built container running as UID `65532` with `/data` mounted as a directory.
+
+## Runtime & Release
+
+- **Release**: pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`, which builds `linux/amd64` + `linux/arm64` and pushes `ghcr.io/<owner>/reader` tagged `X.Y.Z`, plus `latest` for non-prerelease versions (metadata-action default `latest=auto`). The README example uses `:latest`.
+- **Single instance**: startup holds an exclusive advisory lock on `<DATA_DIR>/lantern.lock`; a second process exits with `another Lantern instance is already using DATA_DIR`, so a failed rebind during manual tests leaves the old binary serving.
+- **Data**: `/data` must be a directory or named volume (SQLite needs `-wal`/`-shm`), writable by UID `65532`.
+- **Shutdown & restarts**: shutdown is hard-capped at `3s` (`shutdownTimeout`); recommended `stop_grace_period: 5s` is only the SIGKILL backstop. A persistent database failure exits non-zero and `restart: unless-stopped` restarts the container; `docker stop` never restarts it (`reader-engineering` Fail fast rule).
+- **Schema**: early development has no deployment and no legacy data; schema changes edit `001_init.sql` and the dev database is deleted, with no migration compatibility code.
 
 ## Static Serving & Routing (`internal/http`)
 

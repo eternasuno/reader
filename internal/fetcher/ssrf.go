@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"reader/internal/domain"
 )
 
 const (
@@ -35,6 +37,8 @@ var (
 		netip.MustParsePrefix("198.18.0.0/15"),
 		netip.MustParsePrefix("240.0.0.0/4"),
 		netip.MustParsePrefix("255.255.255.255/32"),
+		netip.MustParsePrefix("64:ff9b::/96"),
+		netip.MustParsePrefix("64:ff9b:1::/48"),
 		netip.MustParsePrefix("fc00::/7"),
 		netip.MustParsePrefix("fe80::/10"),
 		netip.MustParsePrefix("ff00::/8"),
@@ -42,7 +46,7 @@ var (
 )
 
 func IsBlockedIP(addr netip.Addr) bool {
-	addr = addr.Unmap()
+	addr = addr.Unmap().WithZone("")
 	if !addr.IsValid() {
 		return true
 	}
@@ -89,6 +93,32 @@ func newHTTPClient(allowPrivateNetwork bool) *http.Client {
 
 		return checkDialAddress(address)
 	})
+}
+
+func newBrowserDiscoveryClient() *http.Client {
+	client := newHTTPClient(true)
+	client.CheckRedirect = browserDiscoveryRedirectPolicy
+
+	return client
+}
+
+func browserDiscoveryRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if err := redirectPolicy(req, via); err != nil {
+		return err
+	}
+
+	if len(via) == 0 || via[0] == nil {
+		return errBadRedirectURL
+	}
+
+	origin, ok := domain.OriginFromURL(via[0].URL)
+	if !ok || breaksAuthScope(req, origin) {
+		return errBadRedirectURL
+	}
+
+	req.Header.Del("Referer")
+
+	return nil
 }
 
 func newHTTPClientWithDialCheck(check func(address string) error) *http.Client {
@@ -142,48 +172,35 @@ func redirectPolicy(req *http.Request, via []*http.Request) error {
 }
 
 func shouldStripAuthorization(via []*http.Request, next *http.Request) bool {
-	if len(via) == 0 || via[0] == nil || via[0].URL == nil {
+	if len(via) == 0 || via[0] == nil {
 		return true
 	}
 
-	initialURL := via[0].URL
-	initialOrigin := requestOrigin(initialURL)
-	initialHTTPS := strings.EqualFold(initialURL.Scheme, "https")
+	initialOrigin, ok := domain.OriginFromURL(via[0].URL)
+	if !ok {
+		return true
+	}
 
 	for _, hop := range via[1:] {
-		if breaksAuthScope(hop, initialOrigin, initialHTTPS) {
+		if breaksAuthScope(hop, initialOrigin) {
 			return true
 		}
 	}
 
-	return breaksAuthScope(next, initialOrigin, initialHTTPS)
+	return breaksAuthScope(next, initialOrigin)
 }
 
-func breaksAuthScope(req *http.Request, initialOrigin string, initialHTTPS bool) bool {
-	if req == nil || req.URL == nil {
+func breaksAuthScope(req *http.Request, initialOrigin domain.Origin) bool {
+	if req == nil {
 		return true
 	}
 
-	if requestOrigin(req.URL) != initialOrigin {
+	origin, ok := domain.OriginFromURL(req.URL)
+	if !ok {
 		return true
 	}
 
-	return initialHTTPS && strings.EqualFold(req.URL.Scheme, "http")
-}
-
-func requestOrigin(parsed *url.URL) string {
-	scheme := strings.ToLower(parsed.Scheme)
-	port := parsed.Port()
-	if port == "" {
-		switch scheme {
-		case "http":
-			port = "80"
-		case "https":
-			port = "443"
-		}
-	}
-
-	return scheme + "://" + strings.ToLower(parsed.Hostname()) + ":" + port
+	return origin != initialOrigin
 }
 
 func readLimitedBody(reader io.Reader, maxBytes int64) ([]byte, error) {
@@ -207,5 +224,5 @@ func sanitizedURL(parsed *url.URL) string {
 	stripped := *parsed
 	stripped.User = nil
 
-	return stripCredentialText(stripped.String())
+	return domain.SanitizeErrorText(stripped.String())
 }

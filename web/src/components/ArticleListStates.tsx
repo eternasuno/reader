@@ -14,13 +14,11 @@ export function ArticleListError(): JSX.Element {
     >
       <Icon name="warning" size={16} class="mt-0.5 text-error" />
       <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-        <p class="text-sm font-medium">{String(t('library.loadErrorTitle'))}</p>
-        <p class="text-xs text-base-content/60">
-          {String(t('library.loadErrorHint'))}
-        </p>
+        <p class="text-sm font-medium">{t('library.loadErrorTitle')}</p>
+        <p class="text-xs text-base-content/60">{t('library.loadErrorHint')}</p>
       </div>
       <Button variant="secondary" size="sm" onClick={() => void retryLoad()}>
-        {String(t('common.retry'))}
+        {t('common.retry')}
       </Button>
     </div>
   );
@@ -33,7 +31,7 @@ export function ArticleListLoading(): JSX.Element {
       role="status"
     >
       <span class="loading loading-spinner loading-sm" aria-hidden="true" />
-      {String(t('library.loading'))}
+      {t('library.loading')}
     </p>
   );
 }
@@ -66,12 +64,8 @@ function UnreadEmptyCopy(props: {
 }): JSX.Element {
   return (
     <>
-      <p class="text-base font-medium">
-        {String(t('library.unreadEmptyTitle'))}
-      </p>
-      <p class="text-sm text-base-content/60">
-        {String(t('library.unreadEmptyHint'))}
-      </p>
+      <p class="text-base font-medium">{t('library.unreadEmptyTitle')}</p>
+      <p class="text-sm text-base-content/60">{t('library.unreadEmptyHint')}</p>
       <Button
         variant="secondary"
         size="sm"
@@ -80,7 +74,7 @@ function UnreadEmptyCopy(props: {
           props.onNavigate(buildLibraryUrl(props.scope, { unreadOnly: false }))
         }
       >
-        {String(t('library.viewAllArticles'))}
+        {t('library.viewAllArticles')}
       </Button>
     </>
   );

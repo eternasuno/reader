@@ -1,5 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import { createEffect, createSignal, Show } from 'solid-js';
+import type { Feed } from '../api';
 import {
   displayMode,
   type LibraryArticle,
@@ -7,16 +8,16 @@ import {
   readerAppearance,
 } from '../state';
 import { EmbeddedWebpageFrame } from './EmbeddedWebpageFrame';
-import { ReaderArticleBody, ReaderArticleHeader } from './ReaderArticle';
+import { ReaderArticleHeader, ReaderStoredBody } from './ReaderArticle';
 import { ReaderToolbar } from './ReaderToolbar';
 import type { ReaderNav } from './readerNav';
 
 export interface ReaderViewProps {
   article: LibraryArticle;
   nav: ReaderNav;
-  savingToLater: boolean;
   onSaveToLater: () => void;
   onDelete: () => void;
+  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 const LINE_WIDTH_CLASSES: Record<ReaderLineWidth, string> = {
@@ -34,7 +35,7 @@ export function ReaderView(props: ReaderViewProps): JSX.Element {
   const [scrolled, setScrolled] = createSignal(false);
 
   createEffect(
-    () => props.article.id,
+    () => `${props.article.id}:${displayMode()}`,
     () => {
       if (scrollRef) scrollRef.scrollTop = 0;
       setScrolled(false);
@@ -49,6 +50,7 @@ export function ReaderView(props: ReaderViewProps): JSX.Element {
         scrolled={scrolled()}
         onSaveToLater={props.onSaveToLater}
         onDelete={props.onDelete}
+        onRequestFeedOptions={props.onRequestFeedOptions}
       />
       <Show
         when={displayMode() === 'embedded'}
@@ -65,7 +67,7 @@ export function ReaderView(props: ReaderViewProps): JSX.Element {
               ]}
             >
               <ReaderArticleHeader article={props.article} />
-              <ReaderArticleBody article={props.article} />
+              <ReaderStoredBody article={props.article} />
             </article>
           </div>
         }

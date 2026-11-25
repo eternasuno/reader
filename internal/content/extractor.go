@@ -1,7 +1,6 @@
 package content
 
 import (
-	"bytes"
 	stdhtml "html"
 	"net/url"
 	"strings"
@@ -12,6 +11,8 @@ import (
 
 	"reader/internal/domain"
 )
+
+const maxExtractedHTMLBytes = 10 << 20
 
 type Extractor struct {
 	sanitizer domain.HTMLSanitizer
@@ -27,7 +28,7 @@ func (e *Extractor) ExtractArticle(htmlBody string, pageURL string) (domain.Extr
 		return domain.ExtractedArticle{}, err
 	}
 
-	sanitized, err := e.renderSanitizedArticle(article, pageURL)
+	sanitized, err := e.renderSanitizedArticleWithLimit(article, pageURL, maxExtractedHTMLBytes)
 	if err != nil {
 		return domain.ExtractedArticle{}, err
 	}
@@ -38,9 +39,6 @@ func (e *Extractor) ExtractArticle(htmlBody string, pageURL string) (domain.Extr
 	}
 
 	title, description, content := domain.NormalizeArticleValues(article.Title(), description, &sanitized)
-	if content == nil || *content == "" {
-		return domain.ExtractedArticle{}, domain.NewError(domain.ErrArticleEmptyContent, nil)
-	}
 
 	return domain.ExtractedArticle{
 		Title:       title,
@@ -72,13 +70,13 @@ func extractReadableArticle(htmlBody string, pageURL string) (readability.Articl
 	return article, nil
 }
 
-func (e *Extractor) renderSanitizedArticle(article readability.Article, pageURL string) (string, error) {
-	var rendered bytes.Buffer
+func (e *Extractor) renderSanitizedArticleWithLimit(article readability.Article, pageURL string, maxBytes int) (string, error) {
+	rendered := boundedBuffer{limit: maxBytes}
 	if err := article.RenderHTML(&rendered); err != nil {
 		return "", domain.NewError(domain.ErrArticleExtractorError, err)
 	}
 
-	sanitized, err := e.sanitizer.SanitizeHTML(rendered.String(), pageURL)
+	sanitized, err := e.sanitizer.SanitizeHTML(rendered.buf.String(), pageURL)
 	if err != nil {
 		return "", domain.NewError(domain.ErrArticleExtractorError, err)
 	}

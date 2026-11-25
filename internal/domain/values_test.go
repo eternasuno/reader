@@ -257,124 +257,42 @@ func TestValueSendTime(t *testing.T) {
 	}
 }
 
-func TestNextSendAtDaylightSaving(t *testing.T) {
-	t.Parallel()
-
-	loc, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		t.Skipf("timezone data unavailable: %v", err)
-	}
-
-	now := time.Date(2026, 3, 8, 1, 0, 0, 0, loc)
-
-	next, err := ComputeNextSendAt("02:30", now, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := time.Date(2026, 3, 9, 2, 30, 0, 0, loc)
-	if !next.Equal(want) {
-		t.Fatalf("next = %s, want %s", next.UTC(), want.UTC())
-	}
-
-	nextLocal := next.In(loc)
-	if nextLocal.Hour() != 2 || nextLocal.Minute() != 30 {
-		t.Fatalf("next local time = %02d:%02d, want 02:30", nextLocal.Hour(), nextLocal.Minute())
-	}
-
-	next, err = ComputeNextSendAt("09:30", now, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if next.In(loc).Hour() != 9 || next.In(loc).Minute() != 30 {
-		t.Fatalf("next local time = %s, want 09:30", next.In(loc))
-	}
-
-	dayAfter := time.Date(2026, 3, 8, 12, 0, 0, 0, loc)
-	next, err = ComputeNextSendAt("02:30", dayAfter, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !next.Equal(want) {
-		t.Fatalf("next = %s, want %s", next.UTC(), want.UTC())
-	}
-
-	fallBackNow := time.Date(2026, 11, 1, 5, 45, 0, 0, time.UTC)
-	fallBackNext, err := ComputeNextSendAt("01:30", fallBackNow, loc)
-	if err != nil {
-		t.Fatalf("unexpected error on fall-back: %v", err)
-	}
-
-	wantFallBack := time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC)
-	if !fallBackNext.Equal(wantFallBack) {
-		t.Fatalf("fall-back next = %s, want %s", fallBackNext, wantFallBack)
-	}
-}
-
 func TestNextSendAt(t *testing.T) {
 	t.Parallel()
-
-	loc := time.FixedZone("UTC+8", 8*60*60)
-	now := time.Date(2026, 3, 1, 9, 0, 0, 0, loc)
-
-	next, err := ComputeNextSendAt("09:30", now, loc)
+	ny, err := time.LoadLocation("America/New_York")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("load timezone: %v", err)
 	}
-
-	want := time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)
-	if !next.Equal(want) {
-		t.Fatalf("next = %s, want %s", next, want)
-	}
-
-	if next.Location() != time.UTC {
-		t.Fatalf("next location = %s, want UTC", next.Location())
-	}
-
-	next, err = ComputeNextSendAt("08:30", now, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want = time.Date(2026, 3, 2, 0, 30, 0, 0, time.UTC)
-	if !next.Equal(want) {
-		t.Fatalf("next = %s, want %s", next, want)
-	}
-
-	next, err = ComputeNextSendAt("09:00", now, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want = time.Date(2026, 3, 2, 1, 0, 0, 0, time.UTC)
-	if !next.Equal(want) {
-		t.Fatalf("next = %s, want %s", next, want)
-	}
-
+	fixed := time.FixedZone("UTC+8", 8*60*60)
+	localNow := time.Date(2026, 3, 1, 9, 0, 0, 0, fixed)
 	utcNow := time.Date(2026, 3, 1, 1, 0, 0, 0, time.UTC)
-	next, err = ComputeNextSendAt("09:30", utcNow, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	cases := []struct {
+		name, send string
+		now        time.Time
+		loc        *time.Location
+		want       time.Time
+	}{
+		{"same day", "09:30", localNow, fixed, time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)},
+		{"next day", "08:30", localNow, fixed, time.Date(2026, 3, 2, 0, 30, 0, 0, time.UTC)},
+		{"equal time", "09:00", localNow, fixed, time.Date(2026, 3, 2, 1, 0, 0, 0, time.UTC)},
+		{"UTC now", "09:30", utcNow, fixed, time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)},
+		{"spring missing time", "02:30", time.Date(2026, 3, 8, 1, 0, 0, 0, ny), ny, time.Date(2026, 3, 9, 6, 30, 0, 0, time.UTC)},
+		{"spring same day", "09:30", time.Date(2026, 3, 8, 1, 0, 0, 0, ny), ny, time.Date(2026, 3, 8, 13, 30, 0, 0, time.UTC)},
+		{"spring after transition", "02:30", time.Date(2026, 3, 8, 12, 0, 0, 0, ny), ny, time.Date(2026, 3, 9, 6, 30, 0, 0, time.UTC)},
+		{"fall repeated time", "01:30", time.Date(2026, 11, 1, 5, 45, 0, 0, time.UTC), ny, time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC)},
 	}
-
-	want = time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)
-	if !next.Equal(want) {
-		t.Fatalf("next = %s, want %s", next, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			next, err := ComputeNextSendAt(tc.send, tc.now, tc.loc)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !next.Equal(tc.want) || next.Location() != time.UTC {
+				t.Fatalf("next = %s (%s), want %s UTC", next, next.Location(), tc.want)
+			}
+		})
 	}
-
-	next, err = ComputeNextSendAt("09:30", utcNow, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want = time.Date(2026, 3, 1, 9, 30, 0, 0, time.UTC)
-	if !next.Equal(want) {
-		t.Fatalf("next = %s, want %s", next, want)
-	}
-
-	_, err = ComputeNextSendAt("09:15", now, loc)
+	_, err = ComputeNextSendAt("09:15", localNow, fixed)
 	requireDomainError(t, err, ErrInvalidKindleSetting)
 }
 

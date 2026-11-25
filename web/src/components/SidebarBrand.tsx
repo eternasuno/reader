@@ -13,17 +13,13 @@ import { Button, Icon, Menu, MenuDivider, MenuItem, MenuRadio } from '../ui';
 const handleCollapseSidebar = (): void => {
   toggleSidebarCollapse();
   queueMicrotask(() =>
-    document
-      .querySelector<HTMLButtonElement>(
-        `button[aria-label="${String(t('library.expandSidebar'))}"]`
-      )
-      ?.focus()
+    document.querySelector<HTMLButtonElement>('[data-sidebar-expand]')?.focus()
   );
 };
 
 /**
- * `auth.md:16`: the brand row hosts the nav menu — settings, locale switch, and
- * sign-out, which stays on the page and reports failures inline.
+ * `AC-AUTH-3`, `CM-I18N-1`, `LIB-VIEW-1`: the brand row hosts sidebar collapse and
+ * the nav menu (settings, theme, locale switch, and sign-out with inline failure alert).
  */
 export function SidebarBrand(props: {
   onNavigate: (url: string) => void;
@@ -52,22 +48,22 @@ export function SidebarBrand(props: {
       <div class="flex min-h-11 items-center justify-between gap-2 px-2 pb-1">
         <span class="flex min-w-0 items-center gap-2 text-lg font-semibold tracking-wide text-base-content">
           <Icon name="rss" size={22} strokeWidth={2.25} class="text-brand" />
-          <span class="truncate">{String(t('common.brand'))}</span>
+          <span class="truncate">{t('common.brand')}</span>
         </span>
         <div class="flex items-center gap-1">
           <Button
             variant="icon"
             size="sm"
             class="hidden btn-xs md:inline-flex"
-            aria-label={String(t('library.collapseSidebar'))}
-            title={String(t('library.collapseSidebar'))}
+            data-sidebar-collapse=""
+            aria-label={t('library.collapseSidebar')}
+            title={t('library.collapseSidebar')}
             onClick={handleCollapseSidebar}
           >
             <Icon name="sidebar" size={16} />
           </Button>
           <BrandMenu
             signingOut={signingOut()}
-            signOutError={signOutError()}
             onNavigate={props.onNavigate}
             onSignOut={handleSignOut}
           />
@@ -75,7 +71,7 @@ export function SidebarBrand(props: {
       </div>
       <Show when={signOutError()}>
         <p role="alert" class="px-2 text-xs text-error">
-          {String(t('auth.signOutFailed'))}
+          {t('auth.signOutFailed')}
         </p>
       </Show>
     </>
@@ -84,7 +80,6 @@ export function SidebarBrand(props: {
 
 interface BrandMenuProps {
   signingOut: boolean;
-  signOutError: boolean;
   onNavigate: (url: string) => void;
   onSignOut: () => void;
 }
@@ -111,25 +106,25 @@ function BrandThemeSubpanel(props: { onBack: () => void }): JSX.Element {
         <span class="flex size-5 shrink-0 items-center justify-center">
           <Icon name="arrow-left" size={18} />
         </span>
-        <span>{String(t('reader.theme'))}</span>
+        <span>{t('reader.theme')}</span>
       </button>
       <MenuRadio
         checked={readerTheme() === 'auto'}
         onSelect={() => setReaderTheme('auto')}
       >
-        {String(t('reader.themeAuto'))}
+        {t('reader.themeAuto')}
       </MenuRadio>
       <MenuRadio
         checked={readerTheme() === 'light'}
         onSelect={() => setReaderTheme('light')}
       >
-        {String(t('reader.themeLight'))}
+        {t('reader.themeLight')}
       </MenuRadio>
       <MenuRadio
         checked={readerTheme() === 'dark'}
         onSelect={() => setReaderTheme('dark')}
       >
-        {String(t('reader.themeDark'))}
+        {t('reader.themeDark')}
       </MenuRadio>
     </>
   );
@@ -141,8 +136,7 @@ function BrandMenu(props: BrandMenuProps): JSX.Element {
   return (
     <Menu
       icon="user"
-      label={String(t('library.appMenu'))}
-      align="end"
+      label={t('library.appMenu')}
       triggerClass="btn-xs"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
@@ -152,7 +146,9 @@ function BrandMenu(props: BrandMenuProps): JSX.Element {
         when={panel() === 'theme'}
         fallback={
           <BrandMainMenuItems
-            props={props}
+            signingOut={props.signingOut}
+            onNavigate={props.onNavigate}
+            onSignOut={props.onSignOut}
             onOpenTheme={() => setPanel('theme')}
           />
         }
@@ -164,16 +160,15 @@ function BrandMenu(props: BrandMenuProps): JSX.Element {
 }
 
 function BrandMainMenuItems(props: {
-  props: BrandMenuProps;
+  signingOut: boolean;
+  onNavigate: (url: string) => void;
+  onSignOut: () => void;
   onOpenTheme: () => void;
 }): JSX.Element {
   return (
     <>
-      <MenuItem
-        icon="settings"
-        onSelect={() => props.props.onNavigate('/settings')}
-      >
-        {String(t('library.settings'))}
+      <MenuItem icon="settings" onSelect={() => props.onNavigate('/settings')}>
+        {t('library.settings')}
       </MenuItem>
       <button
         type="button"
@@ -185,27 +180,22 @@ function BrandMainMenuItems(props: {
         <span class="flex size-5 shrink-0 items-center justify-center opacity-70">
           <Icon name="chevron-right" size={16} />
         </span>
-        <span class="flex-1 truncate">{String(t('reader.theme'))}</span>
+        <span class="flex-1 truncate">{t('reader.theme')}</span>
         <span class="text-sm text-base-content/60">
-          {String(t(THEME_LABEL_KEYS[readerTheme()]))}
+          {t(THEME_LABEL_KEYS[readerTheme()])}
         </span>
       </button>
       <MenuItem icon="globe" onSelect={() => toggleLocale()}>
-        {String(t('common.localeSwitchLabel'))}
+        {t('common.localeSwitchLabel')}
       </MenuItem>
       <MenuDivider />
       <MenuItem
         icon="logout"
-        disabled={props.props.signingOut}
-        onSelect={props.props.onSignOut}
+        disabled={props.signingOut}
+        onSelect={props.onSignOut}
       >
-        {String(t(props.props.signingOut ? 'auth.signingOut' : 'auth.signOut'))}
+        {t(props.signingOut ? 'auth.signingOut' : 'auth.signOut')}
       </MenuItem>
-      <Show when={props.props.signOutError}>
-        <p role="alert" class="px-3 py-1 text-xs text-error">
-          {String(t('auth.signOutFailed'))}
-        </p>
-      </Show>
     </>
   );
 }

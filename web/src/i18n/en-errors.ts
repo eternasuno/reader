@@ -6,6 +6,8 @@ export const enErrors: typeof zhErrors = {
   InvalidCredentials: 'Incorrect password.',
   TooManyRequests: 'Too many requests. Please try again later.',
   RequestFailed: 'Something went wrong. Please try again later.',
+  RequestTimeout: 'Request timed out. Please try again later.',
+  InvalidResponse: 'The server returned an unrecognized response.',
   NetworkError:
     'Network connection failed. Check your connection and try again.',
   ArticleEmptyContent: 'Could not extract any article content.',

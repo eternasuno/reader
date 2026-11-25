@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,11 +21,14 @@ import (
 )
 
 const (
-	defaultRetention    = 100
-	readPoolConnections = 4
-	sqliteConstraint    = 19
-	foreignKeyFailed    = "FOREIGN KEY constraint failed"
-	uniqueFailedPrefix  = "UNIQUE constraint failed: "
+	readPoolConnections     = 4
+	sqliteConstraint        = 19
+	foreignKeyFailed        = "FOREIGN KEY constraint failed"
+	uniqueFailedPrefix      = "UNIQUE constraint failed: "
+	dataDirMode             = 0o700
+	dbFileMode              = 0o600
+	markSavedPagesReadQuery = `UPDATE saved_page SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`
+	markFeedItemsReadQuery  = `UPDATE feed_item SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`
 )
 
 //go:embed migrations/*.sql
@@ -42,11 +46,16 @@ type Store struct {
 }
 
 func Open(ctx context.Context, dbPath string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
-		return nil, fmt.Errorf("create database directory: %w", err)
+	absPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve database path: %w", err)
 	}
 
-	writeDB, err := sql.Open("sqlite", writeDSN(dbPath))
+	if err := ensureDatabasePermissions(absPath); err != nil {
+		return nil, err
+	}
+
+	writeDB, err := sql.Open("sqlite", sqliteDSN(absPath, true))
 	if err != nil {
 		return nil, fmt.Errorf("open write pool: %w", err)
 	}
@@ -54,7 +63,7 @@ func Open(ctx context.Context, dbPath string) (*Store, error) {
 	writeDB.SetMaxOpenConns(1)
 	writeDB.SetMaxIdleConns(1)
 
-	store, err := initialize(ctx, dbPath, writeDB)
+	store, err := initialize(ctx, absPath, writeDB)
 	if err != nil {
 		_ = writeDB.Close()
 
@@ -69,21 +78,15 @@ func initialize(ctx context.Context, dbPath string, writeDB *sql.DB) (*Store, er
 		return nil, fmt.Errorf("enable write-ahead logging: %w", err)
 	}
 
+	if err := tightenSidecarPermissions(dbPath); err != nil {
+		return nil, err
+	}
+
 	if err := applyMigrations(ctx, writeDB); err != nil {
 		return nil, err
 	}
 
-	_, err := writeDB.ExecContext(
-		ctx,
-		`INSERT INTO setting (id, retention, provider) VALUES (1, ?, ?) ON CONFLICT (id) DO NOTHING`,
-		defaultRetention,
-		string(domain.ProviderDirect),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("initialize settings: %w", err)
-	}
-
-	readDB, err := sql.Open("sqlite", readDSN(dbPath))
+	readDB, err := sql.Open("sqlite", sqliteDSN(dbPath, false))
 	if err != nil {
 		return nil, fmt.Errorf("open read pool: %w", err)
 	}
@@ -107,16 +110,32 @@ func initialize(ctx context.Context, dbPath string, writeDB *sql.DB) (*Store, er
 	return store, nil
 }
 
-func writeDSN(dbPath string) string {
-	return "file:" + dbPath + "?_txlock=immediate&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
-}
+func sqliteDSN(dbPath string, txLockImmediate bool) string {
+	query := "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	if txLockImmediate {
+		query = "_txlock=immediate&" + query
+	}
 
-func readDSN(dbPath string) string {
-	return "file:" + dbPath + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	slashPath := filepath.ToSlash(dbPath)
+	if !strings.HasPrefix(slashPath, "/") {
+		slashPath = "/" + slashPath
+	}
+
+	uri := url.URL{
+		Scheme:   "file",
+		Path:     slashPath,
+		RawQuery: query,
+	}
+
+	return uri.String()
 }
 
 func applyMigrations(ctx context.Context, db *sql.DB) error {
-	names, err := fs.Glob(migrationFiles, "migrations/*.sql")
+	return applyMigrationsFromFS(ctx, db, migrationFiles)
+}
+
+func applyMigrationsFromFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
+	names, err := fs.Glob(fsys, "migrations/*.sql")
 	if err != nil {
 		return fmt.Errorf("list migrations: %w", err)
 	}
@@ -124,12 +143,17 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 	sort.Strings(names)
 
 	for _, name := range names {
-		payload, err := migrationFiles.ReadFile(name)
+		payload, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", filepath.Base(name), err)
 		}
 
-		if _, err := db.ExecContext(ctx, string(payload)); err != nil {
+		err = withTx(ctx, db, func(tx *sql.Tx) error {
+			_, execErr := tx.ExecContext(ctx, string(payload))
+
+			return execErr
+		})
+		if err != nil {
 			return fmt.Errorf("apply migration %s: %w", filepath.Base(name), err)
 		}
 	}
@@ -173,8 +197,46 @@ func (s *Store) KindleSends() *KindleSendRepo {
 	return s.kindleSends
 }
 
-func (s *Store) ImportOPML(ctx context.Context, doc domain.OPMLDocument) (domain.OPMLImportResult, []domain.Feed, error) {
-	return importOPML(ctx, s.writeDB, doc)
+func ensureDatabasePermissions(absPath string) error {
+	dataDir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dataDir, dataDirMode); err != nil {
+		return fmt.Errorf("create database directory: %w", err)
+	}
+
+	//nolint:gosec // absPath is the caller-configured SQLite database file path.
+	file, err := os.OpenFile(absPath, os.O_CREATE|os.O_RDONLY, dbFileMode)
+	if err != nil {
+		return fmt.Errorf("create database file: %w", err)
+	}
+
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close database file: %w", err)
+	}
+
+	if err := os.Chmod(absPath, dbFileMode); err != nil {
+		return fmt.Errorf("chmod database file: %w", err)
+	}
+
+	return tightenSidecarPermissions(absPath)
+}
+
+func tightenSidecarPermissions(absPath string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecar := absPath + suffix
+		if err := os.Chmod(sidecar, dbFileMode); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("chmod database sidecar %s: %w", filepath.Base(sidecar), err)
+		}
+	}
+
+	return nil
+}
+
+type rowsQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 func withTx(ctx context.Context, db *sql.DB, apply func(tx *sql.Tx) error) error {
@@ -183,17 +245,22 @@ func withTx(ctx context.Context, db *sql.DB, apply func(tx *sql.Tx) error) error
 		return err
 	}
 
-	if err := apply(tx); err != nil {
-		_ = tx.Rollback()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
+	if err := apply(tx); err != nil {
 		return err
 	}
 
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
-
 		return err
 	}
+
+	committed = true
 
 	return nil
 }
@@ -291,6 +358,21 @@ func encodeIDs(ids []string) (string, error) {
 	}
 
 	return string(payload), nil
+}
+
+func markIDsRead(ctx context.Context, exec execer, query string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	payload, err := encodeIDs(ids)
+	if err != nil {
+		return err
+	}
+
+	_, err = exec.ExecContext(ctx, query, payload)
+
+	return err
 }
 
 func closeRows(rows *sql.Rows) {

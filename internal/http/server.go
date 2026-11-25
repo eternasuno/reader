@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -19,10 +20,15 @@ import (
 )
 
 const (
-	maxRequestBodyBytes = 10 << 20
+	maxRequestBodyBytes            = 10 << 20
+	maxLoginBodyBytes              = 4 << 10
+	maxConcurrentForegroundFetches = 4
+	defaultForegroundFetchTimeout  = 30 * time.Second
 
+	apiCacheControl       = "no-store"
 	immutableCacheControl = "public, max-age=31536000, immutable"
 	indexCacheControl     = "no-cache"
+	indexCSP              = "frame-ancestors 'none'"
 )
 
 // FeedRefresher schedules background refreshes without exposing the worker
@@ -41,13 +47,14 @@ type KindleDispatcher interface {
 // Config carries the settings, repositories, adapters, and workers the HTTP
 // layer needs.
 type Config struct {
-	AppPassword   string
-	AppURL        string
-	SessionSecret []byte
-	Location      *time.Location
-	Now           func() time.Time
-	HealthCheck   func(ctx context.Context) error
-	StaticFS      fs.FS
+	AppPassword            string
+	AppURL                 string
+	SessionSecret          []byte
+	Location               *time.Location
+	Now                    func() time.Time
+	ForegroundFetchTimeout time.Duration
+	HealthCheck            func(ctx context.Context) error
+	StaticFS               fs.FS
 
 	Folders     domain.FolderRepository
 	Feeds       domain.FeedRepository
@@ -65,43 +72,39 @@ type Config struct {
 	Kindle    KindleDispatcher
 }
 
-type server struct {
-	cfg     Config
-	appURL  *url.URL
-	secure  bool
-	limiter *loginLimiter
-	mux     *http.ServeMux
+var errExtractionsStillRunning = errors.New("extractions still running after cancellation grace")
+
+type Server struct {
+	cfg       Config
+	appOrigin domain.Origin
+	secure    bool
+	limiter   *loginLimiter
+	fetchSem  slotSemaphore
+	extracts  *extractGroup
+	mux       *http.ServeMux
 }
 
+type server = Server
+
 // NewServer validates the static configuration and wires the route table.
-func NewServer(cfg Config) (http.Handler, error) {
-	if cfg.Now == nil {
-		cfg.Now = time.Now
+func NewServer(cfg Config) (*Server, error) {
+	if cfg.ForegroundFetchTimeout <= 0 {
+		cfg.ForegroundFetchTimeout = defaultForegroundFetchTimeout
 	}
 
-	if cfg.Location == nil {
-		cfg.Location = time.UTC
-	}
-
-	if len(cfg.SessionSecret) == 0 {
-		return nil, errors.New("http: session secret is required")
-	}
-
-	appURL, err := url.Parse(strings.TrimSpace(cfg.AppURL))
+	appOrigin, err := parseAppOrigin(cfg.AppURL)
 	if err != nil {
-		// The raw URL may embed credentials, so never echo it or the parse error.
-		return nil, errors.New("http: invalid APP_URL")
+		return nil, err
 	}
 
-	if appURL.Scheme == "" || appURL.Host == "" || appURL.User != nil {
-		return nil, errors.New("http: invalid APP_URL")
-	}
-
+	fetchSem := newSlotSemaphore(maxConcurrentForegroundFetches)
 	s := &server{
-		cfg:     cfg,
-		appURL:  appURL,
-		secure:  strings.EqualFold(appURL.Scheme, "https"),
-		limiter: newLoginLimiter(cfg.Now),
+		cfg:       cfg,
+		appOrigin: appOrigin,
+		secure:    appOrigin.Scheme == "https",
+		limiter:   newLoginLimiter(cfg.Now),
+		fetchSem:  fetchSem,
+		extracts:  newExtractGroup(fetchSem, cfg.ForegroundFetchTimeout),
 	}
 
 	s.mux = s.routes()
@@ -109,8 +112,56 @@ func NewServer(cfg Config) (http.Handler, error) {
 	return s, nil
 }
 
+func (s *Server) WaitExtractions(ctx context.Context) error {
+	drained := s.extracts.closeAndDrained()
+	s.extracts.cancelInflight()
+
+	select {
+	case <-drained:
+		return nil
+	default:
+	}
+
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("%w: %w", errExtractionsStillRunning, ctx.Err())
+	}
+}
+
+// ValidateAppURL checks that APP_URL is an http or https origin without credentials.
+func ValidateAppURL(rawAppURL string) error {
+	_, err := parseAppOrigin(rawAppURL)
+
+	return err
+}
+
+func parseAppOrigin(rawAppURL string) (domain.Origin, error) {
+	appURL, err := url.Parse(strings.TrimSpace(rawAppURL))
+	if err != nil {
+		// The raw URL may embed credentials, so never echo it or the parse error.
+		return domain.Origin{}, errors.New("http: invalid APP_URL")
+	}
+
+	if appURL.User != nil || appURL.Host == "" || appURL.Opaque != "" || strings.HasSuffix(appURL.Host, ":") {
+		return domain.Origin{}, errors.New("http: invalid APP_URL")
+	}
+
+	appOrigin, ok := domain.OriginFromURL(appURL)
+	if !ok || (appOrigin.Scheme != "http" && appOrigin.Scheme != "https") {
+		return domain.Origin{}, errors.New("http: invalid APP_URL")
+	}
+
+	return appOrigin, nil
+}
+
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
 	if isAPIPath(r.URL.Path) {
+		w.Header().Set("Cache-Control", apiCacheControl)
+
 		if isStateChanging(r.Method) && !s.originAllowed(r) {
 			writeError(w, domain.NewError(domain.ErrForbidden, nil))
 
@@ -151,11 +202,10 @@ func (s *server) registerSavedPageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/saved-pages", s.handleSavedPageList)
 	mux.HandleFunc("POST /api/saved-pages", s.handleSavedPageCreate)
 	mux.HandleFunc("GET /api/saved-pages/unread-count", s.handleSavedPageUnreadCount)
-	mux.HandleFunc("GET /api/saved-pages/lookup", s.handleSavedPageLookup)
-	mux.HandleFunc("POST /api/saved-pages/read", s.handleSavedPagesMarkRead)
-	mux.HandleFunc("POST /api/saved-pages/read-all", s.handleSavedPagesMarkAllRead)
+	mux.HandleFunc("POST /api/saved-pages/read", handleMarkIDsRead(s.cfg.SavedPages))
+	mux.HandleFunc("POST /api/saved-pages/read-all", handleMarkAllRead(s.cfg.SavedPages))
 	mux.HandleFunc("GET /api/saved-pages/{id}", s.handleSavedPageGet)
-	mux.HandleFunc("PATCH /api/saved-pages/{id}", s.handleSavedPageSetRead)
+	mux.HandleFunc("PATCH /api/saved-pages/{id}", handleSetRead(s.cfg.SavedPages))
 	mux.HandleFunc("DELETE /api/saved-pages/{id}", s.handleSavedPageDelete)
 }
 
@@ -173,10 +223,10 @@ func (s *server) registerFeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/feeds/{id}/read-all", s.handleFeedMarkRead)
 
 	mux.HandleFunc("GET /api/feed-items", s.handleFeedItemList)
-	mux.HandleFunc("POST /api/feed-items/read", s.handleFeedItemsMarkRead)
-	mux.HandleFunc("POST /api/feed-items/read-all", s.handleFeedItemsMarkAllRead)
+	mux.HandleFunc("POST /api/feed-items/read", handleMarkIDsRead(s.cfg.FeedItems))
+	mux.HandleFunc("POST /api/feed-items/read-all", handleMarkAllRead(s.cfg.FeedItems))
 	mux.HandleFunc("GET /api/feed-items/{id}", s.handleFeedItemGet)
-	mux.HandleFunc("PATCH /api/feed-items/{id}", s.handleFeedItemSetRead)
+	mux.HandleFunc("PATCH /api/feed-items/{id}", handleSetRead(s.cfg.FeedItems))
 	mux.HandleFunc("POST /api/feed-items/{id}/save", s.handleFeedItemSave)
 	mux.HandleFunc("POST /api/feed-items/{id}/extract", s.handleFeedItemExtract)
 
@@ -209,12 +259,10 @@ func (s *server) registerFolderAndSettingRoutes(mux *http.ServeMux) {
 }
 
 func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.HealthCheck != nil {
-		if err := s.cfg.HealthCheck(r.Context()); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, statusResponse{Status: "error"})
+	if err := s.cfg.HealthCheck(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, statusResponse{Status: "error"})
 
-			return
-		}
+		return
 	}
 
 	writeJSON(w, http.StatusOK, statusResponse{Status: "ok"})
@@ -232,14 +280,8 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.cfg.StaticFS == nil {
-		http.NotFound(w, r)
-
-		return
-	}
-
 	name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
-	if name == "" || !hasFileExtension(name) {
+	if name == "" || name == "index.html" || path.Ext(name) == "" {
 		s.serveIndex(w, r)
 
 		return
@@ -254,6 +296,12 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(name, "assets/") {
 		w.Header().Set("Cache-Control", immutableCacheControl)
+	} else {
+		w.Header().Set("Cache-Control", indexCacheControl)
+	}
+
+	if path.Ext(name) == ".webmanifest" {
+		w.Header().Set("Content-Type", "application/manifest+json")
 	}
 
 	http.ServeFileFS(w, r, s.cfg.StaticFS, name)
@@ -261,14 +309,48 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", indexCacheControl)
+	w.Header().Set("Content-Security-Policy", indexCSP)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeFileFS(w, r, s.cfg.StaticFS, "index.html")
 }
 
-func hasFileExtension(name string) bool {
-	return path.Ext(name) != ""
+type slotSemaphore chan struct{}
+
+func newSlotSemaphore(capacity int) slotSemaphore {
+	return make(slotSemaphore, capacity)
+}
+
+func (s slotSemaphore) tryAcquire() bool {
+	select {
+	case s <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s slotSemaphore) release() {
+	<-s
+}
+
+func (s *server) withForegroundFetchTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, s.cfg.ForegroundFetchTimeout)
 }
 
 func (s *server) extractWebpage(ctx context.Context, pageURL domain.NormalizedURL) (domain.ExtractedArticle, error) {
+	if !s.fetchSem.tryAcquire() {
+		return domain.ExtractedArticle{}, domain.NewError(domain.ErrTooManyRequests, nil)
+	}
+
+	defer s.fetchSem.release()
+
+	fetchCtx, cancel := s.withForegroundFetchTimeout(ctx)
+	defer cancel()
+
+	return s.extractWebpageWithSlot(fetchCtx, pageURL)
+}
+
+func (s *server) extractWebpageWithSlot(ctx context.Context, pageURL domain.NormalizedURL) (domain.ExtractedArticle, error) {
 	htmlBody, finalURL, err := s.cfg.WebpageFetcher.FetchWebpage(ctx, pageURL)
 	if err != nil {
 		return domain.ExtractedArticle{}, err
@@ -277,12 +359,81 @@ func (s *server) extractWebpage(ctx context.Context, pageURL domain.NormalizedUR
 	return s.cfg.ArticleExtractor.ExtractArticle(htmlBody, finalURL)
 }
 
+type readStateRepository interface {
+	SetRead(ctx context.Context, id string, read bool) error
+	MarkIDsRead(ctx context.Context, ids []string) error
+	MarkAllRead(ctx context.Context) error
+}
+
+func handleSetRead(repo readStateRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req readStateRequest
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		if req.Read == nil {
+			writeError(w, domain.NewError(domain.ErrRequestFailed, nil))
+
+			return
+		}
+
+		if err := repo.SetRead(r.Context(), r.PathValue("id"), *req.Read); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		writeNoContent(w)
+	}
+}
+
+func handleMarkIDsRead(repo readStateRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req idsRequest
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		if req.IDs == nil {
+			writeError(w, domain.NewError(domain.ErrRequestFailed, nil))
+
+			return
+		}
+
+		if err := repo.MarkIDsRead(r.Context(), req.IDs); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		writeNoContent(w)
+	}
+}
+
+func handleMarkAllRead(repo readStateRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := repo.MarkAllRead(r.Context()); err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		writeNoContent(w)
+	}
+}
+
 type statusResponse struct {
 	Status string `json:"status"`
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
+	ID    string `json:"id,omitempty"`
 	URL   string `json:"url,omitempty"`
 }
 
@@ -305,7 +456,15 @@ type pageQuery struct {
 }
 
 func parsePageQuery(r *http.Request) (pageQuery, error) {
-	values := r.URL.Query()
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return pageQuery{}, domain.NewError(domain.ErrRequestFailed, err)
+	}
+
+	if hasMultipleQueryValues(values, "limit", "unread", "order", "cursor") {
+		return pageQuery{}, domain.NewError(domain.ErrRequestFailed, nil)
+	}
+
 	parsed := pageQuery{}
 
 	if values.Has("limit") {
@@ -330,11 +489,22 @@ func parsePageQuery(r *http.Request) (pageQuery, error) {
 		parsed.order = domain.SortOrder(strings.ToLower(queryOrder))
 	}
 
-	if cursor := strings.TrimSpace(values.Get("cursor")); cursor != "" {
+	if values.Has("cursor") {
+		cursor := values.Get("cursor")
 		parsed.cursor = &cursor
 	}
 
 	return parsed, nil
+}
+
+func hasMultipleQueryValues(values url.Values, keys ...string) bool {
+	for _, key := range keys {
+		if len(values[key]) > 1 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func parseUnreadFlag(values url.Values) (bool, error) {
@@ -350,6 +520,34 @@ func parseUnreadFlag(values url.Values) (bool, error) {
 	default:
 		return false, domain.NewError(domain.ErrRequestFailed, nil)
 	}
+}
+
+func parseDefaultPageParams(r *http.Request) (domain.PageParams, error) {
+	query, err := parsePageQuery(r)
+	if err != nil {
+		return domain.PageParams{}, err
+	}
+
+	return query.params(query.orderOrDefault())
+}
+
+func mapSlice[In, Out any](items []In, convert func(In) Out) []Out {
+	converted := make([]Out, 0, len(items))
+	for _, item := range items {
+		converted = append(converted, convert(item))
+	}
+
+	return converted
+}
+
+func toPtr[In, Out any](item *In, convert func(In) Out) *Out {
+	if item == nil {
+		return nil
+	}
+
+	converted := convert(*item)
+
+	return &converted
 }
 
 func (q pageQuery) orderOrDefault() domain.SortOrder {
@@ -400,15 +598,21 @@ func writeError(w http.ResponseWriter, err error) {
 	code := domain.ErrRequestFailed
 	status := http.StatusInternalServerError
 	redactedURL := ""
+	conflictID := ""
 
 	var domainErr *domain.DomainError
 	if errors.As(err, &domainErr) {
 		code = domainErr.Code
 		status = statusForCode(code)
 		redactedURL = domainErr.URL
+		conflictID = domainErr.ID
 	}
 
-	writeJSON(w, status, errorResponse{Error: string(code), URL: redactedURL})
+	if status >= http.StatusInternalServerError {
+		logInternalError(code, err)
+	}
+
+	writeJSON(w, status, errorResponse{Error: string(code), ID: conflictID, URL: redactedURL})
 }
 
 func statusForCode(code domain.ErrorCode) int {
@@ -453,34 +657,24 @@ func statusForCode(code domain.ErrorCode) int {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	return decodeJSONWithLimit(w, r, maxRequestBodyBytes, dst)
+}
+
+func decodeJSONWithLimit(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(dst); err != nil {
 		return domain.NewError(domain.ErrRequestFailed, err)
 	}
 
-	// Reject a second JSON value so `{"read":true}{"read":false}` cannot smuggle
-	// ambiguous trailing payloads past validation.
-	var trailing any
-	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+	// Reject a second JSON token so `{"read":true}{"read":false}` cannot smuggle
+	// ambiguous trailing payloads without allocating an arbitrary value tree.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return domain.NewError(domain.ErrRequestFailed, nil)
 	}
 
 	return nil
-}
-
-func trimOptional(value *string) *string {
-	if value == nil {
-		return nil
-	}
-
-	trimmed := strings.TrimSpace(*value)
-	if trimmed == "" {
-		return nil
-	}
-
-	return &trimmed
 }
 
 func formatTimestamp(value time.Time) string {

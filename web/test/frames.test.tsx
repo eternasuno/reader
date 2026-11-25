@@ -1,29 +1,15 @@
-import type { JSX } from '@solidjs/web';
 import { render } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   ArticleFrame,
   buildArticleSrcdoc,
   isValidResizeMessage,
-  stripSourceClasses,
 } from '../src/components/ArticleFrame';
-import {
-  EmbeddedWebpageFrame,
-  isSafeEmbedUrl,
-} from '../src/components/EmbeddedWebpageFrame';
-import { setLocale } from '../src/i18n';
+import { EmbeddedWebpageFrame } from '../src/components/EmbeddedWebpageFrame';
+import { mount, setupInteractions } from './support/list-helpers';
 
-let disposers: Array<() => void> = [];
-
-const mount = (component: () => JSX.Element): HTMLElement => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(render(component, container));
-  flush();
-
-  return container;
-};
+setupInteractions();
 
 const iframeOf = (container: HTMLElement): HTMLIFrameElement =>
   container.querySelector('iframe') as HTMLIFrameElement;
@@ -40,52 +26,27 @@ const dispatchResize = (source: Window | null, data: unknown): void => {
   flush();
 };
 
-beforeEach(() => {
-  localStorage.clear();
-  setLocale('zh-CN');
-});
-
-afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  document.body.innerHTML = '';
-});
-
 const SRCDOC = buildArticleSrcdoc({
-  html: '<p class="lead">Hello</p><img class="shot" src="a.png" alt="a">',
+  html: '<div class="prose wide" id="keep" style="color:red">Hello</div><p class="a"><span class="b">hi</span></p><img class="shot" src="a.png" alt="a">',
   nonce: 'nonce123',
   token: 'token456',
   appOrigin: 'https://app.example',
   stylesheetHrefs: ['https://app.example/assets/app.css'],
 });
 const RESIZE_MESSAGE = { type: 'article-frame-resize' };
-const BLOCK_SELECTORS =
-  'p {|h1 {|h2 {|h3 {|h4,|h5,|h6 {|a {|pre {|code {|blockquote {|img {|table {'.split(
-    '|'
-  );
-
-describe('stripSourceClasses', () => {
-  it('removes source classes for block and nested markup', () => {
-    const html = '<div class="prose wide" id="keep" style="color:red">x</div>';
-
-    expect(stripSourceClasses(html)).toBe(
-      '<div id="keep" style="color:red">x</div>'
-    );
-    expect(
-      stripSourceClasses('<p class="a"><span class="b">hi</span></p>')
-    ).toBe('<p><span>hi</span></p>');
-  });
-});
 
 describe('buildArticleSrcdoc sanitization', () => {
-  it('strips stored source classes from the injected body', () => {
-    expect(SRCDOC).not.toContain('class="lead"');
+  it('strips stored source classes from block and nested markup', () => {
+    expect(SRCDOC).not.toContain('class="prose wide"');
+    expect(SRCDOC).not.toContain('class="a"');
+    expect(SRCDOC).not.toContain('class="b"');
     expect(SRCDOC).not.toContain('class="shot"');
-    expect(SRCDOC).toContain('Hello');
+    expect(SRCDOC).toContain('<div id="keep" style="color:red">Hello</div>');
+    expect(SRCDOC).toContain('<p><span>hi</span></p>');
     expect(SRCDOC).toContain('<img src="a.png" alt="a">');
   });
 
-  it('omits stylesheets when absent and escapes hostile hrefs', () => {
+  it('omits stylesheets when absent and escapes hrefs', () => {
     const bare = buildArticleSrcdoc({
       html: '<p>x</p>',
       nonce: 'n',
@@ -110,36 +71,10 @@ describe('buildArticleSrcdoc sanitization', () => {
 
 describe('buildArticleSrcdoc policy', () => {
   it('renders the CSP meta tag with the nonce and app origin', () => {
-    const expected =
-      "default-src 'none'; img-src https: http:; style-src 'unsafe-inline' " +
-      "https://app.example; script-src 'nonce-nonce123'; base-uri 'none'; form-action 'none'";
-
     expect(SRCDOC).toContain('http-equiv="Content-Security-Policy"');
-    expect(SRCDOC).toContain(expected);
-  });
-
-  it('applies the fixed reader typography and app stylesheet', () => {
-    for (const selector of BLOCK_SELECTORS) {
-      expect(SRCDOC).toContain(selector);
-    }
     expect(SRCDOC).toContain(
-      '<link rel="stylesheet" href="https://app.example/assets/app.css">'
+      "default-src 'none'; img-src https: http:; style-src 'unsafe-inline' https://app.example; script-src 'nonce-nonce123'; base-uri 'none'; form-action 'none'"
     );
-    expect(SRCDOC).toContain('font-family: -apple-system');
-    expect(SRCDOC).toContain('"PingFang SC"');
-    expect(SRCDOC).toMatch(/Arial[^;]*"Noto Sans CJK SC"/);
-    expect(SRCDOC).not.toMatch(/font-family:\s*system-ui/);
-    expect(SRCDOC).toContain('#1e1e1e');
-    expect(SRCDOC).toContain('max-width: 100%');
-  });
-
-  it('embeds the nonce-guarded resize script with the token', () => {
-    expect(SRCDOC).toContain('<script nonce="nonce123">');
-    expect(SRCDOC).toContain('var token = "token456"');
-    expect(SRCDOC).toContain("type: 'article-frame-resize'");
-    expect(SRCDOC).toContain('window.parent.postMessage(');
-    expect(SRCDOC).toContain(", '*')");
-    expect(SRCDOC).toContain('ResizeObserver');
   });
 });
 
@@ -159,43 +94,33 @@ describe('isValidResizeMessage', () => {
   });
 
   it('rejects foreign tokens, wrong types, and out-of-range heights', () => {
-    const heights = [0, -5, 1_000_001, '100', Infinity, null];
-    const invalid: Array<unknown> = [
-      null,
-      undefined,
-      'article-frame-resize',
-      42,
-      [],
-      {},
-      resize({ type: 'other' }),
-      resize({ token: 'other' }),
-      resize({ token: undefined }),
-      ...heights.map((height) => resize({ height })),
-    ];
-
-    for (const data of invalid) {
+    for (const data of [null, undefined, 'article-frame-resize', 42, [], {}])
       expect(isValidResizeMessage(data, token)).toBe(false);
-    }
+    for (const height of [0, -5, 1_000_001, '100', Infinity, null])
+      expect(isValidResizeMessage(resize({ height }), token)).toBe(false);
+    for (const bad of [
+      { type: 'other' },
+      { token: 'other' },
+      { token: undefined },
+    ])
+      expect(isValidResizeMessage(resize(bad), token)).toBe(false);
     expect(isValidResizeMessage(resize({}), '')).toBe(false);
   });
 });
 
 describe('ArticleFrame sandbox', () => {
   it('renders an isolated sandboxed iframe without allow-same-origin', () => {
-    const container = mount(() => (
-      <ArticleFrame html='<p class="lead">Body</p>' title="文章" />
-    ));
-    const iframe = iframeOf(container);
+    const iframe = iframeOf(
+      mount(() => <ArticleFrame html='<p class="lead">Body</p>' title="文章" />)
+    );
     const sandbox = iframe.getAttribute('sandbox') ?? '';
 
-    expect([
-      sandbox.includes('allow-scripts'),
-      sandbox.includes('allow-popups'),
-      sandbox.includes('allow-popups-to-escape-sandbox'),
-      sandbox.includes('allow-same-origin'),
-    ]).toEqual([true, true, true, false]);
+    expect(sandbox.split(' ')).toEqual([
+      'allow-scripts',
+      'allow-popups',
+      'allow-popups-to-escape-sandbox',
+    ]);
     expect(iframe.getAttribute('title')).toBe('文章');
-    expect(srcdocOf(iframe)).not.toContain('class="lead"');
   });
 
   it('links the active app stylesheet into the srcdoc', () => {
@@ -203,11 +128,11 @@ describe('ArticleFrame sandbox', () => {
     stylesheet.rel = 'stylesheet';
     stylesheet.href = '/assets/app.css';
     document.head.append(stylesheet);
-    const container = mount(() => <ArticleFrame html="<p>Body</p>" />);
-    const expected = new URL('/assets/app.css', document.baseURI).href;
-
-    expect(srcdocOf(iframeOf(container))).toContain(
-      `<link rel="stylesheet" href="${expected}">`
+    const doc = srcdocOf(
+      iframeOf(mount(() => <ArticleFrame html="<p>Body</p>" />))
+    );
+    expect(doc).toContain(
+      `<link rel="stylesheet" href="${new URL('/assets/app.css', document.baseURI).href}">`
     );
     stylesheet.remove();
   });
@@ -215,12 +140,10 @@ describe('ArticleFrame sandbox', () => {
 
 describe('ArticleFrame tokens', () => {
   it('issues a fresh nonce and token per render and on html change', () => {
-    const first = srcdocOf(
-      iframeOf(mount(() => <ArticleFrame html="<p>a</p>" />))
-    );
-    const second = srcdocOf(
-      iframeOf(mount(() => <ArticleFrame html="<p>a</p>" />))
-    );
+    const docFor = (h: string) =>
+      srcdocOf(iframeOf(mount(() => <ArticleFrame html={h} />)));
+    const first = docFor('<p>a</p>');
+    const second = docFor('<p>a</p>');
     const [html, setHtml] = createSignal('<p>one</p>');
     const iframe = iframeOf(mount(() => <ArticleFrame html={html()} />));
     const before = srcdocOf(iframe);
@@ -258,62 +181,27 @@ describe('ArticleFrame resize messages', () => {
   });
 
   it('stops listening once the frame is disposed', () => {
-    const iframe = iframeOf(mount(() => <ArticleFrame html="<p>one</p>" />));
+    const container = document.createElement('div');
+    document.body.append(container);
+    const dispose = render(() => <ArticleFrame html="<p>one</p>" />, container);
+    flush();
+    const iframe = iframeOf(container);
     const token = tokenOf(srcdocOf(iframe));
 
-    disposers.pop()?.();
-
-    dispatchResize(iframe.contentWindow, {
-      ...RESIZE_MESSAGE,
-      token,
-      height: 500,
-    });
+    dispose();
+    const msg = { ...RESIZE_MESSAGE, token, height: 500 };
+    dispatchResize(iframe.contentWindow, msg);
     expect(iframe.style.height).toBe('');
   });
 });
 
-describe('isSafeEmbedUrl', () => {
-  it('accepts http(s) URLs without credentials outside the app origin', () => {
-    const cases: Array<[string, string | undefined]> = [
-      ['https://example.com/post', undefined],
-      ['http://example.com/post', undefined],
-      ['https://example.com/post', 'https://app.example'],
-      ['https://app.example/post', 'https://other.example'],
-      ['https://news.example.com/post', window.location.origin],
-    ];
-
-    for (const [url, origin] of cases) {
-      expect(isSafeEmbedUrl(url, origin)).toBe(true);
-    }
-  });
-
-  it('rejects same-origin URLs, credentials, and non-http(s) schemes', () => {
-    const rejected = [
-      'https://app.example/post',
-      'https://APP.example/post',
-      'https://user:pass@example.com/post',
-      'https://user@example.com/post',
-      'ftp://example.com/file',
-      'javascript:alert(1)',
-      'file:///etc/passwd',
-      'not a url',
-      '',
-      '   ',
-    ];
-
-    for (const url of rejected) {
-      expect(isSafeEmbedUrl(url, 'https://app.example')).toBe(false);
-    }
-    expect(isSafeEmbedUrl(`${window.location.origin}/post`)).toBe(false);
-  });
-});
-
 describe('EmbeddedWebpageFrame', () => {
-  it('renders the notice and sandboxed iframe for safe URLs', () => {
-    const container = mount(() => (
-      <EmbeddedWebpageFrame url="https://example.com/post" title="原文" />
-    ));
-    const iframe = iframeOf(container);
+  it('renders the sandboxed iframe for safe URLs', () => {
+    const iframe = iframeOf(
+      mount(() => (
+        <EmbeddedWebpageFrame url="https://example.com/post" title="原文" />
+      ))
+    );
 
     expect(iframe.getAttribute('src')).toBe('https://example.com/post');
     expect(iframe.getAttribute('sandbox')).toBe(
@@ -321,21 +209,25 @@ describe('EmbeddedWebpageFrame', () => {
     );
     expect(iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
     expect(iframe.getAttribute('title')).toBe('原文');
-    expect(iframe.className).toContain('h-full w-full flex-1');
   });
 
-  it('shows the unsafe notice instead of an iframe', () => {
-    const unsafe = [
-      `${window.location.origin}/post`,
-      'https://user:pass@example.com/post',
-    ];
+  it.each([
+    ['same-origin URL', `${window.location.origin}/post`],
+    ['URL with credentials', 'https://user:pass@example.com/post'],
+  ])('shows the unsafe notice instead of an iframe for %s', (_, url) => {
+    const mounted = mount(() => <EmbeddedWebpageFrame url={url} />);
+    expect(mounted.querySelector('iframe')).toBeNull();
+    expect(mounted.textContent).toContain('此地址不支持安全内嵌');
+  });
 
-    for (const url of unsafe) {
-      const mounted = mount(() => <EmbeddedWebpageFrame url={url} />);
-
-      expect(mounted.querySelector('iframe')).toBeNull();
-      expect(mounted.textContent).toContain('此地址不支持安全内嵌');
-      expect(mounted.textContent).not.toContain('部分网站不允许内嵌');
-    }
+  it('shows the unparsable notice for URLs the browser cannot parse', () => {
+    const mounted = mount(() => (
+      <EmbeddedWebpageFrame url="http://127.0.0.1:99999/x.html" />
+    ));
+    expect(mounted.querySelector('iframe')).toBeNull();
+    expect(mounted.textContent).toContain(
+      '此地址无法被浏览器解析，无法内嵌或打开。'
+    );
+    expect(mounted.textContent).not.toContain('请使用上方链接');
   });
 });

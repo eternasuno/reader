@@ -25,6 +25,7 @@ export const isSameScope = (a: LibraryScope, b: LibraryScope): boolean => {
   if (a.kind === 'feed' && b.kind === 'feed') return a.feedId === b.feedId;
   if (a.kind === 'folder' && b.kind === 'folder')
     return a.folderId === b.folderId;
+
   return true;
 };
 
@@ -190,7 +191,7 @@ const decodeEntity = (match: string, entity: string): string => {
 const decodeEntities = (text: string): string =>
   text.replace(/&(#[0-9]+|#x[0-9a-f]+|[a-z]+);/gi, decodeEntity);
 
-/** `LIB-ROW-1`: plain-text summary for the 2-line article row excerpt. */
+/** `LIB-ROW-1`: plain-text summary for the 3-line article row excerpt. */
 export const htmlToPlainText = (html: string | undefined | null): string => {
   if (html === undefined || html === null || html.length === 0) return '';
 
@@ -214,29 +215,16 @@ export const hostnameOf = (rawUrl: string): string => {
 const httpUrl = (rawUrl: string): URL | null => {
   try {
     const url = new URL(rawUrl);
+
     return url.protocol === 'http:' || url.protocol === 'https:' ? url : null;
   } catch {
     return null;
   }
 };
 
-const IMG_SRC_PATTERN = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/i;
-
-/** `LIB-ROW-1`: first absolute `http(s)` `<img src>` of the stored HTML, for the row thumbnail. */
-export const firstImageUrl = (
-  html: string | undefined | null
-): string | null => {
-  if (html === undefined || html === null) return null;
-
-  const match = IMG_SRC_PATTERN.exec(html);
-  const src = match?.[1] ?? match?.[2];
-  if (src === undefined) return null;
-
-  return httpUrl(decodeEntities(src))?.href ?? null;
-};
-
 /** `LIB-ROW-1`: the site's `/favicon.ico`, requested directly by the browser. */
 export const siteIconUrl = (rawUrl: string): string | null => {
   const url = httpUrl(rawUrl);
+
   return url === null ? null : `${url.origin}/favicon.ico`;
 };

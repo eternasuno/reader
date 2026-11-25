@@ -7,8 +7,10 @@ import {
   htmlToPlainText,
   type LibraryArticle,
   type LibraryScope,
+  saveFeedItemToLater,
   toggleArticleRead,
 } from '../state';
+import { Button, Icon } from '../ui';
 import { openInNewTab } from './openInNewTab';
 import { SiteIcon } from './SiteIcon';
 
@@ -29,7 +31,7 @@ const isPlainPrimaryClick = (event: MouseEvent): boolean =>
 
 /**
  * `LIB-ROW-1`: card row with a leading read toggle, site icon + source, relative
- * time, title (3 lines), summary (2 lines), and an optional thumbnail. Plain
+ * time, title (3 lines), summary (3 lines), and top-right quick actions. Plain
  * left-click opens the reader; modified and middle clicks open the original URL.
  */
 export function ArticleRow(props: ArticleRowProps): JSX.Element {
@@ -40,15 +42,15 @@ export function ArticleRow(props: ArticleRowProps): JSX.Element {
     });
   const html = (): string | undefined =>
     props.row.description ?? props.row.content;
-  const readLabel = (): string =>
-    String(t(props.row.read ? 'reader.markUnread' : 'reader.markRead'));
 
   const onClick = (event: MouseEvent): void => {
     event.preventDefault();
     if (!isPlainPrimaryClick(event)) {
       openInNewTab(props.row.url);
+
       return;
     }
+
     props.onNavigate(href());
   };
 
@@ -62,7 +64,7 @@ export function ArticleRow(props: ArticleRowProps): JSX.Element {
             : 'hover:bg-base-200',
         ]}
       >
-        <ReadToggle row={props.row} active={props.active} label={readLabel()} />
+        <ReadToggle row={props.row} active={props.active} />
         <a
           href={href()}
           class="flex min-w-0 flex-1 flex-col gap-1 rounded-field focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
@@ -78,7 +80,53 @@ export function ArticleRow(props: ArticleRowProps): JSX.Element {
           <RowTitle row={props.row} />
           <RowSummary html={html()} />
         </a>
+        <RowQuickActions row={props.row} active={props.active} />
       </div>
+    </div>
+  );
+}
+
+function RowQuickActions(props: {
+  row: LibraryArticle;
+  active: boolean;
+}): JSX.Element {
+  return (
+    <div
+      class={[
+        'absolute top-1.5 right-2 flex items-center gap-0.5 rounded-field p-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100',
+        props.active ? 'bg-neutral' : 'bg-base-100 group-hover:bg-base-200',
+      ]}
+    >
+      <Show when={props.row.kind === 'feed'}>
+        <Button
+          variant="icon"
+          size="sm"
+          class="size-7 pointer-coarse:size-10"
+          aria-label={t('reader.saveToLater')}
+          title={t('reader.saveToLater')}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void saveFeedItemToLater(props.row.id);
+          }}
+        >
+          <Icon name="bookmark" size={14} />
+        </Button>
+      </Show>
+      <Button
+        variant="icon"
+        size="sm"
+        class="size-7 pointer-coarse:size-10"
+        aria-label={t('reader.openOriginal')}
+        title={t('reader.openOriginal')}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openInNewTab(props.row.url);
+        }}
+      >
+        <Icon name="external-link" size={14} />
+      </Button>
     </div>
   );
 }
@@ -146,15 +194,16 @@ function RowTitle(props: { row: LibraryArticle }): JSX.Element {
 function ReadToggle(props: {
   row: LibraryArticle;
   active: boolean;
-  label: string;
 }): JSX.Element {
+  const label = (): string => t('library.readToggle');
+
   return (
     <button
       type="button"
       class="group/toggle mt-6 flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-base-content/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:mt-4.5 pointer-coarse:size-8"
       aria-pressed={props.row.read ? 'true' : 'false'}
-      aria-label={props.label}
-      title={props.label}
+      aria-label={label()}
+      title={label()}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();

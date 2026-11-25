@@ -1,43 +1,71 @@
 /**
- * Shared settings store (`SET-VAL-*`, `SET-SVC-1`, `SET-KINDLE-1`, `KD-SEND-1`): loaded
- * settings, per-section drafts and the save/send guards. `settings.ts`, `settings-kindle.ts`, and
- * `settings-services.ts` read and write it through these accessors, keeping modules cycle-free.
+ * Shared settings session state (`SET-VAL-*`, `SET-SVC-1`, `SET-KINDLE-1`, `KD-SEND-1`):
+ * loaded settings, Kindle send history, save/send locks, and pure draft conversion helpers.
+ * Active form drafts live in a `createStore` owned by the mounted `SettingsPage`.
  */
 
-import { createSignal, flush } from 'solid-js';
+import { createSignal, flush, type StoreSetter } from 'solid-js';
 import type {
   ExtractorProvider,
   KindleSendRecord,
   Settings,
   SMTPSecurity,
 } from '../api';
-import { ApiError } from '../api';
-import { translateErrorCode } from '../i18n';
 import { showToast } from '../ui';
+import { errorText } from './errorText';
+import { onSessionCleared } from './session';
 
 export type SettingsSection = 'articles' | 'extraction' | 'kindle' | 'services';
 
+export interface SettingsDrafts {
+  retention: number;
+  provider: ExtractorProvider;
+  jinaKey: string;
+  browserEndpoint: string;
+  smtpSenderEmail: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: SMTPSecurity;
+  smtpUser: string;
+  smtpPassword: string;
+  kindleEmail: string;
+  sendTime: string;
+}
+
 /** `SET-VAL-1`: retention defaults to 100. */
-export const DEFAULT_RETENTION = 100;
+const DEFAULT_RETENTION = 100;
+
+/** `SET-VAL-3`: secret fields are never returned by the API, so drafts always start blank. */
+export const draftsFromSettings = (
+  loaded: Settings | null
+): SettingsDrafts => ({
+  retention: loaded?.retention ?? DEFAULT_RETENTION,
+  provider: loaded?.provider ?? 'direct',
+  jinaKey: '',
+  browserEndpoint: '',
+  smtpSenderEmail: loaded?.smtp?.senderEmail ?? '',
+  smtpHost: loaded?.smtp?.host ?? '',
+  smtpPort: loaded?.smtp?.port ?? 0,
+  smtpSecurity: loaded?.smtp?.security ?? 'tls',
+  smtpUser: loaded?.smtp?.user ?? '',
+  smtpPassword: '',
+  kindleEmail: loaded?.kindle?.kindleEmail ?? '',
+  sendTime: loaded?.kindle?.sendTime ?? '',
+});
+
+export const clearSecretDrafts = (
+  setDrafts: StoreSetter<SettingsDrafts>
+): void => {
+  setDrafts((draft) => ({
+    ...draft,
+    jinaKey: '',
+    browserEndpoint: '',
+    smtpPassword: '',
+  }));
+};
 
 const [settings, setSettings] = createSignal<Settings | null>(null);
-
-const [retentionDraft, setRetentionDraft] = createSignal(DEFAULT_RETENTION);
-const [providerDraft, setProviderDraft] =
-  createSignal<ExtractorProvider>('direct');
-const [jinaKeyDraft, setJinaKeyDraft] = createSignal('');
-const [browserEndpointDraft, setBrowserEndpointDraft] = createSignal('');
-
-const [smtpSenderEmailDraft, setSmtpSenderEmailDraft] = createSignal('');
-const [smtpHostDraft, setSmtpHostDraft] = createSignal('');
-const [smtpPortDraft, setSmtpPortDraft] = createSignal(0);
-const [smtpSecurityDraft, setSmtpSecurityDraft] =
-  createSignal<SMTPSecurity>('tls');
-const [smtpUserDraft, setSmtpUserDraft] = createSignal('');
-const [smtpPasswordDraft, setSmtpPasswordDraft] = createSignal('');
-
-const [kindleEmailDraft, setKindleEmailDraft] = createSignal('');
-const [sendTimeDraft, setSendTimeDraft] = createSignal('');
+const [loadingSettings, setLoadingSettings] = createSignal(false);
 
 const [savingAction, setSavingAction] = createSignal<string | null>(null);
 const [kindleSending, setKindleSending] = createSignal(false);
@@ -47,47 +75,46 @@ const [kindleSends, setKindleSends] = createSignal<
 const [kindleRunning, setKindleRunning] = createSignal(false);
 
 export {
-  browserEndpointDraft,
-  jinaKeyDraft,
-  kindleEmailDraft,
   kindleRunning,
   kindleSending,
   kindleSends,
-  providerDraft,
-  retentionDraft,
+  loadingSettings,
   savingAction,
-  sendTimeDraft,
-  setBrowserEndpointDraft,
-  setJinaKeyDraft,
-  setKindleEmailDraft,
   setKindleRunning,
   setKindleSending,
   setKindleSends,
-  setProviderDraft,
-  setRetentionDraft,
-  setSavingAction,
-  setSendTimeDraft,
+  setLoadingSettings,
   setSettings,
-  setSmtpHostDraft,
-  setSmtpPasswordDraft,
-  setSmtpPortDraft,
-  setSmtpSecurityDraft,
-  setSmtpSenderEmailDraft,
-  setSmtpUserDraft,
   settings,
-  smtpHostDraft,
-  smtpPasswordDraft,
-  smtpPortDraft,
-  smtpSecurityDraft,
-  smtpSenderEmailDraft,
-  smtpUserDraft,
 };
 
-export const errorCodeOf = (error: unknown): string =>
-  error instanceof ApiError ? error.code : 'RequestFailed';
+let saveToken = 0;
+let activeSaveToken: number | null = null;
+let kindleSendsGeneration = 0;
+
+export const nextKindleSendsGeneration = (): number => {
+  kindleSendsGeneration += 1;
+  return kindleSendsGeneration;
+};
+
+export const isCurrentKindleSendsGeneration = (generation: number): boolean =>
+  kindleSendsGeneration === generation;
+
+const clearSettingsState = (): void => {
+  activeSaveToken = null;
+  kindleSendsGeneration += 1;
+  setSettings(null);
+  setLoadingSettings(false);
+  setSavingAction(null);
+  setKindleSending(false);
+  setKindleSends([]);
+  setKindleRunning(false);
+};
+
+onSessionCleared(clearSettingsState);
 
 export const toastSettingsError = (error: unknown): false => {
-  showToast(translateErrorCode(errorCodeOf(error)), 'error');
+  showToast(errorText(error), 'error');
   return false;
 };
 
@@ -101,12 +128,18 @@ export const runSave = async (
 ): Promise<boolean> => {
   if (savingAction() !== null) return false;
 
+  saveToken += 1;
+  const ownerToken = saveToken;
+  activeSaveToken = ownerToken;
   setSavingAction(action);
   flush();
   try {
     return await work();
   } finally {
-    setSavingAction(null);
-    flush();
+    if (activeSaveToken === ownerToken) {
+      activeSaveToken = null;
+      setSavingAction(null);
+      flush();
+    }
   }
 };

@@ -21,23 +21,25 @@ export interface EmptyCopy {
 /** The feed the current scope points at, when it points at a single feed. */
 export const activeFeed = (scope: LibraryScope): Feed | null => {
   if (scope.kind !== 'feed') return null;
+
   return feeds().find((feed) => feed.id === scope.feedId) ?? null;
 };
 
 /** `FD-SCHED-3`: only repeat offenders escalate to the heading warning. */
 export const failingFeed = (scope: LibraryScope): Feed | null => {
   const feed = activeFeed(scope);
+
   return feed !== null && hasRefreshFailures(feed) ? feed : null;
 };
 
 export const scopeTitle = (scope: LibraryScope): string => {
   switch (scope.kind) {
     case 'later':
-      return String(t('library.laterScope'));
+      return t('library.laterScope');
     case 'all':
-      return String(t('library.allFeedsScope'));
+      return t('library.allFeedsScope');
     case 'feed':
-      return feeds().find((feed) => feed.id === scope.feedId)?.title ?? '';
+      return activeFeed(scope)?.title ?? '';
     case 'folder':
       return (
         folders().find((folder) => folder.id === scope.folderId)?.name ?? ''
@@ -67,36 +69,36 @@ export const emptyCopy = (
   switch (scope.kind) {
     case 'later':
       return {
-        title: String(t('later.emptyTitle')),
-        hint: String(t('later.emptyHint')),
+        title: t('later.emptyTitle'),
+        hint: t('later.emptyHint'),
         action: {
-          label: String(t('later.addLinkTitle')),
+          label: t('later.addLinkTitle'),
           run: onRequestAddLink,
         },
       };
     case 'all':
       return {
-        title: String(t('feeds.emptyAllTitle')),
-        hint: String(t('feeds.emptyAllHint')),
+        title: t('feeds.emptyAllTitle'),
+        hint: t('feeds.emptyAllHint'),
         action: {
-          label: String(t('library.addFeed')),
+          label: t('library.addFeed'),
           run: onRequestAddFeed,
         },
       };
     case 'feed':
       return {
-        title: String(t('feeds.emptyFeedTitle')),
-        hint: String(t('feeds.emptyFeedHint')),
+        title: t('feeds.emptyFeedTitle'),
+        hint: t('feeds.emptyFeedHint'),
       };
     case 'folder':
       return folderFeeds(scope.folderId).length === 0
         ? {
-            title: String(t('folders.emptyNoFeedsTitle')),
-            hint: String(t('folders.emptyNoFeedsHint')),
+            title: t('folders.emptyNoFeedsTitle'),
+            hint: t('folders.emptyNoFeedsHint'),
           }
         : {
-            title: String(t('folders.emptyNoItemsTitle')),
-            hint: String(t('folders.emptyNoItemsHint')),
+            title: t('folders.emptyNoItemsTitle'),
+            hint: t('folders.emptyNoItemsHint'),
           };
   }
 };

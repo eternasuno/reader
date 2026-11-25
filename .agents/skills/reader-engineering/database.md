@@ -9,8 +9,10 @@ Single SQLite database file (`<DATA_DIR>/reader.db`) using `modernc.org/sqlite`.
 
 ## Connection, Pragmas & Startup Migration
 
+- **File permissions**: `Open` creates the data directory (`0700` only when it creates the directory; an existing, possibly shared directory keeps its mode and the Docker image provides `0700`) and pre-creates the database file (`0600`) before opening pools or enabling WAL, and enforces `0600` on existing database, `-wal`, and `-shm` files on startup so stored secrets (SMTP password, Jina key, browser endpoint) are never group- or world-readable.
 - **Per-connection pragmas**: SQLite `foreign_keys`, `busy_timeout`, and `synchronous` are connection-scoped. Configure them on **every** pooled connection via repeated modernc DSN `_pragma` parameters (`?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)`) or a driver connection init hook — never by executing `PRAGMA` once on `*sql.DB`.
 - **WAL & pools**: open the write pool (`SetMaxOpenConns(1)` with `_txlock=immediate` for `BEGIN IMMEDIATE`) first, execute `PRAGMA journal_mode = WAL`, then open the read pool (`MaxOpenConns > 1`). Note `SetMaxOpenConns(1)` serializes writes **within this Go process** only; concurrent external processes or multiple containers against the same file will still hit `SQLITE_BUSY` and are unsupported.
+- **Single-instance lock**: on Unix, `cmd/reader` acquires a non-blocking exclusive `flock` on `<DATA_DIR>/lantern.lock` (`0600`) before opening SQLite or cleaning the EPUB spool directory, holding it until after workers stop and the store closes.
 - **Startup migration**: SQL migrations live in `internal/sqlite/migrations/*.sql` embedded via `//go:embed` and execute idempotently on startup before HTTP servers or workers start. During active development, backward-compatible data migrations are not maintained — delete `reader.db` and restart to rebuild from scratch when schema changes.
 
 ## Schema & Indexes
@@ -26,13 +28,16 @@ Single-user schema removes `owner` columns and composite `(owner, id)` constrain
   - Indexes (verify every list variant, including `folder` queries, with `EXPLAIN QUERY PLAN`):
     - `(id)` PK covers `全部订阅` (`unread = false`)
     - `(read, id)` covers `全部订阅` (`unread = true`) and fast unread filtering
+    - `(read, feed_id)` covers `unreadCounts` (`WHERE read = 0 GROUP BY feed_id`)
     - `(feed_id, id)` covers unfiltered single-feed `ORDER BY id DESC|ASC` and feed retention inventory
-    - `(feed_id, read, id)` covers filtered single-feed unread lists and `unreadCounts` (`WHERE read = 0 GROUP BY feed_id`)
+    - `(feed_id, read, id)` covers filtered single-feed unread lists
 - **`saved_page`**: `(id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL, description TEXT, content TEXT NOT NULL, published_at INTEGER, read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1))) STRICT`.
   - Index: `(read, id)`.
 - **`setting`**: singleton row (`id INTEGER PRIMARY KEY CHECK (id = 1)`) storing `retention`, `provider`, `jina_key`, `browser_endpoint`, Kindle SMTP fields, and `next_send_at`.
 - **`kindle_send`**: `(id TEXT PRIMARY KEY, trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')), status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')), article_count INTEGER NOT NULL DEFAULT 0, book_count INTEGER NOT NULL DEFAULT 0, error TEXT, started_at INTEGER NOT NULL, finished_at INTEGER) STRICT`.
-  - Pruned to the latest `20` rows after inserting/completing a run (`KD-LOG-1`). On startup, any leftover `running` rows are marked `failed` before starting HTTP/schedulers.
+  - Pruned to the latest `20` completed rows (never deleting `running` rows) after inserting/completing a run (`KD-LOG-1`). On startup, any leftover `running` rows are marked `failed` before starting HTTP/schedulers.
+- **`kindle_send_book`**: `(send_id TEXT NOT NULL REFERENCES kindle_send(id) ON DELETE CASCADE, book_index INTEGER NOT NULL, PRIMARY KEY (send_id, book_index)) STRICT`.
+  - Records accepted book receipts idempotently per `(send_id, book_index)` so bounded DB-write retries never double-count counters or re-mark articles; rows cascade-delete when `kindle_send` is pruned.
 
 ## Query Rules
 

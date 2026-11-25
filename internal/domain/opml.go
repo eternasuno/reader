@@ -10,10 +10,20 @@ import (
 	"strings"
 )
 
+const (
+	maxOPMLOutlines = 2000
+	maxOPMLDepth    = 64
+)
+
 type opmlXMLDocument struct {
 	XMLName xml.Name     `xml:"opml"`
 	Version string       `xml:"version,attr"`
+	Head    *opmlXMLHead `xml:"head,omitempty"`
 	Body    *opmlXMLBody `xml:"body"`
+}
+
+type opmlXMLHead struct {
+	Title string `xml:"title,omitempty"`
 }
 
 type opmlXMLBody struct {
@@ -32,8 +42,16 @@ type opmlWalkState struct {
 }
 
 func ParseOPML(data []byte) (OPMLDocument, error) {
-	parsed := opmlXMLDocument{}
+	return parseOPMLWithLimit(data, maxOPMLOutlines)
+}
+
+func parseOPMLWithLimit(data []byte, maxOutlines int) (OPMLDocument, error) {
 	payload := bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
+	if err := validateOPMLPayload(payload, maxOutlines); err != nil {
+		return OPMLDocument{}, err
+	}
+
+	parsed := opmlXMLDocument{}
 	decoder := xml.NewDecoder(bytes.NewReader(payload))
 	if err := opmlDecodeRoot(decoder, payload, &parsed); err != nil {
 		return OPMLDocument{}, err
@@ -56,6 +74,99 @@ func ParseOPML(data []byte) (OPMLDocument, error) {
 	return state.document, nil
 }
 
+type opmlTokenValidator struct {
+	maxOutlines int
+	outlines    int
+	depth       int
+	seenToken   bool
+}
+
+func validateOPMLPayload(payload []byte, maxOutlines int) error {
+	decoder := xml.NewDecoder(bytes.NewReader(payload))
+	validator := opmlTokenValidator{maxOutlines: maxOutlines}
+
+	for {
+		tok, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+
+		if err != nil {
+			return NewError(ErrInvalidOpml, err)
+		}
+
+		if err := validator.handleToken(tok); err != nil {
+			return err
+		}
+	}
+}
+
+func (v *opmlTokenValidator) handleToken(tok xml.Token) error {
+	isFirst := !v.seenToken
+	v.seenToken = true
+
+	switch typed := tok.(type) {
+	case xml.ProcInst:
+		if !isFirst {
+			return NewError(ErrInvalidOpml, errors.New("unexpected processing instruction in opml"))
+		}
+	case xml.Directive:
+		return NewError(ErrInvalidOpml, errors.New("xml directives are not allowed in opml"))
+	case xml.StartElement:
+		return v.handleStartElement(typed)
+	case xml.EndElement:
+		v.depth--
+	}
+
+	return nil
+}
+
+func (v *opmlTokenValidator) handleStartElement(start xml.StartElement) error {
+	if opmlHasDuplicateAttr(start.Attr) {
+		return NewError(ErrInvalidOpml, errors.New("opml element has duplicate attribute"))
+	}
+
+	v.depth++
+	if v.depth > maxOPMLDepth {
+		return NewError(ErrInvalidOpml, errors.New("opml nesting depth exceeds limit"))
+	}
+
+	if strings.EqualFold(start.Name.Local, "outline") {
+		v.outlines++
+		if v.outlines > v.maxOutlines {
+			return NewError(ErrInvalidOpml, errors.New("opml outline count exceeds limit"))
+		}
+	}
+
+	return nil
+}
+
+func opmlHasDuplicateAttr(attrs []xml.Attr) bool {
+	if len(attrs) < 2 {
+		return false
+	}
+
+	type attrKey struct {
+		space string
+		local string
+	}
+
+	seen := make(map[attrKey]struct{}, len(attrs))
+	for _, attr := range attrs {
+		key := attrKey{
+			space: attr.Name.Space,
+			local: strings.ToLower(attr.Name.Local),
+		}
+		if _, exists := seen[key]; exists {
+			return true
+		}
+
+		seen[key] = struct{}{}
+	}
+
+	return false
+}
+
 func (s *opmlWalkState) walk(outlines []opmlXMLOutline, folder *string) {
 	for _, outline := range outlines {
 		s.processOutline(outline, folder)
@@ -64,18 +175,20 @@ func (s *opmlWalkState) walk(outlines []opmlXMLOutline, folder *string) {
 
 func (s *opmlWalkState) processOutline(outline opmlXMLOutline, folder *string) {
 	rawXMLURL, hasXMLURL := opmlAttribute(outline.Attrs, "xmlUrl")
-	if !hasXMLURL {
-		if isInvalidEmptyRSSOutline(outline) {
-			// A feed outline without any url is invalid; it must not become a folder.
-			s.document.SkippedInvalid++
-			return
-		}
+	if hasXMLURL {
+		s.addFeed(outline, rawXMLURL, folder)
+		s.walk(outline.Outlines, folder)
 
-		s.walk(outline.Outlines, opmlFolderName(outline, folder, &s.document, s.seenFolders))
 		return
 	}
 
-	s.addFeed(outline, rawXMLURL, folder)
+	if isInvalidEmptyRSSOutline(outline) {
+		// A feed outline without any url is invalid; it must not become a folder.
+		s.document.SkippedInvalid++
+		return
+	}
+
+	s.walk(outline.Outlines, opmlFolderName(outline, folder, &s.document, s.seenFolders))
 }
 
 func isInvalidEmptyRSSOutline(outline opmlXMLOutline) bool {
@@ -128,12 +241,13 @@ func opmlDecodeRoot(decoder *xml.Decoder, payload []byte, parsed *opmlXMLDocumen
 
 func opmlHandleRootToken(decoder *xml.Decoder, tok xml.Token, raw []byte, parsed *opmlXMLDocument) (bool, error) {
 	switch typed := tok.(type) {
-	case xml.Comment, xml.ProcInst, xml.Directive:
+	case xml.Comment, xml.ProcInst:
 		return false, nil
 	case xml.CharData:
 		if !isXMLWhitespacePair(typed, raw) {
 			return false, NewError(ErrInvalidOpml, errors.New("unexpected content before the opml root element"))
 		}
+
 		return false, nil
 	case xml.StartElement:
 		return true, opmlDecodeStartElement(decoder, typed, parsed)
@@ -175,12 +289,13 @@ func opmlCheckTrailing(decoder *xml.Decoder, payload []byte) error {
 
 func opmlValidateTrailingToken(tok xml.Token, raw []byte) error {
 	switch typed := tok.(type) {
-	case xml.Comment, xml.ProcInst:
+	case xml.Comment:
 		return nil
 	case xml.CharData:
 		if !isXMLWhitespacePair(typed, raw) {
 			return NewError(ErrInvalidOpml, errors.New("unexpected content after the opml root element"))
 		}
+
 		return nil
 	default:
 		return NewError(ErrInvalidOpml, errors.New("unexpected element after the opml root element"))
@@ -202,7 +317,11 @@ func isXMLWhitespace(data []byte) bool {
 }
 
 func ExportOPML(folders []OPMLExportFolder, topFeeds []Feed) ([]byte, error) {
-	document := opmlXMLDocument{Version: "2.0", Body: &opmlXMLBody{}}
+	document := opmlXMLDocument{
+		Version: "2.0",
+		Head:    &opmlXMLHead{Title: "Lantern"},
+		Body:    &opmlXMLBody{},
+	}
 	for _, folder := range opmlSortedFolders(folders) {
 		outline := opmlXMLOutline{Attrs: []xml.Attr{
 			{Name: xml.Name{Local: "text"}, Value: folder.Name},
@@ -234,7 +353,7 @@ func ExportOPML(folders []OPMLExportFolder, topFeeds []Feed) ([]byte, error) {
 func opmlSortedFolders(folders []OPMLExportFolder) []OPMLExportFolder {
 	sorted := make([]OPMLExportFolder, len(folders))
 	for i, folder := range folders {
-		sorted[i] = OPMLExportFolder{Name: folder.Name, Feeds: opmlSortedFeeds(folder.Feeds)}
+		sorted[i] = OPMLExportFolder{Name: SanitizeErrorText(folder.Name), Feeds: opmlSortedFeeds(folder.Feeds)}
 	}
 
 	slices.SortFunc(sorted, func(a, b OPMLExportFolder) int {
@@ -246,7 +365,11 @@ func opmlSortedFolders(folders []OPMLExportFolder) []OPMLExportFolder {
 
 func opmlSortedFeeds(feeds []Feed) []Feed {
 	sorted := make([]Feed, len(feeds))
-	copy(sorted, feeds)
+	for i, feed := range feeds {
+		feed.Title = SanitizeErrorText(feed.Title)
+		sorted[i] = feed
+	}
+
 	slices.SortFunc(sorted, func(a, b Feed) int {
 		if byTitle := cmp.Compare(a.Title, b.Title); byTitle != 0 {
 			return byTitle
@@ -273,6 +396,7 @@ func opmlFolderName(outline opmlXMLOutline, parent *string, document *OPMLDocume
 		name = opmlOptionalAttribute(outline.Attrs, "title")
 	}
 
+	name = SanitizeErrorText(name)
 	if name == "" {
 		return parent
 	}
@@ -291,6 +415,7 @@ func opmlFeedTitle(outline opmlXMLOutline, feedURL NormalizedURL) string {
 		title = opmlOptionalAttribute(outline.Attrs, "text")
 	}
 
+	title = SanitizeErrorText(title)
 	if title == "" {
 		title = feedURL.Host()
 	}

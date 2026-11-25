@@ -32,22 +32,12 @@ describe('scope comparison', () => {
   });
 });
 
-describe('scope base paths', () => {
-  it('builds scope base paths with encoded identifiers', () => {
-    expect(state.scopeBasePath({ kind: 'later' })).toBe('/later');
-    expect(state.scopeBasePath({ kind: 'all' })).toBe('/all');
-    expect(state.scopeBasePath({ kind: 'feed', feedId: 'a b/c' })).toBe(
-      '/feed/a%20b%2Fc'
-    );
-    expect(state.scopeBasePath({ kind: 'folder', folderId: 'x' })).toBe(
-      '/folder/x'
-    );
-  });
-});
-
 describe('library URLs', () => {
   it('builds library URLs with an optional article and ?unread flag', () => {
     expect(state.buildLibraryUrl({ kind: 'later' })).toBe('/later');
+    expect(state.buildLibraryUrl({ kind: 'folder', folderId: 'x' })).toBe(
+      '/folder/x'
+    );
     expect(state.buildLibraryUrl({ kind: 'later' }, { articleId: 'p1' })).toBe(
       '/later/p1'
     );

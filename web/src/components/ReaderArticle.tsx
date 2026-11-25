@@ -1,5 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import { Show } from 'solid-js';
+import { browserHref } from '../api/url';
 import { formatDateTime, locale, t } from '../i18n';
 import {
   articleSource,
@@ -9,9 +10,32 @@ import {
   type LibraryArticle,
 } from '../state';
 import { ArticleFrame } from './ArticleFrame';
-import { EmbeddedWebpageFrame } from './EmbeddedWebpageFrame';
 import { bodyHtml } from './readerBody';
 import { SiteIcon } from './SiteIcon';
+
+function OptionalExternalLink(props: {
+  href: string | undefined;
+  class: string;
+  text: string;
+}): JSX.Element {
+  return (
+    <Show
+      when={props.href}
+      fallback={<span class={props.class}>{props.text}</span>}
+    >
+      {(href) => (
+        <a
+          href={href()}
+          target="_blank"
+          rel="noopener noreferrer"
+          class={props.class}
+        >
+          {props.text}
+        </a>
+      )}
+    </Show>
+  );
+}
 
 /** `RD-CONTENT-1`: source line, title, then hostname link and published date. */
 export function ReaderArticleHeader(props: {
@@ -20,6 +44,7 @@ export function ReaderArticleHeader(props: {
   const article = () => props.article;
   const source = () => articleSource(article());
   const hostname = () => hostnameOf(article().url);
+  const href = () => browserHref(article().url);
 
   return (
     <header class="flex flex-col gap-3">
@@ -28,25 +53,19 @@ export function ReaderArticleHeader(props: {
         <span class="truncate">{source().title}</span>
       </p>
       <h1 class="text-3xl leading-tight font-bold break-words sm:text-4xl">
-        <a
-          href={article().url}
-          target="_blank"
-          rel="noopener noreferrer"
+        <OptionalExternalLink
+          href={href()}
           class="transition-colors hover:text-primary"
-        >
-          {article().title}
-        </a>
+          text={article().title}
+        />
       </h1>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60">
-        <Show when={hostname() !== source().title}>
-          <a
-            href={article().url}
-            target="_blank"
-            rel="noopener noreferrer"
+        <Show when={hostname() && hostname() !== source().title}>
+          <OptionalExternalLink
+            href={href()}
             class="truncate transition-colors hover:text-primary"
-          >
-            {hostname()}
-          </a>
+            text={hostname()}
+          />
         </Show>
         <Show when={article().publishedAt}>
           {(publishedAt) => (
@@ -60,27 +79,13 @@ export function ReaderArticleHeader(props: {
   );
 }
 
-/** `RD-WEBPAGE-1`: embedded, extracting, extracted, or plain stored body. */
-export function ReaderArticleBody(props: {
+/** `RD-EXTRACT-1`: extracting indicator or stored/extracted article body. */
+export function ReaderStoredBody(props: {
   article: LibraryArticle;
 }): JSX.Element {
   return (
     <Show
-      when={displayMode() === 'embedded'}
-      fallback={<ReaderStoredBody article={props.article} />}
-    >
-      <EmbeddedWebpageFrame
-        url={props.article.url}
-        title={props.article.title}
-      />
-    </Show>
-  );
-}
-
-function ReaderStoredBody(props: { article: LibraryArticle }): JSX.Element {
-  return (
-    <Show
-      when={extracting()}
+      when={displayMode() === 'extracted' && extracting()}
       fallback={<ReaderContent article={props.article} />}
     >
       <p
@@ -88,7 +93,7 @@ function ReaderStoredBody(props: { article: LibraryArticle }): JSX.Element {
         class="flex items-center gap-2 text-sm text-base-content/60"
       >
         <span class="loading loading-spinner loading-sm" aria-hidden="true" />
-        {String(t('reader.extracting'))}
+        {t('reader.extracting')}
       </p>
     </Show>
   );
@@ -99,9 +104,7 @@ function ReaderContent(props: { article: LibraryArticle }): JSX.Element {
     <Show
       when={bodyHtml(props.article)}
       fallback={
-        <p class="text-sm text-base-content/60">
-          {String(t('reader.noContent'))}
-        </p>
+        <p class="text-sm text-base-content/60">{t('reader.noContent')}</p>
       }
     >
       {(html) => <ArticleFrame html={html()} title={props.article.title} />}

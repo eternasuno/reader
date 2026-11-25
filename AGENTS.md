@@ -1,6 +1,6 @@
 # Project Guide
 
-留白 is a single-user self-hosted RSS reader, read-later app, and Kindle EPUB mailer built as a single Go binary with an embedded SolidJS 2 SPA (`web/`) and SQLite.
+Lantern is a single-user self-hosted RSS reader, read-later app, and Kindle EPUB mailer built as a single Go binary with an embedded SolidJS 2 SPA (`web/`) and SQLite.
 
 ## Repository Layout
 
@@ -23,6 +23,10 @@ Read the relevant skill before making changes:
 - [`reader-engineering`](.agents/skills/reader-engineering/SKILL.md) — engineering architecture: Go packages, dependency direction, error/security rules, testing; database, UI, and Docker build details live in conditional files indexed there.
 
 ## Workflow & Engineering Guardrails
+
+- **Docs split**: `README.md` is for humans (what it is, how to run it, configuration). Anything agents need (architecture, rules, release mechanics, gotchas) lives here and in the project skills, never in the README.
+- **Early development**: there is no deployment and no legacy data, so add no compatibility shims, legacy-data guards, or lenient-read paths; schema changes edit `001_init.sql` and developers delete `reader.db`.
+- **Fail fast**: unexpected or unresolvable errors crash the process instead of being worked around; only persistent internal database failures in background code are fatal, never external failures or shutdown. Details in `reader-engineering`.
 
 - **Spec & code in sync**: update the matching `reader-spec` file in the same change when product behavior changes.
 - **Security**: never log or return secrets (`APP_PASSWORD`, `SESSION_SECRET`, Jina key, browser endpoint, SMTP password, or URL `user:pass@` credentials). Keep Go SSRF IP filtering enabled unless `ALLOW_PRIVATE_NETWORK=true`. Enforce parsed `Origin` (or fallback `Referer` origin when `Origin` is absent) matching `APP_URL` on every state-changing `/api/*` endpoint.

@@ -1,11 +1,11 @@
 ---
 name: reader-spec
-description: What the 留白 personal reader does. Read before changing or verifying any product behavior — saved pages, feeds, folders, OPML, background refresh, the reader view, settings, Kindle delivery, authentication, or the library screen — or any HTTP endpoint, user-visible copy, or acceptance scenario.
+description: What the Lantern personal reader does. Read before changing or verifying any product behavior — saved pages, feeds, folders, OPML, background refresh, the reader view, settings, Kindle delivery, authentication, or the library screen — or any HTTP endpoint, user-visible copy, or acceptance scenario.
 ---
 
 # Reader Spec
 
-留白 is a single-user self-hosted read-later and RSS/Atom/RDF/JSON Feed reader with scheduled Send-to-Kindle delivery. The UI is bilingual (`zh-CN` Simplified Chinese and `en` English) via lightweight client-side dictionaries.
+Lantern is a single-user self-hosted read-later and RSS/Atom/RDF/JSON Feed reader with scheduled Send-to-Kindle delivery. The UI is bilingual (`zh-CN` Simplified Chinese and `en` English) via lightweight client-side dictionaries.
 
 ## Domain Index
 
@@ -31,7 +31,7 @@ Every scope and open article has its own URL so reloads and browser history rest
 | --- | --- |
 | `/` | redirects to `/later` |
 | `/login` | password sign-in page (public) |
-| `/save` | quick-save landing route for `?url=...` (requires session; redirects back after login) |
+| `/save` | quick-save landing route for `#url=...` (and legacy `?url=...`; requires session, strips draft into memory, and redirects back after login) |
 | `/later`, `/later/:pageId` | saved pages; with `:pageId`, that page open in the reader |
 | `/all`, `/all/:itemId` | all feed items |
 | `/feed/:feedId`, `/feed/:feedId/:itemId` | one feed's items |
@@ -73,6 +73,10 @@ Every scope and open article has its own URL so reloads and browser history rest
 - `CM-FETCH-2`: Direct Go HTTP fetches (feeds, direct webpage extraction, EPUB images) enforce SSRF IP filtering (blocking loopback, private, link-local, and multicast ranges unless `ALLOW_PRIVATE_NETWORK=true`), re-validate target IPs on redirects, and enforce hard timeouts (`15s`–`30s`) + max response size (`10 MiB`). The configured external `BrowserEndpoint` itself may sit on a private/Docker address, while page navigation/subresource egress inside external `browser` (CDP) or `jina` runs outside Go's dialer—firewall the remote browser container's egress separately if untrusted URLs are fetched through it.
 - `CM-FETCH-3`: Nothing is saved if fetch, parse, extraction, or empty-content check fails.
 
+### CM-PWA — Installable App
+- `CM-PWA-1`: The SPA is an installable PWA named `Lantern` (`web/public/manifest.webmanifest`, standalone display, icons incl. maskable). `web/public/sw.js` (registered in production builds only, with a build-generated precache manifest and `lantern-<hash>` cache name covering the manifest and `sw.js` source injected by `web/vite.config.ts`) atomically precaches only public shell/assets (`/`, hashed `/assets/*`, icons, `manifest.webmanifest`) during `install` (`credentials: 'omit'`, `redirect: 'error'`, `response.ok && response.type === 'basic' && !response.redirected`), deleting any partial cache and failing the install on error, allows updates to wait until the previous worker has no clients, prunes obsolete `lantern-*` caches and claims clients on `activate`, serves only exact manifest pathnames without query strings cache-first from that build cache (bypassing query-string variants and non-manifest paths), and uses network-first with cached-shell fallback for navigation; it never intercepts `/api/*`, `/healthz`, non-GET, or cross-origin requests, so authenticated data is never cached. Offline navigation falls back to the cached shell, which then shows the normal network-error state.
+- `CM-PWA-2`: Static files outside `/assets/` (including `sw.js` and `manifest.webmanifest`) are served `Cache-Control: no-cache`; `.webmanifest` is served as `application/manifest+json`.
+
 ## Shared Messages & Localization (`CM-I18N`)
 
 - `CM-I18N-1`: Supported UI locales are `zh-CN` and `en`. Initial locale defaults from `navigator.language` (`zh*` → `zh-CN`, otherwise `en`) and persists in `localStorage` (`reader.locale`). Switching locale via `/login` or the sidebar menu updates UI copy and `document.documentElement.lang` reactively without reloading.
@@ -84,6 +88,8 @@ Every scope and open article has its own URL so reloads and browser history rest
 | `Forbidden` | 不允许跨站修改 |
 | `TooManyRequests` | 请求过于频繁，请稍后重试 |
 | `RequestFailed` / fallback | 操作失败，请稍后重试 |
+| `RequestTimeout` | 请求超时，请稍后重试 |
+| `InvalidResponse` | 服务器返回了无法识别的响应 |
 | `NetworkError` | 网络连接失败，请检查网络后重试 |
 | `ArticleEmptyContent` | 未能提取到文章内容 |
 | `WebpageFetcherError` | 网页抓取失败，请稍后重试 |

@@ -15,7 +15,7 @@ Single-level folders for grouping feeds in the sidebar, reading combined lists, 
 
 - **Sidebar**: folders appear first (ordered by name), with indented child feeds beneath each; top-level feeds follow. Folder collapse state persists in `localStorage` (`reader.collapsedFolders`). Selecting a feed inside a collapsed folder auto-expands it.
 - **Menus**: folder `⋯` menu offers `只显示未读`, `全部标记为已读`, `重命名目录`, and `删除目录`. Folder scope (`/folder/:folderId`) list menu offers `只显示未读` and `全部标记为已读`.
-- **Dialogs**: `新建目录` / `重命名目录` share one name dialog (`目录名称`); `移动到` is an in-menu sub-panel (back header `移动到`, one checkbox per folder showing the current folder as checked, a divider, and `新建目录` which opens the name dialog); choosing an unchecked folder moves the feed there, choosing the checked folder moves it back to the top level,; the menu stays open and the checkboxes update in place. Deleting a folder asks `window.confirm` and refreshes the sidebar; if `/folder/:folderId` or `/folder/:folderId/:itemId` was active, redirects to `/all` while preserving `?unread`.
+- **Dialogs**: `新建目录` / `重命名目录` share one name dialog (`目录名称`); `移动到` is an in-menu sub-panel (back header `移动到`, one checkbox per folder showing the current folder as checked, a divider, and `新建目录` which opens the name dialog and moves the feed into the newly created folder); choosing an unchecked folder moves the feed there, choosing the checked folder moves it back to the top level; the menu stays open and the checkboxes update in place. Deleting a folder asks `window.confirm` and refreshes the sidebar; if `/folder/:folderId` or `/folder/:folderId/:itemId` was active, redirects to `/all` while preserving `?unread`.
 
 | Code / Situation | Text |
 | --- | --- |

@@ -1,6 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import { For } from 'solid-js';
-import { type Feed, feedsApi } from '../api';
+import { feedsApi } from '../api';
 import { t } from '../i18n';
 import { folders, topLevelFeeds } from '../state';
 import { Icon, Menu, MenuItem } from '../ui';
@@ -8,60 +8,48 @@ import { FeedRow } from './FeedRow';
 import { FolderRow } from './FolderRow';
 import type { SidebarProps } from './sidebarProps';
 
-/** `folders.md:16-17`: the feeds section, its folders, and top-level feeds. */
+/** `FD-FOLDER-5`, `FD-OPML-1`, `FD-OPML-2`: the feeds section, its folders, and top-level feeds. */
 export function SidebarFeedTree(props: { state: SidebarProps }): JSX.Element {
   return (
     <>
       <FeedTreeHeader state={props.state} />
       <div class="flex flex-col gap-0.5 pb-2">
         {/* `FD-FOLDER-5`: folders render in the server's UTF-8 byte order. */}
-        <For each={folders()}>
-          {(folder) => <FolderRow folder={folder} state={props.state} />}
+        <For each={folders()} keyed={(folder) => folder.id}>
+          {(folder) => <FolderRow folder={folder()} state={props.state} />}
         </For>
-        <For each={topLevelFeeds()}>
-          {(feed) => <TopLevelFeedRow feed={feed} state={props.state} />}
+        <For each={topLevelFeeds()} keyed={(feed) => feed.id}>
+          {(feed) => <FeedRow feed={feed()} state={props.state} />}
         </For>
       </div>
     </>
   );
 }
 
-function TopLevelFeedRow(props: {
-  feed: Feed;
-  state: SidebarProps;
-}): JSX.Element {
-  return <FeedRow feed={props.feed} showMove state={props.state} />;
-}
-
 function FeedTreeHeader(props: { state: SidebarProps }): JSX.Element {
   return (
     <div class="mt-3 flex items-center justify-between gap-2 px-2">
       <h2 class="text-xs font-semibold tracking-wider text-base-content/50 uppercase">
-        {String(t('library.feedsSection'))}
+        {t('library.feedsSection')}
       </h2>
       <div class="flex items-center gap-0.5">
         <button
           type="button"
           class="btn btn-ghost btn-xs btn-square"
-          aria-label={String(t('library.addFeed'))}
-          title={String(t('library.addFeed'))}
+          aria-label={t('library.addFeed')}
+          title={t('library.addFeed')}
           onClick={props.state.onRequestAddFeed}
         >
           <Icon name="plus" size={16} />
         </button>
-        <Menu
-          icon="dots"
-          label={String(t('library.moreActions'))}
-          align="end"
-          triggerClass="btn-xs"
-        >
+        <Menu label={t('library.moreActions')} triggerClass="btn-xs">
           <MenuItem onSelect={props.state.onRequestImportOpml}>
-            {`${String(t('library.importOpml')).replace(/\s*OPML$/i, '')}...`}
+            {t('library.importOpmlMenu')}
           </MenuItem>
           <MenuItem
             onSelect={() => window.location.assign(feedsApi.exportOpmlUrl)}
           >
-            {`${String(t('library.exportOpml')).replace(/\s*OPML$/i, '')}...`}
+            {t('library.exportOpmlMenu')}
           </MenuItem>
         </Menu>
       </div>

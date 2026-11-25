@@ -1,50 +1,19 @@
-export type ErrorCode =
-  | 'Unauthorized'
-  | 'Forbidden'
-  | 'InvalidCredentials'
-  | 'TooManyRequests'
-  | 'RequestFailed'
-  | 'NetworkError'
-  | 'ArticleEmptyContent'
-  | 'WebpageFetcherError'
-  | 'ArticleExtractorError'
-  | 'InvalidPageUrl'
-  | 'SavedPageAlreadyExists'
-  | 'SavedPageRepositoryError'
-  | 'FeedUrlInvalid'
-  | 'FetchFeedError'
-  | 'FeedParserError'
-  | 'FeedAlreadyExists'
-  | 'FeedItemNotFound'
-  | 'FeedRepositoryError'
-  | 'FeedItemRepositoryError'
-  | 'InvalidOpml'
-  | 'InvalidFolderName'
-  | 'FolderAlreadyExists'
-  | 'FolderNotFound'
-  | 'FolderRepositoryError'
-  | 'InvalidRetention'
-  | 'InvalidProvider'
-  | 'InvalidJinaKey'
-  | 'InvalidEndpoint'
-  | 'BrowserEndpointRequired'
-  | 'InvalidSMTPSetting'
-  | 'SMTPNotConfigured'
-  | 'InvalidKindleSetting'
-  | 'SettingRepositoryError'
-  | 'KindleNotConfigured'
-  | 'KindleSendInProgress';
-
 export type ReaderMode = 'default' | 'extracted' | 'embedded';
 export type SortOrder = 'newest' | 'oldest';
 export type ExtractorProvider = 'direct' | 'jina' | 'browser';
 export type SMTPSecurity = 'tls' | 'starttls';
-export type KindleTrigger = 'manual' | 'scheduled';
-export type KindleStatus = 'running' | 'succeeded' | 'failed';
+type KindleTrigger = 'manual' | 'scheduled';
+type KindleStatus = 'running' | 'succeeded' | 'failed';
+
+export type RequestCallOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
 
 export interface ErrorResponse {
   error: string;
   url?: string;
+  id?: string;
 }
 
 export interface Session {
@@ -107,12 +76,12 @@ export interface Page<T> {
   cursor: string | null;
 }
 
-export interface ListParams {
+export type ListParams = {
   limit?: number;
   unread?: boolean;
   cursor?: string | null;
   order?: SortOrder;
-}
+};
 
 export interface FeedCreateInput {
   url: string;
@@ -180,12 +149,37 @@ export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
   readonly url?: string;
+  readonly id?: string;
 
-  constructor(code: string, status: number, url?: string) {
+  constructor(code: string, status: number, url?: string, id?: string) {
     super(code);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
     this.url = url;
+    this.id = id;
   }
 }
+
+export class RequestAbortedError extends Error {
+  constructor(cause?: unknown) {
+    super('The operation was aborted.');
+    this.name = 'AbortError';
+    if (cause !== undefined) {
+      Object.defineProperty(this, 'cause', {
+        value: cause,
+        configurable: true,
+      });
+    }
+  }
+}
+
+export class RequestTimeoutError extends ApiError {
+  constructor() {
+    super('RequestTimeout', 0);
+    this.name = 'RequestTimeoutError';
+  }
+}
+
+export const errorCodeOf = (error: unknown): string =>
+  error instanceof ApiError ? error.code : 'RequestFailed';

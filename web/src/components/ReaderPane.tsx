@@ -1,9 +1,8 @@
 import type { JSX } from '@solidjs/web';
-import { createEffect, createSignal, Show } from 'solid-js';
+import { Show } from 'solid-js';
 import type { Feed } from '../api';
 import { buildLibraryUrl, type LibraryScope, openArticle } from '../state';
 import { ReaderEmptyState } from './ReaderEmptyState';
-import { FeedOptionsContext } from './ReaderToolbar';
 import { ReaderView } from './ReaderView';
 import { deleteOpenArticle, saveOpenArticle } from './readerActions';
 import type { ReaderNav } from './readerNav';
@@ -12,7 +11,7 @@ export interface ReaderPaneProps {
   scope: LibraryScope;
   unreadOnly: boolean;
   onNavigate: (url: string) => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 /**
@@ -21,7 +20,6 @@ export interface ReaderPaneProps {
  * (`RD-WEBPAGE-1`).
  */
 export function ReaderPane(props: ReaderPaneProps): JSX.Element {
-  const [savingToLater, setSavingToLater] = createSignal(false);
   const nav: ReaderNav = {
     listUrl: () =>
       buildLibraryUrl(props.scope, { unreadOnly: props.unreadOnly }),
@@ -32,31 +30,19 @@ export function ReaderPane(props: ReaderPaneProps): JSX.Element {
     onNavigate: (url) => props.onNavigate(url),
   };
 
-  // `RD-ARTICLE-1`: switching articles resets the in-flight save affordance.
-  createEffect(
-    () => openArticle()?.id ?? null,
-    () => {
-      setSavingToLater(false);
-    }
-  );
-
   return (
     <main class="flex h-full min-h-0 flex-col bg-base-100">
-      <FeedOptionsContext value={() => props.onRequestFeedOptions}>
-        <Show when={openArticle()} fallback={<ReaderEmptyState />}>
-          {(current) => (
-            <ReaderView
-              article={current()}
-              nav={nav}
-              savingToLater={savingToLater()}
-              onSaveToLater={() =>
-                void saveOpenArticle(current(), savingToLater, setSavingToLater)
-              }
-              onDelete={() => void deleteOpenArticle(nav, current())}
-            />
-          )}
-        </Show>
-      </FeedOptionsContext>
+      <Show when={openArticle()} fallback={<ReaderEmptyState />}>
+        {(current) => (
+          <ReaderView
+            article={current()}
+            nav={nav}
+            onSaveToLater={() => void saveOpenArticle(current())}
+            onDelete={() => void deleteOpenArticle(nav, current())}
+            onRequestFeedOptions={props.onRequestFeedOptions}
+          />
+        )}
+      </Show>
     </main>
   );
 }

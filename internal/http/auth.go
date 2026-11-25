@@ -1,10 +1,13 @@
 package httpserver
 
 import (
+	"container/list"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"reader/internal/domain"
 )
@@ -20,6 +24,7 @@ const (
 	sessionCookieName  = "reader_session"
 	sessionTTL         = 30 * 24 * time.Hour
 	loginFailureLimit  = 5
+	loginOverflowLimit = loginFailureLimit
 	loginFailureWindow = time.Minute
 	maxTrackedLoginIPs = 1024
 )
@@ -30,6 +35,40 @@ type sessionResponse struct {
 
 type loginRequest struct {
 	Password string `json:"password"`
+}
+
+// ValidateAppPassword checks that the browser can submit the configured password.
+func ValidateAppPassword(password string) error {
+	if password == "" || !utf8.ValidString(password) {
+		return errors.New("http: APP_PASSWORD must be nonempty valid UTF-8")
+	}
+
+	if strings.ContainsAny(password, "\r\n") {
+		return errors.New("http: APP_PASSWORD must not contain CR or LF because browsers strip them from password inputs")
+	}
+
+	// JSON.stringify leaves HTML characters and Unicode line separators unescaped.
+	size := len(`{"password":""}`)
+	for _, r := range password {
+		size += jsonRuneSize(r)
+	}
+
+	if size > maxLoginBodyBytes {
+		return fmt.Errorf("http: APP_PASSWORD is too long: its JSON login request exceeds %d bytes", maxLoginBodyBytes)
+	}
+
+	return nil
+}
+
+func jsonRuneSize(r rune) int {
+	switch {
+	case r == '"', r == '\\', r == '\b', r == '\f', r == '\t':
+		return 2
+	case r < 0x20:
+		return 6
+	default:
+		return utf8.RuneLen(r)
+	}
 }
 
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +84,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req loginRequest
-	if err := decodeJSON(w, r, &req); err != nil {
+	if err := decodeJSONWithLimit(w, r, maxLoginBodyBytes, &req); err != nil {
 		writeError(w, err)
 
 		return
@@ -153,7 +192,7 @@ func (s *server) originAllowed(r *http.Request) bool {
 		return s.validateOriginHeader(originValues)
 	}
 
-	return s.validateRefererHeader(r.Header.Get("Referer"))
+	return s.validateRefererHeader(r.Header.Values("Referer"))
 }
 
 func (s *server) validateOriginHeader(values []string) bool {
@@ -173,53 +212,45 @@ func (s *server) validateOriginHeader(values []string) bool {
 
 	// A serialized origin is scheme://host[:port] only, so any userinfo,
 	// path, query, fragment, or opaque part means the header is forged.
-	if parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
-		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+	if !isSerializedOriginURL(parsed, rawOrigin) {
 		return false
 	}
 
-	return sameOrigin(parsed, s.appURL)
+	origin, ok := domain.OriginFromURL(parsed)
+
+	return ok && origin == s.appOrigin
 }
 
-func (s *server) validateRefererHeader(raw string) bool {
-	rawReferer := strings.TrimSpace(raw)
-	if rawReferer == "" {
+func isSerializedOriginURL(parsed *url.URL, rawOrigin string) bool {
+	if parsed.User != nil || parsed.Opaque != "" || strings.HasSuffix(parsed.Host, ":") {
+		return false
+	}
+
+	if parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return false
+	}
+
+	return !strings.ContainsAny(rawOrigin, "?#")
+}
+
+func (s *server) validateRefererHeader(values []string) bool {
+	if len(values) != 1 {
+		return false
+	}
+
+	rawReferer := strings.TrimSpace(values[0])
+	if rawReferer == "" || strings.EqualFold(rawReferer, "null") {
 		return false
 	}
 
 	parsed, err := url.Parse(rawReferer)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
+	if err != nil || parsed.User != nil || parsed.Opaque != "" || strings.HasSuffix(parsed.Host, ":") {
 		return false
 	}
 
-	return sameOrigin(parsed, s.appURL)
-}
+	origin, ok := domain.OriginFromURL(parsed)
 
-func sameOrigin(left *url.URL, right *url.URL) bool {
-	if !strings.EqualFold(left.Scheme, right.Scheme) {
-		return false
-	}
-
-	if !strings.EqualFold(left.Hostname(), right.Hostname()) {
-		return false
-	}
-
-	return effectivePort(left) == effectivePort(right)
-}
-
-func effectivePort(u *url.URL) string {
-	if port := u.Port(); port != "" {
-		return port
-	}
-
-	switch strings.ToLower(u.Scheme) {
-	case "http":
-		return "80"
-	case "https":
-		return "443"
-	default:
-		return ""
-	}
+	return ok && origin == s.appOrigin
 }
 
 func clientIP(r *http.Request) string {
@@ -236,14 +267,45 @@ type loginWindow struct {
 	failures int
 }
 
+func (w loginWindow) isLive(now time.Time) bool {
+	return w.failures > 0 && now.Sub(w.started) < loginFailureWindow
+}
+
+func (w *loginWindow) reserve(now time.Time, limit int) bool {
+	if !w.isLive(now) {
+		*w = loginWindow{started: now, failures: 1}
+
+		return true
+	}
+
+	if w.failures >= limit {
+		return false
+	}
+
+	w.failures++
+
+	return true
+}
+
+type loginEntry struct {
+	ip     string
+	window loginWindow
+}
+
 type loginLimiter struct {
 	mu       sync.Mutex
 	now      func() time.Time
-	attempts map[string]loginWindow
+	attempts map[string]*list.Element
+	order    *list.List
+	overflow loginWindow
 }
 
 func newLoginLimiter(now func() time.Time) *loginLimiter {
-	return &loginLimiter{now: now, attempts: make(map[string]loginWindow)}
+	return &loginLimiter{
+		now:      now,
+		attempts: make(map[string]*list.Element),
+		order:    list.New(),
+	}
 }
 
 // reserveAttempt checks and records a login attempt for ip under one lock, so
@@ -254,20 +316,30 @@ func (l *loginLimiter) reserveAttempt(ip string) bool {
 	defer l.mu.Unlock()
 
 	now := l.now()
-
-	window, tracked := l.liveWindowLocked(ip, now)
-	if !tracked {
-		l.storeLocked(ip, now, loginWindow{started: now, failures: 1})
-
-		return true
+	if entry, ok := l.liveEntryLocked(ip, now); ok {
+		return entry.window.reserve(now, loginFailureLimit)
 	}
 
-	if window.failures >= loginFailureLimit {
-		return false
+	// Keep untracked addresses in the active overflow window even if tracked
+	// slots open up via success or expiry, preventing rotating/blocked callers
+	// from acquiring a fresh per-IP allowance until the overflow window elapses.
+	if l.overflow.isLive(now) {
+		return l.overflow.reserve(now, loginOverflowLimit)
 	}
 
-	window.failures++
-	l.attempts[ip] = window
+	if len(l.attempts) >= maxTrackedLoginIPs {
+		l.pruneExpiredLocked(now)
+	}
+
+	if len(l.attempts) >= maxTrackedLoginIPs {
+		return l.overflow.reserve(now, loginOverflowLimit)
+	}
+
+	entry := &loginEntry{
+		ip:     ip,
+		window: loginWindow{started: now, failures: 1},
+	}
+	l.attempts[ip] = l.order.PushBack(entry)
 
 	return true
 }
@@ -276,61 +348,46 @@ func (l *loginLimiter) reset(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	delete(l.attempts, ip)
+	if elem, tracked := l.attempts[ip]; tracked {
+		l.removeElementLocked(elem)
+	}
 }
 
-// liveWindowLocked returns the unexpired failure window for ip, dropping it when
+// liveEntryLocked returns the unexpired failure window for ip, dropping it when
 // the window has elapsed.
-func (l *loginLimiter) liveWindowLocked(ip string, now time.Time) (loginWindow, bool) {
-	window, tracked := l.attempts[ip]
+func (l *loginLimiter) liveEntryLocked(ip string, now time.Time) (*loginEntry, bool) {
+	elem, tracked := l.attempts[ip]
 	if !tracked {
-		return loginWindow{}, false
+		return nil, false
 	}
 
-	if now.Sub(window.started) >= loginFailureWindow {
-		delete(l.attempts, ip)
+	entry, ok := elem.Value.(*loginEntry)
+	if !ok || !entry.window.isLive(now) {
+		l.removeElementLocked(elem)
 
-		return loginWindow{}, false
+		return nil, false
 	}
 
-	return window, true
-}
-
-// storeLocked writes a window while keeping the tracked-IP table strictly
-// bounded at maxTrackedLoginIPs: expired windows are pruned first and the oldest
-// entry is evicted when every remaining entry is still unexpired.
-func (l *loginLimiter) storeLocked(ip string, now time.Time, window loginWindow) {
-	if _, tracked := l.attempts[ip]; !tracked && len(l.attempts) >= maxTrackedLoginIPs {
-		l.pruneExpiredLocked(now)
-
-		for len(l.attempts) >= maxTrackedLoginIPs {
-			l.evictOldestLocked()
-		}
-	}
-
-	l.attempts[ip] = window
+	return entry, true
 }
 
 func (l *loginLimiter) pruneExpiredLocked(now time.Time) {
-	for ip, window := range l.attempts {
-		if now.Sub(window.started) >= loginFailureWindow {
-			delete(l.attempts, ip)
+	for front := l.order.Front(); front != nil; {
+		entry, ok := front.Value.(*loginEntry)
+		if ok && entry.window.isLive(now) {
+			break
 		}
+
+		next := front.Next()
+		l.removeElementLocked(front)
+		front = next
 	}
 }
 
-func (l *loginLimiter) evictOldestLocked() {
-	oldestIP := ""
-	oldestStarted := time.Time{}
-	found := false
-
-	for ip, window := range l.attempts {
-		if !found || window.started.Before(oldestStarted) {
-			oldestIP, oldestStarted, found = ip, window.started, true
-		}
+func (l *loginLimiter) removeElementLocked(elem *list.Element) {
+	if entry, ok := elem.Value.(*loginEntry); ok {
+		delete(l.attempts, entry.ip)
 	}
 
-	if found {
-		delete(l.attempts, oldestIP)
-	}
+	l.order.Remove(elem)
 }

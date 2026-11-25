@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 
 	"reader/internal/domain"
 )
@@ -40,7 +39,7 @@ func (r *SavedPageRepo) List(ctx context.Context, params domain.PageParams) (dom
 		return domain.PageResult[domain.SavedPage]{}, domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 
-	return paginateSavedPages(pages, params.Limit), nil
+	return finalizeKeysetPage(pages, params.Limit, func(page domain.SavedPage) string { return page.ID }), nil
 }
 
 func (r *SavedPageRepo) UnreadCount(ctx context.Context) (int, error) {
@@ -65,37 +64,54 @@ func (r *SavedPageRepo) GetByID(ctx context.Context, id string) (*domain.SavedPa
 	return &page, nil
 }
 
-func (r *SavedPageRepo) GetByURL(ctx context.Context, url domain.NormalizedURL) (*domain.SavedPage, error) {
-	page, err := scanSavedPage(r.read.QueryRowContext(ctx, `SELECT `+savedPageColumns+` FROM saved_page WHERE url = ?`, url.Raw()))
+func (r *SavedPageRepo) GetIDByURL(ctx context.Context, url domain.NormalizedURL) (string, bool, error) {
+	var id string
+	err := r.read.QueryRowContext(ctx, `SELECT id FROM saved_page WHERE url = ?`, url.Raw()).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return "", false, nil
 	}
 
 	if err != nil {
-		return nil, domain.NewError(domain.ErrSavedPageRepositoryError, err)
+		return "", false, domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 
-	return &page, nil
+	return id, true, nil
 }
 
 func (r *SavedPageRepo) Create(ctx context.Context, page domain.SavedPage) (domain.SavedPage, error) {
-	created, err := scanSavedPage(r.write.QueryRowContext(
-		ctx,
-		`INSERT INTO saved_page (id, url, title, description, content, published_at, read) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (url) DO NOTHING RETURNING `+savedPageColumns,
-		page.ID,
-		page.URL.Raw(),
-		page.Title,
-		optionalString(page.Description),
-		page.Content,
-		optionalTime(page.PublishedAt),
-		boolInt(page.Read),
-	))
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.SavedPage{}, domain.NewConflictURL(domain.ErrSavedPageAlreadyExists, page.URL.RedactedString())
-	}
+	var created domain.SavedPage
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		row, insertErr := scanSavedPage(tx.QueryRowContext(
+			ctx,
+			`INSERT INTO saved_page (id, url, title, description, content, published_at, read) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (url) DO NOTHING RETURNING `+savedPageColumns,
+			page.ID,
+			page.URL.Raw(),
+			page.Title,
+			optionalString(page.Description),
+			page.Content,
+			optionalTime(page.PublishedAt),
+			boolInt(page.Read),
+		))
+		if insertErr == nil {
+			created = row
 
+			return nil
+		}
+
+		if !errors.Is(insertErr, sql.ErrNoRows) {
+			return insertErr
+		}
+
+		var existingID string
+		lookupErr := tx.QueryRowContext(ctx, `SELECT id FROM saved_page WHERE url = ?`, page.URL.Raw()).Scan(&existingID)
+		if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+			return lookupErr
+		}
+
+		return domain.NewSavedPageConflict(existingID, page.URL.RedactedString())
+	})
 	if err != nil {
-		return domain.SavedPage{}, domain.NewError(domain.ErrSavedPageRepositoryError, err)
+		return domain.SavedPage{}, wrapRepositoryError(err, domain.ErrSavedPageRepositoryError)
 	}
 
 	return created, nil
@@ -110,17 +126,7 @@ func (r *SavedPageRepo) SetRead(ctx context.Context, id string, read bool) error
 }
 
 func (r *SavedPageRepo) MarkIDsRead(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	payload, err := encodeIDs(ids)
-	if err != nil {
-		return domain.NewError(domain.ErrSavedPageRepositoryError, err)
-	}
-
-	_, err = r.write.ExecContext(ctx, `UPDATE saved_page SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`, payload)
-	if err != nil {
+	if err := markIDsRead(ctx, r.write, markSavedPagesReadQuery, ids); err != nil {
 		return domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 
@@ -144,26 +150,9 @@ func (r *SavedPageRepo) Delete(ctx context.Context, id string) error {
 }
 
 func listSavedPagesQuery(params domain.PageParams) (string, []any) {
-	query := `SELECT ` + savedPageColumns + ` FROM saved_page`
-	where := []string{}
-	args := []any{}
-	if params.Unread {
-		where = append(where, `read = 0`)
-	}
+	where, tail, args := appendKeysetClauses(unqualifiedKeysetColumns, nil, nil, params)
 
-	comparison, order := pageDirection(params.Order)
-	if params.Cursor != nil {
-		where = append(where, `id `+comparison+` ?`)
-		args = append(args, *params.Cursor)
-	}
-
-	if len(where) > 0 {
-		query += ` WHERE ` + strings.Join(where, ` AND `)
-	}
-
-	query += ` ORDER BY id ` + order + ` LIMIT ?`
-
-	return query, append(args, params.Limit+1)
+	return `SELECT ` + savedPageColumns + ` FROM saved_page` + where + tail, args
 }
 
 func scanSavedPage(row interface{ Scan(...any) error }) (domain.SavedPage, error) {
@@ -182,31 +171,18 @@ func scanSavedPage(row interface{ Scan(...any) error }) (domain.SavedPage, error
 		return domain.SavedPage{}, err
 	}
 
+	parsedURL, err := domain.ParseNormalizedURL(rawURL, domain.ErrFeedUrlInvalid)
+	if err != nil {
+		return domain.SavedPage{}, errors.New("invalid stored saved page url")
+	}
+
 	return domain.SavedPage{
 		ID:          id,
-		URL:         domain.NormalizedURLFromStored(rawURL),
+		URL:         parsedURL,
 		Title:       title,
 		Description: optionalText(description),
 		Content:     content,
 		PublishedAt: optionalMillis(publishedAt),
 		Read:        intBool(read),
 	}, nil
-}
-
-func paginateSavedPages(pages []domain.SavedPage, limit int) domain.PageResult[domain.SavedPage] {
-	result := domain.PageResult[domain.SavedPage]{Items: pages}
-	if result.Items == nil {
-		result.Items = []domain.SavedPage{}
-	}
-
-	if len(pages) <= limit {
-		return result
-	}
-
-	trimmed := pages[:limit]
-	cursor := trimmed[len(trimmed)-1].ID
-	result.Items = trimmed
-	result.Cursor = &cursor
-
-	return result
 }

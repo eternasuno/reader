@@ -14,53 +14,43 @@ type FolderRepo struct {
 }
 
 func (r *FolderRepo) List(ctx context.Context) ([]domain.Folder, error) {
-	rows, err := r.read.QueryContext(ctx, `SELECT id, name FROM folder ORDER BY name ASC, id ASC`)
+	folders, err := queryFolders(ctx, r.read)
 	if err != nil {
-		return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
-	}
-
-	defer closeRows(rows)
-
-	folders := []domain.Folder{}
-	for rows.Next() {
-		folder := domain.Folder{}
-		if err := rows.Scan(&folder.ID, &folder.Name); err != nil {
-			return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
-		}
-
-		folders = append(folders, folder)
-	}
-
-	if err := rows.Err(); err != nil {
 		return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
 	}
 
 	return folders, nil
 }
 
-func (r *FolderRepo) GetByID(ctx context.Context, id string) (*domain.Folder, error) {
-	folder := domain.Folder{}
-	err := r.read.QueryRowContext(ctx, `SELECT id, name FROM folder WHERE id = ?`, id).Scan(&folder.ID, &folder.Name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-
+func queryFolders(ctx context.Context, querier rowsQuerier) ([]domain.Folder, error) {
+	rows, err := querier.QueryContext(ctx, `SELECT id, name FROM folder ORDER BY name ASC, id ASC`)
 	if err != nil {
-		return nil, domain.NewError(domain.ErrFolderRepositoryError, err)
+		return nil, err
 	}
 
-	return &folder, nil
+	defer closeRows(rows)
+
+	folders := []domain.Folder{}
+	for rows.Next() {
+		var folder domain.Folder
+		if err := rows.Scan(&folder.ID, &folder.Name); err != nil {
+			return nil, err
+		}
+
+		folders = append(folders, folder)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return folders, nil
 }
 
 func (r *FolderRepo) Create(ctx context.Context, id string, name string) (domain.Folder, error) {
-	trimmed, err := domain.ValidateFolderName(name)
-	if err != nil {
-		return domain.Folder{}, err
-	}
-
 	folder := domain.Folder{}
-	err = r.write.
-		QueryRowContext(ctx, `INSERT INTO folder (id, name) VALUES (?, ?) ON CONFLICT (name) DO NOTHING RETURNING id, name`, id, trimmed).
+	err := r.write.
+		QueryRowContext(ctx, `INSERT INTO folder (id, name) VALUES (?, ?) ON CONFLICT (name) DO NOTHING RETURNING id, name`, id, name).
 		Scan(&folder.ID, &folder.Name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Folder{}, domain.NewError(domain.ErrFolderAlreadyExists, nil)
@@ -74,25 +64,17 @@ func (r *FolderRepo) Create(ctx context.Context, id string, name string) (domain
 }
 
 func (r *FolderRepo) Rename(ctx context.Context, id string, name string) error {
-	trimmed, err := domain.ValidateFolderName(name)
-	if err != nil {
-		return err
-	}
-
-	current, err := r.GetByID(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	if current == nil {
+	var updatedID string
+	err := r.write.QueryRowContext(
+		ctx,
+		`UPDATE folder SET name = ? WHERE id = ? RETURNING id`,
+		name,
+		id,
+	).Scan(&updatedID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NewError(domain.ErrFolderNotFound, nil)
 	}
 
-	if current.Name == trimmed {
-		return nil
-	}
-
-	_, err = r.write.ExecContext(ctx, `UPDATE folder SET name = ? WHERE id = ?`, trimmed, id)
 	if err != nil {
 		if isUniqueViolation(err, "folder.name") {
 			return domain.NewError(domain.ErrFolderAlreadyExists, nil)

@@ -4,15 +4,17 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
   For,
   type Setter,
   Show,
   untrack,
 } from 'solid-js';
 import type { Feed, ReaderMode } from '../api';
+import { browserHref } from '../api/url';
 import { t } from '../i18n';
 import { changeFeedReaderMode, feeds } from '../state';
-import { Button, Icon } from '../ui';
+import { Button, Icon, useDialogFocus } from '../ui';
 import { createOpenReset } from './createOpenReset';
 import { SiteIcon } from './SiteIcon';
 
@@ -20,7 +22,7 @@ export interface FeedOptionsDialogProps {
   open: boolean;
   feed: Feed | null;
   onClose: () => void;
-  onUnsubscribe?: (feed: Feed) => void;
+  onUnsubscribe?: (feed: Feed) => void | Promise<void>;
 }
 
 interface FeedOptionsState {
@@ -39,27 +41,7 @@ const READER_MODES: ReadonlyArray<{
   { mode: 'embedded', label: 'feeds.modeEmbedded' },
 ];
 
-const useEscapeToClose = (
-  isOpen: () => boolean,
-  canClose: () => boolean,
-  close: () => void
-): void => {
-  createEffect(isOpen, (open) => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !event.defaultPrevented && canClose()) {
-        close();
-      }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  });
-};
-
-/**
- * `feeds.md`: feed options dialog showing feed metadata and default reader mode.
- */
-export function FeedOptionsDialog(props: FeedOptionsDialogProps): JSX.Element {
+const useFeedOptionsController = (props: FeedOptionsDialogProps) => {
   const [saving, setSaving] = createSignal(false);
   const [selectedMode, setSelectedMode] = createSignal<ReaderMode>('default');
   const state: FeedOptionsState = {
@@ -88,24 +70,38 @@ export function FeedOptionsDialog(props: FeedOptionsDialogProps): JSX.Element {
     if (mode !== undefined) setSelectedMode(mode);
   });
 
-  useEscapeToClose(
-    () => props.open,
-    () => !saving(),
-    props.onClose
-  );
+  return { state, liveFeed, saving, selectedMode };
+};
+
+/**
+ * `FD-PREF-1` / `RD-MODE-1`: feed options drawer showing feed metadata and default reader mode.
+ */
+export function FeedOptionsDialog(props: FeedOptionsDialogProps): JSX.Element {
+  let panel: HTMLElement | undefined;
+  const ctl = useFeedOptionsController(props);
+
+  useDialogFocus({
+    open: () => Boolean(props.open && ctl.liveFeed()),
+    panel: () => panel,
+    dismissable: () => !ctl.saving(),
+    onClose: () => props.onClose(),
+  });
 
   return (
-    <Show when={props.open && liveFeed()}>
+    <Show when={props.open && ctl.liveFeed()}>
       {(feed) => (
         <FeedOptionsDrawer
           feed={feed()}
-          mode={selectedMode()}
-          busy={saving()}
+          mode={ctl.selectedMode()}
+          busy={ctl.saving()}
+          panelRef={(el) => {
+            panel = el;
+          }}
           onClose={() => {
-            if (!saving()) props.onClose();
+            if (!ctl.saving()) props.onClose();
           }}
           onModeChange={(nextMode) =>
-            void updateReaderMode(feed(), nextMode, state)
+            void updateReaderMode(feed(), nextMode, ctl.state)
           }
           onUnsubscribe={props.onUnsubscribe}
         />
@@ -126,34 +122,36 @@ function FeedOptionsDrawer(props: {
   feed: Feed;
   mode: ReaderMode;
   busy: boolean;
+  panelRef: (element: HTMLElement) => void;
   onClose: () => void;
   onModeChange: (mode: ReaderMode) => void;
-  onUnsubscribe?: (feed: Feed) => void;
+  onUnsubscribe?: (feed: Feed) => void | Promise<void>;
 }): JSX.Element {
   return (
     <div class="fixed inset-0 z-50 flex justify-end">
-      <button
-        type="button"
+      <div
         class="fixed inset-0 bg-black/25"
-        aria-label={String(t('common.close'))}
-        disabled={props.busy}
+        aria-hidden="true"
         onClick={props.onClose}
       />
       <aside
+        ref={props.panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label={String(t('feeds.feedOptionsTitle'))}
-        class="relative z-10 flex h-full w-[360px] max-w-full flex-col border-l border-base-300 bg-base-100 text-base-content shadow-2xl"
+        aria-label={t('feeds.feedOptionsTitle')}
+        aria-busy={props.busy ? 'true' : undefined}
+        tabindex="-1"
+        class="relative z-10 flex h-full w-[360px] max-w-full flex-col border-l border-base-300 bg-base-100 text-base-content shadow-2xl focus:outline-none"
       >
         <nav class="sticky top-0 z-20 flex h-13 shrink-0 items-center justify-between bg-base-100 px-5">
           <h2 class="text-base font-medium text-base-content">
-            {String(t('feeds.feedOptionsTitle'))}
+            {t('feeds.feedOptionsTitle')}
           </h2>
           <Button
             variant="icon"
             size="sm"
             class="rounded-full bg-base-200"
-            aria-label={String(t('common.close'))}
+            aria-label={t('common.close')}
             disabled={props.busy}
             onClick={props.onClose}
           >
@@ -177,7 +175,7 @@ function FeedOptionsBody(props: {
   mode: ReaderMode;
   busy: boolean;
   onModeChange: (mode: ReaderMode) => void;
-  onUnsubscribe?: (feed: Feed) => void;
+  onUnsubscribe?: (feed: Feed) => void | Promise<void>;
 }): JSX.Element {
   const siteUrl = () => feedSiteOrigin(props.feed.url);
 
@@ -188,14 +186,11 @@ function FeedOptionsBody(props: {
       </div>
       <div class="flex flex-col gap-1.5">
         <span class="text-xs text-base-content/60">
-          {String(t('feeds.titleLabel'))}
+          {t('feeds.titleLabel')}
         </span>
-        <div class="flex items-center justify-between gap-2">
-          <p class="text-sm font-medium break-words text-base-content">
-            {props.feed.title}
-          </p>
-          <Icon name="edit" size={16} class="shrink-0 text-base-content/60" />
-        </div>
+        <p class="text-sm font-medium break-words text-base-content">
+          {props.feed.title}
+        </p>
       </div>
       <FeedDefaultViewSelect
         mode={props.mode}
@@ -203,7 +198,7 @@ function FeedOptionsBody(props: {
         onModeChange={props.onModeChange}
       />
       <FeedExternalLinkSection
-        label={String(t('feeds.websiteLabel'))}
+        label={t('feeds.websiteLabel')}
         href={siteUrl()}
       />
       <FeedExternalLinkSection label="RSS" href={props.feed.url} />
@@ -214,10 +209,10 @@ function FeedOptionsBody(props: {
               variant="ghost"
               class="btn-outline border-error/60 text-error hover:bg-error/10"
               disabled={props.busy}
-              onClick={() => unsubscribe()(props.feed)}
+              onClick={() => void unsubscribe()(props.feed)}
             >
               <Icon name="trash" size={16} />
-              {String(t('feeds.deleteFeed'))}
+              {t('feeds.deleteFeed')}
             </Button>
           </div>
         )}
@@ -231,13 +226,15 @@ function FeedDefaultViewSelect(props: {
   busy: boolean;
   onModeChange: (mode: ReaderMode) => void;
 }): JSX.Element {
+  const selectId = createUniqueId();
+
   return (
     <div class="flex flex-col gap-1.5">
-      <label for="feed-default-display" class="text-xs text-base-content/60">
-        {String(t('feeds.defaultDisplay'))}
+      <label for={selectId} class="text-xs text-base-content/60">
+        {t('feeds.defaultDisplay')}
       </label>
       <select
-        id="feed-default-display"
+        id={selectId}
         class="h-10 w-fit min-w-44 rounded border border-base-300 bg-base-200 px-2.5 text-sm text-base-content focus:border-primary focus:outline-none disabled:opacity-50"
         value={props.mode}
         disabled={props.busy}
@@ -246,13 +243,11 @@ function FeedDefaultViewSelect(props: {
         }
       >
         <For each={READER_MODES}>
-          {(option) => (
-            <option value={option.mode}>{String(t(option.label))}</option>
-          )}
+          {(option) => <option value={option.mode}>{t(option.label)}</option>}
         </For>
       </select>
       <p class="text-xs text-base-content/60">
-        {String(t('feeds.defaultDisplayHint'))}
+        {t('feeds.defaultDisplayHint')}
       </p>
     </div>
   );
@@ -262,18 +257,28 @@ function FeedExternalLinkSection(props: {
   label: string;
   href: string;
 }): JSX.Element {
+  const linkClass =
+    'inline-flex items-center gap-1 text-sm break-all text-base-content/90 underline hover:text-base-content';
+
   return (
     <div class="flex flex-col gap-1">
       <span class="text-xs text-base-content/60">{props.label}</span>
-      <a
-        href={props.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="inline-flex items-center gap-1 text-sm break-all text-base-content/90 underline hover:text-base-content"
+      <Show
+        when={browserHref(props.href)}
+        fallback={<span class={linkClass}>{props.href}</span>}
       >
-        <span>{props.href}</span>
-        <Icon name="external-link" size={14} class="shrink-0 opacity-70" />
-      </a>
+        {(href) => (
+          <a
+            href={href()}
+            target="_blank"
+            rel="noopener noreferrer"
+            class={linkClass}
+          >
+            <span>{props.href}</span>
+            <Icon name="external-link" size={14} class="shrink-0 opacity-70" />
+          </a>
+        )}
+      </Show>
     </div>
   );
 }

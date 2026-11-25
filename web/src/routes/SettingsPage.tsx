@@ -1,21 +1,32 @@
 import { useBeforeLeave, useNavigate } from '@solidjs/router';
 import type { JSX } from '@solidjs/web';
-import { createSignal, For, onSettled } from 'solid-js';
-import { t, translateErrorCode } from '../i18n';
-import type { SettingsSection } from '../state';
 import {
+  createSignal,
+  createStore,
+  For,
+  onCleanup,
+  onSettled,
+  untrack,
+} from 'solid-js';
+import { t } from '../i18n';
+import type { SettingsDrafts, SettingsSection } from '../state';
+import {
+  clearSecretDrafts,
+  draftsFromSettings,
+  errorText,
   hasAnyUnsavedChanges,
   isSaving,
   isSectionDirty,
   loadSettings,
   refreshKindleSends,
   resetSectionDraft,
+  settings,
 } from '../state';
 import { Button, Icon, type IconName, showToast } from '../ui';
 import { KindleSection } from './KindleSections';
 import { ServicesSection } from './ServicesSection';
 import { ArticlesSection, ExtractionSection } from './SettingsSections';
-import { errorCodeOf } from './viewHelpers';
+import type { SettingsDraftProps } from './settingsHelpers';
 
 const SECTION_LABEL_KEYS = {
   articles: 'settings.sectionArticles',
@@ -47,13 +58,13 @@ function SettingsHeader(props: { onLeave: () => void }): JSX.Element {
       <Button
         variant="icon"
         size="sm"
-        aria-label={String(t('settings.backToLibrary'))}
-        title={String(t('settings.backToLibrary'))}
+        aria-label={t('settings.backToLibrary')}
+        title={t('settings.backToLibrary')}
         onClick={props.onLeave}
       >
         <Icon name="arrow-left" size={18} />
       </Button>
-      <h1 class="text-base font-semibold">{String(t('settings.title'))}</h1>
+      <h1 class="text-base font-semibold">{t('settings.title')}</h1>
     </header>
   );
 }
@@ -68,7 +79,7 @@ function SettingsNav(props: SettingsNavProps): JSX.Element {
   return (
     <nav
       class="grid shrink-0 grid-cols-4 gap-1 md:sticky md:top-6 md:flex md:w-52 md:flex-col md:self-start"
-      aria-label={String(t('settings.title'))}
+      aria-label={t('settings.title')}
     >
       <For each={SECTIONS}>
         {(section) => (
@@ -85,7 +96,7 @@ function SettingsNav(props: SettingsNavProps): JSX.Element {
             onClick={() => props.onSelect(section)}
           >
             <Icon name={SECTION_ICONS[section]} size={18} class="opacity-70" />
-            {String(t(SECTION_LABEL_KEYS[section]))}
+            {t(SECTION_LABEL_KEYS[section])}
           </button>
         )}
       </For>
@@ -94,44 +105,54 @@ function SettingsNav(props: SettingsNavProps): JSX.Element {
 }
 
 /** All four forms stay mounted so drafts survive section switches (`settings.md:25`). */
-function SettingsPanels(props: {
-  active: SettingsSection;
-  onGoToServices: () => void;
-}): JSX.Element {
+function SettingsPanels(
+  props: SettingsDraftProps & {
+    active: SettingsSection;
+    onGoToServices: () => void;
+  }
+): JSX.Element {
   return (
     <>
       <section
         class={sectionPanelClass(props.active === 'articles')}
-        aria-label={String(t('settings.sectionArticles'))}
+        aria-label={t('settings.sectionArticles')}
       >
-        <ArticlesSection />
+        <ArticlesSection drafts={props.drafts} setDrafts={props.setDrafts} />
       </section>
       <section
         class={sectionPanelClass(props.active === 'extraction')}
-        aria-label={String(t('settings.sectionExtraction'))}
+        aria-label={t('settings.sectionExtraction')}
       >
-        <ExtractionSection onGoToServices={props.onGoToServices} />
+        <ExtractionSection
+          drafts={props.drafts}
+          setDrafts={props.setDrafts}
+          onGoToServices={props.onGoToServices}
+        />
       </section>
       <section
         class={sectionPanelClass(props.active === 'kindle')}
-        aria-label={String(t('settings.sectionKindle'))}
+        aria-label={t('settings.sectionKindle')}
       >
-        <KindleSection onGoToServices={props.onGoToServices} />
+        <KindleSection
+          drafts={props.drafts}
+          setDrafts={props.setDrafts}
+          onGoToServices={props.onGoToServices}
+        />
       </section>
       <section
         class={sectionPanelClass(props.active === 'services')}
-        aria-label={String(t('settings.sectionServices'))}
+        aria-label={t('settings.sectionServices')}
       >
-        <ServicesSection />
+        <ServicesSection drafts={props.drafts} setDrafts={props.setDrafts} />
       </section>
     </>
   );
 }
 
-const useLeaveGuards = (): void => {
+const useLeaveGuards = (isDirty: () => boolean): void => {
   onSettled(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
-      if (!hasAnyUnsavedChanges()) return;
+      if (!isDirty()) return;
 
       event.preventDefault();
       const unloadEvent = event;
@@ -146,41 +167,52 @@ const useLeaveGuards = (): void => {
   });
 
   useBeforeLeave((event) => {
-    if (event.defaultPrevented || !hasAnyUnsavedChanges()) return;
+    if (event.defaultPrevented || !isDirty()) return;
 
-    if (!window.confirm(String(t('settings.unsavedLeaveConfirm')))) {
+    if (!window.confirm(t('settings.unsavedLeaveConfirm'))) {
       event.preventDefault();
     }
   });
 };
 
 /**
- * `settings.md:16-25`: one page with four sections in order (articles &
- * subscriptions, extraction, Kindle, external services), sidebar navigation on
- * wide screens, and unsaved-change guards for both section switches and leaving
- * the page.
+ * `settings.md:16-25`: one page with four sections in order (articles & subscriptions,
+ * extraction, Kindle, external services), sidebar navigation on wide screens, and
+ * unsaved-change guards for both section switches and leaving the page.
  */
 export function SettingsPage(): JSX.Element {
   const navigate = useNavigate();
   const [activeSection, setActiveSection] =
     createSignal<SettingsSection>('articles');
+  const [drafts, setDrafts] = createStore<SettingsDrafts>(
+    draftsFromSettings(untrack(settings))
+  );
 
-  useLeaveGuards();
+  onCleanup(() => clearSecretDrafts(setDrafts));
+  useLeaveGuards(() => hasAnyUnsavedChanges(drafts, settings()));
 
   onSettled(() => {
-    void loadSettings().catch((error: unknown) => {
-      showToast(translateErrorCode(errorCodeOf(error)), 'error');
+    let active = true;
+    void loadSettings((loaded) => {
+      if (active) setDrafts(() => draftsFromSettings(loaded));
+    }).catch((error: unknown) => {
+      if (active) showToast(errorText(error), 'error');
     });
+
+    return () => {
+      active = false;
+    };
   });
 
   const selectSection = (next: SettingsSection): void => {
     const current = activeSection();
     if (next === current || isSaving()) return;
 
-    if (isSectionDirty(current)) {
-      if (!window.confirm(String(t('settings.unsavedSectionConfirm')))) return;
+    const loaded = settings();
+    if (isSectionDirty(current, drafts, loaded)) {
+      if (!window.confirm(t('settings.unsavedSectionConfirm'))) return;
       // `settings.md:20`: the discarded draft is reset from the saved settings.
-      resetSectionDraft(current);
+      resetSectionDraft(current, setDrafts, loaded);
     }
 
     setActiveSection(next);
@@ -199,6 +231,8 @@ export function SettingsPage(): JSX.Element {
         <div class="min-w-0 max-w-2xl flex-1">
           <SettingsPanels
             active={activeSection()}
+            drafts={drafts}
+            setDrafts={setDrafts}
             onGoToServices={() => selectSection('services')}
           />
         </div>

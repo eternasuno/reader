@@ -20,11 +20,12 @@ export interface ReaderMoreMenuProps {
   article: LibraryArticle;
   nav: ReaderNav;
   onDelete: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 const articleFeed = (article: LibraryArticle): Feed | null => {
   if (article.kind !== 'feed') return null;
+
   return feeds().find((f) => f.id === article.feedId) ?? null;
 };
 
@@ -32,44 +33,47 @@ const MoreMainPanel = (props: {
   article: LibraryArticle;
   onDelete: () => void;
   onOpenView: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onRequestFeedOptions: (feed: Feed) => void;
 }): JSX.Element => (
   <>
     <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
-      {String(t('reader.sendAsEbook'))}
+      {t('reader.sendAsEbook')}
     </MenuItem>
     <MenuDivider />
     <MenuItem
       icon="external-link"
       onSelect={() => openInNewTab(props.article.url)}
     >
-      {String(t('reader.openOriginalInNewTab'))}
+      {t('reader.openOriginalInNewTab')}
     </MenuItem>
     <MenuCheckbox
       icon="compass"
       checked={displayMode() === 'embedded'}
       onSelect={() => toggleEmbeddedMode()}
     >
-      {String(t('reader.embeddedWebpageView'))}
+      {t('reader.embeddedWebpageView')}
     </MenuCheckbox>
     <MenuCheckbox
       icon="fullscreen"
       checked={readerFullscreen()}
       onSelect={() => toggleReaderFullscreen()}
     >
-      {String(t('reader.fullscreen'))}
+      {t('reader.fullscreen')}
     </MenuCheckbox>
     <Show when={displayMode() !== 'embedded'}>
-      <MenuItem submenu keepOpen icon="typography" onSelect={props.onOpenView}>
-        {String(t('reader.appearance'))}
+      <MenuItem submenu icon="typography" onSelect={props.onOpenView}>
+        {t('reader.appearance')}
       </MenuItem>
     </Show>
     <Show when={articleFeed(props.article)}>
       {(feed) => (
         <>
           <MenuDivider />
-          <MenuItem onSelect={() => props.onRequestFeedOptions?.(feed())}>
-            {String(t('feeds.feedOptions'))}
+          <MenuItem
+            opensDialog
+            onSelect={() => props.onRequestFeedOptions(feed())}
+          >
+            {t('feeds.feedOptions')}
           </MenuItem>
         </>
       )}
@@ -77,7 +81,7 @@ const MoreMainPanel = (props: {
     <Show when={props.article.kind === 'later'}>
       <MenuDivider />
       <MenuItem danger icon="trash" onSelect={props.onDelete}>
-        {String(t('reader.deleteArticle'))}
+        {t('reader.deleteArticle')}
       </MenuItem>
     </Show>
   </>
@@ -89,8 +93,7 @@ export function ReaderMoreMenu(props: ReaderMoreMenuProps): JSX.Element {
 
   return (
     <Menu
-      label={String(t('reader.moreActions'))}
-      align="end"
+      label={t('reader.moreActions')}
       triggerClass="btn-sm max-md:size-10"
       onOpenChange={(open) => {
         if (!open) setPanel('main');

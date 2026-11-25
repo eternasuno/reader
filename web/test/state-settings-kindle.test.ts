@@ -1,23 +1,43 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings } from '../src/api';
+import type { SettingsDrafts } from '../src/state';
+import { makeKindleSettings as makeSettings } from './support/state-fixture';
 
 type StateModule = typeof import('../src/state');
 type I18nModule = typeof import('../src/i18n');
 type UiModule = typeof import('../src/ui');
+type StoreSetter = import('solid-js').StoreSetter<SettingsDrafts>;
 
 let state: StateModule;
 let solid: typeof import('solid-js');
 let i18n: I18nModule;
 let ui: UiModule;
 let fetchMock: ReturnType<typeof vi.fn>;
+let drafts: SettingsDrafts;
+let setDrafts: StoreSetter;
+let disposeRoot: (() => void) | undefined;
 
 const fresh = async (): Promise<void> => {
+  disposeRoot?.();
   vi.resetModules();
   solid = await import('solid-js');
   i18n = await import('../src/i18n');
   ui = await import('../src/ui');
   state = await import('../src/state');
+  disposeRoot = solid.createRoot((dispose) => {
+    const [store, setStore] = solid.createStore<SettingsDrafts>(
+      state.draftsFromSettings(null)
+    );
+    drafts = store;
+    setDrafts = setStore;
+    return dispose;
+  });
 };
+
+afterEach(() => {
+  disposeRoot?.();
+  disposeRoot = undefined;
+});
 
 beforeEach(async () => {
   fetchMock = vi.fn();
@@ -53,39 +73,23 @@ const requestBody = (call = 0): unknown => {
   return typeof body === 'string' ? JSON.parse(body) : body;
 };
 
-const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
-  retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
-  smtp: {
-    senderEmail: 'sender@example.com',
-    host: 'smtp.example.com',
-    port: 587,
-    security: 'starttls',
-    user: 'smtp-user',
-    passwordConfigured: true,
-  },
-  kindle: {
-    kindleEmail: 'kindle@example.com',
-    sendTime: '08:00',
-    nextSendAt: '2026-11-20T08:00:00Z',
-  },
-  ...overrides,
-});
-
 const load = async (loaded: Settings = makeSettings()): Promise<void> => {
   queue(loaded);
   queue({ running: false, items: [] });
-  await state.loadSettings();
+  await state.loadSettings((next) => {
+    setDrafts(() => state.draftsFromSettings(next));
+  });
   solid.flush();
 };
 
 describe('kindle save', () => {
   it('saves only kindleEmail and sendTime and clears dirty state', async () => {
     await load();
-    state.setKindleEmailDraft(' new@kindle.com ');
-    state.setSendTimeDraft('07:30');
+    setDrafts((d) => ({
+      ...d,
+      kindleEmail: ' new@kindle.com ',
+      sendTime: '07:30',
+    }));
     solid.flush();
 
     queueEmpty();
@@ -99,7 +103,7 @@ describe('kindle save', () => {
         },
       })
     );
-    await expect(state.saveKindle()).resolves.toBe(true);
+    await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(true);
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/kindle');
@@ -115,8 +119,8 @@ describe('kindle save', () => {
       sendTime: '07:30',
       nextSendAt: '2026-11-21T07:30:00Z',
     });
-    expect(state.kindleEmailDraft()).toBe('new@kindle.com');
-    expect(state.isSectionDirty('kindle')).toBe(false);
+    expect(drafts.kindleEmail).toBe('new@kindle.com');
+    expect(state.isSectionDirty('kindle', drafts)).toBe(false);
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('settings.kindleSavedToast'))
     );
@@ -126,12 +130,12 @@ describe('kindle save', () => {
 describe('kindle schedule disable', () => {
   it('omits blank sendTime when disabling scheduled sends', async () => {
     await load();
-    state.setSendTimeDraft('   ');
+    setDrafts((d) => ({ ...d, sendTime: '   ' }));
     solid.flush();
 
     queueEmpty();
     queue(makeSettings({ kindle: { kindleEmail: 'kindle@example.com' } }));
-    await expect(state.saveKindle()).resolves.toBe(true);
+    await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(true);
     solid.flush();
 
     const body = requestBody(2) as Record<string, unknown>;
@@ -141,20 +145,23 @@ describe('kindle schedule disable', () => {
       kindleEmail: 'kindle@example.com',
     });
     expect(state.settings()?.kindle?.nextSendAt).toBeUndefined();
-    expect(state.isSectionDirty('kindle')).toBe(false);
+    expect(state.isSectionDirty('kindle', drafts)).toBe(false);
   });
 });
 
 describe('kindle save fallback', () => {
   it('falls back to submitted values and clears nextSendAt when re-read fails', async () => {
     await load();
-    state.setKindleEmailDraft('fallback@kindle.com');
-    state.setSendTimeDraft('');
+    setDrafts((d) => ({
+      ...d,
+      kindleEmail: 'fallback@kindle.com',
+      sendTime: '',
+    }));
     solid.flush();
 
     queueEmpty();
     queue({ error: 'SettingRepositoryError' }, 500);
-    await expect(state.saveKindle()).resolves.toBe(true);
+    await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(true);
     solid.flush();
 
     expect(state.settings()?.kindle).toEqual({
@@ -168,34 +175,32 @@ describe('kindle save fallback', () => {
 });
 
 describe('kindle save failure', () => {
-  it('reports invalid Kindle settings', async () => {
-    await load();
-    state.setKindleEmailDraft('bad-email');
-    solid.flush();
+  it.each([
+    {
+      error: 'InvalidKindleSetting',
+      status: 400,
+      email: 'bad-email',
+      initial: makeSettings(),
+    },
+    {
+      error: 'SMTPNotConfigured',
+      status: 422,
+      email: 'a@kindle.com',
+      initial: makeSettings({ smtp: undefined, kindle: undefined }),
+    },
+  ])(
+    'reports $error and preserves saved settings',
+    async ({ error, status, email, initial }) => {
+      await load(initial);
+      setDrafts((d) => ({ ...d, kindleEmail: email }));
+      solid.flush();
+      queue({ error }, status);
 
-    queue({ error: 'InvalidKindleSetting' }, 400);
-    await expect(state.saveKindle()).resolves.toBe(false);
-    solid.flush();
-
-    expect(state.settings()?.kindle?.kindleEmail).toBe('kindle@example.com');
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('InvalidKindleSetting')
-    );
-    expect(state.isSaving()).toBe(false);
-  });
-
-  it('reports missing SMTP configuration', async () => {
-    await load(makeSettings({ smtp: undefined, kindle: undefined }));
-    state.setKindleEmailDraft('a@kindle.com');
-    solid.flush();
-
-    queue({ error: 'SMTPNotConfigured' }, 422);
-    await expect(state.saveKindle()).resolves.toBe(false);
-    solid.flush();
-
-    expect(state.settings()?.kindle).toBeUndefined();
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('SMTPNotConfigured')
-    );
-  });
+      await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(false);
+      solid.flush();
+      expect(state.settings()?.kindle).toEqual(initial.kindle);
+      expect(ui.currentToast()?.message).toBe(i18n.translateErrorCode(error));
+      expect(state.isSaving()).toBe(false);
+    }
+  );
 });

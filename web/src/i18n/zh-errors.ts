@@ -4,6 +4,8 @@ export const zhErrors = {
   InvalidCredentials: '密码不正确',
   TooManyRequests: '请求过于频繁，请稍后重试',
   RequestFailed: '操作失败，请稍后重试',
+  RequestTimeout: '请求超时，请稍后重试',
+  InvalidResponse: '服务器返回了无法识别的响应',
   NetworkError: '网络连接失败，请检查网络后重试',
   ArticleEmptyContent: '未能提取到文章内容',
   WebpageFetcherError: '网页抓取失败，请稍后重试',

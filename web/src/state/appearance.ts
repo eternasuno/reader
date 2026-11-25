@@ -3,9 +3,10 @@
  */
 
 import { createSignal, flush } from 'solid-js';
+import { getItem, removeItem, setItem } from './storage';
 
 export const APPEARANCE_STORAGE_KEY = 'reader.appearance';
-export const THEME_STORAGE_KEY = 'reader.theme';
+const THEME_STORAGE_KEY = 'reader.theme';
 
 export type ReaderTheme = 'auto' | 'light' | 'dark';
 export type ReaderFontSize = 14 | 16 | 18 | 20 | 22;
@@ -27,15 +28,9 @@ export interface ReaderAppearanceInput {
   lineHeight?: ReaderLineHeight | 'compact' | 'comfortable' | 'relaxed';
 }
 
-export const FONT_SIZE_STEPS: ReadonlyArray<ReaderFontSize> = [
-  14, 16, 18, 20, 22,
-];
-export const LINE_HEIGHT_STEPS: ReadonlyArray<ReaderLineHeight> = [
-  1.4, 1.6, 1.8, 2.0,
-];
-export const LINE_WIDTH_STEPS: ReadonlyArray<ReaderLineWidth> = [
-  1, 2, 3, 4, 5, 6,
-];
+const FONT_SIZE_STEPS: ReadonlyArray<ReaderFontSize> = [14, 16, 18, 20, 22];
+const LINE_HEIGHT_STEPS: ReadonlyArray<ReaderLineHeight> = [1.4, 1.6, 1.8, 2.0];
+const LINE_WIDTH_STEPS: ReadonlyArray<ReaderLineWidth> = [1, 2, 3, 4, 5, 6];
 
 export const DEFAULT_APPEARANCE: ReaderAppearance = {
   fontSize: 16,
@@ -128,12 +123,10 @@ const normalizeAppearance = (
 };
 
 function loadAppearance(): ReaderAppearance {
-  if (typeof localStorage === 'undefined') return { ...DEFAULT_APPEARANCE };
+  const raw = getItem(APPEARANCE_STORAGE_KEY);
+  if (raw === null) return { ...DEFAULT_APPEARANCE };
 
   try {
-    const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY);
-    if (raw === null) return { ...DEFAULT_APPEARANCE };
-
     return normalizeAppearance(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_APPEARANCE };
@@ -141,23 +134,11 @@ function loadAppearance(): ReaderAppearance {
 }
 
 const persistAppearance = (next: ReaderAppearance): void => {
-  if (typeof localStorage === 'undefined') return;
-
-  try {
-    localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // Storage may be unavailable (private mode / quota); keep appearance in memory.
-  }
+  setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(next));
 };
 
 const removePersistedAppearance = (): void => {
-  if (typeof localStorage === 'undefined') return;
-
-  try {
-    localStorage.removeItem(APPEARANCE_STORAGE_KEY);
-  } catch {
-    // Storage may be unavailable; keep default appearance in memory.
-  }
+  removeItem(APPEARANCE_STORAGE_KEY);
 };
 
 const [readerAppearance, setReaderAppearance] = createSignal<ReaderAppearance>(
@@ -209,7 +190,6 @@ export const resetReaderAppearance = (): void => {
 };
 
 const applyTheme = (next: ReaderTheme): void => {
-  if (typeof document === 'undefined') return;
   if (next === 'auto') {
     delete document.documentElement.dataset.theme;
   } else {
@@ -218,27 +198,13 @@ const applyTheme = (next: ReaderTheme): void => {
 };
 
 const loadTheme = (): ReaderTheme => {
-  if (typeof localStorage === 'undefined') return 'auto';
-  try {
-    const theme = pickAllowed(
-      localStorage.getItem(THEME_STORAGE_KEY),
-      THEMES,
-      'auto'
-    );
-    if (theme !== 'auto') applyTheme(theme);
-    return theme;
-  } catch {
-    return 'auto';
-  }
+  const theme = pickAllowed(getItem(THEME_STORAGE_KEY), THEMES, 'auto');
+  if (theme !== 'auto') applyTheme(theme);
+  return theme;
 };
 
 const persistTheme = (next: ReaderTheme): void => {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, next);
-  } catch {
-    // Storage may be unavailable; keep theme in memory.
-  }
+  setItem(THEME_STORAGE_KEY, next);
 };
 
 const [readerTheme, setReaderThemeSignal] = createSignal<ReaderTheme>(
@@ -256,7 +222,7 @@ export const setReaderTheme = (next: ReaderTheme): void => {
 
 const [readerFullscreen, setReaderFullscreen] = createSignal(false);
 
-export { readerFullscreen, setReaderFullscreen };
+export { readerFullscreen };
 
 export const toggleReaderFullscreen = (): void => {
   setReaderFullscreen((prev) => !prev);

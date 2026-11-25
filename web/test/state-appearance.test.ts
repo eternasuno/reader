@@ -16,12 +16,6 @@ beforeEach(async () => {
 });
 
 describe('readerAppearance state', () => {
-  it('defaults to DEFAULT_APPEARANCE with isDefaultAppearance true', () => {
-    expect(state.readerAppearance()).toEqual(state.DEFAULT_APPEARANCE);
-    expect(state.isDefaultAppearance()).toBe(true);
-    expect(localStorage.getItem(state.APPEARANCE_STORAGE_KEY)).toBeNull();
-  });
-
   it('updates appearance, sets isDefaultAppearance false, and persists JSON', () => {
     const next = {
       fontSize: 18 as const,
@@ -109,6 +103,33 @@ describe('readerAppearance legacy migration', () => {
       lineWidth: 6,
       lineHeight: 2.0,
     });
+  });
+});
+
+describe('safe storage fallback', () => {
+  it('survives when window.localStorage throws on access', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('Blocked', 'SecurityError');
+      },
+    });
+    try {
+      vi.resetModules();
+      const isolated = await import('../src/state/appearance');
+      expect(isolated.readerAppearance()).toEqual(isolated.DEFAULT_APPEARANCE);
+      expect(isolated.readerTheme()).toBe('auto');
+      expect(() =>
+        isolated.updateReaderAppearance({ fontSize: 20 })
+      ).not.toThrow();
+      expect(isolated.readerAppearance().fontSize).toBe(20);
+      expect(() => isolated.setReaderTheme('dark')).not.toThrow();
+      expect(isolated.readerTheme()).toBe('dark');
+      expect(() => isolated.resetReaderAppearance()).not.toThrow();
+    } finally {
+      if (descriptor) Object.defineProperty(window, 'localStorage', descriptor);
+    }
   });
 });
 

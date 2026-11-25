@@ -1,20 +1,22 @@
 import type { JSX } from '@solidjs/web';
-import {
-  createEffect,
-  createSignal,
-  createUniqueId,
-  onSettled,
-  Show,
-} from 'solid-js';
+import { createSignal, createUniqueId, Show } from 'solid-js';
 import type { IconName } from './Icon';
 import { Icon } from './Icon';
+import {
+  handleMenuClick,
+  handleMenuKeyDown,
+  type MenuRefs,
+  rememberMenuTrigger,
+  useMenuDismiss,
+  useMenuFocus,
+} from './menu-focus';
 
 const ITEM_CLASSES =
-  'flex min-h-10 w-[calc(100%-1rem)] mx-2 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm leading-5 text-base-content transition-colors hover:bg-base-300/70 focus-visible:bg-base-300/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40';
+  'flex min-h-10 w-[calc(100%-1rem)] mx-2 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm leading-5 text-base-content transition-colors hover:bg-base-300/70 focus-visible:bg-base-300/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40';
 
 /** `top: anchor(bottom)` + `flip-block, flip-inline` keeps menus inside the viewport without JS coordinates. */
 const PANEL_CLASSES =
-  'inset-auto m-0 my-1 min-w-60 rounded-lg border border-base-300/80 bg-base-200 px-0 py-2 text-base-content shadow-2xl [position-try-fallbacks:flip-block,flip-inline]';
+  'inset-auto m-0 my-1 min-w-60 rounded-lg border border-base-300/80 bg-base-200 px-0 py-2 text-base-content shadow-2xl focus:outline-none [position-try-fallbacks:flip-block,flip-inline]';
 
 const PANEL_AREA = {
   start: '[position-area:bottom_span-right]',
@@ -23,182 +25,40 @@ const PANEL_AREA = {
 
 const TRIGGER_CLASSES = 'btn btn-ghost btn-sm btn-square';
 
-const MENU_ITEM_SELECTOR =
-  '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
-
+/** Props for the accessible popup {@link Menu} component. */
 export interface MenuProps {
   children?: JSX.Element;
-  /** Custom trigger contents; defaults to the `dots` icon. */
   trigger?: JSX.Element;
-  /** Icon used by the default trigger. */
   icon?: IconName;
-  /** Accessible label for the trigger button. */
-  label?: string;
+  label: string;
   align?: 'start' | 'end';
-  /** Extra classes for the wrapping element. */
-  class?: string;
-  /** Extra classes for the trigger button. */
   triggerClass?: string;
-  disabled?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
 
-interface MenuRefs {
-  container?: HTMLDivElement;
-  trigger?: HTMLButtonElement;
-  panel?: HTMLDivElement;
-}
-
-const menuItems = (panel?: HTMLDivElement): Array<HTMLElement> =>
-  panel
-    ? Array.from(panel.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR))
-    : [];
-
-/** Index to focus after an arrow, Home, or End key press. */
-const nextIndex = (
-  key: string,
-  active: number,
-  length: number
-): number | undefined => {
-  if (key === 'ArrowDown') return active < 0 ? 0 : (active + 1) % length;
-  if (key === 'ArrowUp') return active <= 0 ? length - 1 : active - 1;
-  if (key === 'Home') return 0;
-  if (key === 'End') return length - 1;
-  return undefined;
-};
-
-const focusItem = (event: KeyboardEvent, panel: HTMLDivElement): void => {
-  const items = menuItems(panel);
-  if (items.length === 0) return;
-
-  const active = items.indexOf(document.activeElement as HTMLElement);
-  const index = nextIndex(event.key, active, items.length);
-  if (index === undefined) return;
-
-  event.preventDefault();
-  items[index]?.focus();
-};
-
-const handleMenuKeyDown = (
-  event: KeyboardEvent,
-  refs: MenuRefs,
-  dismiss: () => void
-): void => {
-  if (event.key === 'Tab') {
-    dismiss();
-    return;
-  }
-  if (refs.panel) focusItem(event, refs.panel);
-};
-
-const handleMenuClick = (event: MouseEvent, dismiss: () => void): void => {
-  const target = event.target;
-  if (!(target instanceof Element)) return;
-  if (target.closest('[data-keep-open="true"]')) return;
-
-  const item = target.closest('[role="menuitem"]');
-  if (item && !item.hasAttribute('disabled')) dismiss();
-};
-
-interface DismissOptions {
-  open: () => boolean;
-  container: () => HTMLDivElement | undefined;
-  dismiss: (restoreFocus?: boolean) => void;
-}
-
-/** Closes the menu on an outside press/click or Escape (`UI-FOCUS-3`). */
-const useMenuDismiss = (options: DismissOptions): void => {
-  const isOutside = (event: MouseEvent): boolean => {
-    const container = options.container();
-    if (!options.open() || !container) return false;
-    if (event.composedPath().includes(container)) return false;
-    const target = event.target;
-    return !(target instanceof Node && container.contains(target));
-  };
-
-  const onPress = (event: MouseEvent) => {
-    if (isOutside(event)) options.dismiss();
-  };
-
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape' || !options.open()) return;
-    event.preventDefault();
-    options.dismiss(true);
-  };
-
-  onSettled(() => {
-    document.addEventListener('mousedown', onPress);
-    document.addEventListener('click', onPress);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPress);
-      document.removeEventListener('click', onPress);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  });
-};
-
-const useMenuFocus = (open: () => boolean, refs: MenuRefs): void => {
-  createEffect(open, (isOpen) => {
-    if (!isOpen) return;
-    queueMicrotask(() => {
-      refs.panel?.showPopover();
-      menuItems(refs.panel)[0]?.focus();
-    });
-  });
-};
-
 const useMenuState = (props: MenuProps, refs: MenuRefs) => {
   const [open, setOpen] = createSignal(false);
-
   const setOpenState = (next: boolean) => {
     setOpen(next);
     props.onOpenChange?.(next);
   };
-
   const dismiss = (restoreFocus = false) => {
     if (!open()) return;
+
     setOpenState(false);
     if (restoreFocus) refs.trigger?.focus();
   };
-
   const toggle = () => {
-    if (props.disabled) return;
-    if (open()) dismiss();
-    else setOpenState(true);
+    open() ? dismiss() : setOpenState(true);
   };
 
-  useMenuDismiss({ open, container: () => refs.container, dismiss });
+  useMenuDismiss(open, () => refs.container, dismiss);
   useMenuFocus(open, refs);
 
   return { open, toggle, dismiss };
 };
 
-interface MenuPanelProps {
-  label?: string;
-  align?: 'start' | 'end';
-  anchor: string;
-  children?: JSX.Element;
-  onKeyDown: (event: KeyboardEvent) => void;
-  onClick: (event: MouseEvent) => void;
-  panelRef: (el: HTMLDivElement) => void;
-}
-
-const MenuPanel = (props: MenuPanelProps): JSX.Element => (
-  <div
-    ref={props.panelRef}
-    role="menu"
-    popover="manual"
-    aria-label={props.label}
-    class={[PANEL_CLASSES, PANEL_AREA[props.align ?? 'end']]}
-    style={{ 'position-anchor': props.anchor }}
-    onKeyDown={props.onKeyDown}
-    onClick={props.onClick}
-  >
-    {props.children}
-  </div>
-);
-
+/** Accessible popover menu with keyboard navigation and subpanel focus tracking. */
 export function Menu(props: MenuProps): JSX.Element {
   const refs: MenuRefs = {};
   const menu = useMenuState(props, refs);
@@ -209,7 +69,7 @@ export function Menu(props: MenuProps): JSX.Element {
       ref={(el) => {
         refs.container = el;
       }}
-      class={['relative inline-block', props.class]}
+      class="relative inline-block"
     >
       <button
         ref={(el) => {
@@ -220,8 +80,7 @@ export function Menu(props: MenuProps): JSX.Element {
         style={{ 'anchor-name': anchor }}
         aria-haspopup="menu"
         aria-expanded={menu.open() ? 'true' : 'false'}
-        aria-label={props.label ?? '菜单'}
-        disabled={props.disabled}
+        aria-label={props.label}
         onClick={menu.toggle}
       >
         <Show
@@ -232,153 +91,173 @@ export function Menu(props: MenuProps): JSX.Element {
         </Show>
       </button>
       <Show when={menu.open()}>
-        <MenuPanel
-          label={props.label}
-          align={props.align}
-          anchor={anchor}
+        <div
+          ref={(el) => {
+            refs.panel = el;
+            el.addEventListener(
+              'click',
+              (event) => rememberMenuTrigger(event, refs),
+              true
+            );
+          }}
+          role="menu"
+          popover="manual"
+          tabindex="-1"
+          aria-label={props.label}
+          class={[PANEL_CLASSES, PANEL_AREA[props.align ?? 'end']]}
+          style={{ 'position-anchor': anchor }}
           onKeyDown={(event) => handleMenuKeyDown(event, refs, menu.dismiss)}
           onClick={(event) => handleMenuClick(event, menu.dismiss)}
-          panelRef={(el) => {
-            refs.panel = el;
-          }}
         >
           {props.children}
-        </MenuPanel>
+        </div>
       </Show>
     </div>
   );
 }
 
-const MenuTrailingIcon = (props: {
+function MenuItemBody(props: {
+  lead?: IconName;
+  leadSize?: 16 | 18;
+  leadClass: string;
   icon?: IconName;
   danger?: boolean;
-}): JSX.Element => (
-  <span
-    class={[
-      'flex size-4 shrink-0 items-center justify-center',
-      props.danger ? '' : 'opacity-75',
-    ]}
-    aria-hidden="true"
-  >
-    <Show when={props.icon}>{(name) => <Icon name={name()} size={16} />}</Show>
-  </span>
-);
+  children?: JSX.Element;
+}): JSX.Element {
+  return (
+    <>
+      <span class={props.leadClass} aria-hidden="true">
+        <Show when={props.lead}>
+          {(name) => <Icon name={name()} size={props.leadSize ?? 16} />}
+        </Show>
+      </span>
+      <span class="flex-1 truncate">{props.children}</span>
+      <span
+        class={[
+          'flex size-4 shrink-0 items-center justify-center',
+          props.danger ? '' : 'opacity-75',
+        ]}
+        aria-hidden="true"
+      >
+        <Show when={props.icon}>
+          {(name) => <Icon name={name()} size={16} />}
+        </Show>
+      </span>
+    </>
+  );
+}
 
-export interface MenuItemProps {
+interface BaseMenuItemProps {
   children?: JSX.Element;
   icon?: IconName;
-  onSelect?: () => void;
   disabled?: boolean;
+  'aria-disabled'?: JSX.AriaAttributes['aria-disabled'];
+  class?: string;
+}
+
+const isPropDisabled = (props: BaseMenuItemProps): boolean =>
+  Boolean(props.disabled) || props['aria-disabled'] === 'true';
+
+/** Props for {@link MenuItem}. */
+export interface MenuItemProps extends BaseMenuItemProps {
+  onSelect?: () => void;
   danger?: boolean;
   submenu?: boolean;
   keepOpen?: boolean;
-  class?: string;
+  /**
+   * Marks an action that opens a dialog; focus returns to the menu trigger on close.
+   * The item must open its dialog synchronously within the same task for focus return
+   * to the trigger to work.
+   */
+  opensDialog?: boolean;
 }
 
-export function MenuItem(props: MenuItemProps): JSX.Element {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      tabindex="-1"
-      disabled={props.disabled}
-      data-keep-open={props.submenu || props.keepOpen ? 'true' : undefined}
-      class={[
-        ITEM_CLASSES,
-        { 'text-error hover:bg-error/10': Boolean(props.danger) },
-        props.class,
-      ]}
-      onClick={() => {
-        if (!props.disabled) props.onSelect?.();
-      }}
+/** Standard action or submenu trigger inside a {@link Menu}. */
+export const MenuItem = (props: MenuItemProps): JSX.Element => (
+  <button
+    type="button"
+    role="menuitem"
+    tabindex="-1"
+    disabled={props.disabled}
+    aria-disabled={props['aria-disabled']}
+    data-keep-open={props.submenu || props.keepOpen ? 'true' : undefined}
+    data-opens-dialog={props.opensDialog ? 'true' : undefined}
+    class={[
+      ITEM_CLASSES,
+      { 'text-error hover:bg-error/10': Boolean(props.danger) },
+      props.class,
+    ]}
+    onClick={() => !isPropDisabled(props) && props.onSelect?.()}
+  >
+    <MenuItemBody
+      lead={props.submenu ? 'chevron-right' : undefined}
+      leadClass="flex size-5 shrink-0 items-center justify-center opacity-70"
+      icon={props.icon}
+      danger={props.danger}
     >
-      <span
-        class="flex size-5 shrink-0 items-center justify-center opacity-70"
-        aria-hidden="true"
-      >
-        <Show when={props.submenu}>
-          <Icon name="chevron-right" size={16} />
-        </Show>
-      </span>
-      <span class="flex-1 truncate">{props.children}</span>
-      <MenuTrailingIcon icon={props.icon} danger={props.danger} />
-    </button>
-  );
-}
+      {props.children}
+    </MenuItemBody>
+  </button>
+);
 
-export interface MenuCheckboxProps {
-  children?: JSX.Element;
-  icon?: IconName;
+/** Props for {@link MenuCheckbox}. */
+export interface MenuCheckboxProps extends BaseMenuItemProps {
   checked?: boolean;
   onSelect?: (checked: boolean) => void;
-  disabled?: boolean;
-  class?: string;
 }
 
-export function MenuCheckbox(props: MenuCheckboxProps): JSX.Element {
-  return (
-    <button
-      type="button"
-      role="menuitemcheckbox"
-      tabindex="-1"
-      aria-checked={props.checked ? 'true' : 'false'}
-      disabled={props.disabled}
-      class={[ITEM_CLASSES, props.class]}
-      onClick={() => {
-        if (!props.disabled) props.onSelect?.(!props.checked);
-      }}
+/** Toggleable checkbox item inside a {@link Menu}. */
+export const MenuCheckbox = (props: MenuCheckboxProps): JSX.Element => (
+  <button
+    type="button"
+    role="menuitemcheckbox"
+    tabindex="-1"
+    aria-checked={props.checked ? 'true' : 'false'}
+    disabled={props.disabled}
+    aria-disabled={props['aria-disabled']}
+    class={[ITEM_CLASSES, props.class]}
+    onClick={() => !isPropDisabled(props) && props.onSelect?.(!props.checked)}
+  >
+    <MenuItemBody
+      lead={props.checked ? 'checkbox-checked' : 'checkbox'}
+      leadSize={18}
+      leadClass="flex size-5 shrink-0 items-center justify-center opacity-90"
+      icon={props.icon}
     >
-      <span
-        class="flex size-5 shrink-0 items-center justify-center opacity-90"
-        aria-hidden="true"
-      >
-        <Icon
-          name={props.checked ? 'checkbox-checked' : 'checkbox'}
-          size={18}
-        />
-      </span>
-      <span class="flex-1 truncate">{props.children}</span>
-      <MenuTrailingIcon icon={props.icon} />
-    </button>
-  );
-}
+      {props.children}
+    </MenuItemBody>
+  </button>
+);
 
-export interface MenuRadioProps {
-  children?: JSX.Element;
-  icon?: IconName;
+/** Props for {@link MenuRadio}. */
+export interface MenuRadioProps extends BaseMenuItemProps {
   checked?: boolean;
   onSelect?: () => void;
-  disabled?: boolean;
-  class?: string;
 }
 
-export function MenuRadio(props: MenuRadioProps): JSX.Element {
-  return (
-    <button
-      type="button"
-      role="menuitemradio"
-      tabindex="-1"
-      aria-checked={props.checked ? 'true' : 'false'}
-      disabled={props.disabled}
-      class={[ITEM_CLASSES, props.class]}
-      onClick={() => {
-        if (!props.disabled) props.onSelect?.();
-      }}
+/** Mutually exclusive radio item inside a {@link Menu}. */
+export const MenuRadio = (props: MenuRadioProps): JSX.Element => (
+  <button
+    type="button"
+    role="menuitemradio"
+    tabindex="-1"
+    aria-checked={props.checked ? 'true' : 'false'}
+    disabled={props.disabled}
+    aria-disabled={props['aria-disabled']}
+    class={[ITEM_CLASSES, props.class]}
+    onClick={() => !isPropDisabled(props) && props.onSelect?.()}
+  >
+    <MenuItemBody
+      lead={props.checked ? 'check' : undefined}
+      leadClass="flex size-4 shrink-0 items-center justify-center text-primary"
+      icon={props.icon}
     >
-      <span
-        class="flex size-4 shrink-0 items-center justify-center text-primary"
-        aria-hidden="true"
-      >
-        <Show when={props.checked}>
-          <Icon name="check" size={16} />
-        </Show>
-      </span>
-      <span class="flex-1 truncate">{props.children}</span>
-      <MenuTrailingIcon icon={props.icon} />
-    </button>
-  );
-}
+      {props.children}
+    </MenuItemBody>
+  </button>
+);
 
+/** Horizontal separator between menu item groups. */
 export function MenuDivider(): JSX.Element {
   return <hr class="my-2 h-px border-0 bg-base-content/15" />;
 }

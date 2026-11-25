@@ -18,7 +18,7 @@ export function App(props: AppProps): JSX.Element {
   return (
     <>
       <Router>{(section) => section.children}</Router>
-      <ToastViewport closeLabel={String(t('common.close'))} />
+      <ToastViewport closeLabel={t('common.close')} />
     </>
   );
 }

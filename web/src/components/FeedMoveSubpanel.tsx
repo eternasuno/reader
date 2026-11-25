@@ -10,7 +10,7 @@ export function FeedMoveSubpanel(props: {
   feed: Feed;
   onBack: () => void;
   onMove: (feed: Feed, folderId: string | null) => Promise<void>;
-  onRequestNewFolder: () => void;
+  onRequestNewFolder: (feed: Feed) => void;
 }): JSX.Element {
   return (
     <>
@@ -24,27 +24,31 @@ export function FeedMoveSubpanel(props: {
         <span class="flex size-5 shrink-0 items-center justify-center">
           <Icon name="arrow-left" size={18} />
         </span>
-        <span>{String(t('feeds.moveTo'))}</span>
+        <span>{t('feeds.moveTo')}</span>
       </button>
       <MenuDivider />
-      <For each={folders()}>
+      <For each={folders()} keyed={(folder) => folder.id}>
         {(folder) => (
           <MenuCheckbox
-            checked={props.feed.folderId === folder.id}
+            checked={props.feed.folderId === folder().id}
             onSelect={() =>
               void props.onMove(
                 props.feed,
-                props.feed.folderId === folder.id ? null : folder.id
+                props.feed.folderId === folder().id ? null : folder().id
               )
             }
           >
-            {folder.name}
+            {folder().name}
           </MenuCheckbox>
         )}
       </For>
       <MenuDivider />
-      <MenuItem icon="plus" onSelect={props.onRequestNewFolder}>
-        {String(t('library.newFolder'))}
+      <MenuItem
+        opensDialog
+        icon="plus"
+        onSelect={() => props.onRequestNewFolder(props.feed)}
+      >
+        {t('library.newFolder')}
       </MenuItem>
     </>
   );

@@ -2,19 +2,16 @@ import type { JSX } from '@solidjs/web';
 import { createSignal, Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
-import { feedUnreadCount, markScopeAllRead, triggerKindleSend } from '../state';
-import { Icon, Menu, MenuCheckbox, MenuDivider, MenuItem } from '../ui';
+import { feedUnreadCount, isSameScope } from '../state';
+import { Menu, MenuDivider, MenuItem } from '../ui';
+import { deleteFeed } from './articleListActions';
+import { FeedFailureMenu } from './FeedFailureMenu';
 import { FeedMoveSubpanel } from './FeedMoveSubpanel';
-import { hasRefreshFailures, retryRefresh } from './feedFailure';
-import { ListOrderCheckbox } from './ListOrderCheckbox';
+import { hasRefreshFailures } from './feedFailure';
+import { ScopeMenuItems } from './ScopeRow';
 import { SidebarRowEnd } from './SidebarRowEnd';
 import { SiteIcon } from './SiteIcon';
-import {
-  deleteFeed,
-  isActiveScope,
-  selectFeed,
-  toggleUnread,
-} from './sidebarActions';
+import { selectFeed, toggleUnread } from './sidebarActions';
 import {
   ROW_BUTTON_CLASSES,
   ROW_CLASSES,
@@ -24,13 +21,11 @@ import {
 import type { SidebarProps } from './sidebarProps';
 
 /**
- * `feeds.md:23-24`: feed row with unread count, `⋯` menu (filter, mark all, order,
- * default display, move, unsubscribe) and the `FD-SCHED-3` failure warning.
+ * `FD-PREF-1`, `FD-MOVE-1`, `FD-UNSUB-1`, `FD-SCHED-3`: feed row with unread count,
+ * `⋯` menu (mark all, send, filter, order, move, feed options, delete), and failure warning.
  */
 export function FeedRow(props: {
   feed: Feed;
-  indent?: boolean;
-  showMove: boolean;
   state: SidebarProps;
 }): JSX.Element {
   return (
@@ -38,27 +33,31 @@ export function FeedRow(props: {
       class={[
         ROW_CLASSES,
         rowClasses(
-          isActiveScope(props.state, {
+          isSameScope(props.state.scope, {
             kind: 'feed',
             feedId: props.feed.id,
           })
         ),
       ]}
     >
-      <FeedRowButton
-        feed={props.feed}
-        indent={props.indent ?? false}
-        state={props.state}
-      />
+      <FeedRowButton feed={props.feed} state={props.state} />
       <Show when={hasRefreshFailures(props.feed)}>
-        <FeedFailureMenu feed={props.feed} state={props.state} />
+        <FeedFailureMenu
+          feed={props.feed}
+          align="end"
+          onDelete={(feed) =>
+            void deleteFeed(
+              {
+                unreadOnly: () => props.state.unreadOnly,
+                onNavigate: props.state.onNavigate,
+              },
+              feed
+            )
+          }
+        />
       </Show>
       <SidebarRowEnd count={feedUnreadCount(props.feed.id)}>
-        <FeedRowMenu
-          feed={props.feed}
-          showMove={props.showMove}
-          state={props.state}
-        />
+        <FeedRowMenu feed={props.feed} state={props.state} />
       </SidebarRowEnd>
     </div>
   );
@@ -66,20 +65,15 @@ export function FeedRow(props: {
 
 function FeedRowButton(props: {
   feed: Feed;
-  indent: boolean;
   state: SidebarProps;
 }): JSX.Element {
   const active = () =>
-    isActiveScope(props.state, { kind: 'feed', feedId: props.feed.id });
+    isSameScope(props.state.scope, { kind: 'feed', feedId: props.feed.id });
 
   return (
     <button
       type="button"
-      class={[
-        ROW_BUTTON_CLASSES,
-        props.indent ? 'pl-2' : '',
-        rowTextClasses(active()),
-      ]}
+      class={[ROW_BUTTON_CLASSES, rowTextClasses(active())]}
       aria-current={active() ? 'page' : undefined}
       onClick={() => selectFeed(props.state, props.feed)}
     >
@@ -89,45 +83,12 @@ function FeedRowButton(props: {
   );
 }
 
-function FeedFailureMenu(props: {
-  feed: Feed;
-  state: SidebarProps;
-}): JSX.Element {
-  return (
-    <Menu
-      align="end"
-      label={String(t('feeds.retryRefresh'))}
-      triggerClass="btn-xs btn-square"
-      trigger={<Icon name="warning" size={14} class="text-warning" />}
-    >
-      <p class="max-w-56 px-3 py-1.5 text-xs break-words text-base-content/70">
-        {props.feed.lastError ?? ''}
-      </p>
-      <MenuItem icon="refresh" onSelect={() => void retryRefresh(props.feed)}>
-        {String(t('feeds.retryRefresh'))}
-      </MenuItem>
-      <MenuItem
-        danger
-        icon="trash"
-        onSelect={() => void deleteFeed(props.state, props.feed)}
-      >
-        {String(t('feeds.deleteFeed'))}
-      </MenuItem>
-    </Menu>
-  );
-}
-
-function FeedRowMenu(props: {
-  feed: Feed;
-  showMove: boolean;
-  state: SidebarProps;
-}): JSX.Element {
+function FeedRowMenu(props: { feed: Feed; state: SidebarProps }): JSX.Element {
   const [panel, setPanel] = createSignal<'main' | 'move'>('main');
 
   return (
     <Menu
-      label={String(t('library.moreActions'))}
-      align="end"
+      label={t('library.moreActions')}
       triggerClass="btn-xs"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
@@ -138,7 +99,6 @@ function FeedRowMenu(props: {
         fallback={
           <FeedRowMainItems
             feed={props.feed}
-            showMove={props.showMove}
             state={props.state}
             onOpenMove={() => setPanel('move')}
           />
@@ -157,45 +117,40 @@ function FeedRowMenu(props: {
 
 function FeedRowMainItems(props: {
   feed: Feed;
-  showMove: boolean;
   state: SidebarProps;
   onOpenMove: () => void;
 }): JSX.Element {
   return (
     <>
+      <ScopeMenuItems
+        scope={{ kind: 'feed', feedId: props.feed.id }}
+        feed={props.feed}
+        unreadOnly={props.state.unreadOnly}
+        onToggleUnread={() => toggleUnread(props.state)}
+      />
+      <MenuDivider />
+      <MenuItem submenu onSelect={props.onOpenMove}>
+        {t('feeds.moveTo')}
+      </MenuItem>
       <MenuItem
-        icon="check-double"
-        onSelect={() =>
-          void markScopeAllRead({ kind: 'feed', feedId: props.feed.id })
-        }
+        opensDialog
+        onSelect={() => props.state.onRequestFeedOptions?.(props.feed)}
       >
-        {String(t('library.markAllRead'))}
-      </MenuItem>
-      <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
-        {String(t('reader.sendAsEbook'))}
-      </MenuItem>
-      <MenuDivider />
-      <MenuCheckbox
-        checked={props.state.unreadOnly}
-        onSelect={() => toggleUnread(props.state)}
-      >
-        {String(t('library.unreadOnly'))}
-      </MenuCheckbox>
-      <ListOrderCheckbox feed={props.feed} />
-      <MenuDivider />
-      <Show when={props.showMove}>
-        <MenuItem submenu keepOpen onSelect={props.onOpenMove}>
-          {String(t('feeds.moveTo'))}
-        </MenuItem>
-      </Show>
-      <MenuItem onSelect={() => props.state.onRequestFeedOptions?.(props.feed)}>
-        {String(t('feeds.feedOptions'))}
+        {t('feeds.feedOptions')}
       </MenuItem>
       <MenuItem
         icon="trash"
-        onSelect={() => void deleteFeed(props.state, props.feed)}
+        onSelect={() =>
+          void deleteFeed(
+            {
+              unreadOnly: () => props.state.unreadOnly,
+              onNavigate: props.state.onNavigate,
+            },
+            props.feed
+          )
+        }
       >
-        {String(t('feeds.deleteFeed'))}
+        {t('feeds.deleteFeedMenu')}
       </MenuItem>
     </>
   );

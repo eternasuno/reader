@@ -1,5 +1,5 @@
 /**
- * Library list loading and local row patches (`LIB-SCOPE-1`, `LIB-LIST-1`, `LIB-RELOAD-1`,
+ * Library list loading and local row mutations (`LIB-SCOPE-1`, `LIB-LIST-1`, `LIB-RELOAD-1`,
  * `LIB-FILTER-1`, `SP-ADD-1`, `FD-PREF-1`). Row actions live in `library-actions.ts` and are
  * re-exported here so `state/index.ts` keeps one public surface.
  */
@@ -7,46 +7,28 @@
 import { flush } from 'solid-js';
 import type { Feed, FeedItem, Page, SavedPage, SortOrder } from '../api';
 import {
-  ApiError,
+  errorCodeOf,
   feedItemsApi,
   feedsApi,
   foldersApi,
   savedPagesApi,
 } from '../api';
-import { translateErrorCode } from '../i18n';
 import { showToast } from '../ui';
+import { errorText } from './errorText';
 import {
   isShowingEmptyFeed,
   waitForFirstRefresh,
 } from './library-first-refresh';
+import { LatestTokenMap } from './library-mutations';
 import type { LibraryArticle, LibraryArticlePatch } from './library-store';
-import {
-  activeScope,
-  activeUnreadOnly,
-  aggregateOrder,
-  cursor,
-  loadError,
-  loadingInitial,
-  loadingMore,
-  notifyArticlePatched,
-  PAGE_SIZE,
-  requestState,
-  rows,
-  setActiveOrder,
-  setActiveScope,
-  setActiveUnreadOnly,
-  setAggregateOrder,
-  setCursor,
-  setLoadError,
-  setLoadingInitial,
-  setLoadingMore,
-  setRows,
-} from './library-store';
+import * as store from './library-store';
 import type { LibraryScope } from './scope';
 import { hostnameOf } from './scope';
+import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
 
 export * from './library-actions';
+export * from './library-actions-bulk';
 export * from './library-actions-feed';
 export type {
   ArticleReadFallback,
@@ -58,19 +40,21 @@ export {
   activeScope,
   activeUnreadOnly,
   aggregateOrder,
+  articleById,
+  captureMutationVersion,
   cursor,
   isLibraryMounted,
   loadError,
   loadingInitial,
   loadingMore,
   PAGE_SIZE,
+  retainReaderArticle,
   rows,
-  setOnArticlePatched,
   trackLibraryMount,
+  upsertArticle,
 } from './library-store';
 
-const codeOf = (error: unknown): string =>
-  error instanceof ApiError ? error.code : 'RequestFailed';
+const feedOrderTokens = new LatestTokenMap();
 
 export interface ArticleSource {
   title: string;
@@ -86,6 +70,7 @@ export const articleSource = (article: LibraryArticle): ArticleSource => {
     return { title: hostnameOf(article.url), url: article.url };
 
   const feed = sidebar.feeds().find((entry) => entry.id === article.feedId);
+
   return { title: feed?.title ?? '', url: feed?.url ?? article.url };
 };
 
@@ -114,13 +99,12 @@ interface PageRequest {
 const fetchPage = async (
   request: PageRequest
 ): Promise<Page<SavedPage> | Page<FeedItem>> => {
-  const params = {
-    limit: PAGE_SIZE,
+  const withOrder = {
+    limit: store.PAGE_SIZE,
     unread: request.unreadOnly,
     cursor: request.cursor,
+    order: request.order,
   };
-
-  const withOrder = { ...params, order: request.order };
 
   switch (request.scope.kind) {
     case 'later':
@@ -136,7 +120,7 @@ const fetchPage = async (
 
 /** The default `newest` order is the server default, so only `oldest` is sent explicitly. */
 const aggregateRequestOrder = (): SortOrder | undefined =>
-  aggregateOrder() === 'oldest' ? 'oldest' : undefined;
+  store.aggregateOrder() === 'oldest' ? 'oldest' : undefined;
 
 const storedFeedOrder = (feedId: string): SortOrder | undefined =>
   sidebar.feeds().find((feed) => feed.id === feedId)?.order;
@@ -146,7 +130,8 @@ const effectiveOrderOf = (
   scope: LibraryScope,
   order: SortOrder | undefined
 ): SortOrder => {
-  if (scope.kind !== 'feed') return aggregateOrder();
+  if (scope.kind !== 'feed') return store.aggregateOrder();
+
   return order ?? storedFeedOrder(scope.feedId) ?? 'newest';
 };
 
@@ -155,21 +140,21 @@ const resetListState = (
   unreadOnly: boolean,
   order: SortOrder
 ): void => {
-  setActiveScope(scope);
-  setActiveUnreadOnly(unreadOnly);
-  setActiveOrder(order);
-  setRows([]);
-  setCursor(null);
-  setLoadError(null);
-  setLoadingMore(false);
-  setLoadingInitial(true);
+  store.setActiveScope(scope);
+  store.setActiveUnreadOnly(unreadOnly);
+  store.setActiveOrder(order);
+  store.clearRows();
+  store.setCursor(null);
+  store.setLoadError(null);
+  store.setLoadingMore(false);
+  store.setLoadingInitial(true);
   flush();
 };
 
 const finishInitialLoad = (requestGeneration: number): void => {
-  if (requestGeneration !== requestState.generation) return;
+  if (requestGeneration !== store.requestState.generation) return;
 
-  setLoadingInitial(false);
+  store.setLoadingInitial(false);
   flush();
 };
 
@@ -179,8 +164,10 @@ export const loadScopeFirstPage = async (
   unreadOnly: boolean,
   order?: SortOrder
 ): Promise<void> => {
-  requestState.generation += 1;
-  const requestGeneration = requestState.generation;
+  store.requestState.generation += 1;
+  store.requestState.pageInFlight = false;
+  const requestGeneration = store.requestState.generation;
+  const dispatchVersion = store.captureMutationVersion();
   // `FD-PREF-1`: without an explicit order the server applies a single feed's stored order.
   const requestOrder = scope.kind === 'feed' ? order : aggregateRequestOrder();
 
@@ -193,13 +180,14 @@ export const loadScopeFirstPage = async (
       order: requestOrder,
       cursor: null,
     });
-    if (requestGeneration !== requestState.generation) return;
+    if (requestGeneration !== store.requestState.generation) return;
 
-    setRows(toRows(scope, page.items));
-    setCursor(page.cursor);
+    store.replaceRows(toRows(scope, page.items), dispatchVersion);
+    store.setCursor(page.cursor);
   } catch (error) {
-    if (requestGeneration !== requestState.generation) return;
-    setLoadError(codeOf(error));
+    if (requestGeneration !== store.requestState.generation) return;
+
+    store.setLoadError(errorCodeOf(error));
   } finally {
     finishInitialLoad(requestGeneration);
   }
@@ -214,11 +202,12 @@ export const reloadAfterFirstRefresh = async (
   signal: AbortSignal
 ): Promise<void> => {
   if (!(await waitForFirstRefresh(feedId, signal))) return;
+
   if (signal.aborted || !isShowingEmptyFeed(feedId)) return;
 
-  await sidebar.refreshSidebar();
+  await sidebar.invalidateSidebar();
   if (!signal.aborted && isShowingEmptyFeed(feedId))
-    await loadScopeFirstPage(activeScope(), activeUnreadOnly());
+    await loadScopeFirstPage(store.activeScope(), store.activeUnreadOnly());
 };
 
 let firstRefreshWait: AbortController | null = null;
@@ -233,100 +222,111 @@ export const startFirstRefreshWait = (feedId: string): void => {
 
 const canLoadNextPage = (nextCursor: string | null): boolean =>
   nextCursor !== null &&
-  !loadingInitial() &&
-  !loadingMore() &&
-  loadError() === null &&
-  !requestState.pageInFlight;
+  !store.loadingInitial() &&
+  !store.loadingMore() &&
+  store.loadError() === null &&
+  !store.requestState.pageInFlight;
 
 const finishNextPage = (requestGeneration: number): void => {
-  requestState.pageInFlight = false;
-  if (requestGeneration !== requestState.generation) return;
+  if (requestGeneration !== store.requestState.generation) return;
 
-  setLoadingMore(false);
+  store.requestState.pageInFlight = false;
+  store.setLoadingMore(false);
   flush();
 };
 
 /**
- * `LIB-LIST-1`: appends the next page. At most one page request is in flight; a failure keeps the
- * loaded rows and exposes a retry banner through `loadError`.
+ * `LIB-LIST-1`: appends the next page (deduped by ID). At most one page request is in flight;
+ * a failure keeps the loaded rows and exposes a retry banner through `loadError`.
  */
 export const loadNextPage = async (): Promise<void> => {
-  const nextCursor = cursor();
+  const nextCursor = store.cursor();
   if (!canLoadNextPage(nextCursor)) return;
 
-  requestState.pageInFlight = true;
-  const requestGeneration = requestState.generation;
-  const scope = activeScope();
+  store.requestState.pageInFlight = true;
+  const requestGeneration = store.requestState.generation;
+  const dispatchVersion = store.captureMutationVersion();
+  const scope = store.activeScope();
   const request: PageRequest = {
     scope,
-    unreadOnly: activeUnreadOnly(),
+    unreadOnly: store.activeUnreadOnly(),
     // `FD-PREF-1`: the server applies a single feed's stored order, so pagination stays consistent
     // even when the client has not loaded the feed list yet.
     order: scope.kind === 'feed' ? undefined : aggregateRequestOrder(),
     cursor: nextCursor,
   };
 
-  setLoadingMore(true);
+  store.setLoadingMore(true);
   flush();
 
   try {
     const page = await fetchPage(request);
-    if (requestGeneration !== requestState.generation) return;
+    if (requestGeneration !== store.requestState.generation) return;
 
-    setRows([...rows(), ...toRows(request.scope, page.items)]);
-    setCursor(page.cursor);
+    store.appendRows(toRows(request.scope, page.items), dispatchVersion);
+    store.setCursor(page.cursor);
   } catch (error) {
-    if (requestGeneration !== requestState.generation) return;
-    setLoadError(codeOf(error));
+    if (requestGeneration !== store.requestState.generation) return;
+
+    store.setLoadError(errorCodeOf(error));
   } finally {
     finishNextPage(requestGeneration);
   }
 };
 
 export const retryLoad = async (): Promise<void> => {
-  if (rows().length === 0) {
-    await loadScopeFirstPage(activeScope(), activeUnreadOnly());
+  if (store.rows().length === 0) {
+    await loadScopeFirstPage(store.activeScope(), store.activeUnreadOnly());
+
     return;
   }
 
-  setLoadError(null);
+  store.setLoadError(null);
   flush();
   await loadNextPage();
 };
 
-/** `SP-ADD-1`: inserts a freshly created saved page at the top of the loaded `/later` list. */
-export const prependSavedPageLocal = (page: SavedPage): void => {
-  if (activeScope().kind !== 'later') return;
+const isFinalPageLoaded = (): boolean =>
+  store.cursor() === null &&
+  !store.loadingInitial() &&
+  store.loadError() === null;
+
+/**
+ * `SP-ADD-1`: inserts a freshly created saved page into `/later` matching the active order:
+ * newest-first prepends, oldest-first appends only when the final page is already loaded.
+ */
+export const insertSavedPageLocal = (page: SavedPage): void => {
+  if (store.activeScope().kind !== 'later' || store.hasRow(page.id)) return;
 
   const article = toLibraryArticle({ kind: 'later' }, page);
-  if (rows().some((row) => row.id === article.id)) return;
+  if (store.activeOrder() === 'newest') {
+    store.prependRow(article);
+  } else if (isFinalPageLoaded()) {
+    store.appendRow(article);
+  }
 
-  setRows((current) => [article, ...current]);
   if (!page.read) sidebar.adjustSavedUnread(1);
+
   flush();
 };
 
-/** `later.md:18`: drops a deleted saved page from the loaded `/later` rows and its unread count. */
+/** `SP-REMOVE-1`: drops a deleted saved page from the loaded `/later` rows and its unread count. */
 export const removeSavedPageLocal = (pageId: string): void => {
-  const target = rows().find((row) => row.id === pageId) ?? null;
-  if (target === null) return;
+  const target = store.articleById(pageId);
+  if (target === null || !store.hasRow(pageId)) return;
 
-  setRows((current) => current.filter((row) => row.id !== pageId));
+  store.removeRow(pageId);
   if (!target.read) sidebar.adjustSavedUnread(-1);
+
   flush();
 };
 
-/** Patches a loaded row in place (used by the reader after extraction, `RD-EXTRACT-1`). */
+/** Patches an article record in place (used by the reader after extraction, `RD-EXTRACT-1`). */
 export const patchArticleLocal = (
   articleId: string,
   patch: LibraryArticlePatch
 ): void => {
-  setRows((current) =>
-    current.map((row) =>
-      row.id === articleId ? ({ ...row, ...patch } as LibraryArticle) : row
-    )
-  );
-  notifyArticlePatched(articleId, patch);
+  store.patchArticle(articleId, patch);
 };
 
 /** `FD-PREF-1`: changing order on the active single-feed list resets the cursor and reloads. */
@@ -334,27 +334,47 @@ export const changeFeedOrder = async (
   feed: Feed,
   order: SortOrder
 ): Promise<void> => {
+  const token = feedOrderTokens.claim(feed.id);
+  let current = false;
   try {
     await feedsApi.setOrder(feed.id, order);
+    current = feedOrderTokens.isCurrent(feed.id, token);
   } catch (error) {
-    showToast(translateErrorCode(codeOf(error)), 'error');
+    if (feedOrderTokens.isCurrent(feed.id, token)) {
+      showToast(errorText(error), 'error');
+    }
+
     return;
+  } finally {
+    feedOrderTokens.release(feed.id, token);
   }
 
+  if (!current) return;
+
   sidebar.updateFeedLocal(feed.id, { order });
-  const scope = activeScope();
+  const scope = store.activeScope();
   if (scope.kind === 'feed' && scope.feedId === feed.id) {
-    await loadScopeFirstPage(scope, activeUnreadOnly(), order);
+    await loadScopeFirstPage(scope, store.activeUnreadOnly(), order);
   }
 };
 
 /** `FD-PREF-1`: flips the shared order of the all-feeds, folder, and read-later lists and reloads. */
 export const toggleAggregateOrder = async (): Promise<void> => {
-  setAggregateOrder(aggregateOrder() === 'oldest' ? 'newest' : 'oldest');
+  store.setAggregateOrder(
+    store.aggregateOrder() === 'oldest' ? 'newest' : 'oldest'
+  );
   flush();
 
-  const scope = activeScope();
+  const scope = store.activeScope();
   if (scope.kind !== 'feed') {
-    await loadScopeFirstPage(scope, activeUnreadOnly());
+    await loadScopeFirstPage(scope, store.activeUnreadOnly());
   }
 };
+
+export const clearLibraryState = (): void => {
+  firstRefreshWait?.abort();
+  firstRefreshWait = null;
+  feedOrderTokens.reset();
+};
+
+onSessionCleared(clearLibraryState);

@@ -1,23 +1,11 @@
-import type { JSX } from '@solidjs/web';
-import { render } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Feed } from '../src/api';
 import { FeedOptionsDialog } from '../src/components';
-import { setLocale } from '../src/i18n';
-import { dismissToast } from '../src/ui';
+import { mount, setupInteractions } from './support/list-helpers';
 
-let disposers: Array<() => void> = [];
+setupInteractions();
 let fetchMock: ReturnType<typeof vi.fn>;
-
-const mount = (component: () => JSX.Element): HTMLElement => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(render(component, container));
-  flush();
-
-  return container;
-};
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   Response.json(body, { status });
@@ -34,7 +22,7 @@ const makeFeed = (overrides: Partial<Feed> = {}): Feed => ({
 });
 
 const selectElement = (): HTMLSelectElement =>
-  document.querySelector('#feed-default-display') as HTMLSelectElement;
+  document.querySelector('[role="dialog"] select') as HTMLSelectElement;
 
 const changeMode = async (value: Feed['readerMode']): Promise<void> => {
   const select = selectElement();
@@ -45,18 +33,8 @@ const changeMode = async (value: Feed['readerMode']): Promise<void> => {
 };
 
 beforeEach(() => {
-  localStorage.clear();
-  setLocale('zh-CN');
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
-});
-
-afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  document.body.innerHTML = '';
-  dismissToast();
-  vi.restoreAllMocks();
 });
 
 describe('FeedOptionsDialog', () => {
@@ -114,5 +92,41 @@ describe('FeedOptionsDialog error & reopen', () => {
     flush();
 
     expect(selectElement().value).toBe('extracted');
+  });
+});
+
+describe('FeedOptionsDialog accessibility and focus', () => {
+  it('focuses the select on open, closes on Escape, and returns focus', async () => {
+    const trigger = document.createElement('button');
+    trigger.textContent = 'Open options';
+    document.body.append(trigger);
+    trigger.focus();
+
+    const [open, setOpen] = createSignal(false);
+    mount(() => (
+      <FeedOptionsDialog
+        open={open()}
+        feed={makeFeed()}
+        onClose={() => setOpen(false)}
+      />
+    ));
+
+    setOpen(true);
+    flush();
+    await Promise.resolve();
+
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.activeElement).toBe(selectElement());
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    flush();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 });

@@ -1,25 +1,19 @@
 import type { JSX } from '@solidjs/web';
-import { For, Show } from 'solid-js';
+import { createUniqueId, For, Show } from 'solid-js';
 import type { Folder } from '../api';
 import { t } from '../i18n';
 import {
   collapsedFolders,
   folderFeeds,
   folderUnreadCount,
-  markScopeAllRead,
+  isSameScope,
   toggleFolderCollapse,
-  triggerKindleSend,
 } from '../state';
-import { Icon, Menu, MenuCheckbox, MenuDivider, MenuItem } from '../ui';
+import { Icon, Menu, MenuDivider, MenuItem } from '../ui';
 import { FeedRow } from './FeedRow';
-import { ListOrderCheckbox } from './ListOrderCheckbox';
+import { ScopeMenuItems } from './ScopeRow';
 import { SidebarRowEnd } from './SidebarRowEnd';
-import {
-  deleteFolder,
-  isActiveScope,
-  selectScope,
-  toggleUnread,
-} from './sidebarActions';
+import { deleteFolder, selectScope, toggleUnread } from './sidebarActions';
 import {
   ROW_BUTTON_CLASSES,
   ROW_CLASSES,
@@ -28,14 +22,15 @@ import {
 } from './sidebarClasses';
 import type { SidebarProps } from './sidebarProps';
 
-/** `folders.md:16-17`: collapsible folder row with its feeds indented below. */
+/** `FD-FOLDER-5`, `FD-MOVE-1`: collapsible folder row with its feeds indented below. */
 export function FolderRow(props: {
   folder: Folder;
   state: SidebarProps;
 }): JSX.Element {
+  const listId = createUniqueId();
   const collapsed = () => collapsedFolders().has(props.folder.id);
   const active = () =>
-    isActiveScope(props.state, {
+    isSameScope(props.state.scope, {
       kind: 'folder',
       folderId: props.folder.id,
     });
@@ -43,7 +38,11 @@ export function FolderRow(props: {
   return (
     <div class="flex flex-col gap-0.5">
       <div class={[ROW_CLASSES, rowClasses(active())]}>
-        <CollapseButton folder={props.folder} collapsed={collapsed()} />
+        <CollapseButton
+          folder={props.folder}
+          collapsed={collapsed()}
+          controlsId={listId}
+        />
         <FolderNameButton
           folder={props.folder}
           active={active()}
@@ -54,11 +53,12 @@ export function FolderRow(props: {
         </SidebarRowEnd>
       </div>
       <Show when={!collapsed()}>
-        <div class="ml-4 flex flex-col gap-0.5 border-l border-base-300 pl-1">
-          <For each={folderFeeds(props.folder.id)}>
-            {(feed) => (
-              <FeedRow feed={feed} indent showMove state={props.state} />
-            )}
+        <div
+          id={listId}
+          class="ml-4 flex flex-col gap-0.5 border-l border-base-300 pl-1"
+        >
+          <For each={folderFeeds(props.folder.id)} keyed={(feed) => feed.id}>
+            {(feed) => <FeedRow feed={feed()} state={props.state} />}
           </For>
         </div>
       </Show>
@@ -69,13 +69,20 @@ export function FolderRow(props: {
 function CollapseButton(props: {
   folder: Folder;
   collapsed: boolean;
+  controlsId: string;
 }): JSX.Element {
+  const label = () =>
+    t(props.collapsed ? 'folders.expandFolder' : 'folders.collapseFolder', {
+      name: props.folder.name,
+    });
+
   return (
     <button
       type="button"
       class="btn btn-ghost btn-xs btn-square shrink-0"
-      aria-label={props.folder.name}
+      aria-label={label()}
       aria-expanded={props.collapsed ? 'false' : 'true'}
+      aria-controls={props.controlsId}
       onClick={() => toggleFolderCollapse(props.folder.id)}
     >
       <Icon
@@ -118,56 +125,25 @@ function FolderMenu(props: {
   state: SidebarProps;
 }): JSX.Element {
   return (
-    <Menu
-      label={String(t('library.moreActions'))}
-      align="end"
-      triggerClass="btn-xs"
-    >
-      <FolderMainMenuItems folder={props.folder} state={props.state} />
-    </Menu>
-  );
-}
-
-function FolderMainMenuItems(props: {
-  folder: Folder;
-  state: SidebarProps;
-}): JSX.Element {
-  return (
-    <>
-      <MenuItem
-        icon="check-double"
-        onSelect={() =>
-          void markScopeAllRead({
-            kind: 'folder',
-            folderId: props.folder.id,
-          })
-        }
-      >
-        {String(t('library.markAllRead'))}
-      </MenuItem>
-      <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
-        {String(t('reader.sendAsEbook'))}
-      </MenuItem>
-      <MenuDivider />
-      <MenuCheckbox
-        checked={props.state.unreadOnly}
-        onSelect={() => toggleUnread(props.state)}
-      >
-        {String(t('library.unreadOnly'))}
-      </MenuCheckbox>
-      <ListOrderCheckbox feed={null} />
+    <Menu label={t('library.moreActions')} triggerClass="btn-xs">
+      <ScopeMenuItems
+        scope={{ kind: 'folder', folderId: props.folder.id }}
+        unreadOnly={props.state.unreadOnly}
+        onToggleUnread={() => toggleUnread(props.state)}
+      />
       <MenuDivider />
       <MenuItem
+        opensDialog
         onSelect={() => props.state.onRequestRenameFolder(props.folder)}
       >
-        {String(t('folders.renameFolder'))}
+        {t('folders.renameFolder')}
       </MenuItem>
       <MenuItem
         icon="trash"
         onSelect={() => void deleteFolder(props.state, props.folder)}
       >
-        {String(t('folders.deleteFolder'))}
+        {t('folders.deleteFolder')}
       </MenuItem>
-    </>
+    </Menu>
   );
 }

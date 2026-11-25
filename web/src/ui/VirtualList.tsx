@@ -19,8 +19,10 @@ export interface VirtualListProps<T> {
   footer?: JSX.Element;
   /** Extra classes for the scroll container. */
   class?: string;
-  /** Row index to scroll into view when changed. */
+  /** Row index to scroll into view when `activeKey` changes or becomes available. */
   activeIndex?: number;
+  /** Identifier for the active row so appending rows does not re-scroll to the same item. */
+  activeKey?: string | null;
 }
 
 interface RowsProps<T> {
@@ -56,31 +58,47 @@ const VirtualRows = <T,>(props: RowsProps<T>): JSX.Element => (
   </div>
 );
 
-interface StaticRowsProps<T> {
-  items: ReadonlyArray<T>;
-  render: (item: T, index: () => number) => JSX.Element;
-}
+class ActiveScrollTracker {
+  private key: string | null | undefined;
+  private index: number | undefined;
 
-/** Fallback list used while the viewport has no measurable height. */
-const StaticRows = <T,>(props: StaticRowsProps<T>): JSX.Element => (
-  <For each={props.items}>
-    {(item, index) => (
-      <div data-index={index()}>{props.render(item, index)}</div>
-    )}
-  </For>
-);
+  shouldScroll(
+    key: string | null | undefined,
+    index: number | undefined,
+    length: number
+  ): index is number {
+    if (key !== undefined) {
+      if (this.key === key) return false;
+      this.key = null;
+    }
+    if (index === undefined || index < 0 || index >= length) {
+      if (key === undefined) this.index = undefined;
+      return false;
+    }
+    if (key !== undefined) {
+      this.key = key;
+      return true;
+    }
+    if (this.index === index) return false;
+    this.index = index;
+    return true;
+  }
+}
 
 export function VirtualList<T>(props: VirtualListProps<T>): JSX.Element {
   const list = useVirtualList(props);
+  const tracker = new ActiveScrollTracker();
 
   createEffect(
-    () => ({ index: props.activeIndex, fallback: list.fallbackVisible() }),
-    ({ index, fallback }) => {
-      if (index === undefined || index < 0 || index >= props.items.length) {
-        return;
+    () => ({
+      key: props.activeKey,
+      index: props.activeIndex,
+      length: props.items.length,
+    }),
+    ({ key, index, length }) => {
+      if (tracker.shouldScroll(key, index, length)) {
+        list.virtualizer.scrollToIndex(index, { align: 'auto' });
       }
-      if (fallback) return;
-      list.virtualizer.scrollToIndex(index, { align: 'auto' });
     }
   );
 
@@ -91,20 +109,13 @@ export function VirtualList<T>(props: VirtualListProps<T>): JSX.Element {
       onScroll={list.onScroll}
     >
       <Show when={props.header}>{props.header}</Show>
-      <Show
-        when={list.fallbackVisible()}
-        fallback={
-          <VirtualRows
-            virtualizer={list.virtualizer}
-            rows={list.rows()}
-            totalSize={list.totalSize()}
-            items={props.items}
-            render={props.renderItem}
-          />
-        }
-      >
-        <StaticRows items={props.items} render={props.renderItem} />
-      </Show>
+      <VirtualRows
+        virtualizer={list.virtualizer}
+        rows={list.rows()}
+        totalSize={list.totalSize()}
+        items={props.items}
+        render={props.renderItem}
+      />
       <Show when={props.footer}>{props.footer}</Show>
     </div>
   );

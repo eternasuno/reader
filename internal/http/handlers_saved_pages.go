@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"reader/internal/domain"
 )
@@ -30,25 +29,6 @@ func toSavedPageJSON(page domain.SavedPage) savedPageJSON {
 	}
 }
 
-func toSavedPagesJSON(pages []domain.SavedPage) []savedPageJSON {
-	converted := make([]savedPageJSON, 0, len(pages))
-	for _, page := range pages {
-		converted = append(converted, toSavedPageJSON(page))
-	}
-
-	return converted
-}
-
-func toSavedPagePtr(page *domain.SavedPage) *savedPageJSON {
-	if page == nil {
-		return nil
-	}
-
-	converted := toSavedPageJSON(*page)
-
-	return &converted
-}
-
 type savedPageRequest struct {
 	URL string `json:"url"`
 }
@@ -62,14 +42,7 @@ type idsRequest struct {
 }
 
 func (s *server) handleSavedPageList(w http.ResponseWriter, r *http.Request) {
-	query, err := parsePageQuery(r)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	params, err := query.params(query.orderOrDefault())
+	params, err := parseDefaultPageParams(r)
 	if err != nil {
 		writeError(w, err)
 
@@ -83,7 +56,7 @@ func (s *server) handleSavedPageList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pageResponse[savedPageJSON]{Items: toSavedPagesJSON(result.Items), Cursor: result.Cursor})
+	writeJSON(w, http.StatusOK, pageResponse[savedPageJSON]{Items: mapSlice(result.Items, toSavedPageJSON), Cursor: result.Cursor})
 }
 
 func (s *server) handleSavedPageUnreadCount(w http.ResponseWriter, r *http.Request) {
@@ -97,24 +70,6 @@ func (s *server) handleSavedPageUnreadCount(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, countResponse{Count: count})
 }
 
-func (s *server) handleSavedPageLookup(w http.ResponseWriter, r *http.Request) {
-	pageURL, err := domain.ParseNormalizedURL(r.URL.Query().Get("url"), domain.ErrInvalidPageUrl)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	page, err := s.cfg.SavedPages.GetByURL(r.Context(), pageURL)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, itemResponse[savedPageJSON]{Item: toSavedPagePtr(page)})
-}
-
 func (s *server) handleSavedPageGet(w http.ResponseWriter, r *http.Request) {
 	page, err := s.cfg.SavedPages.GetByID(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -123,7 +78,7 @@ func (s *server) handleSavedPageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, itemResponse[savedPageJSON]{Item: toSavedPagePtr(page)})
+	writeJSON(w, http.StatusOK, itemResponse[savedPageJSON]{Item: toPtr(page, toSavedPageJSON)})
 }
 
 func (s *server) handleSavedPageCreate(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +103,9 @@ func (s *server) handleSavedPageCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, itemResponse[savedPageJSON]{Item: toSavedPagePtr(&created)})
+	converted := toSavedPageJSON(created)
+
+	writeJSON(w, http.StatusCreated, itemResponse[savedPageJSON]{Item: &converted})
 }
 
 func (s *server) createSavedPage(ctx context.Context, pageURL domain.NormalizedURL) (domain.SavedPage, error) {
@@ -172,66 +129,16 @@ func (s *server) createSavedPage(ctx context.Context, pageURL domain.NormalizedU
 }
 
 func (s *server) ensureSavedPageAbsent(ctx context.Context, pageURL domain.NormalizedURL) error {
-	existing, err := s.cfg.SavedPages.GetByURL(ctx, pageURL)
+	id, found, err := s.cfg.SavedPages.GetIDByURL(ctx, pageURL)
 	if err != nil {
 		return err
 	}
 
-	if existing != nil {
-		return domain.NewConflictURL(domain.ErrSavedPageAlreadyExists, pageURL.RedactedString())
+	if found {
+		return domain.NewSavedPageConflict(id, pageURL.RedactedString())
 	}
 
 	return nil
-}
-
-func (s *server) handleSavedPageSetRead(w http.ResponseWriter, r *http.Request) {
-	var req readStateRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if req.Read == nil {
-		writeError(w, domain.NewError(domain.ErrRequestFailed, nil))
-
-		return
-	}
-
-	if err := s.cfg.SavedPages.SetRead(r.Context(), r.PathValue("id"), *req.Read); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
-}
-
-func (s *server) handleSavedPagesMarkRead(w http.ResponseWriter, r *http.Request) {
-	var req idsRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if err := s.cfg.SavedPages.MarkIDsRead(r.Context(), req.IDs); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
-}
-
-func (s *server) handleSavedPagesMarkAllRead(w http.ResponseWriter, r *http.Request) {
-	if err := s.cfg.SavedPages.MarkAllRead(r.Context()); err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	writeNoContent(w)
 }
 
 func (s *server) handleSavedPageDelete(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +172,9 @@ func (s *server) handleFeedItemSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, itemResponse[savedPageJSON]{Item: toSavedPagePtr(&created)})
+	converted := toSavedPageJSON(created)
+
+	writeJSON(w, http.StatusCreated, itemResponse[savedPageJSON]{Item: &converted})
 }
 
 func (s *server) saveFeedItem(ctx context.Context, item *domain.FeedItem) (domain.SavedPage, error) {
@@ -291,9 +200,9 @@ func (s *server) savedPageFromFeedItem(ctx context.Context, item *domain.FeedIte
 	}
 
 	switch {
-	case hasText(item.ExtractedContent):
+	case item.ExtractedContent != nil:
 		page.Content = *item.ExtractedContent
-	case hasText(item.Content):
+	case item.Content != nil:
 		page.Content = *item.Content
 	default:
 		article, err := s.extractWebpage(ctx, item.URL)
@@ -302,9 +211,7 @@ func (s *server) savedPageFromFeedItem(ctx context.Context, item *domain.FeedIte
 		}
 
 		page.Content = article.Content
-		if strings.TrimSpace(article.Title) != "" {
-			page.Title = article.Title
-		}
+		page.Title = article.Title
 
 		if article.Description != nil {
 			page.Description = article.Description
@@ -316,10 +223,6 @@ func (s *server) savedPageFromFeedItem(ctx context.Context, item *domain.FeedIte
 	}
 
 	return page, nil
-}
-
-func hasText(value *string) bool {
-	return value != nil && strings.TrimSpace(*value) != ""
 }
 
 type countResponse struct {

@@ -5,9 +5,10 @@ Single-user password authentication configured by `APP_PASSWORD`. No registratio
 ## Rules
 
 - `AC-AUTH-1`: `POST /api/auth/login` verifies the submitted password using constant-time comparison against `APP_PASSWORD`. Success sets an `HttpOnly`, `SameSite=Lax` (and `Secure` when `APP_URL` is `https://`) HMAC-signed session cookie.
+- `AC-AUTH-1a`: `APP_PASSWORD` must be nonempty valid UTF-8 without CR or LF (browsers strip them from password inputs) and its browser JSON login request must fit the 4096-byte request body limit; invalid configuration is rejected without exposing the password.
 - `AC-AUTH-2`: Wrong password returns `401 InvalidCredentials`. Repeated failed login attempts from an IP are rate-limited (`429 TooManyRequests`).
 - `AC-AUTH-3`: `POST /api/auth/logout` clears the session cookie (`204`).
-- `AC-AUTH-4`: Every route except `/login` checks `GET /api/auth/session` (`200 { authenticated: boolean }`). Unauthenticated requests redirect to `/login` preserving a validated same-origin relative `?next=...` path (starting with `/`, never `//`, keeping encoded query parameters such as `/save?url=...` across failed login attempts); authenticated visits to `/login` redirect to `?next` (if valid) or `/`.
+- `AC-AUTH-4`: Every route except `/login` checks `GET /api/auth/session` (`200 { authenticated: boolean }`). Unauthenticated requests redirect to `/login` preserving a validated same-origin relative `?next=...` path (starting with `/`, never `//`, keeping encoded query parameters such as `/all?unread` across failed login attempts; `/save` holds its `#url=` or legacy `?url=` draft in tab memory instead of copying it into `?next`); authenticated visits to `/login` redirect to `?next` (if valid) or `/`.
 - `AC-AUTH-5`: If any non-login `/api/*` request receives `401 Unauthorized`, the client clears session state and redirects to `/login` (preserving current relative route+query in `?next`). `POST /api/auth/login` returning `401 InvalidCredentials` never triggers this redirect and shows `密码不正确` inline.
 
 ## Interface
@@ -38,11 +39,11 @@ Single-user password authentication configured by `APP_PASSWORD`. No registratio
 Feature: Single-user authentication
   Scenario: Signing in with a redirect target from quick-save
     Given I am not signed in
-    When I open "/save?url=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2"
-    Then I am redirected to "/login?next=%2Fsave%3Furl%3Dhttps%253A%252F%252Fexample.com%252Fpost%253Fa%253D1%2526b%253D2"
+    When I open "/save#url=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2"
+    Then I am redirected to "/login?next=%2Fsave" without the target URL in "?next"
     When I submit an incorrect password first, then the correct password
     Then the first attempt stays on "/login" showing "密码不正确" and keeps "?next"
-    And the second attempt returns to "/save?url=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2"
+    And the second attempt returns to "/save" with "https://example.com/post?a=1&b=2" pre-filled from memory
 
   Scenario: Wrong password is rate-limited after repeated failures
     When I submit an incorrect password repeatedly

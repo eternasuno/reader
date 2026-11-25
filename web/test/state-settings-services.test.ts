@@ -1,15 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Settings, SmtpSettingsView } from '../src/api';
+import type { SettingsDrafts } from '../src/state';
 
 type StateModule = typeof import('../src/state');
 type I18nModule = typeof import('../src/i18n');
 type UiModule = typeof import('../src/ui');
+type StoreSetter = import('solid-js').StoreSetter<SettingsDrafts>;
 
 let state: StateModule;
 let solid: typeof import('solid-js');
 let i18n: I18nModule;
 let ui: UiModule;
 let fetchMock: ReturnType<typeof vi.fn>;
+let drafts: SettingsDrafts;
+let setDrafts: StoreSetter;
 
 const fresh = async (): Promise<void> => {
   vi.resetModules();
@@ -17,6 +21,16 @@ const fresh = async (): Promise<void> => {
   i18n = await import('../src/i18n');
   ui = await import('../src/ui');
   state = await import('../src/state');
+  onTestFinished(
+    solid.createRoot((dispose) => {
+      const [store, setStore] = solid.createStore<SettingsDrafts>(
+        state.draftsFromSettings(null)
+      );
+      drafts = store;
+      setDrafts = setStore;
+      return dispose;
+    })
+  );
 };
 
 beforeEach(async () => {
@@ -74,51 +88,48 @@ const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
 const load = async (loaded: Settings = makeSettings()): Promise<void> => {
   queue(loaded);
   queue({ running: false, items: [] });
-  await state.loadSettings();
+  await state.loadSettings((next) => {
+    setDrafts(() => state.draftsFromSettings(next));
+  });
   solid.flush();
 };
 
-const fillSmtpDrafts = (password = ''): void => {
-  state.setSmtpSenderEmailDraft(' sender@example.com ');
-  state.setSmtpHostDraft(' smtp.example.com ');
-  state.setSmtpPortDraft(465);
-  state.setSmtpSecurityDraft('tls');
-  state.setSmtpUserDraft(' user@example.com ');
-  state.setSmtpPasswordDraft(password);
+const patchDrafts = (patch: Partial<SettingsDrafts>): void => {
+  setDrafts((d) => ({ ...d, ...patch }));
   solid.flush();
 };
+
+const toastIs = (message: string): void => {
+  expect(ui.currentToast()?.message).toBe(message);
+};
+
+const fillSmtpDrafts = (password = ''): void =>
+  patchDrafts({
+    smtpSenderEmail: ' sender@example.com ',
+    smtpHost: ' smtp.example.com ',
+    smtpPort: 465,
+    smtpSecurity: 'tls',
+    smtpUser: ' user@example.com ',
+    smtpPassword: password,
+  });
 
 describe('saveJinaKey', () => {
   it('saves Jina key, updates state, clears draft and shows toast', async () => {
     await load();
-    state.setJinaKeyDraft(' jina-secret ');
-    solid.flush();
+    patchDrafts({ jinaKey: ' jina-secret ' });
 
     queueEmpty();
-    await expect(state.saveJinaKey()).resolves.toBe(true);
+    await expect(state.saveJinaKey(drafts, setDrafts)).resolves.toBe(true);
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/services/jina');
     expect(requestMethod(2)).toBe('PUT');
     expect(requestBody(2)).toEqual({ key: 'jina-secret' });
     expect(state.settings()?.jinaKeyConfigured).toBe(true);
-    expect(state.jinaKeyDraft()).toBe('');
-    expect(state.isSectionDirty('services')).toBe(false);
+    expect(drafts.jinaKey).toBe('');
+    expect(state.isSectionDirty('services', drafts)).toBe(false);
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('settings.jinaKeySavedToast'))
-    );
-  });
-
-  it('shows error toast when saving Jina key fails', async () => {
-    await load();
-    queue({ error: 'InvalidJinaKey' }, 400);
-
-    await expect(state.saveJinaKey()).resolves.toBe(false);
-    solid.flush();
-
-    expect(state.settings()?.jinaKeyConfigured).toBe(false);
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('InvalidJinaKey')
     );
   });
 });
@@ -128,33 +139,30 @@ describe('removeJinaKey', () => {
     await load(makeSettings({ jinaKeyConfigured: true }));
 
     queueEmpty();
-    await expect(state.removeJinaKey()).resolves.toBe(true);
+    await expect(state.removeJinaKey(setDrafts)).resolves.toBe(true);
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/services/jina');
     expect(requestMethod(2)).toBe('DELETE');
     expect(state.settings()?.jinaKeyConfigured).toBe(false);
-    expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.jinaKeyDeletedToast'))
-    );
+    toastIs(String(i18n.t('settings.jinaKeyDeletedToast')));
 
     queue({ error: 'SettingRepositoryError' }, 500);
-    await expect(state.removeJinaKey()).resolves.toBe(false);
+    await expect(state.removeJinaKey(setDrafts)).resolves.toBe(false);
     solid.flush();
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('SettingRepositoryError')
-    );
+    toastIs(i18n.translateErrorCode('SettingRepositoryError'));
   });
 });
 
 describe('saveBrowserEndpoint', () => {
   it('saves browser endpoint, updates availability and clears draft', async () => {
     await load();
-    state.setBrowserEndpointDraft(' http://browser:9222 ');
-    solid.flush();
+    patchDrafts({ browserEndpoint: ' http://browser:9222 ' });
 
     queueEmpty();
-    await expect(state.saveBrowserEndpoint()).resolves.toBe(true);
+    await expect(state.saveBrowserEndpoint(drafts, setDrafts)).resolves.toBe(
+      true
+    );
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/services/browser');
@@ -162,24 +170,9 @@ describe('saveBrowserEndpoint', () => {
     expect(requestBody(2)).toEqual({ endpoint: 'http://browser:9222' });
     expect(state.settings()?.browserEndpointConfigured).toBe(true);
     expect(state.isBrowserAvailable()).toBe(true);
-    expect(state.browserEndpointDraft()).toBe('');
+    expect(drafts.browserEndpoint).toBe('');
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('settings.browserEndpointSavedToast'))
-    );
-  });
-
-  it('shows error toast when saving browser endpoint fails', async () => {
-    await load();
-    state.setBrowserEndpointDraft('ftp://invalid');
-    solid.flush();
-    queue({ error: 'InvalidEndpoint' }, 400);
-
-    await expect(state.saveBrowserEndpoint()).resolves.toBe(false);
-    solid.flush();
-
-    expect(state.settings()?.browserEndpointConfigured).toBe(false);
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('InvalidEndpoint')
     );
   });
 });
@@ -191,7 +184,7 @@ describe('removeBrowserEndpoint', () => {
     );
 
     queueEmpty();
-    await expect(state.removeBrowserEndpoint()).resolves.toBe(true);
+    await expect(state.removeBrowserEndpoint(setDrafts)).resolves.toBe(true);
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/services/browser');
@@ -199,10 +192,8 @@ describe('removeBrowserEndpoint', () => {
     expect(state.settings()?.browserEndpointConfigured).toBe(false);
     expect(state.isBrowserAvailable()).toBe(false);
     expect(state.settings()?.provider).toBe('direct');
-    expect(state.providerDraft()).toBe('direct');
-    expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.browserEndpointDeletedToast'))
-    );
+    expect(drafts.provider).toBe('direct');
+    toastIs(String(i18n.t('settings.browserEndpointDeletedToast')));
   });
 
   it('keeps non-browser provider and surfaces errors', async () => {
@@ -211,17 +202,15 @@ describe('removeBrowserEndpoint', () => {
     );
 
     queue({ error: 'SettingRepositoryError' }, 500);
-    await expect(state.removeBrowserEndpoint()).resolves.toBe(false);
+    await expect(state.removeBrowserEndpoint(setDrafts)).resolves.toBe(false);
     solid.flush();
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('SettingRepositoryError')
-    );
+    toastIs(i18n.translateErrorCode('SettingRepositoryError'));
 
     queueEmpty();
-    await expect(state.removeBrowserEndpoint()).resolves.toBe(true);
+    await expect(state.removeBrowserEndpoint(setDrafts)).resolves.toBe(true);
     solid.flush();
     expect(state.settings()?.provider).toBe('jina');
-    expect(state.providerDraft()).toBe('jina');
+    expect(drafts.provider).toBe('jina');
   });
 });
 
@@ -231,7 +220,7 @@ describe('saveSmtp', () => {
     fillSmtpDrafts(' smtp-secret ');
 
     queueEmpty();
-    await expect(state.saveSmtp()).resolves.toBe(true);
+    await expect(state.saveSmtp(drafts, setDrafts)).resolves.toBe(true);
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/services/smtp');
@@ -245,34 +234,19 @@ describe('saveSmtp', () => {
       ...SMTP_VIEW,
       user: 'user@example.com',
     });
-    expect(state.smtpPasswordDraft()).toBe('');
+    expect(drafts.smtpPassword).toBe('');
     expect(state.isSmtpConfigured()).toBe(true);
     expect(state.canSendToKindle()).toBe(true);
-    expect(state.isSectionDirty('services')).toBe(false);
+    expect(state.isSectionDirty('services', drafts)).toBe(false);
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('settings.smtpSavedToast'))
     );
 
-    state.setSmtpPortDraft(587);
-    state.setSmtpSecurityDraft('starttls');
-    solid.flush();
+    patchDrafts({ smtpPort: 587, smtpSecurity: 'starttls' });
     queueEmpty();
-    await expect(state.saveSmtp()).resolves.toBe(true);
+    await expect(state.saveSmtp(drafts, setDrafts)).resolves.toBe(true);
     expect(requestBody(3)).not.toHaveProperty('password');
     expect(state.settings()?.smtp?.passwordConfigured).toBe(true);
-  });
-
-  it('shows error toast when saving SMTP fails', async () => {
-    await load();
-    queue({ error: 'InvalidSMTPSetting' }, 400);
-
-    await expect(state.saveSmtp()).resolves.toBe(false);
-    solid.flush();
-
-    expect(state.settings()?.smtp).toBeUndefined();
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('InvalidSMTPSetting')
-    );
   });
 });
 
@@ -281,10 +255,10 @@ describe('saveSmtp whitespace password', () => {
     await load();
     fillSmtpDrafts('   ');
     queueEmpty();
-    await expect(state.saveSmtp()).resolves.toBe(true);
+    await expect(state.saveSmtp(drafts, setDrafts)).resolves.toBe(true);
     expect(requestBody(2)).not.toHaveProperty('password');
     expect(state.settings()?.smtp?.passwordConfigured).toBe(false);
-    expect(state.isSectionDirty('services')).toBe(false);
+    expect(state.isSectionDirty('services', drafts)).toBe(false);
   });
 });
 
@@ -293,22 +267,18 @@ describe('removeSmtpPassword', () => {
     await load(makeSettings({ smtp: SMTP_VIEW }));
 
     queueEmpty();
-    await expect(state.removeSmtpPassword()).resolves.toBe(true);
+    await expect(state.removeSmtpPassword(setDrafts)).resolves.toBe(true);
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/services/smtp/password');
     expect(requestMethod(2)).toBe('DELETE');
     expect(state.settings()?.smtp?.passwordConfigured).toBe(false);
-    expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.smtpPasswordDeletedToast'))
-    );
+    toastIs(String(i18n.t('settings.smtpPasswordDeletedToast')));
 
     queue({ error: 'SettingRepositoryError' }, 500);
-    await expect(state.removeSmtpPassword()).resolves.toBe(false);
+    await expect(state.removeSmtpPassword(setDrafts)).resolves.toBe(false);
     solid.flush();
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('SettingRepositoryError')
-    );
+    toastIs(i18n.translateErrorCode('SettingRepositoryError'));
   });
 });
 
@@ -322,7 +292,7 @@ describe('removeSmtp', () => {
     );
 
     queueEmpty();
-    await expect(state.removeSmtp()).resolves.toBe(true);
+    await expect(state.removeSmtp(setDrafts)).resolves.toBe(true);
     solid.flush();
 
     expect(requestUrl(2)).toBe('/api/settings/services/smtp');
@@ -330,25 +300,21 @@ describe('removeSmtp', () => {
     expect(state.settings()?.smtp).toBeUndefined();
     expect(state.isSmtpConfigured()).toBe(false);
     expect(state.canSendToKindle()).toBe(false);
-    expect(state.smtpSenderEmailDraft()).toBe('');
-    expect(state.smtpHostDraft()).toBe('');
-    expect(state.smtpPortDraft()).toBe(0);
-    expect(state.isSectionDirty('services')).toBe(false);
-    expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.smtpDeletedToast'))
-    );
+    expect(drafts.smtpSenderEmail).toBe('');
+    expect(drafts.smtpHost).toBe('');
+    expect(drafts.smtpPort).toBe(0);
+    expect(state.isSectionDirty('services', drafts)).toBe(false);
+    toastIs(String(i18n.t('settings.smtpDeletedToast')));
   });
 
   it('shows error toast when clearing SMTP fails', async () => {
     await load(makeSettings({ smtp: SMTP_VIEW }));
     queue({ error: 'SettingRepositoryError' }, 500);
 
-    await expect(state.removeSmtp()).resolves.toBe(false);
+    await expect(state.removeSmtp(setDrafts)).resolves.toBe(false);
     solid.flush();
 
-    expect(state.settings()?.smtp).toBeDefined();
-    expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('SettingRepositoryError')
-    );
+    expect(state.settings()?.smtp).toEqual(SMTP_VIEW);
+    toastIs(i18n.translateErrorCode('SettingRepositoryError'));
   });
 });

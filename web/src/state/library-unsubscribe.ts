@@ -1,9 +1,10 @@
 /** Unsubscribing a feed from the sidebar or feed-list menu (`FD-UNSUB-1`). */
 
 import type { Feed } from '../api';
-import { ApiError, feedsApi } from '../api';
-import { t, translateErrorCode } from '../i18n';
+import { feedsApi } from '../api';
+import { t } from '../i18n';
 import { showToast } from '../ui';
+import { errorText } from './errorText';
 import {
   activeScope,
   activeUnreadOnly,
@@ -11,9 +12,6 @@ import {
   loadScopeFirstPage,
 } from './library';
 import { removeFeedLocal } from './sidebar';
-
-const codeOf = (error: unknown): string =>
-  error instanceof ApiError ? error.code : 'RequestFailed';
 
 /**
  * `FD-UNSUB-1`: removes the feed, shows `订阅源已删除`, and reloads an active aggregate
@@ -23,12 +21,12 @@ export const unsubscribeFeed = async (feed: Feed): Promise<boolean> => {
   try {
     await feedsApi.remove(feed.id);
   } catch (error) {
-    showToast(translateErrorCode(codeOf(error)), 'error');
+    showToast(errorText(error), 'error');
     return false;
   }
 
   removeFeedLocal(feed.id);
-  showToast(String(t('feeds.unsubscribedToast')), 'success');
+  showToast(t('feeds.unsubscribedToast'), 'success');
 
   const scope = activeScope();
   // `activeScope()` outlives the library page; don't reload a list the user already left.

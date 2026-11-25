@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS feed_item (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS feed_item_read_id ON feed_item (read, id);
+CREATE INDEX IF NOT EXISTS feed_item_read_feed_id ON feed_item (read, feed_id);
 CREATE INDEX IF NOT EXISTS feed_item_feed_id ON feed_item (feed_id, id);
+CREATE INDEX IF NOT EXISTS feed_item_feed_id_url ON feed_item (feed_id, id, url);
 CREATE INDEX IF NOT EXISTS feed_item_feed_read_id ON feed_item (feed_id, read, id);
 
 CREATE TABLE IF NOT EXISTS saved_page (
@@ -77,4 +79,10 @@ CREATE TABLE IF NOT EXISTS kindle_send (
   error TEXT,
   started_at INTEGER NOT NULL,
   finished_at INTEGER
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS kindle_send_book (
+  send_id TEXT NOT NULL REFERENCES kindle_send(id) ON DELETE CASCADE,
+  book_index INTEGER NOT NULL,
+  PRIMARY KEY (send_id, book_index)
 ) STRICT;

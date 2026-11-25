@@ -1,12 +1,13 @@
 import * as i18n from '@solid-primitives/i18n';
 import { createMemo, createRoot, createSignal, flush } from 'solid-js';
+// biome-ignore lint/style/noRestrictedImports: storage.ts is a dependency-free leaf helper
+import { getItem, setItem } from '../state/storage';
 import type { Dict } from './en';
 import { enDict } from './en';
 import { zhDict } from './zh';
 
 export type { Dict } from './en';
 export type Locale = 'zh-CN' | 'en';
-export type FlatDict = i18n.Flatten<Dict>;
 
 const STORAGE_KEY = 'reader.locale';
 
@@ -19,22 +20,17 @@ const isLocale = (value: string | null): value is Locale =>
   value === 'zh-CN' || value === 'en';
 
 const detectLocale = (): Locale => {
-  if (typeof localStorage !== 'undefined') {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (isLocale(stored)) return stored;
-  }
+  const stored = getItem(STORAGE_KEY);
+  if (isLocale(stored)) return stored;
 
-  const language =
-    typeof navigator === 'undefined' ? '' : (navigator.language ?? '');
+  const language = navigator.language ?? '';
   return language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
 };
 
 const [locale, setLocaleSignal] = createSignal<Locale>(detectLocale());
 
 const applyDocumentLang = (next: Locale) => {
-  if (typeof document !== 'undefined') {
-    document.documentElement.lang = next;
-  }
+  document.documentElement.lang = next;
 };
 
 applyDocumentLang(locale());
@@ -42,15 +38,11 @@ applyDocumentLang(locale());
 export { locale };
 
 export const setLocale = (next: Locale) => {
-  if (!isLocale(next)) return;
-
   setLocaleSignal(next);
   applyDocumentLang(next);
   flush();
 
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY, next);
-  }
+  setItem(STORAGE_KEY, next);
 };
 
 export const toggleLocale = () => {
@@ -72,7 +64,7 @@ export const translateErrorCode = (code: string): string => {
   const message = translate(`errors.${code}`);
   if (typeof message === 'string' && message.length > 0) return message;
 
-  return String(t('errors.RequestFailed'));
+  return t('errors.RequestFailed');
 };
 
 /** `RD-CONTENT-1`: localized absolute date and time, e.g. `2026年11月22日 14:01`. */
@@ -97,19 +89,21 @@ export const formatRelativeTime = (
   if (Number.isNaN(timestamp)) return '';
 
   const elapsed = Date.now() - timestamp;
-  if (elapsed < 60_000) return dicts[currentLocale].common.justNow;
+  const absElapsed = Math.abs(elapsed);
+  if (absElapsed < 60_000) return dicts[currentLocale].common.justNow;
 
+  const sign = elapsed > 0 ? -1 : 1;
   const relative = new Intl.RelativeTimeFormat(currentLocale, {
     numeric: 'auto',
   });
-  const minutes = Math.floor(elapsed / 60_000);
-  if (minutes < 60) return relative.format(-minutes, 'minute');
+  const minutes = Math.floor(absElapsed / 60_000);
+  if (minutes < 60) return relative.format(sign * minutes, 'minute');
 
-  const hours = Math.floor(elapsed / 3_600_000);
-  if (hours < 24) return relative.format(-hours, 'hour');
+  const hours = Math.floor(absElapsed / 3_600_000);
+  if (hours < 24) return relative.format(sign * hours, 'hour');
 
-  const days = Math.floor(elapsed / 86_400_000);
-  if (days <= 30) return relative.format(-days, 'day');
+  const days = Math.floor(absElapsed / 86_400_000);
+  if (days <= 30) return relative.format(sign * days, 'day');
 
   return new Intl.DateTimeFormat(currentLocale, {
     year: 'numeric',

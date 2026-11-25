@@ -2,6 +2,7 @@
  * module is directly testable under Vitest. */
 
 export * from './appearance';
+export * from './errorText';
 export * from './library';
 export * from './library-unsubscribe';
 export * from './reader';

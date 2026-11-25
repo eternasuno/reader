@@ -1,30 +1,15 @@
 import type { JSX } from '@solidjs/web';
-import { render } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  ArticleFrame,
-  buildArticleSrcdoc,
-} from '../src/components/ArticleFrame';
+import { describe, expect, it, vi } from 'vitest';
+import { ArticleFrame } from '../src/components/ArticleFrame';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
 import { ReaderAppearanceMenu } from '../src/components/ReaderAppearanceMenu';
 import { SidebarBrand } from '../src/components/SidebarBrand';
-import { setLocale } from '../src/i18n';
-import {
-  resetReaderAppearance,
-  setSidebarCollapsedState,
-  sidebarCollapsed,
-} from '../src/state';
+import { sidebarCollapsed } from '../src/state';
+import { Menu, MenuItem } from '../src/ui';
+import { mount, setupInteractions } from './support/list-helpers';
 
-let disposers: Array<() => void> = [];
-
-const mount = (component: () => JSX.Element): HTMLElement => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  disposers.push(render(component, container));
-  flush();
-  return container;
-};
+setupInteractions();
 
 const frameToken = (iframe: HTMLIFrameElement): string =>
   /var token = "([^"]+)"/.exec(iframe.getAttribute('srcdoc') ?? '')?.[1] ?? '';
@@ -51,23 +36,6 @@ const openLightbox = async (
   await Promise.resolve();
   return { iframe, token };
 };
-
-beforeEach(() => {
-  localStorage.clear();
-  setLocale('zh-CN');
-  resetReaderAppearance();
-  setSidebarCollapsedState(false);
-  if (typeof HTMLElement.prototype.showPopover !== 'function') {
-    HTMLElement.prototype.showPopover = () => undefined;
-  }
-});
-
-afterEach(() => {
-  for (const dispose of disposers) dispose();
-  disposers = [];
-  document.body.innerHTML = '';
-  vi.restoreAllMocks();
-});
 
 describe('ImageLightbox focus lifecycle and Tab trap', () => {
   it('focuses close button on open, traps Tab, and restores focus on close', async () => {
@@ -113,62 +81,155 @@ describe('ArticleFrame Escape & image keyboard script', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(seen).toEqual([]);
   });
-
-  it('includes image tabindex/role enhancement and Enter/Space handlers in srcdoc', () => {
-    const srcdoc = buildArticleSrcdoc({
-      html: '<img src="https://example.com/a.jpg">',
-      nonce: 'n1',
-      token: 't1',
-      appOrigin: 'https://app.example',
-    });
-    expect(srcdoc).toContain('function enhanceImages()');
-    expect(srcdoc).toContain('img.tabIndex = 0');
-    expect(srcdoc).toContain("img.setAttribute('role', 'button')");
-    expect(srcdoc).toContain("event.key === 'Enter' || event.key === ' '");
-  });
 });
+
+const openMenu = async (
+  component: () => JSX.Element,
+  label: string
+): Promise<{ container: HTMLElement; panel: HTMLElement | null }> => {
+  const container = mount(component);
+  container
+    .querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
+    ?.click();
+  flush();
+  const panel = container.querySelector<HTMLElement>('[role="menu"]');
+  if (panel) panel.style.display = 'block';
+  await Promise.resolve();
+  return { container, panel };
+};
+
+const pressMenuKey = (panel: HTMLElement | null, key: string): void => {
+  panel?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+};
+
+const menuButtons = (root: ParentNode) =>
+  root.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]');
 
 describe('ReaderAppearanceMenu keyboard accessibility', () => {
   it('exposes menuitem/menuitemradio roles, sub-pages, and arrow navigation', async () => {
-    const container = mount(() => <ReaderAppearanceMenu />);
-    const trigger = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="视图选项"]'
+    const { container, panel } = await openMenu(
+      () => <ReaderAppearanceMenu />,
+      '视图选项'
     );
-    trigger?.click();
-    flush();
-    const panel = container.querySelector<HTMLElement>('[role="menu"]');
-    if (panel) panel.style.display = 'block';
-    await Promise.resolve();
-
-    const items = container.querySelectorAll<HTMLButtonElement>(
-      'button[role="menuitem"]'
-    );
+    const items = menuButtons(container);
     expect(items.length).toBeGreaterThan(1);
     expect(document.activeElement).toBe(items[0]);
 
-    panel?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
-    );
+    pressMenuKey(panel, 'ArrowDown');
     expect(document.activeElement).toBe(items[1]);
-
     items[1]?.click();
     flush();
+    await Promise.resolve();
+    const back = menuButtons(container)[0];
+    expect(panel?.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(back);
+
     const radios = container.querySelectorAll<HTMLButtonElement>(
       '[role="menuitemradio"]'
     );
     expect(radios.length).toBe(2);
+    pressMenuKey(panel, 'ArrowDown');
+    pressMenuKey(panel, 'ArrowDown');
+    expect(document.activeElement).toBe(radios[1]);
     radios[1]?.click();
     flush();
     expect(radios[1]?.getAttribute('aria-checked')).toBe('true');
 
-    container
-      .querySelector<HTMLButtonElement>('button[role="menuitem"]')
-      ?.click();
+    pressMenuKey(panel, 'Home');
+    expect(document.activeElement).toBe(back);
+    back?.click();
     flush();
+    await Promise.resolve();
+    const restored = menuButtons(container);
+    expect(document.activeElement).toBe(restored[1]);
+    expect(Array.from(restored).at(-1)?.textContent).toBe('恢复默认');
     expect(
-      Array.from(container.querySelectorAll('button[role="menuitem"]')).at(-1)
-        ?.textContent
-    ).toBe('恢复默认');
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="正文宽度 增大"]'
+      )?.disabled
+    ).toBe(true);
+  });
+});
+
+describe('Menu disabled items navigation', () => {
+  it('skips disabled and aria-disabled items on entry, Arrow, Home, and End', async () => {
+    const { container, panel } = await openMenu(
+      () => (
+        <Menu label="操作">
+          <MenuItem disabled>禁用首项</MenuItem>
+          <MenuItem>可用一</MenuItem>
+          <MenuItem aria-disabled="true">不可用中项</MenuItem>
+          <MenuItem>可用二</MenuItem>
+          <MenuItem disabled>禁用末项</MenuItem>
+        </Menu>
+      ),
+      '操作'
+    );
+    const items = menuButtons(container);
+    expect(document.activeElement).toBe(items[1]);
+    pressMenuKey(panel, 'ArrowDown');
+    expect(document.activeElement).toBe(items[3]);
+    pressMenuKey(panel, 'ArrowUp');
+    expect(document.activeElement).toBe(items[1]);
+    pressMenuKey(panel, 'End');
+    expect(document.activeElement).toBe(items[3]);
+    pressMenuKey(panel, 'Home');
+    expect(document.activeElement).toBe(items[1]);
+  });
+});
+
+describe('Menu subpanel container focus and Escape', () => {
+  it('focuses the panel container when empty and restores trigger on Escape', async () => {
+    const [sub, setSub] = createSignal<'root' | 'empty'>('root');
+    const { container, panel } = await openMenu(
+      () => (
+        <Menu label="子面板">
+          {sub() === 'root' ? (
+            <MenuItem submenu onSelect={() => setSub('empty')}>
+              打开空面板
+            </MenuItem>
+          ) : (
+            <MenuItem disabled>不可用</MenuItem>
+          )}
+        </Menu>
+      ),
+      '子面板'
+    );
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="子面板"]'
+    );
+    menuButtons(container)[0]?.click();
+    flush();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(panel);
+
+    setSub('root');
+    flush();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(menuButtons(container)[0]);
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+    flush();
+    expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+});
+
+describe('Menu Tab dismissal', () => {
+  it('closes the menu on Tab without blocking focus traversal', async () => {
+    const { container, panel } = await openMenu(
+      () => (
+        <Menu label="Tab测试">
+          <MenuItem>项目</MenuItem>
+        </Menu>
+      ),
+      'Tab测试'
+    );
+    pressMenuKey(panel, 'Tab');
+    flush();
+    expect(container.querySelector('[role="menu"]')).toBeNull();
   });
 });
 

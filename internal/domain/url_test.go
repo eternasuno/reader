@@ -29,9 +29,6 @@ func TestURLParseNormalized(t *testing.T) {
 		wantRedacted string
 		wantHost     string
 		wantCreds    bool
-		wantUser     string
-		wantPass     string
-		wantHasPass  bool
 	}{
 		{
 			name:         "empty path becomes root",
@@ -62,10 +59,31 @@ func TestURLParseNormalized(t *testing.T) {
 			wantHost:     "example.com",
 		},
 		{
+			name:         "strips leading zero default https port",
+			raw:          "https://example.com:0443/a",
+			wantRaw:      "https://example.com/a",
+			wantRedacted: "https://example.com/a",
+			wantHost:     "example.com",
+		},
+		{
+			name:         "strips leading zero default http port",
+			raw:          "http://example.com:080/a",
+			wantRaw:      "http://example.com/a",
+			wantRedacted: "http://example.com/a",
+			wantHost:     "example.com",
+		},
+		{
 			name:         "preserves non default port",
 			raw:          "http://example.com:8080/x",
 			wantRaw:      "http://example.com:8080/x",
 			wantRedacted: "http://example.com:8080/x",
+			wantHost:     "example.com",
+		},
+		{
+			name:         "preserves https non default port and strips leading zeros",
+			raw:          "https://example.com:08080/x",
+			wantRaw:      "https://example.com:8080/x",
+			wantRedacted: "https://example.com:8080/x",
 			wantHost:     "example.com",
 		},
 		{
@@ -96,9 +114,6 @@ func TestURLParseNormalized(t *testing.T) {
 			wantRedacted: "https://example.com/feed",
 			wantHost:     "example.com",
 			wantCreds:    true,
-			wantUser:     "user",
-			wantPass:     "secret",
-			wantHasPass:  true,
 		},
 		{
 			name:         "keeps username only credential",
@@ -107,7 +122,13 @@ func TestURLParseNormalized(t *testing.T) {
 			wantRedacted: "http://example.com/feed",
 			wantHost:     "example.com",
 			wantCreds:    true,
-			wantUser:     "token",
+		},
+		{
+			name:         "preserves non default port 443 on http",
+			raw:          "http://example.com:443/feed",
+			wantRaw:      "http://example.com:443/feed",
+			wantRedacted: "http://example.com:443/feed",
+			wantHost:     "example.com",
 		},
 		{
 			name:         "preserves www and apex distinction and trailing slash",
@@ -150,23 +171,6 @@ func TestURLParseNormalized(t *testing.T) {
 				t.Fatalf("hasCreds = %v, want %v", got.HasCredentials(), tc.wantCreds)
 			}
 
-			username, password, ok := got.BasicAuth()
-			if ok != tc.wantCreds {
-				t.Fatalf("BasicAuth ok = %v, want %v", ok, tc.wantCreds)
-			}
-
-			if username != tc.wantUser {
-				t.Fatalf("username = %q, want %q", username, tc.wantUser)
-			}
-
-			if password != tc.wantPass {
-				t.Fatalf("password = %q, want %q", password, tc.wantPass)
-			}
-
-			if got.hasPass != tc.wantHasPass {
-				t.Fatalf("hasPass = %v, want %v", got.hasPass, tc.wantHasPass)
-			}
-
 			parsed, err := got.Parsed()
 			if err != nil {
 				t.Fatalf("parsed raw error: %v", err)
@@ -190,6 +194,12 @@ func TestURLParseNormalizedInvalid(t *testing.T) {
 		"//example.com/feed",
 		"/relative/path",
 		"not a url at all",
+		"https://example.com:65536/feed",
+		"http://example.com:0/feed",
+		"https://example.com:00/feed",
+		"http://example.com:99999/feed",
+		"http://example.com:abc/feed",
+		"https://example.com:99999999999999999999/feed",
 	}
 
 	for _, raw := range cases {
@@ -205,58 +215,47 @@ func TestURLParseNormalizedInvalid(t *testing.T) {
 	requireDomainError(t, err, ErrInvalidPageUrl)
 }
 
-func TestURLFromStored(t *testing.T) {
+func TestOriginFromURL(t *testing.T) {
 	t.Parallel()
 
-	stored := NormalizedURLFromStored("https://user:secret@example.com/feed#frag")
-	if stored.Raw() != "https://user:secret@example.com/feed" {
-		t.Fatalf("raw = %q", stored.Raw())
-	}
-
-	if stored.RedactedString() != "https://example.com/feed" {
-		t.Fatalf("redacted = %q", stored.RedactedString())
-	}
-
-	if !stored.HasCredentials() {
-		t.Fatalf("expected credentials")
-	}
-
-	parsedStored, err := ParseStoredNormalizedURL("https://user:secret@example.com/feed")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if parsedStored.RedactedString() != "https://example.com/feed" {
-		t.Fatalf("parsed redacted = %q", parsedStored.RedactedString())
-	}
-
-	broken := NormalizedURLFromStored("not a url at all")
-	if broken.Raw() != "" || broken.RedactedString() != "" {
-		t.Fatalf("broken raw = %q redacted = %q", broken.Raw(), broken.RedactedString())
-	}
-
-	if !broken.HasCredentials() {
-		t.Fatalf("broken url should be marked unusable for external fetchers")
-	}
-
-	if _, err := ParseStoredNormalizedURL("not a url at all"); err == nil {
-		t.Fatalf("expected malformed stored url to fail")
-	} else {
-		requireDomainError(t, err, ErrFeedUrlInvalid)
-	}
-
-	for _, input := range []string{
-		"http://user:pass@example.com:badport/feed",
-		"http://user name:secret marker@example.com/feed",
-	} {
-		malformed := NormalizedURLFromStored(input)
-		if malformed.RedactedString() != "" {
-			t.Fatalf("redacted should be empty for invalid stored url %q: %q", input, malformed.RedactedString())
+	parse := func(raw string) Origin {
+		t.Helper()
+		parsed, err := ParseNormalizedURL(raw, ErrFeedUrlInvalid)
+		if err != nil {
+			t.Fatalf("parse %q: %v", raw, err)
 		}
 
-		if !malformed.HasCredentials() {
-			t.Fatalf("expected invalid stored url %q to flag credentials", input)
+		u, err := parsed.Parsed()
+		if err != nil {
+			t.Fatalf("parsed %q: %v", raw, err)
 		}
+
+		origin, ok := OriginFromURL(u)
+		if !ok {
+			t.Fatalf("OriginFromURL(%q) = false", raw)
+		}
+
+		return origin
+	}
+
+	if parse("HTTPS://Example.COM:443/a") != parse("https://example.com/b") {
+		t.Fatal("expected normalized default HTTPS port and lowercase host/scheme to match")
+	}
+
+	if parse("http://example.com:80/a") != parse("http://example.com/b") {
+		t.Fatal("expected normalized default HTTP port to match")
+	}
+
+	if parse("https://example.com:8443/a") == parse("https://example.com/a") {
+		t.Fatal("expected different port to differ")
+	}
+
+	if parse("https://example.com/a") == parse("http://example.com/a") {
+		t.Fatal("expected different scheme to differ")
+	}
+
+	if _, ok := OriginFromURL(nil); ok {
+		t.Fatal("expected nil URL to return ok=false")
 	}
 }
 
@@ -266,6 +265,8 @@ func TestURLParseNormalizedErrorRedactsCredentials(t *testing.T) {
 	for _, input := range []string{
 		"http://secretuser:secretpass@example.com:badport/feed",
 		"http://secretuser:secret pass@example.com/feed",
+		"http://secretuser:secretpass@example.com:65536/feed",
+		"https://secretuser:secretpass@example.com:0/feed",
 	} {
 		_, err := ParseNormalizedURL(input, ErrFeedUrlInvalid)
 		if err == nil {
@@ -298,7 +299,29 @@ func TestURLSanitizeErrorText(t *testing.T) {
 		{name: "uppercase scheme", in: "HTTPS://user:secret@Example.com/feed", want: "HTTPS://Example.com/feed"},
 		{name: "multiple urls", in: "https://a:b@one.com/x and http://c@two.com/y", want: "https://one.com/x and http://two.com/y"},
 		{name: "path with at sign", in: "https://example.com/user@example.com", want: "https://example.com/user@example.com"},
+		{name: "apostrophe in password prose", in: "see http://u:p'w@host/x", want: "see http://host/x"},
+		{name: "closing paren in password prose", in: "see https://user:pa)ss@example.com/feed failed", want: "see https://example.com/feed failed"},
+		{name: "parenthesized url with closing paren in password", in: "feed (https://user:pa)ss@example.com/feed) failed", want: "feed (https://example.com/feed) failed"},
+		{name: "multiple closing parens in password without path", in: "see (https://user:pa))ss@example.com) failed", want: "see (https://example.com) failed"},
+		{name: "special chars in password prose", in: "see https://user:p!$&'()*+,;=%40ss@example.com/feed failed", want: "see https://example.com/feed failed"},
+		{name: "single quoted url with apostrophe in password", in: "failed 'http://u:p'w@host/x'", want: "failed 'http://host/x'"},
+		{name: "double quoted url with apostrophe in password", in: `failed "https://u:p'w@host/x"`, want: `failed "https://host/x"`},
+		{name: "trailing punctuation", in: "check (https://u:p'w@host/x), then http://a:b'c@other.example.", want: "check (https://host/x), then http://other.example."},
+		{name: "websocket credentials", in: "dial ws://tok:p'w@browser.internal:9222/dev failed", want: "dial ws://browser.internal:9222/dev failed"},
 		{name: "non http scheme untouched", in: "smtp://user:secret@example.com:465", want: "smtp://user:secret@example.com:465"},
+		{name: "multiple at signs in password", in: "see http://user:p@ss@host/x", want: "see http://host/x"},
+		{name: "multiple at signs and apostrophe in password", in: "see https://u:p'w@s@s@host/x", want: "see https://host/x"},
+		{name: "quoted and bracketed urls with multi-at password", in: `check [https://u:p@ss@host], <http://a:b@c@other>, {wss://x:y@z@third}, ` + "`ws://k:v@w@fourth`", want: `check [https://host], <http://other>, {wss://third}, ` + "`ws://fourth`"},
+		{name: "single quoted url with multi-at password", in: "'http://user:p@ss@host/x'", want: "'http://host/x'"},
+		{name: "double quoted url with multi-at password", in: `"https://user:p@ss@host/x"`, want: `"https://host/x"`},
+		{name: "whole url label", in: "https://user:secret@example.com/feed", want: "https://example.com/feed"},
+		{name: "whole url label with closing paren in password", in: "HTTPS://user:p)w@Example.com/feed", want: "HTTPS://Example.com/feed"},
+		{name: "url without userinfo unchanged", in: "https://example.com/feed?email=a@b.com#c@d", want: "https://example.com/feed?email=a@b.com#c@d"},
+		{name: "bracketed url without userinfo followed by email", in: "(https://example.com) contact user@example.com", want: "(https://example.com) contact user@example.com"},
+		{name: "parenthesized plain url", in: "see (https://example.com/feed) for details", want: "see (https://example.com/feed) for details"},
+		{name: "parenthesized plain url followed by path at sign", in: "(https://example.com)/user@example.com", want: "(https://example.com)/user@example.com"},
+		{name: "email addresses in prose unchanged", in: "contact alice@example.com or bob@host.local", want: "contact alice@example.com or bob@host.local"},
+		{name: "non-matching scheme prefix untouched", in: "myhttp://user:secret@example.com/x and news://user:secret@example.com/y", want: "myhttp://user:secret@example.com/x and news://user:secret@example.com/y"},
 	}
 
 	for _, tc := range cases {

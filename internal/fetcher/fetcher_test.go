@@ -7,382 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"net/url"
+	"reader/internal/domain"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
-
-	"reader/internal/domain"
 )
-
-type stubSettings struct {
-	settings domain.Settings
-	err      error
-}
-
-func (s stubSettings) Get(ctx context.Context) (domain.Settings, error) {
-	return s.settings, s.err
-}
-
-func (s stubSettings) UpdateRetention(ctx context.Context, retention int) error {
-	return nil
-}
-
-func (s stubSettings) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
-	return nil
-}
-
-func (s stubSettings) UpdateJinaKey(ctx context.Context, key string) error {
-	return nil
-}
-
-func (s stubSettings) DeleteJinaKey(ctx context.Context) error {
-	return nil
-}
-
-func (s stubSettings) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
-	return nil
-}
-
-func (s stubSettings) DeleteBrowserEndpoint(ctx context.Context) error {
-	return nil
-}
-
-func (s stubSettings) UpdateSMTP(ctx context.Context, smtp domain.SMTPSettings) error {
-	return nil
-}
-
-func (s stubSettings) DeleteSMTPPassword(ctx context.Context) error {
-	return nil
-}
-
-func (s stubSettings) DeleteSMTP(ctx context.Context) error {
-	return nil
-}
-
-func (s stubSettings) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
-	return nil
-}
-
-func (s stubSettings) AdvanceNextSendAt(ctx context.Context, nextSendAt time.Time) error {
-	return nil
-}
-
-func ptr(value string) *string {
-	return &value
-}
-
-func mustNormalizedURL(t *testing.T, raw string) domain.NormalizedURL {
-	t.Helper()
-
-	parsed, err := domain.ParseNormalizedURL(raw, domain.ErrFeedUrlInvalid)
-	if err != nil {
-		t.Fatalf("parse %q: %v", raw, err)
-	}
-
-	return parsed
-}
-
-func requireDomainCode(t *testing.T, err error, code domain.ErrorCode) *domain.DomainError {
-	t.Helper()
-
-	if err == nil {
-		t.Fatalf("expected %s error, got nil", code)
-	}
-
-	var domainErr *domain.DomainError
-	if !errors.As(err, &domainErr) {
-		t.Fatalf("expected domain error %s, got %T: %v", code, err, err)
-	}
-
-	if domainErr.Code != code {
-		t.Fatalf("expected code %s, got %s: %v", code, domainErr.Code, err)
-	}
-
-	return domainErr
-}
-
-func TestIsBlockedIP(t *testing.T) {
-	blocked := []string{
-		"127.0.0.1",
-		"10.0.0.1",
-		"172.16.0.1",
-		"192.168.1.1",
-		"169.254.169.254",
-		"100.64.0.1",
-		"0.0.0.0",
-		"224.0.0.1",
-		"198.18.0.1",
-		"255.255.255.255",
-		"::1",
-		"fe80::1",
-		"fc00::1",
-		"ff02::1",
-		"::ffff:127.0.0.1",
-		"::ffff:10.0.0.1",
-	}
-
-	for _, raw := range blocked {
-		t.Run(raw, func(t *testing.T) {
-			addr, err := netip.ParseAddr(raw)
-			if err != nil {
-				t.Fatalf("parse %q: %v", raw, err)
-			}
-
-			if !IsBlockedIP(addr) {
-				t.Fatalf("expected %s to be blocked", raw)
-			}
-		})
-	}
-
-	allowed := []string{
-		"93.184.216.34",
-		"2606:2800:220:1:248:1893:25c8:1946",
-		"8.8.8.8",
-		"1.1.1.1",
-	}
-
-	for _, raw := range allowed {
-		t.Run(raw, func(t *testing.T) {
-			addr, err := netip.ParseAddr(raw)
-			if err != nil {
-				t.Fatalf("parse %q: %v", raw, err)
-			}
-
-			if IsBlockedIP(addr) {
-				t.Fatalf("expected %s to be allowed", raw)
-			}
-		})
-	}
-
-	if !IsBlockedIP(netip.Addr{}) {
-		t.Fatal("expected invalid address to be blocked")
-	}
-}
-
-func TestCheckDialAddress(t *testing.T) {
-	if err := checkDialAddress("127.0.0.1:80"); !errors.Is(err, errBlockedAddress) {
-		t.Fatalf("expected loopback dial to be blocked, got %v", err)
-	}
-
-	if err := checkDialAddress("[fe80::1]:443"); !errors.Is(err, errBlockedAddress) {
-		t.Fatalf("expected link-local dial to be blocked, got %v", err)
-	}
-
-	if err := checkDialAddress("169.254.169.254:80"); !errors.Is(err, errBlockedAddress) {
-		t.Fatalf("expected metadata address dial to be blocked, got %v", err)
-	}
-
-	if err := checkDialAddress("93.184.216.34:443"); err != nil {
-		t.Fatalf("expected public dial to be allowed, got %v", err)
-	}
-
-	if err := checkDialAddress("93.184.216.34"); !errors.Is(err, errInvalidDialAddr) {
-		t.Fatalf("expected portless address to be rejected, got %v", err)
-	}
-}
-
-func TestRedirectPolicy(t *testing.T) {
-	newRequest := func(t *testing.T, raw string) *http.Request {
-		t.Helper()
-
-		req, err := http.NewRequest(http.MethodGet, raw, nil)
-		if err != nil {
-			t.Fatalf("new request %q: %v", raw, err)
-		}
-
-		return req
-	}
-
-	t.Run("too many redirects", func(t *testing.T) {
-		via := make([]*http.Request, maxRedirects)
-		for i := range via {
-			via[i] = newRequest(t, "https://example.com/step")
-		}
-
-		if err := redirectPolicy(newRequest(t, "https://example.com/next"), via); !errors.Is(err, errTooManyRedirects) {
-			t.Fatalf("expected redirect limit error, got %v", err)
-		}
-	})
-
-	t.Run("rejects non http scheme", func(t *testing.T) {
-		via := []*http.Request{newRequest(t, "https://example.com/step")}
-
-		if err := redirectPolicy(newRequest(t, "file:///etc/passwd"), via); !errors.Is(err, errBadRedirectURL) {
-			t.Fatalf("expected scheme rejection, got %v", err)
-		}
-	})
-
-	t.Run("rejects empty host", func(t *testing.T) {
-		via := []*http.Request{newRequest(t, "https://example.com/step")}
-		req := &http.Request{URL: &url.URL{Scheme: "http"}}
-
-		if err := redirectPolicy(req, via); !errors.Is(err, errBadRedirectURL) {
-			t.Fatalf("expected host rejection, got %v", err)
-		}
-	})
-
-	t.Run("strips authorization across hosts and keeps it stripped on subsequent hops", func(t *testing.T) {
-		initial := newRequest(t, "https://a.example/step")
-		initial.Header.Set("Authorization", "Bearer secret")
-		hop1 := newRequest(t, "https://b.example/hop1")
-		hop1.Header.Set("Authorization", "Bearer secret")
-
-		if err := redirectPolicy(hop1, []*http.Request{initial}); err != nil {
-			t.Fatalf("unexpected error on hop 1: %v", err)
-		}
-
-		if hop1.Header.Get("Authorization") != "" {
-			t.Fatal("expected authorization header to be stripped on hop 1")
-		}
-
-		hop2 := newRequest(t, "https://b.example/hop2")
-		hop2.Header.Set("Authorization", "Bearer secret")
-
-		if err := redirectPolicy(hop2, []*http.Request{initial, hop1}); err != nil {
-			t.Fatalf("unexpected error on hop 2: %v", err)
-		}
-
-		if hop2.Header.Get("Authorization") != "" {
-			t.Fatal("expected authorization header to stay stripped on hop 2")
-		}
-	})
-
-	t.Run("keeps authorization on same host", func(t *testing.T) {
-		via := []*http.Request{newRequest(t, "https://a.example/step")}
-		req := newRequest(t, "https://a.example/next")
-		req.Header.Set("Authorization", "Bearer secret")
-
-		if err := redirectPolicy(req, via); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if req.Header.Get("Authorization") != "Bearer secret" {
-			t.Fatal("expected authorization header to be kept")
-		}
-	})
-
-	t.Run("strips authorization on https to http downgrade", func(t *testing.T) {
-		via := []*http.Request{newRequest(t, "https://example.com/a")}
-		req := newRequest(t, "http://example.com/b")
-		req.Header.Set("Authorization", "Bearer secret")
-
-		if err := redirectPolicy(req, via); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if req.Header.Get("Authorization") != "" {
-			t.Fatal("expected authorization header to be stripped")
-		}
-	})
-
-	t.Run("strips authorization on port change", func(t *testing.T) {
-		via := []*http.Request{newRequest(t, "https://example.com:8443/a")}
-		req := newRequest(t, "https://example.com/b")
-		req.Header.Set("Authorization", "Bearer secret")
-
-		if err := redirectPolicy(req, via); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if req.Header.Get("Authorization") != "" {
-			t.Fatal("expected authorization header to be stripped")
-		}
-	})
-
-	t.Run("keeps authorization on same scheme and port", func(t *testing.T) {
-		via := []*http.Request{newRequest(t, "https://example.com/a")}
-		req := newRequest(t, "https://example.com/b")
-		req.Header.Set("Authorization", "Bearer secret")
-
-		if err := redirectPolicy(req, via); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if req.Header.Get("Authorization") != "Bearer secret" {
-			t.Fatal("expected authorization header to be kept")
-		}
-	})
-
-	t.Run("keeps authorization across default port", func(t *testing.T) {
-		via := []*http.Request{newRequest(t, "https://example.com/a")}
-		req := newRequest(t, "https://example.com:443/b")
-		req.Header.Set("Authorization", "Bearer secret")
-
-		if err := redirectPolicy(req, via); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if req.Header.Get("Authorization") != "Bearer secret" {
-			t.Fatal("expected authorization header to be kept")
-		}
-	})
-}
-
-func TestPrivateNetworkBlocked(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<html><body>should not be reached</body></html>"))
-	}))
-	defer server.Close()
-
-	client := New(Config{})
-	ctx := context.Background()
-
-	_, _, err := client.FetchFeed(ctx, mustNormalizedURL(t, server.URL+"/feed.xml"))
-	requireDomainCode(t, err, domain.ErrFetchFeedError)
-
-	_, _, err = client.FetchWebpage(ctx, mustNormalizedURL(t, server.URL+"/page"))
-	requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-
-	_, _, _, err = client.FetchImage(ctx, server.URL+"/image.png")
-	if err == nil {
-		t.Fatal("expected image fetch against loopback to fail")
-	}
-
-	if !strings.Contains(err.Error(), "blocked non-public address") {
-		t.Fatalf("expected blocked address error, got %v", err)
-	}
-}
-
-func TestRedirectToBlockedAddress(t *testing.T) {
-	var blockedHits atomic.Int32
-
-	blockedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		blockedHits.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer blockedServer.Close()
-
-	allowedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, blockedServer.URL+"/secret", http.StatusFound)
-	}))
-	defer allowedServer.Close()
-
-	allowedAddress := allowedServer.Listener.Addr().String()
-
-	client := New(Config{})
-	client.httpClient = newHTTPClientWithDialCheck(func(address string) error {
-		if address == allowedAddress {
-			return nil
-		}
-
-		return checkDialAddress(address)
-	})
-
-	_, _, err := client.FetchFeed(context.Background(), mustNormalizedURL(t, allowedServer.URL+"/feed.xml"))
-	requireDomainCode(t, err, domain.ErrFetchFeedError)
-
-	if blockedHits.Load() != 0 {
-		t.Fatal("expected redirect target to be blocked before connecting")
-	}
-
-	if !strings.Contains(err.Error(), "blocked non-public address") {
-		t.Fatalf("expected blocked address error, got %v", err)
-	}
-}
 
 func TestFetchFeedSuccess(t *testing.T) {
 	var gotUserAgent string
@@ -517,6 +147,16 @@ func TestFetchFeedErrors(t *testing.T) {
 		requireDomainCode(t, err, domain.ErrFetchFeedError)
 	})
 
+	t.Run("non 2xx skips body buffering", func(t *testing.T) {
+		client := New(Config{AllowPrivateNetwork: true, MaxBodyBytes: 1})
+		_, _, err := client.FetchFeed(context.Background(), mustNormalizedURL(t, server.URL+"/missing.xml"))
+		requireDomainCode(t, err, domain.ErrFetchFeedError)
+
+		if !strings.Contains(err.Error(), "unexpected status code 500") {
+			t.Fatalf("expected status code error before body read, got %v", err)
+		}
+	})
+
 	t.Run("body too large", func(t *testing.T) {
 		client := New(Config{AllowPrivateNetwork: true, MaxBodyBytes: 8})
 		_, _, err := client.FetchFeed(context.Background(), mustNormalizedURL(t, server.URL+"/large.xml"))
@@ -531,12 +171,10 @@ func TestFetchFeedErrors(t *testing.T) {
 		client := New(Config{AllowPrivateNetwork: true, FeedTimeout: 20 * time.Millisecond})
 		_, _, err := client.FetchFeed(context.Background(), mustNormalizedURL(t, server.URL+"/slow.xml"))
 		requireDomainCode(t, err, domain.ErrFetchFeedError)
-	})
 
-	t.Run("empty url", func(t *testing.T) {
-		client := New(Config{AllowPrivateNetwork: true})
-		_, _, err := client.FetchFeed(context.Background(), domain.NormalizedURL{})
-		requireDomainCode(t, err, domain.ErrFetchFeedError)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected deadline exceeded, got %v", err)
+		}
 	})
 
 	t.Run("credentialed failure redacts credentials", func(t *testing.T) {
@@ -601,303 +239,25 @@ func TestFetchWebpageDirect(t *testing.T) {
 }
 
 func TestFetchWebpageSettingsError(t *testing.T) {
-	client := New(Config{AllowPrivateNetwork: true, Settings: stubSettings{err: errors.New("settings unavailable")}})
+	client := New(Config{AllowPrivateNetwork: true, Settings: stubSettings(ExtractorSettings{}, errors.New("settings unavailable"))})
 	_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
 	requireDomainCode(t, err, domain.ErrWebpageFetcherError)
 }
 
-func TestFetchWebpageJina(t *testing.T) {
-	var requests atomic.Int32
-	var gotAuthorization string
-	var gotRespondWith string
-	var gotAccept string
-	var gotPath string
-
+func TestFetchStatusCheckedBeforeBufferingBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		gotAuthorization = r.Header.Get("Authorization")
-		gotRespondWith = r.Header.Get("X-Respond-With")
-		gotAccept = r.Header.Get("Accept")
-		gotPath = r.URL.Path
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<html><body><p>jina</p></body></html>"))
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(strings.Repeat("x", 128)))
 	}))
 	defer server.Close()
 
-	key := "  jina-secret-key  "
-	client := New(Config{
-		AllowPrivateNetwork: true,
-		Settings: stubSettings{
-			settings: domain.Settings{Provider: domain.ProviderJina, JinaKey: &key},
-		},
-		JinaBaseURL: server.URL,
-	})
-
-	body, finalURL, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/article"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(body, "<p>jina</p>") {
-		t.Fatalf("unexpected body %q", body)
-	}
-
-	if finalURL != "http://example.com/article" {
-		t.Fatalf("unexpected final url %q", finalURL)
-	}
-
-	if gotPath != "/http://example.com/article" {
-		t.Fatalf("unexpected jina path %q", gotPath)
-	}
-
-	if gotRespondWith != "html" {
-		t.Fatalf("unexpected X-Respond-With %q", gotRespondWith)
-	}
-
-	if gotAccept != jinaAccept {
-		t.Fatalf("unexpected accept header %q", gotAccept)
-	}
-
-	if gotAuthorization != "Bearer jina-secret-key" {
-		t.Fatalf("unexpected authorization header %q", gotAuthorization)
-	}
-
-	if requests.Load() != 1 {
-		t.Fatalf("expected 1 jina request, got %d", requests.Load())
-	}
-}
-
-func TestFetchWebpageJinaWithoutKey(t *testing.T) {
-	var gotAuthorization atomic.Value
-	gotAuthorization.Store("unset")
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if values, ok := r.Header["Authorization"]; ok {
-			gotAuthorization.Store(strings.Join(values, ","))
-		} else {
-			gotAuthorization.Store("")
-		}
-
-		w.Write([]byte("<html><body>jina</body></html>"))
-	}))
-	defer server.Close()
-
-	client := New(Config{
-		AllowPrivateNetwork: true,
-		Settings:            stubSettings{settings: domain.Settings{Provider: domain.ProviderJina}},
-		JinaBaseURL:         server.URL + "/",
-	})
-
-	if _, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "https://example.com/article")); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if gotAuthorization.Load() != "" {
-		t.Fatalf("expected no authorization header, got %v", gotAuthorization.Load())
-	}
-}
-
-func TestFetchWebpageJinaRefusesCredentials(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		w.Write([]byte("<html><body>jina</body></html>"))
-	}))
-	defer server.Close()
-
-	client := New(Config{
-		AllowPrivateNetwork: true,
-		Settings:            stubSettings{settings: domain.Settings{Provider: domain.ProviderJina}},
-		JinaBaseURL:         server.URL,
-	})
-
-	_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://user:secret@example.com/article"))
+	client := New(Config{AllowPrivateNetwork: true, MaxBodyBytes: 8})
+	_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, server.URL+"/err"))
 	requireDomainCode(t, err, domain.ErrWebpageFetcherError)
 
-	if requests.Load() != 0 {
-		t.Fatalf("expected no outbound requests, got %d", requests.Load())
+	if !strings.Contains(err.Error(), "unexpected status code 500") {
+		t.Fatalf("expected status error before reading oversize body, got: %v", err)
 	}
-}
-
-func TestFetchWebpageBrowser(t *testing.T) {
-	var gotEndpoint string
-	var gotTarget string
-	var gotTimeout time.Duration
-	called := false
-
-	client := New(Config{
-		AllowPrivateNetwork: true,
-		Settings: stubSettings{
-			settings: domain.Settings{
-				Provider:        domain.ProviderBrowser,
-				BrowserEndpoint: ptr("ws://browser.internal:9222"),
-			},
-		},
-		BrowserFetch: func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (string, string, error) {
-			called = true
-			gotEndpoint = endpoint
-			gotTarget = targetURL
-			gotTimeout = timeout
-
-			return "<html><body><p>browser</p></body></html>", targetURL, nil
-		},
-	})
-
-	body, finalURL, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !called {
-		t.Fatal("expected browser fetch to be called")
-	}
-
-	if gotEndpoint != "ws://browser.internal:9222" {
-		t.Fatalf("unexpected endpoint %q", gotEndpoint)
-	}
-
-	if gotTarget != "http://example.com/page" {
-		t.Fatalf("unexpected target %q", gotTarget)
-	}
-
-	if gotTimeout != defaultWebpageTimeout {
-		t.Fatalf("unexpected timeout %s", gotTimeout)
-	}
-
-	if !strings.Contains(body, "<p>browser</p>") {
-		t.Fatalf("unexpected body %q", body)
-	}
-
-	if finalURL != "http://example.com/page" {
-		t.Fatalf("unexpected final url %q", finalURL)
-	}
-}
-
-func TestFetchWebpageBrowserRefusesCredentials(t *testing.T) {
-	called := false
-	client := New(Config{
-		AllowPrivateNetwork: true,
-		Settings: stubSettings{
-			settings: domain.Settings{
-				Provider:        domain.ProviderBrowser,
-				BrowserEndpoint: ptr("ws://browser.internal:9222"),
-			},
-		},
-		BrowserFetch: func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (string, string, error) {
-			called = true
-
-			return "<html/>", targetURL, nil
-		},
-	})
-
-	_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://user:secret@example.com/page"))
-	requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-
-	if called {
-		t.Fatal("expected browser fetch to be skipped")
-	}
-}
-
-func TestFetchWebpageBrowserErrors(t *testing.T) {
-	t.Run("missing endpoint", func(t *testing.T) {
-		client := New(Config{
-			AllowPrivateNetwork: true,
-			Settings:            stubSettings{settings: domain.Settings{Provider: domain.ProviderBrowser}},
-		})
-
-		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-		requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-
-		if !strings.Contains(err.Error(), "browser endpoint is not configured") {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("invalid endpoint", func(t *testing.T) {
-		client := New(Config{
-			AllowPrivateNetwork: true,
-			Settings: stubSettings{
-				settings: domain.Settings{
-					Provider:        domain.ProviderBrowser,
-					BrowserEndpoint: ptr("ftp://browser.internal:21"),
-				},
-			},
-		})
-
-		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-		requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-	})
-
-	t.Run("sanitizes endpoint from failure", func(t *testing.T) {
-		endpoint := "ws://token:browser-secret@browser.internal:9222/devtools/browser/abc"
-		client := New(Config{
-			AllowPrivateNetwork: true,
-			Settings: stubSettings{
-				settings: domain.Settings{
-					Provider:        domain.ProviderBrowser,
-					BrowserEndpoint: ptr(endpoint),
-				},
-			},
-			BrowserFetch: func(ctx context.Context, gotEndpoint string, targetURL string, timeout time.Duration) (string, string, error) {
-				return "", "", fmt.Errorf("could not dial %q: connection refused", endpoint)
-			},
-		})
-
-		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-		requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-
-		if strings.Contains(err.Error(), endpoint) || strings.Contains(err.Error(), "browser-secret") {
-			t.Fatalf("error leaks browser endpoint: %v", err)
-		}
-	})
-
-	t.Run("redacts credentialed endpoint secrets", func(t *testing.T) {
-		endpoint := "http://admin:secret@10.0.0.5:9222/devtools/browser/secret-path-token?api_key=secret-query-token"
-		client := New(Config{
-			AllowPrivateNetwork: true,
-			Settings: stubSettings{
-				settings: domain.Settings{
-					Provider:        domain.ProviderBrowser,
-					BrowserEndpoint: ptr(endpoint),
-				},
-			},
-			BrowserFetch: func(ctx context.Context, gotEndpoint string, targetURL string, timeout time.Duration) (string, string, error) {
-				return "", "", fmt.Errorf("could not connect to %s: dial tcp: connection refused", gotEndpoint)
-			},
-		})
-
-		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-		requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-
-		for _, secret := range []string{"admin", "secret", "10.0.0.5", "9222", "secret-path-token", "secret-query-token", "api_key"} {
-			if strings.Contains(err.Error(), secret) {
-				t.Fatalf("error leaks %q: %v", secret, err)
-			}
-		}
-	})
-
-	t.Run("body too large", func(t *testing.T) {
-		client := New(Config{
-			AllowPrivateNetwork: true,
-			MaxBodyBytes:        8,
-			Settings: stubSettings{
-				settings: domain.Settings{
-					Provider:        domain.ProviderBrowser,
-					BrowserEndpoint: ptr("ws://browser.internal:9222"),
-				},
-			},
-			BrowserFetch: func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (string, string, error) {
-				return strings.Repeat("x", 64), targetURL, nil
-			},
-		})
-
-		_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-		requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-
-		if !strings.Contains(err.Error(), "response body too large") {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
 }
 
 func TestFetchImageFormats(t *testing.T) {
@@ -909,7 +269,8 @@ func TestFetchImageFormats(t *testing.T) {
 	}{
 		{"png", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"), "image/png", ".png"},
 		{"jpeg", []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01"), "image/jpeg", ".jpg"},
-		{"gif", []byte("GIF89a\x01\x00\x01\x00\x00\x00\x00;"), "image/gif", ".gif"},
+		{"gif89a", []byte("GIF89a\x01\x00\x01\x00\x00\x00\x00;"), "image/gif", ".gif"},
+		{"gif87a", []byte("GIF87a\x01\x00\x01\x00\x00\x00\x00;"), "image/gif", ".gif"},
 	}
 
 	for _, tc := range cases {
@@ -992,8 +353,8 @@ func TestFetchImageErrors(t *testing.T) {
 	t.Run("non 2xx", func(t *testing.T) {
 		client := New(Config{AllowPrivateNetwork: true})
 		_, _, _, err := client.FetchImage(context.Background(), server.URL+"/missing")
-		if err == nil {
-			t.Fatal("expected non 2xx image fetch to fail")
+		if err == nil || !strings.Contains(err.Error(), "unexpected status code 404") {
+			t.Fatalf("expected status 404 error, got %v", err)
 		}
 	})
 
@@ -1053,20 +414,63 @@ func TestFetchImageBasicAuth(t *testing.T) {
 	}
 }
 
-func TestDetectImageType(t *testing.T) {
-	if _, _, ok := detectImageType([]byte("\x89PNG\r\n\x1a\n")); !ok {
-		t.Fatal("expected png signature to be recognised")
-	}
+func TestFetchBoundaries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/redirect":
+			http.Redirect(w, r, "/redirect", http.StatusFound)
+		case "/slow":
+			<-r.Context().Done()
+		case "/large":
+			_, _ = w.Write([]byte("oversized body"))
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+		}
+	}))
+	defer server.Close()
 
-	if mediaType, ext, ok := detectImageType([]byte("\xff\xd8\xff\xe0")); !ok || mediaType != "image/jpeg" || ext != ".jpg" {
-		t.Fatalf("unexpected jpeg detection: %q %q %v", mediaType, ext, ok)
-	}
+	for _, kind := range []string{"feed", "webpage", "image"} {
+		for _, scenario := range []string{"redirect", "slow", "large", "status"} {
+			t.Run(kind+"/"+scenario, func(t *testing.T) {
+				client := New(Config{AllowPrivateNetwork: true, MaxBodyBytes: 4, FeedTimeout: 30 * time.Millisecond, WebpageTimeout: 30 * time.Millisecond, ImageTimeout: 30 * time.Millisecond})
+				target := strings.Replace(server.URL, "http://", "http://user:secret@", 1) + "/" + scenario
+				var err error
+				switch kind {
+				case "feed":
+					_, _, err = client.FetchFeed(context.Background(), mustNormalizedURL(t, target))
+				case "webpage":
+					_, _, err = client.FetchWebpage(context.Background(), mustNormalizedURL(t, target))
+				case "image":
+					_, _, _, err = client.FetchImage(context.Background(), target)
+				}
 
-	if _, _, ok := detectImageType([]byte("GIF87a")); !ok {
-		t.Fatal("expected gif signature to be recognised")
-	}
+				if err == nil {
+					t.Fatal("expected fetch failure")
+				}
 
-	if _, _, ok := detectImageType([]byte("<html>")); ok {
-		t.Fatal("expected html to be rejected")
+				if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "user:") {
+					t.Fatalf("error leaks credentials: %v", err)
+				}
+
+				switch scenario {
+				case "redirect":
+					if !errors.Is(err, errTooManyRedirects) {
+						t.Fatalf("expected redirect limit: %v", err)
+					}
+				case "slow":
+					if !errors.Is(err, context.DeadlineExceeded) {
+						t.Fatalf("expected timeout: %v", err)
+					}
+				case "large":
+					if !errors.Is(err, errResponseTooLarge) {
+						t.Fatalf("expected size limit: %v", err)
+					}
+				case "status":
+					if !strings.Contains(err.Error(), "unexpected status code 502") {
+						t.Fatalf("expected status error: %v", err)
+					}
+				}
+			})
+		}
 	}
 }

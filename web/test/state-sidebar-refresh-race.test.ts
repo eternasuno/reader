@@ -1,153 +1,267 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Feed, FeedUnreadCount, Folder } from '../src/api';
+import {
+  createStateTestContext,
+  makeFeed,
+  makeFolder,
+} from './support/state-fixture';
 
-type StateModule = typeof import('../src/state');
-
-let state: StateModule;
-let solid: typeof import('solid-js');
-let fetchMock: ReturnType<typeof vi.fn>;
-
-const fresh = async (): Promise<void> => {
-  vi.resetModules();
-  solid = await import('solid-js');
-  state = await import('../src/state');
-};
-
-beforeEach(async () => {
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
-  localStorage.clear();
-  await fresh();
-});
-
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-const makeFeed = (overrides: Partial<Feed> & { id: string }): Feed => ({
-  url: `https://example.com/${overrides.id}/feed.xml`,
-  title: `Feed ${overrides.id}`,
-  folderId: null,
-  failureCount: 0,
-  readerMode: 'default',
-  order: 'newest',
-  ...overrides,
-});
-
-const makeFolder = (id: string, name = `Folder ${id}`): Folder => ({
-  id,
-  name,
-});
-
-interface SidebarSnapshotOptions {
-  feeds?: Array<Feed>;
-  folders?: Array<Folder>;
-  counts?: Array<FeedUnreadCount>;
-  saved?: number;
-}
-
-const queueDeferredResponse = (body: unknown): (() => void) => {
-  let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((res) => {
-    resolve = res;
-  });
-  fetchMock.mockReturnValueOnce(promise);
-
-  return () => {
-    resolve(json(body));
-  };
-};
-
-const queueDeferredSidebar = (
-  options: SidebarSnapshotOptions = {}
-): { resolve: () => void } => {
-  const resolveFeeds = queueDeferredResponse({ items: options.feeds ?? [] });
-  const resolveFolders = queueDeferredResponse({
-    items: options.folders ?? [],
-  });
-  const resolveCounts = queueDeferredResponse({ items: options.counts ?? [] });
-  const resolveSaved = queueDeferredResponse({ count: options.saved ?? 0 });
-
-  return {
-    resolve: () => {
-      resolveFeeds();
-      resolveFolders();
-      resolveCounts();
-      resolveSaved();
-    },
-  };
-};
+const ctx = createStateTestContext();
 
 const feedsListCallCount = (): number =>
-  fetchMock.mock.calls.filter(([url]) => url === '/api/feeds').length;
+  ctx.fetchMock.mock.calls.filter(([url]) => url === '/api/feeds').length;
 
-describe('sidebar refresh race on feed removal', () => {
-  it('re-fetches instead of restoring a feed removed while refresh is in flight', async () => {
-    const staleRound = queueDeferredSidebar({
+beforeEach(async () => {
+  await ctx.reset();
+});
+
+const REMOVAL_RACE_CASES = [
+  {
+    kind: 'feed',
+    stale: {
       feeds: [makeFeed({ id: 'A' }), makeFeed({ id: 'B' })],
       counts: [
         { feedId: 'A', count: 3 },
         { feedId: 'B', count: 1 },
       ],
-    });
-    const freshRound = queueDeferredSidebar({
+    },
+    fresh: {
       feeds: [makeFeed({ id: 'B' })],
       counts: [{ feedId: 'B', count: 1 }],
-    });
-
-    const pending = state.refreshSidebar();
-    state.removeFeedLocal('A');
-
-    staleRound.resolve();
-    await vi.waitFor(() => {
-      expect(feedsListCallCount()).toBe(2);
-    });
-    expect(state.feeds().some((feed) => feed.id === 'A')).toBe(false);
-    expect(state.feedUnreadCount('A')).toBe(0);
-
-    freshRound.resolve();
-    await pending;
-    solid.flush();
-
-    expect(state.feeds().map((feed) => feed.id)).toEqual(['B']);
-    expect(state.feedUnreadCount('A')).toBe(0);
-    expect(state.feedUnreadCount('B')).toBe(1);
-    expect(feedsListCallCount()).toBe(2);
-  });
-});
-
-describe('sidebar refresh race on folder removal', () => {
-  it('re-fetches instead of restoring a folder removed while refresh is in flight', async () => {
-    const staleRound = queueDeferredSidebar({
+    },
+    remove: (s: typeof ctx.state) => s.removeFeedLocal('A'),
+    assertCleared: (s: typeof ctx.state) => {
+      expect(s.feeds().some((feed) => feed.id === 'A')).toBe(false);
+      expect(s.feedUnreadCount('A')).toBe(0);
+    },
+    assertFinal: (s: typeof ctx.state) => {
+      expect(s.feeds().map((feed) => feed.id)).toEqual(['B']);
+      expect(s.feedUnreadCount('A')).toBe(0);
+      expect(s.feedUnreadCount('B')).toBe(1);
+    },
+  },
+  {
+    kind: 'folder',
+    stale: {
       feeds: [makeFeed({ id: 'A', folderId: 'F1' })],
       folders: [makeFolder('F1')],
       counts: [{ feedId: 'A', count: 3 }],
-    });
-    const freshRound = queueDeferredSidebar({
+    },
+    fresh: {
       feeds: [makeFeed({ id: 'A', folderId: null })],
       folders: [],
       counts: [{ feedId: 'A', count: 3 }],
+    },
+    remove: (s: typeof ctx.state) => s.removeFolderLocal('F1'),
+    assertCleared: (s: typeof ctx.state) => {
+      expect(s.folders()).toEqual([]);
+    },
+    assertFinal: (s: typeof ctx.state) => {
+      expect(s.folders()).toEqual([]);
+      expect(s.folderFeeds('F1')).toEqual([]);
+      expect(s.topLevelFeeds().map((feed) => feed.id)).toEqual(['A']);
+      expect(s.feedUnreadCount('A')).toBe(3);
+    },
+  },
+];
+
+describe('sidebar refresh race on removal', () => {
+  it.each(REMOVAL_RACE_CASES)(
+    're-fetches instead of restoring a $kind removed while refresh is in flight',
+    async ({ stale, fresh, remove, assertCleared, assertFinal }) => {
+      const { state, solid } = ctx;
+      const staleRound = ctx.queueDeferredSidebar(stale);
+      const freshRound = ctx.queueDeferredSidebar(fresh);
+
+      const pending = state.refreshSidebar();
+      remove(state);
+
+      staleRound.resolve();
+      await vi.waitFor(() => {
+        expect(feedsListCallCount()).toBe(2);
+      });
+      assertCleared(state);
+
+      freshRound.resolve();
+      await pending;
+      solid.flush();
+
+      assertFinal(state);
+      expect(feedsListCallCount()).toBe(2);
+    }
+  );
+});
+
+describe('sidebar refresh coalescing', () => {
+  it('coalesces concurrent refreshSidebar calls into one request round', async () => {
+    const { state, solid } = ctx;
+    const round = ctx.queueDeferredSidebar({
+      feeds: [makeFeed({ id: 'A' })],
+      counts: [{ feedId: 'A', count: 5 }],
+      saved: 2,
     });
 
-    const pending = state.refreshSidebar();
-    state.removeFolderLocal('F1');
+    const first = state.refreshSidebar();
+    const second = state.refreshSidebar();
+    expect(feedsListCallCount()).toBe(1);
+
+    round.resolve();
+    await Promise.all([first, second]);
+    solid.flush();
+
+    expect(feedsListCallCount()).toBe(1);
+    expect(state.feedUnreadCount('A')).toBe(5);
+    expect(state.savedUnreadCount()).toBe(2);
+  });
+});
+
+describe('sidebar snapshot field invalidation', () => {
+  it('skips snapshot fields invalidated by local mutations during flight while keeping others', async () => {
+    const { state, solid } = ctx;
+    ctx.queueSidebar({
+      feeds: [makeFeed({ id: 'A', readerMode: 'default' })],
+      folders: [makeFolder('F1')],
+      counts: [{ feedId: 'A', count: 3 }],
+      saved: 2,
+    });
+    await state.refreshSidebar();
+    solid.flush();
+
+    const stale = ctx.queueDeferredSidebar({
+      feeds: [makeFeed({ id: 'A', readerMode: 'default' })],
+      folders: [makeFolder('F1'), makeFolder('F2')],
+      counts: [{ feedId: 'A', count: 3 }],
+      saved: 2,
+    });
+
+    const refreshing = state.refreshSidebar();
+    state.updateFeedLocal('A', { readerMode: 'extracted' });
+    state.adjustFeedUnread('A', -1);
+    state.adjustSavedUnread(-1);
+    solid.flush();
+
+    stale.resolve();
+    await refreshing;
+    solid.flush();
+
+    expect(state.feeds()[0].readerMode).toBe('extracted');
+    expect(state.feedUnreadCount('A')).toBe(2);
+    expect(state.savedUnreadCount()).toBe(1);
+    expect(state.folders().map((folder) => folder.id)).toEqual(['F1', 'F2']);
+  });
+});
+
+describe('sidebar refresh rerun after local mutation', () => {
+  it('reruns refresh when called after a local mutation while an older refresh is in flight', async () => {
+    const { state, solid } = ctx;
+    const round1 = ctx.queueDeferredSidebar({
+      counts: [{ feedId: 'A', count: 3 }],
+      saved: 1,
+    });
+    const round2 = ctx.queueDeferredSidebar({
+      counts: [{ feedId: 'A', count: 4 }],
+      saved: 5,
+    });
+
+    const first = state.refreshSidebar();
+    state.adjustSavedUnread(1);
+    const second = state.refreshSidebar();
+
+    round1.resolve();
+    await vi.waitFor(() => {
+      expect(feedsListCallCount()).toBe(2);
+    });
+    round2.resolve();
+    await Promise.all([first, second]);
+    solid.flush();
+
+    expect(state.feedUnreadCount('A')).toBe(4);
+    expect(state.savedUnreadCount()).toBe(5);
+  });
+});
+
+describe('sidebar post-mutation invalidation', () => {
+  it('requests exactly one trailing round when invalidateSidebar runs during an in-flight read', async () => {
+    const { state, solid } = ctx;
+    const staleRound = ctx.queueDeferredSidebar({
+      feeds: [makeFeed({ id: 'A' })],
+      folders: [],
+      counts: [{ feedId: 'A', count: 1 }],
+      saved: 0,
+    });
+    const freshRound = ctx.queueDeferredSidebar({
+      feeds: [makeFeed({ id: 'A' }), makeFeed({ id: 'B', folderId: 'F1' })],
+      folders: [makeFolder('F1')],
+      counts: [
+        { feedId: 'A', count: 1 },
+        { feedId: 'B', count: 3 },
+      ],
+      saved: 0,
+    });
+
+    const readRefresh = state.refreshSidebar();
+    const firstWriteRefresh = state.invalidateSidebar();
+    const secondWriteRefresh = state.invalidateSidebar();
+    expect(feedsListCallCount()).toBe(1);
 
     staleRound.resolve();
     await vi.waitFor(() => {
       expect(feedsListCallCount()).toBe(2);
     });
-    expect(state.folders()).toEqual([]);
 
     freshRound.resolve();
-    await pending;
+    await Promise.all([readRefresh, firstWriteRefresh, secondWriteRefresh]);
     solid.flush();
 
-    expect(state.folders()).toEqual([]);
-    expect(state.folderFeeds('F1')).toEqual([]);
-    expect(state.topLevelFeeds().map((feed) => feed.id)).toEqual(['A']);
-    expect(state.feedUnreadCount('A')).toBe(3);
     expect(feedsListCallCount()).toBe(2);
+    expect(state.feeds().map((feed) => feed.id)).toEqual(['A', 'B']);
+    expect(state.folders().map((folder) => folder.id)).toEqual(['F1']);
+  });
+});
+
+describe('OPML import sidebar invalidation', () => {
+  it('refreshes imported OPML feeds when a pre-import snapshot was already in flight', async () => {
+    const { state, solid } = ctx;
+    const { useOpmlImport } = await import('../src/routes/importOpml');
+
+    const preImport = ctx.queueDeferredSidebar({
+      feeds: [makeFeed({ id: 'A' })],
+      counts: [{ feedId: 'A', count: 1 }],
+    });
+    const inFlightRead = state.refreshSidebar();
+
+    ctx.queue({ importedFeeds: 1, skippedFeeds: 0, createdFolders: 1 });
+    const postImport = ctx.queueDeferredSidebar({
+      feeds: [makeFeed({ id: 'A' }), makeFeed({ id: 'B', folderId: 'F1' })],
+      folders: [makeFolder('F1')],
+      counts: [
+        { feedId: 'A', count: 1 },
+        { feedId: 'B', count: 2 },
+      ],
+    });
+
+    const opml = useOpmlImport();
+    const file = new File(['<opml/>'], 'feeds.opml', { type: 'text/xml' });
+    const input = document.createElement('input');
+    Object.defineProperty(input, 'files', { value: [file] });
+    opml.onChange({ currentTarget: input } as unknown as Event);
+
+    await vi.waitFor(() => {
+      expect(
+        ctx.fetchMock.mock.calls.some(([url]) => url === '/api/opml')
+      ).toBe(true);
+    });
+
+    preImport.resolve();
+    await vi.waitFor(() => {
+      expect(feedsListCallCount()).toBe(2);
+    });
+
+    postImport.resolve();
+    await inFlightRead;
+    solid.flush();
+
+    expect(feedsListCallCount()).toBe(2);
+    expect(state.feeds().map((feed) => feed.id)).toEqual(['A', 'B']);
+    expect(state.folders().map((folder) => folder.id)).toEqual(['F1']);
   });
 });

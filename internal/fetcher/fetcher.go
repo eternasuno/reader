@@ -1,12 +1,15 @@
 package fetcher
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -20,12 +23,14 @@ import (
 )
 
 const (
-	defaultFeedTimeout    = 15 * time.Second
-	defaultWebpageTimeout = 20 * time.Second
-	defaultImageTimeout   = 15 * time.Second
-	defaultMaxBodyBytes   = 10 * 1024 * 1024
-	defaultJinaBaseURL    = "https://r.jina.ai/"
-	defaultUserAgent      = "LiubaiReader/1.0"
+	defaultFeedTimeout       = 15 * time.Second
+	defaultWebpageTimeout    = 20 * time.Second
+	defaultImageTimeout      = 15 * time.Second
+	defaultMaxBodyBytes      = 10 * 1024 * 1024
+	defaultJinaBaseURL       = "https://r.jina.ai/"
+	defaultUserAgent         = "LanternReader/1.0"
+	browserDiscoveryMaxBytes = 64 * 1024
+	browserDiscoveryPath     = "/json/version"
 
 	feedAccept    = "application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, */*"
 	webpageAccept = "text/html, application/xhtml+xml, application/xml;q=0.9, */*;q=0.8"
@@ -42,15 +47,11 @@ const (
 )
 
 var (
-	errEmptyURL             = errors.New("url is empty")
-	errBrowserEndpointUnset = errors.New("browser endpoint is not configured")
-	errBrowserEndpointBad   = errors.New("browser endpoint is invalid")
-	errExternalCredentials  = errors.New("refusing to forward credentialed url to external provider")
-	errEmptyResponseBody    = errors.New("empty response body")
-	errUnsupportedImage     = errors.New("unsupported image media type")
-	errBrowserFetchFailed   = errors.New("browser webpage fetch failed")
-
-	userInfoPattern = regexp.MustCompile(`(?i)((?:https?|wss?)://)[^/\s?#"']+@`)
+	errBrowserEndpointBad  = errors.New("browser endpoint is invalid")
+	errExternalCredentials = errors.New("refusing to forward credentialed url to external provider")
+	errEmptyResponseBody   = errors.New("empty response body")
+	errUnsupportedImage    = errors.New("unsupported image media type")
+	errBrowserFetchFailed  = errors.New("browser webpage fetch failed")
 )
 
 type browserSnapshot struct {
@@ -58,34 +59,49 @@ type browserSnapshot struct {
 	TooLarge bool   `json:"tooLarge"`
 }
 
+type browserVersionResponse struct {
+	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+}
+
+// ExtractorSettings carries the narrow subset of settings that webpage
+// fetching needs.
+type ExtractorSettings struct {
+	Provider        domain.ExtractorProvider
+	JinaKey         *string
+	BrowserEndpoint *string
+}
+
+// SettingsQuery reads the current webpage extractor settings dynamically on
+// each extraction.
+type SettingsQuery func(ctx context.Context) (ExtractorSettings, error)
+
 type BrowserFetchFunc func(ctx context.Context, endpoint string, targetURL string, timeout time.Duration) (htmlBody string, finalURL string, err error)
+
+type hostLookupFunc func(ctx context.Context, host string) ([]net.IPAddr, error)
 
 type Config struct {
 	AllowPrivateNetwork bool
-	Settings            domain.SettingRepository
+	Settings            SettingsQuery
 	FeedTimeout         time.Duration
 	WebpageTimeout      time.Duration
 	ImageTimeout        time.Duration
 	MaxBodyBytes        int64
 	JinaBaseURL         string
-	UserAgent           string
 	BrowserFetch        BrowserFetchFunc
 }
 
 type Client struct {
 	httpClient     *http.Client
-	settings       domain.SettingRepository
+	settings       SettingsQuery
 	feedTimeout    time.Duration
 	webpageTimeout time.Duration
 	imageTimeout   time.Duration
 	maxBodyBytes   int64
 	jinaBaseURL    string
-	userAgent      string
 	browserFetch   BrowserFetchFunc
 }
 
 type fetchResult struct {
-	status   int
 	body     []byte
 	finalURL *url.URL
 }
@@ -107,41 +123,19 @@ func New(cfg Config) *Client {
 		imageTimeout:   resolved.ImageTimeout,
 		maxBodyBytes:   resolved.MaxBodyBytes,
 		jinaBaseURL:    resolved.JinaBaseURL,
-		userAgent:      resolved.UserAgent,
 		browserFetch:   resolved.BrowserFetch,
 	}
 }
 
 func applyConfigDefaults(cfg Config) Config {
 	resolved := cfg
-	if resolved.FeedTimeout <= 0 {
-		resolved.FeedTimeout = defaultFeedTimeout
-	}
-
-	if resolved.WebpageTimeout <= 0 {
-		resolved.WebpageTimeout = defaultWebpageTimeout
-	}
-
-	if resolved.ImageTimeout <= 0 {
-		resolved.ImageTimeout = defaultImageTimeout
-	}
-
-	if resolved.MaxBodyBytes <= 0 {
-		resolved.MaxBodyBytes = defaultMaxBodyBytes
-	}
-
-	resolved.JinaBaseURL = strings.TrimSpace(resolved.JinaBaseURL)
-	if resolved.JinaBaseURL == "" {
-		resolved.JinaBaseURL = defaultJinaBaseURL
-	}
-
+	resolved.FeedTimeout = cmp.Or(resolved.FeedTimeout, defaultFeedTimeout)
+	resolved.WebpageTimeout = cmp.Or(resolved.WebpageTimeout, defaultWebpageTimeout)
+	resolved.ImageTimeout = cmp.Or(resolved.ImageTimeout, defaultImageTimeout)
+	resolved.MaxBodyBytes = cmp.Or(resolved.MaxBodyBytes, defaultMaxBodyBytes)
+	resolved.JinaBaseURL = cmp.Or(resolved.JinaBaseURL, defaultJinaBaseURL)
 	if !strings.HasSuffix(resolved.JinaBaseURL, "/") {
 		resolved.JinaBaseURL += "/"
-	}
-
-	resolved.UserAgent = strings.TrimSpace(resolved.UserAgent)
-	if resolved.UserAgent == "" {
-		resolved.UserAgent = defaultUserAgent
 	}
 
 	if resolved.BrowserFetch == nil {
@@ -157,25 +151,18 @@ func (c *Client) FetchFeed(ctx context.Context, target domain.NormalizedURL) (bo
 		return nil, "", domain.NewError(domain.ErrFetchFeedError, err)
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", feedAccept)
-
-	result, err := c.do(ctx, req, c.feedTimeout)
+	result, err := c.executeHTTP(ctx, req, feedAccept, c.feedTimeout)
 	if err != nil {
-		return nil, "", domain.NewError(domain.ErrFetchFeedError, sanitizedError(err))
-	}
-
-	if result.status < http.StatusOK || result.status > 299 {
-		return nil, "", domain.NewError(domain.ErrFetchFeedError, fmt.Errorf("unexpected status code %d", result.status))
+		return nil, "", domain.NewError(domain.ErrFetchFeedError, err)
 	}
 
 	return result.body, sanitizedURL(result.finalURL), nil
 }
 
 func (c *Client) FetchWebpage(ctx context.Context, target domain.NormalizedURL) (htmlBody string, finalURL string, err error) {
-	settings := domain.Settings{Provider: domain.ProviderDirect}
+	settings := ExtractorSettings{Provider: domain.ProviderDirect}
 	if c.settings != nil {
-		loaded, loadErr := c.settings.Get(ctx)
+		loaded, loadErr := c.settings(ctx)
 		if loadErr != nil {
 			return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(loadErr))
 		}
@@ -204,16 +191,9 @@ func (c *Client) FetchImage(ctx context.Context, rawURL string) (data []byte, me
 		return nil, "", "", err
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", imageAccept)
-
-	result, err := c.do(ctx, req, c.imageTimeout)
+	result, err := c.executeHTTP(ctx, req, imageAccept, c.imageTimeout)
 	if err != nil {
-		return nil, "", "", sanitizedError(err)
-	}
-
-	if result.status < http.StatusOK || result.status > 299 {
-		return nil, "", "", fmt.Errorf("unexpected status code %d", result.status)
+		return nil, "", "", err
 	}
 
 	if len(result.body) == 0 {
@@ -234,22 +214,15 @@ func (c *Client) fetchDirect(ctx context.Context, target domain.NormalizedURL) (
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, reqErr)
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", webpageAccept)
-
-	result, doErr := c.do(ctx, req, c.webpageTimeout)
+	result, doErr := c.executeHTTP(ctx, req, webpageAccept, c.webpageTimeout)
 	if doErr != nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(doErr))
-	}
-
-	if result.status < http.StatusOK || result.status > 299 {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, fmt.Errorf("unexpected status code %d", result.status))
+		return "", "", domain.NewError(domain.ErrWebpageFetcherError, doErr)
 	}
 
 	return string(result.body), sanitizedURL(result.finalURL), nil
 }
 
-func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL, settings domain.Settings) (htmlBody string, finalURL string, err error) {
+func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL, settings ExtractorSettings) (htmlBody string, finalURL string, err error) {
 	if target.HasCredentials() {
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errExternalCredentials)
 	}
@@ -260,23 +233,15 @@ func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL,
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(reqErr))
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", jinaAccept)
 	req.Header.Set("X-Respond-With", "html")
 
 	if settings.JinaKey != nil {
-		if key := strings.TrimSpace(*settings.JinaKey); key != "" {
-			req.Header.Set("Authorization", "Bearer "+key)
-		}
+		req.Header.Set("Authorization", "Bearer "+*settings.JinaKey)
 	}
 
-	result, doErr := c.do(ctx, req, c.webpageTimeout)
+	result, doErr := c.executeHTTP(ctx, req, jinaAccept, c.webpageTimeout)
 	if doErr != nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizedError(doErr))
-	}
-
-	if result.status < http.StatusOK || result.status > 299 {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, fmt.Errorf("unexpected status code %d", result.status))
+		return "", "", domain.NewError(domain.ErrWebpageFetcherError, doErr)
 	}
 
 	if len(result.body) == 0 {
@@ -286,27 +251,14 @@ func (c *Client) fetchWithJina(ctx context.Context, target domain.NormalizedURL,
 	return string(result.body), target.RedactedString(), nil
 }
 
-func (c *Client) fetchWithBrowser(ctx context.Context, target domain.NormalizedURL, settings domain.Settings) (htmlBody string, finalURL string, err error) {
+func (c *Client) fetchWithBrowser(ctx context.Context, target domain.NormalizedURL, settings ExtractorSettings) (htmlBody string, finalURL string, err error) {
 	if target.HasCredentials() {
 		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errExternalCredentials)
 	}
 
-	if settings.BrowserEndpoint == nil || strings.TrimSpace(*settings.BrowserEndpoint) == "" {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errBrowserEndpointUnset)
-	}
-
-	endpoint, validateErr := domain.ValidateBrowserEndpoint(*settings.BrowserEndpoint)
-	if validateErr != nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errBrowserEndpointBad)
-	}
-
-	if c.browserFetch == nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, errBrowserEndpointUnset)
-	}
-
-	body, pageURL, fetchErr := c.browserFetch(ctx, endpoint, target.RedactedString(), c.webpageTimeout)
+	body, pageURL, fetchErr := c.browserFetch(ctx, *settings.BrowserEndpoint, target.RedactedString(), c.webpageTimeout)
 	if fetchErr != nil {
-		return "", "", domain.NewError(domain.ErrWebpageFetcherError, sanitizeBrowserError(fetchErr, endpoint))
+		return "", "", domain.NewError(domain.ErrWebpageFetcherError, classifyBrowserError(fetchErr))
 	}
 
 	if int64(len(body)) > c.maxBodyBytes {
@@ -320,14 +272,17 @@ func (c *Client) fetchWithBrowser(ctx context.Context, target domain.NormalizedU
 	return body, sanitizedStringURL(pageURL), nil
 }
 
-func (c *Client) do(ctx context.Context, req *http.Request, timeout time.Duration) (*fetchResult, error) {
-	requestCtx := ctx
-	cancel := func() {}
-	if timeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, timeout)
-	}
-
+func (c *Client) executeHTTP(
+	ctx context.Context,
+	req *http.Request,
+	accept string,
+	timeout time.Duration,
+) (*fetchResult, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	req.Header.Set("User-Agent", defaultUserAgent)
+	req.Header.Set("Accept", accept)
 
 	resp, err := c.httpClient.Do(req.WithContext(requestCtx))
 	if err != nil {
@@ -336,34 +291,46 @@ func (c *Client) do(ctx context.Context, req *http.Request, timeout time.Duratio
 
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode < http.StatusOK || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+	}
+
 	body, err := readLimitedBody(resp.Body, c.maxBodyBytes)
 	if err != nil {
 		return nil, sanitizedError(err)
 	}
 
-	return &fetchResult{status: resp.StatusCode, body: body, finalURL: resp.Request.URL}, nil
+	return &fetchResult{body: body, finalURL: resp.Request.URL}, nil
 }
 
 func newRequest(ctx context.Context, target domain.NormalizedURL) (*http.Request, error) {
-	if strings.TrimSpace(target.Raw()) == "" {
-		return nil, errEmptyURL
-	}
-
 	parsed, err := target.Parsed()
 	if err != nil {
 		return nil, sanitizedError(err)
 	}
 
+	req, err := newGETRequestFromURL(ctx, parsed)
+	if err != nil {
+		return nil, sanitizedError(err)
+	}
+
+	return req, nil
+}
+
+func newGETRequestFromURL(ctx context.Context, parsed *url.URL) (*http.Request, error) {
 	requestURL := *parsed
 	requestURL.User = nil
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	if err != nil {
-		return nil, sanitizedError(err)
+		return nil, err
 	}
 
-	if username, password, ok := target.BasicAuth(); ok {
-		req.SetBasicAuth(username, password)
+	if parsed.User != nil {
+		password, hasPassword := parsed.User.Password()
+		if parsed.User.Username() != "" || hasPassword {
+			req.SetBasicAuth(parsed.User.Username(), password)
+		}
 	}
 
 	return req, nil
@@ -400,32 +367,32 @@ func runBrowserFetch(
 	timeout time.Duration,
 	maxBodyBytes int64,
 ) (string, string, error) {
-	if timeout <= 0 {
-		timeout = defaultWebpageTimeout
+	wsURL, err := resolveBrowserEndpoint(ctx, endpoint, timeout)
+	if err != nil {
+		return "", "", classifyBrowserError(err)
 	}
 
-	allocCtx, allocCancel := remote.NewAllocator(ctx, endpoint, remote.WithDialTimeout(timeout))
+	allocCtx, allocCancel := remote.NewAllocator(ctx, wsURL, remote.NoModifyURL, remote.WithDialTimeout(timeout))
 	defer allocCancel()
 
-	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
+	tabCtx, tabCancel := chromedp.NewContext(allocCtx, chromedp.WithNewBrowserContext())
 	defer tabCancel()
 
 	runCtx, runCancel := context.WithTimeout(tabCtx, timeout)
 	defer runCancel()
 
-	err := chromedp.Do(runCtx, chromedp.Navigate(targetURL), chromedp.WaitReady(chromedp.CSS("body")))
-	if err != nil {
-		return "", "", fmt.Errorf("browser navigation failed: %w", err)
+	if err := chromedp.Do(runCtx, chromedp.Navigate(targetURL), chromedp.WaitReady(chromedp.CSS("body"))); err != nil {
+		return "", "", classifyBrowserError(err)
 	}
 
 	finalURL, err := chromedp.Run(runCtx, chromedp.Location())
 	if err != nil {
-		return "", "", fmt.Errorf("browser location failed: %w", err)
+		return "", "", classifyBrowserError(err)
 	}
 
 	htmlBody, err := captureBrowserSnapshot(runCtx, maxBodyBytes)
 	if err != nil {
-		return "", "", err
+		return "", "", classifyBrowserError(err)
 	}
 
 	return htmlBody, finalURL, nil
@@ -447,7 +414,7 @@ func captureBrowserSnapshot(ctx context.Context, maxBodyBytes int64) (string, er
 		),
 	)
 	if err != nil {
-		return "", fmt.Errorf("browser html failed: %w", err)
+		return "", err
 	}
 
 	if snapshot.TooLarge || int64(len(snapshot.HTML)) > maxBodyBytes {
@@ -460,7 +427,7 @@ func captureBrowserSnapshot(ctx context.Context, maxBodyBytes int64) (string, er
 func createSnapshotWorld(ctx context.Context) (runtime.ExecutionContextID, error) {
 	frameTree, err := chromedp.Call(ctx, page.GetFrameTree, cdp.Empty{})
 	if err != nil {
-		return 0, fmt.Errorf("browser frame tree failed: %w", err)
+		return 0, err
 	}
 
 	if frameTree.FrameTree == nil || frameTree.FrameTree.Frame == nil {
@@ -472,11 +439,11 @@ func createSnapshotWorld(ctx context.Context) (runtime.ExecutionContextID, error
 		page.CreateIsolatedWorld,
 		page.CreateIsolatedWorldParams{
 			FrameID:   frameTree.FrameTree.Frame.ID,
-			WorldName: "liubai-snapshot",
+			WorldName: "lantern-snapshot",
 		},
 	)
 	if err != nil {
-		return 0, fmt.Errorf("browser isolated world failed: %w", err)
+		return 0, err
 	}
 
 	return world.ExecutionContextID, nil
@@ -487,7 +454,7 @@ func sanitizedError(err error) error {
 		return nil
 	}
 
-	message := stripCredentialText(err.Error())
+	message := domain.SanitizeErrorText(err.Error())
 	if message == err.Error() {
 		return err
 	}
@@ -495,36 +462,271 @@ func sanitizedError(err error) error {
 	return errors.New(message)
 }
 
-func sanitizeBrowserError(err error, endpoint string) error {
-	if err == nil {
-		return nil
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
+func classifyBrowserError(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
 		return context.DeadlineExceeded
-	}
-
-	if errors.Is(err, context.Canceled) {
+	case errors.Is(err, context.Canceled):
 		return context.Canceled
-	}
-
-	if errors.Is(err, errResponseTooLarge) {
+	case errors.Is(err, errResponseTooLarge):
 		return errResponseTooLarge
+	default:
+		return errBrowserFetchFailed
 	}
-
-	_ = endpoint
-
-	return errBrowserFetchFailed
 }
 
-func stripCredentialText(message string) string {
-	return userInfoPattern.ReplaceAllString(domain.SanitizeErrorText(message), "$1")
+func resolveBrowserEndpoint(ctx context.Context, endpoint string, timeout time.Duration) (string, error) {
+	httpClient := newBrowserDiscoveryClient()
+	defer httpClient.CloseIdleConnections()
+
+	return resolveBrowserWSURL(ctx, httpClient, net.DefaultResolver.LookupIPAddr, endpoint, timeout)
+}
+
+func resolveBrowserWSURL(
+	ctx context.Context,
+	httpClient *http.Client,
+	lookupIP hostLookupFunc,
+	endpoint string,
+	timeout time.Duration,
+) (string, error) {
+	parsed, scheme, err := parseBrowserEndpoint(endpoint)
+	if err != nil {
+		return "", err
+	}
+
+	resolveCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	resolvedHost, resolved, err := resolvePlaintextEndpointHost(resolveCtx, lookupIP, parsed, scheme)
+	if err != nil {
+		return "", err
+	}
+
+	if scheme == "ws" || scheme == "wss" {
+		parsed.Scheme = scheme
+
+		return parsed.String(), nil
+	}
+
+	return discoverResolvedBrowserWSURL(resolveCtx, httpClient, parsed, resolvedHost, resolved)
+}
+
+func discoverResolvedBrowserWSURL(
+	ctx context.Context,
+	httpClient *http.Client,
+	endpoint *url.URL,
+	resolvedHost string,
+	resolved bool,
+) (string, error) {
+	wsURL, err := discoverBrowserWSURL(ctx, httpClient, browserDiscoveryURL(endpoint))
+	if err != nil {
+		return "", err
+	}
+
+	if !resolved {
+		return wsURL, nil
+	}
+
+	return rewriteBrowserWSURLHost(wsURL, resolvedHost)
+}
+
+func parseBrowserEndpoint(endpoint string) (*url.URL, string, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Hostname() == "" {
+		return nil, "", errBrowserEndpointBad
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
+	case "http", "https", "ws", "wss":
+		return parsed, scheme, nil
+	default:
+		return nil, "", errBrowserEndpointBad
+	}
+}
+
+func resolvePlaintextEndpointHost(
+	ctx context.Context,
+	lookupIP hostLookupFunc,
+	parsed *url.URL,
+	scheme string,
+) (string, bool, error) {
+	if scheme != "http" && scheme != "ws" {
+		return "", false, nil
+	}
+
+	hostname := parsed.Hostname()
+	if isIPLiteralOrLocalhost(hostname) {
+		return "", false, nil
+	}
+
+	ip, err := resolveBrowserHost(ctx, lookupIP, hostname)
+	if err != nil {
+		return "", false, err
+	}
+
+	replaceURLHost(parsed, ip)
+
+	return parsed.Host, true, nil
+}
+
+func isIPLiteralOrLocalhost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	_, err := netip.ParseAddr(host)
+
+	return err == nil
+}
+
+func resolveBrowserHost(ctx context.Context, lookupIP hostLookupFunc, host string) (string, error) {
+	addrs, err := lookupIP(ctx, host)
+	if err != nil {
+		return "", classifyBrowserError(err)
+	}
+
+	ip, ok := selectPreferredIP(addrs)
+	if !ok {
+		return "", errBrowserFetchFailed
+	}
+
+	return ip, nil
+}
+
+func selectPreferredIP(addrs []net.IPAddr) (string, bool) {
+	for _, addr := range addrs {
+		if ip4 := addr.IP.To4(); ip4 != nil {
+			return ip4.String(), true
+		}
+	}
+
+	for _, addr := range addrs {
+		if len(addr.IP) > 0 && addr.IP.To16() != nil {
+			return addr.IP.String(), true
+		}
+	}
+
+	return "", false
+}
+
+func replaceURLHost(parsed *url.URL, ip string) {
+	port := parsed.Port()
+	if port != "" {
+		parsed.Host = net.JoinHostPort(ip, port)
+
+		return
+	}
+
+	if addr, err := netip.ParseAddr(ip); err == nil && addr.Is6() {
+		parsed.Host = "[" + addr.String() + "]"
+
+		return
+	}
+
+	parsed.Host = ip
+}
+
+func rewriteBrowserWSURLHost(wsURL string, host string) (string, error) {
+	parsed, err := url.Parse(wsURL)
+	if err != nil || parsed.Hostname() == "" {
+		return "", errBrowserFetchFailed
+	}
+
+	if parsed.Scheme != "ws" {
+		return wsURL, nil
+	}
+
+	parsed.Host = host
+
+	return parsed.String(), nil
+}
+
+func browserDiscoveryURL(endpoint *url.URL) *url.URL {
+	discovery := *endpoint
+	switch strings.ToLower(discovery.Scheme) {
+	case "http", "ws":
+		discovery.Scheme = "http"
+	case "https", "wss":
+		discovery.Scheme = "https"
+	}
+
+	discovery.Path = browserDiscoveryPath
+	discovery.RawPath = ""
+	discovery.Fragment = ""
+	discovery.RawFragment = ""
+
+	return &discovery
+}
+
+func discoverBrowserWSURL(
+	ctx context.Context,
+	httpClient *http.Client,
+	discoveryURL *url.URL,
+) (string, error) {
+	req, err := newBrowserDiscoveryRequest(ctx, discoveryURL)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", classifyBrowserError(err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode > 299 {
+		return "", errBrowserFetchFailed
+	}
+
+	body, err := readLimitedBody(resp.Body, browserDiscoveryMaxBytes)
+	if err != nil {
+		return "", classifyBrowserError(err)
+	}
+
+	return parseBrowserDiscoveryResponse(body)
+}
+
+func newBrowserDiscoveryRequest(ctx context.Context, discoveryURL *url.URL) (*http.Request, error) {
+	req, err := newGETRequestFromURL(ctx, discoveryURL)
+	if err != nil {
+		return nil, errBrowserFetchFailed
+	}
+
+	return req, nil
+}
+
+func parseBrowserDiscoveryResponse(body []byte) (string, error) {
+	var payload browserVersionResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", errBrowserFetchFailed
+	}
+
+	trimmed := strings.TrimSpace(payload.WebSocketDebuggerURL)
+	if trimmed == "" {
+		return "", errBrowserFetchFailed
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Hostname() == "" {
+		return "", errBrowserFetchFailed
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "ws" && scheme != "wss" {
+		return "", errBrowserFetchFailed
+	}
+
+	parsed.Scheme = scheme
+
+	return parsed.String(), nil
 }
 
 func sanitizedStringURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return stripCredentialText(raw)
+		return domain.SanitizeErrorText(raw)
 	}
 
 	return sanitizedURL(parsed)

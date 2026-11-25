@@ -1,8 +1,7 @@
 import { feedsApi } from '../api';
-import { t, translateErrorCode } from '../i18n';
-import { refreshSidebar } from '../state';
+import { t } from '../i18n';
+import { errorText, invalidateSidebar } from '../state';
 import { showToast } from '../ui';
-import { errorCodeOf } from './viewHelpers';
 
 export interface OpmlImport {
   /** Callback ref for the hidden file input; the visible button opens this picker. */
@@ -19,17 +18,15 @@ export const useOpmlImport = (): OpmlImport => {
     try {
       const result = await feedsApi.importOpml(file);
       showToast(
-        String(
-          t('feeds.opmlImportedToast', {
-            imported: result.importedFeeds,
-            skipped: result.skippedFeeds,
-          })
-        ),
+        t('feeds.opmlImportedToast', {
+          imported: result.importedFeeds,
+          skipped: result.skippedFeeds,
+        }),
         'success'
       );
-      await refreshSidebar();
+      await invalidateSidebar();
     } catch (error) {
-      showToast(translateErrorCode(errorCodeOf(error)), 'error');
+      showToast(errorText(error), 'error');
     }
   };
 

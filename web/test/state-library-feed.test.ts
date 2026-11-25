@@ -1,133 +1,24 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-  Feed,
-  FeedItem,
-  FeedUnreadCount,
-  Folder,
-  SavedPage,
-} from '../src/api';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { LatestTokenMap } from '../src/state/library-mutations';
+import {
+  createStateTestContext,
+  jsonResponse,
+  makeFeed,
+  makeItem,
+  noContentResponse,
+} from './support/state-fixture';
 
-type StateModule = typeof import('../src/state');
-type I18nModule = typeof import('../src/i18n');
-type UiModule = typeof import('../src/ui');
-
-let state: StateModule;
-let solid: typeof import('solid-js');
-let i18n: I18nModule;
-let ui: UiModule;
-let fetchMock: ReturnType<typeof vi.fn>;
-
-const fresh = async (): Promise<void> => {
-  vi.resetModules();
-  solid = await import('solid-js');
-  i18n = await import('../src/i18n');
-  ui = await import('../src/ui');
-  state = await import('../src/state');
-};
+const ctx = createStateTestContext();
 
 beforeEach(async () => {
-  fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
-  localStorage.clear();
-  await fresh();
+  await ctx.reset();
 });
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-const noContent = (): Response => new Response(null, { status: 204 });
-
-const queue = (body: unknown, status = 200): void => {
-  fetchMock.mockResolvedValueOnce(json(body, status));
-};
-
-const queueEmpty = (): void => {
-  fetchMock.mockResolvedValueOnce(noContent());
-};
-const requestUrl = (call = 0): string =>
-  String(fetchMock.mock.calls[call]?.[0]);
-
-const requestInit = (call = 0): RequestInit =>
-  (fetchMock.mock.calls[call]?.[1] ?? {}) as RequestInit;
-
-const requestBody = (call = 0): unknown => {
-  const body = requestInit(call).body;
-  return typeof body === 'string' ? JSON.parse(body) : body;
-};
-
-const fetchCount = (): number => fetchMock.mock.calls.length;
-const makeFeed = (overrides: Partial<Feed> & { id: string }): Feed => ({
-  url: `https://example.com/${overrides.id}/feed.xml`,
-  title: `Feed ${overrides.id}`,
-  folderId: null,
-  failureCount: 0,
-  readerMode: 'default',
-  order: 'newest',
-  ...overrides,
-});
-const _makePage = (
-  overrides: Partial<SavedPage> & { id: string }
-): SavedPage => ({
-  url: `https://example.com/${overrides.id}`,
-  title: `Page ${overrides.id}`,
-  content: '<p>content</p>',
-  read: false,
-  ...overrides,
-});
-
-const makeItem = (
-  overrides: Partial<FeedItem> & { id: string; feedId: string }
-): FeedItem => ({
-  url: `https://example.com/${overrides.id}`,
-  title: `Item ${overrides.id}`,
-  description: '<p>summary</p>',
-  content: '<p>content</p>',
-  read: false,
-  ...overrides,
-});
-const queueSidebar = (
-  options: {
-    feeds?: Array<Feed>;
-    folders?: Array<Folder>;
-    counts?: Array<FeedUnreadCount>;
-    saved?: number;
-  } = {}
-): void => {
-  queue({ items: options.feeds ?? [] });
-  queue({ items: options.folders ?? [] });
-  queue({ items: options.counts ?? [] });
-  queue({ count: options.saved ?? 0 });
-};
-const queueLoadedLibrary = async (options: {
-  scope: Parameters<StateModule['loadScopeFirstPage']>[0];
-  items: Array<SavedPage | FeedItem>;
-  cursor?: string | null;
-  feeds?: Array<Feed>;
-  counts?: Array<FeedUnreadCount>;
-  saved?: number;
-}): Promise<void> => {
-  // `LIB-RELOAD-1`: the sidebar (and therefore feed titles) is refreshed when entering a scope.
-  if (options.feeds !== undefined) {
-    queueSidebar({
-      feeds: options.feeds,
-      counts: options.counts,
-      saved: options.saved,
-    });
-    await state.refreshSidebar();
-    solid.flush();
-  }
-
-  queue({ items: options.items, cursor: options.cursor ?? null });
-  await state.loadScopeFirstPage(options.scope, false);
-  solid.flush();
-};
 
 describe('feed move', () => {
   it('moves a feed out of the open folder scope without reloading the list', async () => {
+    const { state, solid, ui, i18n } = ctx;
     const target = makeFeed({ id: 'f1', folderId: 'd1' });
-    await queueLoadedLibrary({
+    await ctx.queueLoadedLibrary({
       scope: { kind: 'folder', folderId: 'd1' },
       items: [
         makeItem({ id: 'i1', feedId: 'f1' }),
@@ -137,17 +28,17 @@ describe('feed move', () => {
     });
     expect(state.rows()).toHaveLength(2);
 
-    queueEmpty();
-    const before = fetchCount();
+    ctx.queueEmpty();
+    const before = ctx.fetchCount();
     await expect(state.moveFeedToFolder(target, null)).resolves.toBe(true);
     solid.flush();
 
-    expect(requestUrl(before)).toBe('/api/feeds/f1');
-    expect(requestInit(before).method).toBe('PATCH');
-    expect(requestBody(before)).toEqual({ folderId: null });
+    expect(ctx.requestUrl(before)).toBe('/api/feeds/f1');
+    expect(ctx.requestInit(before).method).toBe('PATCH');
+    expect(ctx.requestBody(before)).toEqual({ folderId: null });
     expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBeNull();
     expect(state.rows().map((row) => row.id)).toEqual(['i2']);
-    expect(fetchCount()).toBe(before + 1);
+    expect(ctx.fetchCount()).toBe(before + 1);
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('folders.movedToast'))
     );
@@ -156,14 +47,15 @@ describe('feed move', () => {
 
 describe('feed move rollback', () => {
   it('rolls back a failed feed move and restores removed rows', async () => {
+    const { state, solid, ui } = ctx;
     const target = makeFeed({ id: 'f1', folderId: 'd1' });
-    await queueLoadedLibrary({
+    await ctx.queueLoadedLibrary({
       scope: { kind: 'folder', folderId: 'd1' },
       items: [makeItem({ id: 'i1', feedId: 'f1' })],
       feeds: [target],
     });
 
-    queue({ error: 'FolderNotFound' }, 404);
+    ctx.queue({ error: 'FolderNotFound' }, 404);
     await expect(state.moveFeedToFolder(target, null)).resolves.toBe(false);
     solid.flush();
 
@@ -173,31 +65,210 @@ describe('feed move rollback', () => {
   });
 });
 
+describe('feed move race: late failure', () => {
+  it('does not let a late failed move overwrite a newer feed move', async () => {
+    const { state, solid } = ctx;
+    const target = makeFeed({ id: 'f1', folderId: 'd1' });
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'folder', folderId: 'd1' },
+      items: [
+        makeItem({ id: 'i1', feedId: 'f1' }),
+        makeItem({ id: 'i2', feedId: 'f2' }),
+      ],
+      feeds: [target, makeFeed({ id: 'f2', folderId: 'd1' })],
+    });
+
+    const firstMove = ctx.pending();
+    const secondMove = ctx.pending();
+
+    const p1 = state.moveFeedToFolder(target, 'd2');
+    const p2 = state.moveFeedToFolder(target, 'd3');
+    solid.flush();
+
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d3');
+    expect(state.rows().map((row) => row.id)).toEqual(['i2']);
+
+    firstMove.resolve(jsonResponse({ error: 'FolderNotFound' }, 404));
+    await expect(p1).resolves.toBe(false);
+    solid.flush();
+
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d3');
+    expect(state.rows().map((row) => row.id)).toEqual(['i2']);
+
+    secondMove.resolve(noContentResponse());
+    await expect(p2).resolves.toBe(true);
+    solid.flush();
+
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d3');
+  });
+});
+
+describe('feed move race: confirmed rollback', () => {
+  it('rolls back to the confirmed folder when move 1 succeeds and move 2 fails', async () => {
+    const { state, solid } = ctx;
+    const target = makeFeed({ id: 'f1', folderId: 'd1' });
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'folder', folderId: 'd1' },
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      feeds: [target],
+    });
+
+    const firstMove = ctx.pending();
+    const secondMove = ctx.pending();
+
+    const p1 = state.moveFeedToFolder(target, 'd2');
+    const p2 = state.moveFeedToFolder(target, 'd3');
+    solid.flush();
+
+    firstMove.resolve(noContentResponse());
+    await expect(p1).resolves.toBe(true);
+
+    secondMove.resolve(jsonResponse({ error: 'FolderNotFound' }, 404));
+    await expect(p2).resolves.toBe(false);
+    solid.flush();
+
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d2');
+    expect(state.rows()).toHaveLength(0);
+  });
+});
+
+describe('feed move race: double failure', () => {
+  it('restores dropped rows when both overlapping moves fail', async () => {
+    const { state, solid } = ctx;
+    const target = makeFeed({ id: 'f1', folderId: 'd1' });
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'folder', folderId: 'd1' },
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      feeds: [target],
+    });
+
+    const firstMove = ctx.pending();
+    const secondMove = ctx.pending();
+
+    const p1 = state.moveFeedToFolder(target, 'd2');
+    const p2 = state.moveFeedToFolder(target, 'd3');
+    solid.flush();
+
+    firstMove.resolve(jsonResponse({ error: 'FolderNotFound' }, 404));
+    await expect(p1).resolves.toBe(false);
+
+    secondMove.resolve(jsonResponse({ error: 'FolderNotFound' }, 404));
+    await expect(p2).resolves.toBe(false);
+    solid.flush();
+
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d1');
+    expect(state.rows().map((row) => row.id)).toEqual(['i1']);
+  });
+});
+
+describe('feed move race: newer failure settles first', () => {
+  it('reconciles to the still-in-flight earlier move when the newer move fails first', async () => {
+    const { state, solid, ui, i18n } = ctx;
+    const target = makeFeed({ id: 'f1', folderId: 'd1' });
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'folder', folderId: 'd1' },
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      feeds: [target],
+    });
+
+    const firstMove = ctx.pending();
+    const secondMove = ctx.pending();
+
+    const p1 = state.moveFeedToFolder(target, 'd2');
+    const p2 = state.moveFeedToFolder(target, 'd3');
+    solid.flush();
+
+    secondMove.resolve(jsonResponse({ error: 'FolderNotFound' }, 404));
+    await expect(p2).resolves.toBe(false);
+    solid.flush();
+
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d2');
+    expect(state.rows()).toHaveLength(0);
+    expect(ui.currentToast()?.variant).toBe('error');
+
+    firstMove.resolve(noContentResponse());
+    await expect(p1).resolves.toBe(true);
+    solid.flush();
+
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d2');
+    expect(state.rows()).toHaveLength(0);
+    expect(ui.currentToast()?.message).toBe(
+      String(i18n.t('folders.movedToast'))
+    );
+  });
+});
+
+describe('feed move race: newer success settles first', () => {
+  it('keeps the newer move when it succeeds first and the older move settles later', async () => {
+    const { state, solid } = ctx;
+    const target = makeFeed({ id: 'f1', folderId: 'd1' });
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'folder', folderId: 'd1' },
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      feeds: [target],
+    });
+
+    const firstMove = ctx.pending();
+    const secondMove = ctx.pending();
+
+    const p1 = state.moveFeedToFolder(target, 'd2');
+    const p2 = state.moveFeedToFolder(target, 'd3');
+    solid.flush();
+
+    secondMove.resolve(noContentResponse());
+    await expect(p2).resolves.toBe(true);
+    solid.flush();
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d3');
+
+    firstMove.resolve(jsonResponse({ error: 'FolderNotFound' }, 404));
+    await expect(p1).resolves.toBe(false);
+    solid.flush();
+
+    expect(state.feeds().find((feed) => feed.id === 'f1')?.folderId).toBe('d3');
+    expect(state.rows()).toHaveLength(0);
+  });
+});
+
+describe('LatestTokenMap release', () => {
+  it('releases settled keys conditionally without deleting newer claims', () => {
+    const map = new LatestTokenMap();
+    const t1 = map.claim('f1');
+    const t2 = map.claim('f1');
+
+    map.release('f1', t1);
+    expect(map.isCurrent('f1', t2)).toBe(true);
+
+    map.release('f1', t2);
+    expect(map.isCurrent('f1', t2)).toBe(false);
+  });
+});
+
 describe('feed order reload', () => {
   it('reloads the active feed list when its order changes', async () => {
+    const { state, solid } = ctx;
     const target = makeFeed({ id: 'f1' });
-    queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: 'i1' });
+    ctx.queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: 'i1' });
     await state.loadScopeFirstPage(
       { kind: 'feed', feedId: 'f1' },
       false,
       'newest'
     );
-    queueSidebar({ feeds: [target] });
+    ctx.queueSidebar({ feeds: [target] });
     await state.refreshSidebar();
     solid.flush();
 
-    queueEmpty();
-    queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: null });
-    const before = fetchCount();
+    ctx.queueEmpty();
+    ctx.queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: null });
+    const before = ctx.fetchCount();
     await state.changeFeedOrder(target, 'oldest');
     solid.flush();
 
-    expect(requestInit(before).method).toBe('PUT');
-    expect(requestUrl(before)).toBe('/api/feeds/f1/order');
+    expect(ctx.requestInit(before).method).toBe('PUT');
+    expect(ctx.requestUrl(before)).toBe('/api/feeds/f1/order');
     expect(state.feeds()[0].order).toBe('oldest');
     expect(state.activeOrder()).toBe('oldest');
     expect(state.cursor()).toBeNull();
-    expect(requestUrl(before + 1)).toBe(
+    expect(ctx.requestUrl(before + 1)).toBe(
       '/api/feeds/f1/items?limit=30&unread=false&order=oldest'
     );
   });
@@ -205,37 +276,50 @@ describe('feed order reload', () => {
 
 describe('stored feed order', () => {
   it('omits the order param so the stored feed order applies', async () => {
-    queueSidebar({ feeds: [makeFeed({ id: 'f1', order: 'oldest' })] });
+    const { state, solid } = ctx;
+    ctx.queueSidebar({ feeds: [makeFeed({ id: 'f1', order: 'oldest' })] });
     await state.refreshSidebar();
     solid.flush();
 
-    queue({ items: [], cursor: null });
+    ctx.queue({ items: [], cursor: null });
     await state.loadScopeFirstPage({ kind: 'feed', feedId: 'f1' }, false);
     solid.flush();
 
-    expect(requestUrl(4)).toBe('/api/feeds/f1/items?limit=30&unread=false');
+    expect(ctx.requestUrl(4)).toBe('/api/feeds/f1/items?limit=30&unread=false');
     expect(state.activeOrder()).toBe('oldest');
   });
 });
 
 describe('feed reader mode', () => {
-  it('updates the feed reader mode and reports failures', async () => {
+  it('updates the feed reader mode, reports failures, and discards stale responses', async () => {
+    const { state, solid, ui } = ctx;
     const target = makeFeed({ id: 'f1' });
-    queueSidebar({ feeds: [target] });
+    ctx.queueSidebar({ feeds: [target] });
     await state.refreshSidebar();
     solid.flush();
 
-    queueEmpty();
-    const before = fetchCount();
+    ctx.queueEmpty();
+    const before = ctx.fetchCount();
     await state.changeFeedReaderMode(target, 'extracted');
     solid.flush();
-    expect(requestUrl(before)).toBe('/api/feeds/f1/reader-mode');
+    expect(ctx.requestUrl(before)).toBe('/api/feeds/f1/reader-mode');
     expect(state.feeds()[0].readerMode).toBe('extracted');
 
-    queue({ error: 'FeedRepositoryError' }, 500);
+    ctx.queue({ error: 'FeedRepositoryError' }, 500);
     await state.changeFeedReaderMode(target, 'embedded');
     solid.flush();
     expect(state.feeds()[0].readerMode).toBe('extracted');
     expect(ui.currentToast()?.variant).toBe('error');
+
+    const slow = ctx.pending();
+    const fast = ctx.pending();
+    const first = state.changeFeedReaderMode(target, 'embedded');
+    const second = state.changeFeedReaderMode(target, 'default');
+    fast.resolve(noContentResponse());
+    await second;
+    slow.resolve(noContentResponse());
+    await first;
+    solid.flush();
+    expect(state.feeds()[0].readerMode).toBe('default');
   });
 });

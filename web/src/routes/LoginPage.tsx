@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from '@solidjs/router';
 import type { JSX } from '@solidjs/web';
 import { createEffect, createSignal, onSettled, Show, untrack } from 'solid-js';
-import { authApi } from '../api';
+import { authApi, errorCodeOf } from '../api';
 import { t, toggleLocale, translateErrorCode } from '../i18n';
 import {
   checkSession,
@@ -10,7 +10,6 @@ import {
   sessionStatus,
 } from '../state';
 import { Button, Icon, Input } from '../ui';
-import { errorCodeOf } from './viewHelpers';
 
 function LoginBrand(): JSX.Element {
   return (
@@ -19,20 +18,18 @@ function LoginBrand(): JSX.Element {
         <Icon name="rss" size={30} strokeWidth={2.25} class="text-brand" />
         <div class="flex flex-col">
           <p class="text-xl font-semibold text-base-content">
-            {String(t('common.brand'))}
+            {t('common.brand')}
           </p>
-          <p class="text-xs text-base-content/60">
-            {String(t('auth.productLabel'))}
-          </p>
+          <p class="text-xs text-base-content/60">{t('auth.productLabel')}</p>
         </div>
       </div>
       <Button
         size="sm"
         variant="ghost"
-        aria-label={String(t('common.localeSwitchLabel'))}
+        aria-label={t('common.localeSwitchLabel')}
         onClick={toggleLocale}
       >
-        {String(t('common.localeToggleShort'))}
+        {t('common.localeToggleShort')}
       </Button>
     </div>
   );
@@ -43,7 +40,7 @@ function LoginError(props: { code: string }): JSX.Element {
   return (
     <div role="alert" class="alert alert-error alert-soft text-sm">
       {props.code === 'REQUIRED'
-        ? String(t('auth.passwordRequired'))
+        ? t('auth.passwordRequired')
         : translateErrorCode(props.code)}
     </div>
   );
@@ -69,8 +66,8 @@ function LoginForm(props: LoginFormProps): JSX.Element {
         type="password"
         autocomplete="current-password"
         required
-        label={String(t('auth.passwordLabel'))}
-        placeholder={String(t('auth.passwordPlaceholder'))}
+        label={t('auth.passwordLabel')}
+        placeholder={t('auth.passwordPlaceholder')}
         value={props.password}
         disabled={props.submitting}
         onInput={(event) => props.onPassword(event.currentTarget.value)}
@@ -82,7 +79,7 @@ function LoginForm(props: LoginFormProps): JSX.Element {
         loading={props.submitting}
         disabled={props.submitting}
       >
-        {String(t(props.submitting ? 'auth.submitting' : 'auth.submit'))}
+        {t(props.submitting ? 'auth.submitting' : 'auth.submit')}
       </Button>
     </form>
   );
@@ -95,38 +92,31 @@ const useLoginRedirects = (nextParam: () => string | null): void => {
   createEffect(
     () => sessionStatus(),
     (status) => {
-      if (status === 'checking') void checkSession();
-    }
-  );
-
-  createEffect(
-    () => sessionStatus(),
-    (status) => {
-      if (status !== 'authenticated') return;
-
-      const target = untrack(() => sanitizeNextPath(nextParam()));
-      navigate(target, { replace: true });
+      if (status === 'checking') {
+        void checkSession();
+        return;
+      }
+      if (status === 'authenticated') {
+        const target = untrack(() => sanitizeNextPath(nextParam()));
+        navigate(target, { replace: true });
+      }
     }
   );
 };
 
-const useLoginSubmit = (nextParam: () => string | null) => {
-  const navigate = useNavigate();
+const useLoginSubmit = () => {
   const [password, setPassword] = createSignal('');
   const [submitting, setSubmitting] = createSignal(false);
   // Keep the code, not the translated text, so a locale switch re-translates the message.
   const [errorCode, setErrorCode] = createSignal<string | null>(null);
 
   const attempt = async (value: string): Promise<void> => {
-    // Resolve the destination before the guard effect reacts to `markAuthenticated()`.
-    const destination = untrack(() => sanitizeNextPath(nextParam()));
     setSubmitting(true);
     setErrorCode(null);
 
     try {
       await authApi.login(value);
       markAuthenticated();
-      navigate(destination, { replace: true });
     } catch (caught) {
       setErrorCode(errorCodeOf(caught));
     } finally {
@@ -158,7 +148,7 @@ export function LoginPage(): JSX.Element {
   const location = useLocation();
   const nextParam = (): string | null =>
     new URLSearchParams(location.search).get('next');
-  const login = useLoginSubmit(nextParam);
+  const login = useLoginSubmit();
 
   useLoginRedirects(nextParam);
 
@@ -168,7 +158,7 @@ export function LoginPage(): JSX.Element {
         <div class="card-body gap-6 p-7">
           <LoginBrand />
           <h1 class="text-base font-medium text-base-content/80">
-            {String(t('auth.title'))}
+            {t('auth.title')}
           </h1>
           <Show when={login.errorCode()}>
             {(code) => <LoginError code={code()} />}

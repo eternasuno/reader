@@ -15,15 +15,6 @@ func toFolderJSON(folder domain.Folder) folderJSON {
 	return folderJSON{ID: folder.ID, Name: folder.Name}
 }
 
-func toFoldersJSON(folders []domain.Folder) []folderJSON {
-	converted := make([]folderJSON, 0, len(folders))
-	for _, folder := range folders {
-		converted = append(converted, toFolderJSON(folder))
-	}
-
-	return converted
-}
-
 type folderRequest struct {
 	Name string `json:"name"`
 }
@@ -36,7 +27,7 @@ func (s *server) handleFolderList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, listResponse[folderJSON]{Items: toFoldersJSON(folders)})
+	writeJSON(w, http.StatusOK, listResponse[folderJSON]{Items: mapSlice(folders, toFolderJSON)})
 }
 
 func (s *server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
@@ -111,14 +102,7 @@ func (s *server) handleFolderMarkRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleFolderItems(w http.ResponseWriter, r *http.Request) {
-	query, err := parsePageQuery(r)
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	params, err := query.params(query.orderOrDefault())
+	params, err := parseDefaultPageParams(r)
 	if err != nil {
 		writeError(w, err)
 

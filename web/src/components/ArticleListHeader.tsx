@@ -1,25 +1,23 @@
 import type { JSX } from '@solidjs/web';
-import { createSignal, Show } from 'solid-js';
+import { createSignal, flush, Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
 import {
   type LibraryScope,
   markLoadedRead,
-  markScopeAllRead,
   sidebarCollapsed,
   toggleSidebarCollapse,
-  triggerKindleSend,
 } from '../state';
-import { Button, Icon, Menu, MenuCheckbox, MenuDivider, MenuItem } from '../ui';
+import { Button, Icon, Menu, MenuDivider, MenuItem } from '../ui';
 import {
   activeFeed,
   failingFeed,
   scopeTitle,
   scopeUnreadCount,
 } from './articleListScope';
+import { FeedFailureMenu } from './FeedFailureMenu';
 import { FeedMoveSubpanel } from './FeedMoveSubpanel';
-import { retryRefresh } from './feedFailure';
-import { ListOrderCheckbox } from './ListOrderCheckbox';
+import { ScopeMenuItems } from './ScopeRow';
 
 const COUNT_CLASSES = 'text-sm font-normal tabular-nums text-base-content/50';
 
@@ -32,7 +30,7 @@ export interface ArticleListHeaderProps {
   onToggleUnread: () => void;
   onRequestAddLink: () => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
-  onRequestNewFolder: () => void;
+  onRequestNewFolder: (feed: Feed) => void;
   onRequestFeedOptions?: (feed: Feed) => void;
   onDeleteFeed: (feed: Feed) => void;
 }
@@ -40,13 +38,10 @@ export interface ArticleListHeaderProps {
 function SidebarExpandButton(): JSX.Element {
   const handleExpand = (): void => {
     toggleSidebarCollapse();
-    queueMicrotask(() =>
-      document
-        .querySelector<HTMLButtonElement>(
-          `button[aria-label="${String(t('library.collapseSidebar'))}"]`
-        )
-        ?.focus()
-    );
+    flush();
+    document
+      .querySelector<HTMLButtonElement>('[data-sidebar-collapse]')
+      ?.focus();
   };
 
   return (
@@ -55,13 +50,60 @@ function SidebarExpandButton(): JSX.Element {
         variant="icon"
         size="sm"
         class="hidden md:inline-flex"
-        aria-label={String(t('library.expandSidebar'))}
-        title={String(t('library.expandSidebar'))}
+        data-sidebar-expand=""
+        aria-label={t('library.expandSidebar')}
+        title={t('library.expandSidebar')}
         onClick={handleExpand}
       >
         <Icon name="sidebar" size={18} />
       </Button>
     </Show>
+  );
+}
+
+function ArticleListHeading(props: {
+  scope: LibraryScope;
+  onDeleteFeed: (feed: Feed) => void;
+}): JSX.Element {
+  return (
+    <div class="flex min-w-0 flex-1 items-center gap-2 pl-2 max-md:pl-0">
+      <h2 class="flex min-w-0 items-center gap-2 text-base font-semibold">
+        <span class="truncate">{scopeTitle(props.scope)}</span>
+        <span class={COUNT_CLASSES}>{scopeUnreadCount(props.scope)}</span>
+      </h2>
+      <Show when={failingFeed(props.scope)}>
+        {(feed) => (
+          <FeedFailureMenu
+            feed={feed()}
+            align="start"
+            onDelete={props.onDeleteFeed}
+          />
+        )}
+      </Show>
+    </div>
+  );
+}
+
+function UnreadToggleButton(props: {
+  unreadOnly: boolean;
+  onToggleUnread: () => void;
+}): JSX.Element {
+  return (
+    <Button
+      variant="icon"
+      size="sm"
+      class={
+        props.unreadOnly
+          ? 'max-md:size-10 bg-primary/15 text-primary hover:bg-primary/20'
+          : 'max-md:size-10'
+      }
+      aria-pressed={props.unreadOnly ? 'true' : 'false'}
+      aria-label={t('library.unreadOnly')}
+      title={t('library.unreadOnly')}
+      onClick={props.onToggleUnread}
+    >
+      <Icon name="filter" size={18} />
+    </Button>
   );
 }
 
@@ -74,26 +116,27 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
         variant="icon"
         size="sm"
         class="max-md:size-10 md:hidden"
-        aria-label={String(t('library.toggleNav'))}
+        aria-label={t('library.toggleNav')}
         aria-expanded={props.drawerOpen ? 'true' : 'false'}
         onClick={props.onToggleNav}
       >
         <Icon name="sidebar" size={20} />
       </Button>
       <SidebarExpandButton />
-      <h2 class="flex min-w-0 flex-1 items-center gap-2 pl-2 max-md:pl-0 text-base font-semibold">
-        <span class="truncate">{scopeTitle(props.scope)}</span>
-        <span class={COUNT_CLASSES}>{scopeUnreadCount(props.scope)}</span>
-        <Show when={failingFeed(props.scope)}>
-          {(feed) => <FeedFailureMenu feed={feed()} />}
-        </Show>
-      </h2>
+      <ArticleListHeading
+        scope={props.scope}
+        onDeleteFeed={props.onDeleteFeed}
+      />
+      <UnreadToggleButton
+        unreadOnly={props.unreadOnly}
+        onToggleUnread={props.onToggleUnread}
+      />
       <Button
         variant="icon"
         size="sm"
         class="max-md:size-10"
-        aria-label={String(t('library.markLoadedRead'))}
-        title={String(t('library.markLoadedRead'))}
+        aria-label={t('library.markLoadedRead')}
+        title={t('library.markLoadedRead')}
         onClick={() => void markLoadedRead()}
       >
         <Icon name="check-up" size={18} />
@@ -101,9 +144,6 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
       <ArticleHeaderMenu
         scope={props.scope}
         unreadOnly={props.unreadOnly}
-        drawerOpen={props.drawerOpen}
-        onToggleNav={props.onToggleNav}
-        navToggleRef={props.navToggleRef}
         onToggleUnread={props.onToggleUnread}
         onRequestAddLink={props.onRequestAddLink}
         onMoveFeed={props.onMoveFeed}
@@ -115,14 +155,24 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
   );
 }
 
-function ArticleHeaderMenu(props: ArticleListHeaderProps): JSX.Element {
+interface ArticleHeaderMenuProps {
+  scope: LibraryScope;
+  unreadOnly: boolean;
+  onToggleUnread: () => void;
+  onRequestAddLink: () => void;
+  onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
+  onRequestNewFolder: (feed: Feed) => void;
+  onRequestFeedOptions?: (feed: Feed) => void;
+  onDeleteFeed: (feed: Feed) => void;
+}
+
+function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
   const [panel, setPanel] = createSignal<'main' | 'move'>('main');
   const feed = () => activeFeed(props.scope);
 
   return (
     <Menu
-      label={String(t('library.moreActions'))}
-      align="end"
+      label={t('library.moreActions')}
       triggerClass="btn-sm max-md:size-10"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
@@ -132,8 +182,13 @@ function ArticleHeaderMenu(props: ArticleListHeaderProps): JSX.Element {
         when={panel() === 'move' && feed()}
         fallback={
           <ArticleHeaderMainItems
-            props={props}
+            scope={props.scope}
+            unreadOnly={props.unreadOnly}
+            onToggleUnread={props.onToggleUnread}
+            onRequestAddLink={props.onRequestAddLink}
             onOpenMove={() => setPanel('move')}
+            onRequestFeedOptions={props.onRequestFeedOptions}
+            onDeleteFeed={props.onDeleteFeed}
           />
         }
       >
@@ -150,42 +205,40 @@ function ArticleHeaderMenu(props: ArticleListHeaderProps): JSX.Element {
   );
 }
 
-function ArticleHeaderMainItems(props: {
-  props: ArticleListHeaderProps;
+interface ArticleHeaderMainItemsProps {
+  scope: LibraryScope;
+  unreadOnly: boolean;
+  onToggleUnread: () => void;
+  onRequestAddLink: () => void;
   onOpenMove: () => void;
-}): JSX.Element {
+  onRequestFeedOptions?: (feed: Feed) => void;
+  onDeleteFeed: (feed: Feed) => void;
+}
+
+function ArticleHeaderMainItems(
+  props: ArticleHeaderMainItemsProps
+): JSX.Element {
   return (
     <>
-      <MenuItem
-        icon="check-double"
-        onSelect={() => void markScopeAllRead(props.props.scope)}
-      >
-        {String(t('library.markAllRead'))}
-      </MenuItem>
-      <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
-        {String(t('reader.sendAsEbook'))}
-      </MenuItem>
-      <MenuDivider />
-      <MenuCheckbox
-        checked={props.props.unreadOnly}
-        onSelect={props.props.onToggleUnread}
-      >
-        {String(t('library.unreadOnly'))}
-      </MenuCheckbox>
-      <ListOrderCheckbox feed={activeFeed(props.props.scope)} />
-      <Show when={props.props.scope.kind === 'later'}>
+      <ScopeMenuItems
+        scope={props.scope}
+        feed={activeFeed(props.scope)}
+        unreadOnly={props.unreadOnly}
+        onToggleUnread={props.onToggleUnread}
+      />
+      <Show when={props.scope.kind === 'later'}>
         <MenuDivider />
-        <MenuItem icon="plus" onSelect={props.props.onRequestAddLink}>
-          {String(t('later.addLinkTitle'))}
+        <MenuItem opensDialog icon="plus" onSelect={props.onRequestAddLink}>
+          {t('later.addLinkTitle')}
         </MenuItem>
       </Show>
-      <Show when={activeFeed(props.props.scope)}>
+      <Show when={activeFeed(props.scope)}>
         {(feed) => (
           <FeedMenuOptions
             feed={feed()}
             onOpenMove={props.onOpenMove}
-            onRequestFeedOptions={props.props.onRequestFeedOptions}
-            onDeleteFeed={props.props.onDeleteFeed}
+            onRequestFeedOptions={props.onRequestFeedOptions}
+            onDeleteFeed={props.onDeleteFeed}
           />
         )}
       </Show>
@@ -204,34 +257,18 @@ function FeedMenuOptions(props: FeedMenuOptionsProps): JSX.Element {
   return (
     <>
       <MenuDivider />
-      <MenuItem submenu keepOpen onSelect={props.onOpenMove}>
-        {String(t('feeds.moveTo'))}
+      <MenuItem submenu onSelect={props.onOpenMove}>
+        {t('feeds.moveTo')}
       </MenuItem>
-      <MenuItem onSelect={() => props.onRequestFeedOptions?.(props.feed)}>
-        {String(t('feeds.feedOptions'))}
+      <MenuItem
+        opensDialog
+        onSelect={() => props.onRequestFeedOptions?.(props.feed)}
+      >
+        {t('feeds.feedOptions')}
       </MenuItem>
       <MenuItem icon="trash" onSelect={() => props.onDeleteFeed(props.feed)}>
-        {String(t('feeds.deleteFeed'))}
+        {t('feeds.deleteFeedMenu')}
       </MenuItem>
     </>
-  );
-}
-
-/** `FD-SCHED-3`: the heading warning exposes the stored error and a retry. */
-function FeedFailureMenu(props: { feed: Feed }): JSX.Element {
-  return (
-    <Menu
-      align="start"
-      label={String(t('feeds.retryRefresh'))}
-      triggerClass="btn-xs btn-square"
-      trigger={<Icon name="warning" size={14} class="text-warning" />}
-    >
-      <p class="max-w-56 px-3 py-1.5 text-xs break-words text-base-content/70">
-        {props.feed.lastError ?? ''}
-      </p>
-      <MenuItem icon="refresh" onSelect={() => void retryRefresh(props.feed)}>
-        {String(t('feeds.retryRefresh'))}
-      </MenuItem>
-    </Menu>
   );
 }
