@@ -149,3 +149,13 @@ func readBoundedOPML(r io.Reader) ([]byte, error) {
 
 	return payload, nil
 }
+
+func (s *server) handleDatabaseExport(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/vnd.sqlite3")
+	w.Header().Set("Content-Disposition", `attachment; filename="reader.db"`)
+
+	if err := s.cfg.ExportDatabase(r.Context(), w); err != nil {
+		w.Header().Del("Content-Disposition")
+		writeError(w, err)
+	}
+}

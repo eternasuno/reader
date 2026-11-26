@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ const (
 )
 
 type Store struct {
+	path        string
 	writeDB     *sql.DB
 	readDB      *sql.DB
 	folders     *FolderRepo
@@ -93,7 +95,7 @@ func initialize(ctx context.Context, dbPath string, writeDB *sql.DB) (*Store, er
 		return nil, fmt.Errorf("ping read pool: %w", err)
 	}
 
-	store := &Store{writeDB: writeDB, readDB: readDB}
+	store := &Store{path: dbPath, writeDB: writeDB, readDB: readDB}
 	store.folders = &FolderRepo{read: readDB, write: writeDB}
 	store.feeds = &FeedRepo{read: readDB, write: writeDB}
 	store.feedItems = &FeedItemRepo{read: readDB, write: writeDB}
@@ -126,6 +128,34 @@ func sqliteDSN(dbPath string, txLockImmediate bool) string {
 
 func (s *Store) Close() error {
 	return errors.Join(s.readDB.Close(), s.writeDB.Close())
+}
+
+// ExportTo writes a consistent snapshot of the whole database file to w.
+func (s *Store) ExportTo(ctx context.Context, w io.Writer) error {
+	dir, err := os.MkdirTemp(filepath.Dir(s.path), ".export-")
+	if err != nil {
+		return fmt.Errorf("create export directory: %w", err)
+	}
+
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	snapshot := filepath.Join(dir, "reader.db")
+	if _, err := s.readDB.ExecContext(ctx, `VACUUM INTO ?`, snapshot); err != nil {
+		return fmt.Errorf("snapshot database: %w", err)
+	}
+
+	file, err := os.Open(snapshot) // #nosec G304 -- path is built from our own temp directory
+	if err != nil {
+		return fmt.Errorf("open snapshot: %w", err)
+	}
+
+	defer func() { _ = file.Close() }()
+
+	if _, err := io.Copy(w, file); err != nil {
+		return fmt.Errorf("write snapshot: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Store) WriteDB() *sql.DB {

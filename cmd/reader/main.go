@@ -250,6 +250,7 @@ func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (
 		Location:         cfg.Location,
 		Now:              time.Now,
 		HealthCheck:      func(ctx context.Context) error { return store.ReadDB().PingContext(ctx) },
+		ExportDatabase:   store.ExportTo,
 		StaticFS:         staticFS,
 		Folders:          store.Folders(),
 		Feeds:            store.Feeds(),

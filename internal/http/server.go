@@ -54,6 +54,7 @@ type Config struct {
 	Now                    func() time.Time
 	ForegroundFetchTimeout time.Duration
 	HealthCheck            func(ctx context.Context) error
+	ExportDatabase         func(ctx context.Context, w io.Writer) error
 	StaticFS               fs.FS
 
 	Folders     domain.FolderRepository
@@ -232,6 +233,7 @@ func (s *server) registerFeedRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/opml", s.handleOPMLExport)
 	mux.HandleFunc("POST /api/opml", s.handleOPMLImport)
+	mux.HandleFunc("GET /api/export/sqlite", s.handleDatabaseExport)
 }
 
 func (s *server) registerFolderAndSettingRoutes(mux *http.ServeMux) {
