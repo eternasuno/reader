@@ -56,18 +56,23 @@ func (s *server) handleSavedPageList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pageResponse[savedPageJSON]{Items: mapSlice(result.Items, toSavedPageJSON), Cursor: result.Cursor})
+	writeJSON(w, http.StatusOK, pageResponse[savedPageJSON]{
+		Items:    mapSlice(result.Items, toSavedPageJSON),
+		Cursor:   result.Cursor,
+		Boundary: params.Boundary,
+	})
 }
 
 func (s *server) handleSavedPageUnreadCount(w http.ResponseWriter, r *http.Request) {
-	count, err := s.cfg.SavedPages.UnreadCount(r.Context())
+	boundary := domain.NewID()
+	count, err := s.cfg.SavedPages.UnreadCount(r.Context(), boundary)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, countResponse{Count: count})
+	writeJSON(w, http.StatusOK, countResponse{Count: count, Boundary: boundary})
 }
 
 func (s *server) handleSavedPageGet(w http.ResponseWriter, r *http.Request) {
@@ -226,5 +231,6 @@ func (s *server) savedPageFromFeedItem(ctx context.Context, item *domain.FeedIte
 }
 
 type countResponse struct {
-	Count int `json:"count"`
+	Count    int    `json:"count"`
+	Boundary string `json:"boundary"`
 }

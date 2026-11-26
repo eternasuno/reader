@@ -7,6 +7,8 @@ import {
   noContentResponse,
 } from './support/state-fixture';
 
+const BOUNDARY = '019363b8-0000-7000-8000-000000000000';
+
 const ctx = createStateTestContext();
 
 beforeEach(async () => {
@@ -141,6 +143,7 @@ describe('read on open before slow list snapshot', () => {
           makePage({ id: 'p2', read: false }),
         ],
         cursor: null,
+        boundary: BOUNDARY,
       })
     );
     await loadingList;
@@ -168,6 +171,7 @@ describe('slow list snapshot before read on open', () => {
           makePage({ id: 'p2', read: false }),
         ],
         cursor: null,
+        boundary: BOUNDARY,
       })
     );
     await loadingList;
@@ -199,6 +203,7 @@ describe('local toggle during detail load', () => {
       jsonResponse({
         items: [makePage({ id: 'p1', read: false })],
         cursor: null,
+        boundary: BOUNDARY,
       })
     );
     await loadingList;
@@ -217,5 +222,81 @@ describe('local toggle during detail load', () => {
     expect(ctx.fetchCount()).toBe(beforeDetail);
     expect(state.rows()[0].read).toBe(true);
     expect(state.openArticle()?.read).toBe(true);
+  });
+});
+
+describe('refreshOpenArticle on mark-all', () => {
+  it('refreshes open article in scope without resetting mode, selection, or auto-marking read', async () => {
+    const { state, solid } = ctx;
+    state.trackLibraryMount();
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'later' },
+      items: [makePage({ id: 'p1', read: false })],
+      feeds: [],
+      saved: 1,
+    });
+    ctx.queue({ item: makePage({ id: 'p1', read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, 'p1');
+    state.toggleEmbeddedMode();
+    ctx.queueEmpty();
+    const opened = state.openArticle();
+    expect(opened).not.toBeNull();
+    if (opened !== null) await state.toggleOpenArticleRead(opened, false);
+    solid.flush();
+    expect(state.openArticle()?.read).toBe(false);
+
+    const beforeMark = ctx.fetchCount();
+    ctx.queueEmpty();
+    ctx.queue({
+      items: [makePage({ id: 'p1', read: true })],
+      cursor: null,
+      boundary: BOUNDARY,
+    });
+    ctx.queue({ item: makePage({ id: 'p1', read: true }) });
+
+    await state.markScopeAllRead({ kind: 'later' });
+    solid.flush();
+
+    const urls = ctx.fetchMock.mock.calls
+      .slice(beforeMark)
+      .map(([url]) => String(url));
+    expect(urls).toContain('/api/saved-pages/p1');
+    expect(
+      ctx.fetchMock.mock.calls
+        .slice(beforeMark)
+        .some(
+          ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'
+        )
+    ).toBe(false);
+    expect(state.openArticleId()).toBe('p1');
+    expect(state.displayMode()).toBe('embedded');
+    expect(state.openArticle()?.read).toBe(true);
+  });
+});
+
+describe('refreshOpenArticle scope guard and stale drop', () => {
+  it('skips detail fetch when open article is outside marked scope and drops stale refreshes', async () => {
+    const { state, solid } = ctx;
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'later' },
+      items: [makePage({ id: 'p1', read: true })],
+    });
+    ctx.queue({ item: makePage({ id: 'p1', read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, 'p1');
+
+    const beforeOther = ctx.fetchCount();
+    await state.refreshOpenArticle((row) => row.kind === 'feed');
+    expect(ctx.fetchCount()).toBe(beforeOther);
+
+    const slowRefresh = ctx.pending();
+    const refreshing = state.refreshOpenArticle((row) => row.kind === 'later');
+    ctx.queue({ item: makePage({ id: 'p2', read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, 'p2');
+    slowRefresh.resolve(
+      jsonResponse({ item: makePage({ id: 'p1', read: true, title: 'Old' }) })
+    );
+    await refreshing;
+    solid.flush();
+    expect(state.openArticleId()).toBe('p2');
   });
 });

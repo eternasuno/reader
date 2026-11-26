@@ -1,6 +1,7 @@
 import type { JSX } from '@solidjs/web';
 import { createEffect, onSettled } from 'solid-js';
 import { sidebarCollapsed, trackLibraryMount } from '../state';
+import { mountSidebarRefresh } from '../state/sidebar-refresh';
 import type { PanelName } from './LibraryPanels';
 import { LibraryLayout } from './LibraryPanels';
 import { createLibraryController } from './libraryController';
@@ -28,6 +29,9 @@ export function LibraryPage(): JSX.Element {
 
   // `FD-SUB-2`: a first-refresh wait stops once no library page is mounted (e.g. on /settings).
   onSettled(() => trackLibraryMount());
+
+  // `LIB-COUNT-2`: the 60 s count polling runs only while the library is mounted.
+  onSettled(() => mountSidebarRefresh());
 
   // `LIB-VIEW-1`: opening the narrow-screen drawer moves focus to the drawer panel itself.
   createEffect(

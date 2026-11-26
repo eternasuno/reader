@@ -3,7 +3,6 @@
  * let a late failure undo a newer user choice. Article read state syncs through `read-sync.ts`.
  */
 
-import type { LibraryArticle } from './library-store';
 import { onSessionCleared } from './session';
 
 let mutationEpoch = 0;
@@ -11,7 +10,7 @@ let mutationEpoch = 0;
 export interface DroppedFeedRows {
   scopeGeneration: number;
   folderId: string | null;
-  rows: ReadonlyArray<LibraryArticle>;
+  ids: ReadonlyArray<string>;
   orderIds: ReadonlyArray<string>;
 }
 
@@ -61,7 +60,7 @@ class FeedMoveTracker {
 
   recordDrop(feedId: string, drop: DroppedFeedRows): void {
     const entry = this.entries.get(feedId);
-    if (entry === undefined || drop.rows.length === 0) return;
+    if (entry === undefined || drop.ids.length === 0) return;
 
     const current = entry.dropped;
     if (

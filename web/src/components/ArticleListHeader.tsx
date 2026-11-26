@@ -3,6 +3,7 @@ import { createSignal, flush, Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
 import {
+  isMarkingScope,
   type LibraryScope,
   markLoadedRead,
   sidebarCollapsed,
@@ -18,6 +19,7 @@ import {
 import { FeedFailureMenu } from './FeedFailureMenu';
 import { FeedMoveSubpanel } from './FeedMoveSubpanel';
 import { ScopeMenuItems } from './ScopeRow';
+import { MarkingIndicator } from './SidebarRowEnd';
 
 const COUNT_CLASSES = 'text-sm font-normal tabular-nums text-base-content/50';
 
@@ -80,6 +82,9 @@ function ArticleListHeading(props: {
           />
         )}
       </Show>
+      <Show when={isMarkingScope(props.scope)}>
+        <MarkingIndicator class="shrink-0 text-base-content/60" />
+      </Show>
     </div>
   );
 }
@@ -137,7 +142,7 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
         class="max-md:size-10"
         aria-label={t('library.markLoadedRead')}
         title={t('library.markLoadedRead')}
-        onClick={() => void markLoadedRead()}
+        onClick={markLoadedRead}
       >
         <Icon name="check-up" size={18} />
       </Button>

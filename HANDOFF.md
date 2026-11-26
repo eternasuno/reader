@@ -2,7 +2,7 @@
 
 > Temporary work handoff. Delete this file before merging the branch into `main`.
 
-Branch: `refactor/ui-and-fine-grained-state`. Status at handoff: plan revision 4 settled with the user; implementation NOT started. The committed frontend read-sync code is a prototype with known defects (see "Prototype state").
+Branch: `refactor/ui-and-fine-grained-state`. Status: plan revision 4 implemented (backend boundary, serial read queue with barrier, pessimistic mark-all, count gating + 60 s polling, specs/skills updated); three independent reviews with all findings fixed and regression-tested; browser-verified in Firefox (touch-emulating pointer); all automated checks green (67 files / 552 frontend tests); NOT committed.
 
 ## Already done on this branch (committed)
 - Solid 2.0.3 / Go dependency upgrades; upstream Solid issue noted in `.agents/skills/reader-engineering/upstream-issues.md`.
@@ -64,8 +64,15 @@ None serialize read writes with mark-all or guard count fetches against in-fligh
 - Update tests: `internal/http/feeds_test.go` (bodyless read-all, count shape), `internal/http/saved_pages_test.go`, `internal/http/paging_test.go` (cursor-only success), `web/src/api/feeds.ts`/`client.ts`/`decoders.ts`, `web/test/api-decoders.test.ts`, `web/test/api-shapes.test.ts`, `web/test/support/app-harness.ts`, state-read-sync and sidebar refresh race tests.
 - New tests: same-boundary continuation, empty page, cursor-without-boundary 400, bounded counts, coalescing, barrier ordering (unread toggle before/after mark-all, failed toggle after mark-all, GET after a later toggle settled), first-click count fetch + failure, superseded filter/order response, drain/visibility/periodic refresh, logout cleanup, VirtualList measurement offsets after prepend/remove.
 
+## Follow-up decisions and fixes (this session)
+- Touch/narrow sidebar rows behave like wide: count (or mark-all spinner) shown, swapped for `⋯` on hover/focus; `pointer-coarse` variants removed from `SidebarRowEnd.tsx`, `library.md` updated.
+- Deep-linked articles not in the store: barrier stamps check scope from the incoming record (`mergeSnapshotRead(incoming, seq)`).
+- Ambiguous write failure marks the server value unknown so queued intents still send; idle unknown entries for articles outside the store are dropped at drain.
+- Ok barrier confirms covered entries read and patches idle rows' display without touching badges (post-drain count refresh publishes totals).
+- Folder mark-all freezes membership when the POST is sent (`scopeMatcher`); barrier stamps and the reader refresh use that predicate.
+- Cleanup: shared `toLibraryArticle`/`articleKindOf`/`fetchArticle`; feed-move rollback carries ids only; `markLoadedRead` is synchronous; unused read-sync exports removed; duplicate tests merged; VirtualList offset test added.
+- Browser check: list continuation sends `boundary`; heading/sidebar mark-all send `{before}`; spinners show during the request; list reloads read and counts reach 0 afterwards.
+
 ## Next steps
-1. Optional: one more independent plan review of revision 4 (user was offered; recommendation was to skip and rely on code review).
-2. Implement per `task-model-routing`: backend first (C2–C6 + Go tests), then frontend in disjoint-ownership tasks (queue/state, mark-all + reader refresh, counts/refresh owner + polling, API decoders/tests), then spec/docs.
-3. Independent code review with F-contracts (A2, A5, B1, B2, B4, D2) as focus; fix; browser verification.
-4. Verification: `go test ./...`, `go vet ./...`, `go tool golangci-lint run ./...`, `pnpm --dir web check`, `pnpm --dir web test`, `pnpm --dir web build`, browser check.
+1. Commit, then delete this file before merging into `main`.
+2. Accepted limit: unread-counts query plan uses `feed_item_read_id` with a temp B-tree for GROUP BY.

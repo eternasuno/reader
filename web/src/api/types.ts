@@ -43,6 +43,16 @@ export interface FeedUnreadCount {
   count: number;
 }
 
+export interface UnreadCounts {
+  items: Array<FeedUnreadCount>;
+  boundary: string;
+}
+
+export interface SavedPageUnreadCount {
+  count: number;
+  boundary: string;
+}
+
 export interface FeedItem {
   id: string;
   feedId: string;
@@ -75,12 +85,14 @@ export interface FeedPreview {
 export interface Page<T> {
   items: Array<T>;
   cursor: string | null;
+  boundary: string;
 }
 
 export type ListParams = {
   limit?: number;
   unread?: boolean;
   cursor?: string | null;
+  boundary?: string;
   order?: SortOrder;
 };
 

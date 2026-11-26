@@ -25,12 +25,15 @@ func pageDirection(order domain.SortOrder) (string, string) {
 	return `<`, `DESC`
 }
 
-// appendKeysetClauses appends optional unread and cursor predicates using trusted
+// appendKeysetClauses appends optional unread, boundary, and cursor predicates using trusted
 // column identifiers, builds ORDER BY id ASC|DESC LIMIT ?, and binds parameters.
 func appendKeysetClauses(cols keysetColumns, where []string, args []any, params domain.PageParams) (string, string, []any) {
 	if params.Unread {
 		where = append(where, cols.read+` = 0`)
 	}
+
+	where = append(where, cols.id+` <= ?`)
+	args = append(args, params.Boundary)
 
 	comparison, order := pageDirection(params.Order)
 	if params.Cursor != nil {

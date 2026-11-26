@@ -44,5 +44,6 @@ Single-user schema removes `owner` columns and composite `(owner, id)` constrain
 
 - **Dates & booleans**: store timestamps as `INTEGER` epoch milliseconds; booleans as `0`/`1`.
 - **Keyset paging**: `WHERE id < ?` (`DESC`) or `WHERE id > ?` (`ASC` for `oldest`), `ORDER BY id DESC|ASC LIMIT ?` (fetching `limit + 1` rows to compute `cursor`). `published_at` is never in `ORDER BY` or indexes.
+- **Boundary snapshots**: list, unread-count, and read-all queries bind `id <= boundary` (the request's or minted `boundary`) alongside any keyset cursor predicate. `TestQueryPlansUseIndexes` (`internal/sqlite/db_test.go`) covers these queries with `EXPLAIN QUERY PLAN`; new paged or bulk queries must follow the same binding.
 - **Unbounded ID lists**: pass ID slices via `json_each(?)` rather than building dynamic `IN (?, ?, ...)` placeholders to avoid SQLite parameter limits.
 - **Atomic writes**: use `INSERT ... ON CONFLICT DO NOTHING RETURNING id` and `UPDATE ... RETURNING id` instead of check-then-write sequences.

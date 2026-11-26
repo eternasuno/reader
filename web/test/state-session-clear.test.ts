@@ -9,6 +9,8 @@ import {
   noContentResponse,
 } from './support/state-fixture';
 
+const BOUNDARY = '019363b8-0000-7000-8000-000000000000';
+
 const ctx = createStateTestContext();
 
 beforeEach(async () => {
@@ -28,11 +30,12 @@ const seedPopulatedSession = async (): Promise<void> => {
     saved: 2,
   });
   await state.refreshSidebar();
-  ctx.queue({ items: [], cursor: null });
+  ctx.queue({ items: [], cursor: null, boundary: BOUNDARY });
   await state.toggleAggregateOrder();
   ctx.queue({
     items: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
     cursor: 'c1',
+    boundary: BOUNDARY,
   });
   await state.loadScopeFirstPage({ kind: 'folder', folderId: 'd1' }, true);
 
@@ -133,7 +136,11 @@ describe('session clear: in-flight first-page load', () => {
 
     state.markUnauthenticated();
     page1.resolve(
-      jsonResponse({ items: [makePage({ id: 'p1' })], cursor: 'c1' })
+      jsonResponse({
+        items: [makePage({ id: 'p1' })],
+        cursor: 'c1',
+        boundary: BOUNDARY,
+      })
     );
     await loading;
     solid.flush();
@@ -161,14 +168,22 @@ describe('session clear: in-flight next-page load', () => {
     state.markUnauthenticated();
     expect(state.loadingMore()).toBe(false);
 
-    ctx.queue({ items: [makePage({ id: 'p2', read: true })], cursor: 'c2' });
+    ctx.queue({
+      items: [makePage({ id: 'p2', read: true })],
+      cursor: 'c2',
+      boundary: BOUNDARY,
+    });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     const freshNext = ctx.pending();
     const freshLoad = state.loadNextPage();
     expect(state.loadingMore()).toBe(true);
 
     staleNext.resolve(
-      jsonResponse({ items: [makePage({ id: 'p-old' })], cursor: 'c-old' })
+      jsonResponse({
+        items: [makePage({ id: 'p-old' })],
+        cursor: 'c-old',
+        boundary: BOUNDARY,
+      })
     );
     await staleLoad;
     solid.flush();
@@ -180,6 +195,7 @@ describe('session clear: in-flight next-page load', () => {
       jsonResponse({
         items: [makePage({ id: 'p3', read: true })],
         cursor: null,
+        boundary: BOUNDARY,
       })
     );
     await freshLoad;

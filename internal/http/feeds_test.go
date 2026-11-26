@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"reader/internal/domain"
@@ -240,10 +241,14 @@ func TestFeedItemReadStateAndCounts(t *testing.T) {
 	recorder = h.authed(http.MethodGet, "/api/feeds/unread-counts", nil)
 	requireStatus(t, recorder, http.StatusOK)
 
-	var counts listResponse[feedUnreadCountJSON]
+	var counts unreadCountsResponse
 	decodeBody(t, recorder, &counts)
 	if len(counts.Items) != 1 || counts.Items[0].FeedID != feed.ID || counts.Items[0].Count != 2 {
 		t.Fatalf("unread counts = %+v", counts.Items)
+	}
+
+	if !domain.IsValidUUIDv7(counts.Boundary) {
+		t.Fatalf("unread counts boundary = %q, want valid UUIDv7", counts.Boundary)
 	}
 
 	requireStatus(t, h.authed(http.MethodPatch, "/api/feed-items/"+first.ID, map[string]any{"read": true}), http.StatusNoContent)
@@ -259,14 +264,122 @@ func TestFeedItemReadStateAndCounts(t *testing.T) {
 	scoped := h.seedItem(feed.ID, "https://example.com/scoped", nil)
 	otherFeed := h.seedFeed("Other", "https://other.example.com/rss", nil)
 	outside := h.seedItem(otherFeed.ID, "https://example.com/outside", nil)
-	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+feed.ID+"/read-all", nil), http.StatusNoContent)
+	requireAPIError(t, h.authed(http.MethodPost, "/api/feeds/"+feed.ID+"/read-all", nil), http.StatusBadRequest, "RequestFailed")
+	if h.feedItemByID(scoped.ID).Read {
+		t.Fatal("bodyless feed read-all changed read state")
+	}
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+feed.ID+"/read-all", map[string]any{"before": domain.NewID()}), http.StatusNoContent)
 	if !h.feedItemByID(scoped.ID).Read || h.feedItemByID(outside.ID).Read {
 		t.Fatal("feed read-all did not preserve scope")
 	}
 
 	third := h.seedItem(feed.ID, "https://example.com/3", nil)
-	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/read-all", nil), http.StatusNoContent)
+	requireAPIError(t, h.authed(http.MethodPost, "/api/feed-items/read-all", nil), http.StatusBadRequest, "RequestFailed")
+	if h.feedItemByID(third.ID).Read {
+		t.Fatal("bodyless feed-items read-all changed read state")
+	}
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/read-all", map[string]any{"before": domain.NewID()}), http.StatusNoContent)
 	if !h.feedItemByID(third.ID).Read {
 		t.Fatal("read-all did not mark items read")
+	}
+}
+
+type unreadCountsSpyFeedItemRepo struct {
+	domain.FeedItemRepository
+	gotBoundary string
+	onUnread    func(boundary string)
+}
+
+func (r *unreadCountsSpyFeedItemRepo) UnreadCounts(ctx context.Context, boundary string) ([]domain.FeedUnreadCount, error) {
+	r.gotBoundary = boundary
+	if r.onUnread != nil {
+		r.onUnread(boundary)
+	}
+
+	return r.FeedItemRepository.UnreadCounts(ctx, boundary)
+}
+
+func TestFeedUnreadCountsBoundWithReturnedBoundary(t *testing.T) {
+	t.Parallel()
+
+	var spy *unreadCountsSpyFeedItemRepo
+	h := newHarnessWith(t, func(cfg *Config) {
+		spy = &unreadCountsSpyFeedItemRepo{FeedItemRepository: cfg.FeedItems}
+		cfg.FeedItems = spy
+	})
+
+	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
+	h.seedItem(feed.ID, "https://example.com/before", nil)
+	spy.onUnread = func(boundary string) {
+		post := h.seedItem(feed.ID, "https://example.com/after", nil)
+		if post.ID <= boundary {
+			t.Fatalf("post-boundary item %q <= boundary %q", post.ID, boundary)
+		}
+	}
+
+	recorder := h.authed(http.MethodGet, "/api/feeds/unread-counts", nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	var counts unreadCountsResponse
+	decodeBody(t, recorder, &counts)
+	if !domain.IsValidUUIDv7(counts.Boundary) || counts.Boundary != spy.gotBoundary {
+		t.Fatalf("counts boundary = %q, repo saw %q", counts.Boundary, spy.gotBoundary)
+	}
+
+	if len(counts.Items) != 1 || counts.Items[0].FeedID != feed.ID || counts.Items[0].Count != 1 {
+		t.Fatalf("bounded unread counts = %+v, want count 1", counts.Items)
+	}
+}
+
+func TestFeedReadAllValidationAndBoundary(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
+	beforeItem := h.seedItem(feed.ID, "https://example.com/before", nil)
+	boundary := domain.NewID()
+	afterItem := h.seedItem(feed.ID, "https://example.com/after", nil)
+
+	invalidID := domain.NewID()
+	badBodies := []string{
+		"",
+		`{}`,
+		`null`,
+		`{"before":null}`,
+		`{"before":""}`,
+		`{"before":"not-a-uuid"}`,
+		`{"before":"00000000-0000-4000-8000-000000000000"}`,
+		`{"before":"` + strings.ToUpper(invalidID) + `"}`,
+		`{"before":"` + invalidID + `","extra":true}`,
+		`{"before":"` + invalidID + `"} trailing`,
+	}
+
+	for _, endpoint := range []string{"/api/feeds/" + feed.ID + "/read-all", "/api/feed-items/read-all"} {
+		for _, body := range badBodies {
+			requireAPIError(t, h.do(h.rawRequest(http.MethodPost, endpoint, body)), http.StatusBadRequest, "RequestFailed")
+		}
+	}
+
+	if h.feedItemByID(beforeItem.ID).Read || h.feedItemByID(afterItem.ID).Read {
+		t.Fatal("invalid read-all payloads changed read state")
+	}
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+feed.ID+"/read-all", map[string]any{"before": boundary}), http.StatusNoContent)
+	if !h.feedItemByID(beforeItem.ID).Read || h.feedItemByID(afterItem.ID).Read {
+		t.Fatalf("bounded feed read-all read states = (%v, %v), want (true, false)", h.feedItemByID(beforeItem.ID).Read, h.feedItemByID(afterItem.ID).Read)
+	}
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+domain.NewID()+"/read-all", map[string]any{"before": domain.NewID()}), http.StatusNoContent)
+
+	otherFeed := h.seedFeed("Other", "https://other.example.com/rss", nil)
+	otherBefore := h.seedItem(otherFeed.ID, "https://other.example.com/before", nil)
+	allBoundary := domain.NewID()
+	otherAfter := h.seedItem(otherFeed.ID, "https://other.example.com/after", nil)
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/read-all", map[string]any{"before": allBoundary}), http.StatusNoContent)
+	if !h.feedItemByID(afterItem.ID).Read || !h.feedItemByID(otherBefore.ID).Read || h.feedItemByID(otherAfter.ID).Read {
+		t.Fatalf("bounded feed-items read-all did not respect boundary")
 	}
 }

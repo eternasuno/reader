@@ -362,7 +362,7 @@ func (s *server) extractWebpageWithSlot(ctx context.Context, pageURL domain.Norm
 type readStateRepository interface {
 	SetRead(ctx context.Context, id string, read bool) error
 	MarkIDsRead(ctx context.Context, ids []string) error
-	MarkAllRead(ctx context.Context) error
+	MarkAllRead(ctx context.Context, boundary string) error
 }
 
 func handleSetRead(repo readStateRepository) http.HandlerFunc {
@@ -415,9 +415,33 @@ func handleMarkIDsRead(repo readStateRepository) http.HandlerFunc {
 	}
 }
 
+type readAllRequest struct {
+	Before string `json:"before"`
+}
+
+func decodeReadAllBefore(w http.ResponseWriter, r *http.Request) (string, error) {
+	var req readAllRequest
+	if err := decodeStrictJSON(w, r, &req); err != nil {
+		return "", err
+	}
+
+	if !domain.IsValidUUIDv7(req.Before) {
+		return "", domain.NewError(domain.ErrRequestFailed, nil)
+	}
+
+	return req.Before, nil
+}
+
 func handleMarkAllRead(repo readStateRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := repo.MarkAllRead(r.Context()); err != nil {
+		before, err := decodeReadAllBefore(w, r)
+		if err != nil {
+			writeError(w, err)
+
+			return
+		}
+
+		if err := repo.MarkAllRead(r.Context(), before); err != nil {
 			writeError(w, err)
 
 			return
@@ -442,8 +466,9 @@ type itemResponse[T any] struct {
 }
 
 type pageResponse[T any] struct {
-	Items  []T     `json:"items"`
-	Cursor *string `json:"cursor"`
+	Items    []T     `json:"items"`
+	Cursor   *string `json:"cursor"`
+	Boundary string  `json:"boundary"`
 }
 
 type pageQuery struct {
@@ -453,6 +478,7 @@ type pageQuery struct {
 	hasOrder bool
 	order    domain.SortOrder
 	cursor   *string
+	boundary *string
 }
 
 func parsePageQuery(r *http.Request) (pageQuery, error) {
@@ -461,20 +487,16 @@ func parsePageQuery(r *http.Request) (pageQuery, error) {
 		return pageQuery{}, domain.NewError(domain.ErrRequestFailed, err)
 	}
 
-	if hasMultipleQueryValues(values, "limit", "unread", "order", "cursor") {
+	if hasMultipleQueryValues(values, "limit", "unread", "order", "cursor", "boundary") {
 		return pageQuery{}, domain.NewError(domain.ErrRequestFailed, nil)
 	}
 
-	parsed := pageQuery{}
-
-	if values.Has("limit") {
-		limit, err := strconv.Atoi(strings.TrimSpace(values.Get("limit")))
-		if err != nil {
-			return pageQuery{}, domain.NewError(domain.ErrRequestFailed, err)
-		}
-
-		parsed.limit = limit
-		parsed.hasLimit = true
+	parsed := pageQuery{
+		cursor:   optionalQueryValue(values, "cursor"),
+		boundary: optionalQueryValue(values, "boundary"),
+	}
+	if err := parsePageLimit(values, &parsed); err != nil {
+		return pageQuery{}, err
 	}
 
 	unread, err := parseUnreadFlag(values)
@@ -483,18 +505,38 @@ func parsePageQuery(r *http.Request) (pageQuery, error) {
 	}
 
 	parsed.unread = unread
-
 	if queryOrder := strings.TrimSpace(values.Get("order")); queryOrder != "" {
 		parsed.hasOrder = true
 		parsed.order = domain.SortOrder(strings.ToLower(queryOrder))
 	}
 
-	if values.Has("cursor") {
-		cursor := values.Get("cursor")
-		parsed.cursor = &cursor
+	return parsed, nil
+}
+
+func parsePageLimit(values url.Values, parsed *pageQuery) error {
+	if !values.Has("limit") {
+		return nil
 	}
 
-	return parsed, nil
+	limit, err := strconv.Atoi(strings.TrimSpace(values.Get("limit")))
+	if err != nil {
+		return domain.NewError(domain.ErrRequestFailed, err)
+	}
+
+	parsed.limit = limit
+	parsed.hasLimit = true
+
+	return nil
+}
+
+func optionalQueryValue(values url.Values, key string) *string {
+	if !values.Has(key) {
+		return nil
+	}
+
+	value := values.Get(key)
+
+	return &value
 }
 
 func hasMultipleQueryValues(values url.Values, keys ...string) bool {
@@ -559,7 +601,7 @@ func (q pageQuery) orderOrDefault() domain.SortOrder {
 }
 
 func (q pageQuery) params(order domain.SortOrder) (domain.PageParams, error) {
-	return domain.ValidatePageParams(q.limit, q.hasLimit, q.unread, order, q.cursor)
+	return domain.ValidatePageParams(q.limit, q.hasLimit, q.unread, order, q.cursor, q.boundary)
 }
 
 func isAPIPath(requestPath string) bool {
@@ -660,10 +702,22 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	return decodeJSONWithLimit(w, r, maxRequestBodyBytes, dst)
 }
 
+func decodeStrictJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	return decodeJSONReader(w, r, maxRequestBodyBytes, dst, true)
+}
+
 func decodeJSONWithLimit(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) error {
+	return decodeJSONReader(w, r, maxBytes, dst, false)
+}
+
+func decodeJSONReader(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any, disallowUnknown bool) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
 	dec := json.NewDecoder(r.Body)
+	if disallowUnknown {
+		dec.DisallowUnknownFields()
+	}
+
 	if err := dec.Decode(dst); err != nil {
 		return domain.NewError(domain.ErrRequestFailed, err)
 	}

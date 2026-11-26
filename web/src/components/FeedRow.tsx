@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import {
   feedUnreadCount,
   iconCandidates,
+  isMarkingScope,
   isSameScope,
   siteIconUrl,
 } from '../state';
@@ -61,7 +62,10 @@ export function FeedRow(props: {
           }
         />
       </Show>
-      <SidebarRowEnd count={feedUnreadCount(props.feed.id)}>
+      <SidebarRowEnd
+        count={feedUnreadCount(props.feed.id)}
+        marking={isMarkingScope({ kind: 'feed', feedId: props.feed.id })}
+      >
         <FeedRowMenu feed={props.feed} state={props.state} />
       </SidebarRowEnd>
     </div>

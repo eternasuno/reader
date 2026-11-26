@@ -15,6 +15,7 @@ import { feedMoveTracker, LatestTokenMap } from './library-mutations';
 import {
   activeScope,
   dropFeedRows,
+  releaseFeedRows,
   requestState,
   restoreFeedRows,
 } from './library-store';
@@ -22,6 +23,26 @@ import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
 
 const readerModeTokens = new LatestTokenMap();
+
+/** Feed moves in flight; a feed's dropped rows are released when its last move settles. */
+const movesInFlight = new Map<string, number>();
+let moveEpoch = 0;
+
+const beginFeedMove = (feedId: string): number => {
+  movesInFlight.set(feedId, (movesInFlight.get(feedId) ?? 0) + 1);
+  return moveEpoch;
+};
+
+const endFeedMove = (feedId: string, epoch: number): void => {
+  if (epoch !== moveEpoch) return;
+  const remaining = (movesInFlight.get(feedId) ?? 0) - 1;
+  if (remaining > 0) {
+    movesInFlight.set(feedId, remaining);
+    return;
+  }
+  movesInFlight.delete(feedId);
+  releaseFeedRows(feedId);
+};
 
 const currentFolderOf = (feed: Feed): string | null => {
   const stored = sidebar.feeds().find((entry) => entry.id === feed.id);
@@ -44,7 +65,7 @@ const maybeRestoreDropped = (
     targetFolderId === dropped.folderId &&
     requestState.generation === dropped.scopeGeneration
   ) {
-    restoreFeedRows(dropped.rows, dropped.orderIds);
+    restoreFeedRows(dropped.ids, dropped.orderIds);
   }
 };
 
@@ -61,11 +82,7 @@ const reconcileFeedMove = (
   flush();
 };
 
-/**
- * `FD-MOVE-1`: moves a feed without reloading the list; leaving the open folder scope drops that
- * feed's rows.
- */
-export const moveFeedToFolder = async (
+const runFeedMove = async (
   feed: Feed,
   folderId: string | null
 ): Promise<boolean> => {
@@ -77,7 +94,7 @@ export const moveFeedToFolder = async (
     feedMoveTracker.recordDrop(feed.id, {
       scopeGeneration: requestState.generation,
       folderId: scope.folderId,
-      rows: dropped.rows,
+      ids: dropped.ids,
       orderIds: dropped.orderIds,
     });
   }
@@ -107,6 +124,22 @@ export const moveFeedToFolder = async (
   }
 };
 
+/**
+ * `FD-MOVE-1`: moves a feed without reloading the list; leaving the open folder scope drops that
+ * feed's rows. Those rows stay pinned until the feed's last move settles.
+ */
+export const moveFeedToFolder = async (
+  feed: Feed,
+  folderId: string | null
+): Promise<boolean> => {
+  const epoch = beginFeedMove(feed.id);
+  try {
+    return await runFeedMove(feed, folderId);
+  } finally {
+    endFeedMove(feed.id, epoch);
+  }
+};
+
 /** `FD-PREF-1`: stores the feed's starting reader mode (`RD-MODE-1`). */
 export const changeFeedReaderMode = async (
   feed: Feed,
@@ -131,4 +164,6 @@ export const changeFeedReaderMode = async (
 
 onSessionCleared(() => {
   readerModeTokens.reset();
+  movesInFlight.clear();
+  moveEpoch += 1;
 });

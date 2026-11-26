@@ -6,6 +6,7 @@ import {
   collapsedFolders,
   folderFeeds,
   folderUnreadCount,
+  isMarkingScope,
   isSameScope,
   toggleFolderCollapse,
 } from '../state';
@@ -48,7 +49,13 @@ export function FolderRow(props: {
           active={active()}
           state={props.state}
         />
-        <SidebarRowEnd count={folderUnreadCount(props.folder.id)}>
+        <SidebarRowEnd
+          count={folderUnreadCount(props.folder.id)}
+          marking={isMarkingScope({
+            kind: 'folder',
+            folderId: props.folder.id,
+          })}
+        >
           <FolderMenu folder={props.folder} state={props.state} />
         </SidebarRowEnd>
       </div>

@@ -48,6 +48,7 @@ export const zhDict = {
     unreadOnly: '只显示未读',
     readToggle: '已读',
     markAllRead: '全部标记为已读',
+    markingAllRead: '正在全部标记为已读…',
     moreActions: '更多操作',
     collapseSidebar: '收起侧边栏',
     expandSidebar: '展开侧边栏',

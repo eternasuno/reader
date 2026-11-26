@@ -2,8 +2,8 @@
  * Single-article read toggle (`LIB-READ-1`, `LIB-FILTER-1`) on top of the per-article read sync.
  */
 
-import type { ArticleReadFallback, LibraryArticle } from './library-store';
-import { activeScope, articleById } from './library-store';
+import type { ArticleReadFallback } from './library-store';
+import { activeScope, articleById, articleKindOf } from './library-store';
 import type { ReadTarget } from './read-sync';
 import { requestRead, targetOf } from './read-sync';
 
@@ -21,9 +21,12 @@ const fallbackTarget = (
     };
   }
 
-  const kind: LibraryArticle['kind'] =
-    activeScope().kind === 'later' ? 'later' : 'feed';
-  return { id: articleId, kind, feedId: null, read: !nextRead };
+  return {
+    id: articleId,
+    kind: articleKindOf(activeScope()),
+    feedId: null,
+    read: !nextRead,
+  };
 };
 
 /**

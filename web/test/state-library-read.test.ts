@@ -1,10 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createStateTestContext,
+  jsonResponse,
   makeFeed,
   makeItem,
   makePage,
 } from './support/state-fixture';
+
+const B = '019363b8-0000-7000-8000-000000000001';
 
 const ctx = createStateTestContext();
 
@@ -15,7 +18,7 @@ beforeEach(async () => {
 describe('optimistic read toggle', () => {
   it('marks a row read optimistically and keeps it under the unread filter', async () => {
     const { state, solid } = ctx;
-    ctx.queue({ items: [makePage({ id: 'p1' })], cursor: null });
+    ctx.queue({ items: [makePage({ id: 'p1' })], cursor: null, boundary: B });
     await state.loadScopeFirstPage({ kind: 'later' }, true);
     ctx.queueSidebar({ saved: 1 });
     await state.refreshSidebar();
@@ -72,15 +75,21 @@ describe('read no-op', () => {
 describe('read toggle rollback', () => {
   it('restores the confirmed state and counts of a failed read toggle', async () => {
     const { state, solid, ui, i18n } = ctx;
-    ctx.queue({ items: [makePage({ id: 'p1' })], cursor: null });
+    ctx.queue({ items: [makePage({ id: 'p1' })], cursor: null, boundary: B });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     ctx.queueSidebar({ saved: 1 });
     await state.refreshSidebar();
     solid.flush();
 
-    ctx.queue({ error: 'SavedPageRepositoryError' }, 500);
+    const req = ctx.pending();
     const before = ctx.fetchCount();
-    await expect(state.toggleArticleRead('p1', true)).resolves.toBe(false);
+    const toggling = state.toggleArticleRead('p1', true);
+    solid.flush();
+    expect(state.rows()[0].read).toBe(true);
+    expect(state.savedUnreadCount()).toBe(0);
+
+    req.resolve(jsonResponse({ error: 'SavedPageRepositoryError' }, 500));
+    await expect(toggling).resolves.toBe(false);
     solid.flush();
 
     expect(ctx.requestUrl(before)).toBe('/api/saved-pages/p1');
@@ -110,8 +119,9 @@ describe('mark loaded read', () => {
 
     ctx.queueEmpty();
     const before = ctx.fetchCount();
-    await state.markLoadedRead();
+    state.markLoadedRead();
     solid.flush();
+    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(before + 1));
 
     expect(ctx.requestUrl(before)).toBe('/api/feed-items/read');
     expect(ctx.requestBody(before)).toEqual({ ids: ['i1', 'i2'] });
@@ -119,7 +129,7 @@ describe('mark loaded read', () => {
     expect(state.feedUnreadCount('f1')).toBe(0);
 
     const afterBatch = ctx.fetchCount();
-    await state.markLoadedRead();
+    state.markLoadedRead();
     expect(ctx.fetchCount()).toBe(afterBatch);
   });
 });
@@ -134,7 +144,8 @@ describe('mark loaded read rollback', () => {
     });
 
     ctx.queue({ error: 'SavedPageRepositoryError' }, 500);
-    await state.markLoadedRead();
+    state.markLoadedRead();
+    await vi.waitFor(() => expect(ui.currentToast()).not.toBeNull());
     solid.flush();
 
     expect(state.rows()[0].read).toBe(false);

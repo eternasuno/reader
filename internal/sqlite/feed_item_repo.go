@@ -10,8 +10,11 @@ import (
 )
 
 const (
-	feedItemColumns   = `id, feed_id, url, title, description, content, extracted_content, published_at, read`
-	unreadCountsQuery = `SELECT feed_id, COUNT(*) FROM feed_item WHERE read = 0 GROUP BY feed_id`
+	feedItemColumns       = `id, feed_id, url, title, description, content, extracted_content, published_at, read`
+	unreadCountsQuery     = `SELECT feed_id, COUNT(*) FROM feed_item WHERE read = 0 AND id <= ? GROUP BY feed_id`
+	markAllItemsReadQuery = `UPDATE feed_item SET read = 1 WHERE read = 0 AND id <= ?`
+	markFeedReadQuery     = `UPDATE feed_item SET read = 1 WHERE feed_id = ? AND read = 0 AND id <= ?`
+	markFolderReadQuery   = `UPDATE feed_item SET read = 1 WHERE read = 0 AND feed_item.id <= ? AND feed_id IN (SELECT id FROM feed WHERE folder_id = ?)`
 )
 
 type FeedItemRepo struct {
@@ -75,8 +78,8 @@ func (r *FeedItemRepo) GetByID(ctx context.Context, id string) (*domain.FeedItem
 	return &item, nil
 }
 
-func (r *FeedItemRepo) UnreadCounts(ctx context.Context) ([]domain.FeedUnreadCount, error) {
-	rows, err := r.read.QueryContext(ctx, unreadCountsQuery)
+func (r *FeedItemRepo) UnreadCounts(ctx context.Context, boundary string) ([]domain.FeedUnreadCount, error) {
+	rows, err := r.read.QueryContext(ctx, unreadCountsQuery, boundary)
 	if err != nil {
 		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
@@ -117,24 +120,24 @@ func (r *FeedItemRepo) MarkIDsRead(ctx context.Context, ids []string) error {
 	return nil
 }
 
-func (r *FeedItemRepo) MarkAllRead(ctx context.Context) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE feed_item SET read = 1 WHERE read = 0`); err != nil {
+func (r *FeedItemRepo) MarkAllRead(ctx context.Context, boundary string) error {
+	if _, err := r.write.ExecContext(ctx, markAllItemsReadQuery, boundary); err != nil {
 		return domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
 
 	return nil
 }
 
-func (r *FeedItemRepo) MarkFeedRead(ctx context.Context, feedID string) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE feed_item SET read = 1 WHERE feed_id = ? AND read = 0`, feedID); err != nil {
+func (r *FeedItemRepo) MarkFeedRead(ctx context.Context, feedID string, boundary string) error {
+	if _, err := r.write.ExecContext(ctx, markFeedReadQuery, feedID, boundary); err != nil {
 		return domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
 
 	return nil
 }
 
-func (r *FeedItemRepo) MarkFolderRead(ctx context.Context, folderID string) error {
-	_, err := r.write.ExecContext(ctx, `UPDATE feed_item SET read = 1 WHERE read = 0 AND feed_id IN (SELECT id FROM feed WHERE folder_id = ?)`, folderID)
+func (r *FeedItemRepo) MarkFolderRead(ctx context.Context, folderID string, boundary string) error {
+	_, err := r.write.ExecContext(ctx, markFolderReadQuery, boundary, folderID)
 	if err != nil {
 		return domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}

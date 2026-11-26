@@ -1,3 +1,4 @@
+import { flush } from 'solid-js';
 import { describe, expect, it, vi } from 'vitest';
 import type { Feed } from '../src/api';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
@@ -5,6 +6,7 @@ import { FeedMoveSubpanel } from '../src/components/FeedMoveSubpanel';
 import { ReaderMoreMenu } from '../src/components/ReaderMoreMenu';
 import * as state from '../src/state';
 import {
+  ariaBtn,
   clickAria,
   clickButton,
   mount,
@@ -62,6 +64,61 @@ describe('ArticleListHeader', () => {
     expect(c1.textContent).not.toContain('视图选项');
     expect(c1.textContent).not.toContain('摘要行数');
     expect(c1.textContent).not.toContain('刷新');
+  });
+});
+
+const stubPendingMarkAll = () => {
+  const boundary = '019363b8-0000-7000-8000-000000000001';
+  const pendingReads: Array<() => void> = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: unknown) => {
+      const url = String(input);
+      if (url === '/api/feed-items/read-all') {
+        return new Promise<Response>((resolve) => {
+          pendingReads.push(() => resolve(new Response(null, { status: 204 })));
+        });
+      }
+      if (url === '/api/feeds/unread-counts')
+        return Promise.resolve(Response.json({ items: [], boundary }));
+      if (url === '/api/saved-pages/unread-count')
+        return Promise.resolve(Response.json({ count: 0, boundary }));
+      return Promise.resolve(
+        Response.json({ items: [], cursor: null, boundary })
+      );
+    })
+  );
+  return pendingReads;
+};
+
+describe('ArticleListHeader mark-all indicator', () => {
+  it('shows heading mark-all indicator while pending, keeps controls enabled, and supports repeat clicks', async () => {
+    const pendingReads = stubPendingMarkAll();
+    const c = mountHeader(false);
+    clickAria(c, '更多操作');
+    clickButton(c, '全部标记为已读');
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(1));
+    flush();
+
+    const busySel = '[role="status"][aria-busy="true"].loading-spinner';
+    expect(c.querySelector(busySel)).not.toBeNull();
+    expect(ariaBtn(c, '将已加载文章标为已读')?.disabled).toBe(false);
+
+    clickAria(c, '更多操作');
+    const markBtn = Array.from(c.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('全部标记为已读')
+    );
+    expect(markBtn?.disabled).toBe(false);
+    markBtn?.click();
+    flush();
+
+    pendingReads[0]?.();
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(2));
+    flush();
+    expect(c.querySelector(busySel)).not.toBeNull();
+
+    pendingReads[1]?.();
+    await vi.waitFor(() => expect(c.querySelector(busySel)).toBeNull());
   });
 });
 

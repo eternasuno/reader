@@ -1,274 +1,312 @@
 /**
- * Per-article serialized read-state sync (`LIB-READ-1`, `LIB-READ-2`). The store always shows the
- * user's latest intent; each article has at most one request in flight, and rapid toggles coalesce
- * into the next request. A failure restores the last server-confirmed value only while the intent
- * is still the failed value. Solid optimistic APIs are not used (see `upstream-issues.md`).
+ * Serial ordered read-state mutation queue (`LIB-READ-1`, `LIB-READ-2`). One module-level queue
+ * processes segments of coalesced per-article read intents separated by opaque barriers (mark-all).
+ * Solid optimistic APIs are not used (see `upstream-issues.md`).
  */
 
 import { flush } from 'solid-js';
-import { feedItemsApi, savedPagesApi } from '../api';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
 import type { LibraryArticle } from './library-store';
-import { patchArticle } from './library-store';
+import { articleById } from './library-store';
+import { settleFailure, settleSuccess } from './read-sync-settle';
+import type {
+  BarrierItem,
+  BarrierOutcome,
+  EnqueueBarrierResult,
+  IntentItem,
+  ReadBarrier,
+  ReadTarget,
+} from './read-sync-state';
+import {
+  activeSnapshots,
+  ambiguousIds,
+  applyBarrierSettlement,
+  barrierStamps,
+  drainListeners,
+  ensureEntry,
+  entries,
+  isEntryIdle,
+  queue,
+  queueState,
+  resolveWaiters,
+  setDisplay,
+} from './read-sync-state';
+import {
+  isAmbiguousError,
+  refetchArticleSnapshot,
+  sendMarkIdsRead,
+  sendSetRead,
+} from './read-sync-transport';
 import { onSessionCleared } from './session';
-import * as sidebar from './sidebar';
 
-/** Read-state context of one article as currently shown. */
-export interface ReadTarget {
-  id: string;
-  kind: LibraryArticle['kind'];
-  feedId: string | null;
-  read: boolean;
-}
+export type {
+  BarrierOutcome,
+  BarrierTarget,
+  EnqueueBarrierResult,
+  ReadBarrier,
+  ReadTarget,
+  RecordSnapshotToken,
+} from './read-sync-state';
+export {
+  beginRecordSnapshot,
+  mergeSnapshotRead,
+  targetOf,
+} from './read-sync-state';
 
-interface ReadEntry {
-  kind: LibraryArticle['kind'];
-  feedId: string | null;
-  /** Last server-confirmed value. */
-  confirmed: boolean;
-  /** The user's latest intent; what the store shows. */
-  desired: boolean;
-  inflight: boolean;
-  /** Latest snapshot request dispatched before the last settle; the entry is held until it lands. */
-  holdUntil: number;
-  /** Resolved with the confirmed value once the queue is idle, or `null` after a session clear. */
-  waiters: Array<(confirmed: boolean | null) => void>;
-}
-
-/** Outcome of a batch request, or `null` when the session was cleared meanwhile. */
-export type ReadBatchResult =
-  | { ok: true }
-  | { ok: false; error: unknown; reverted: number };
-
-const entries = new Map<string, ReadEntry>();
-let epoch = 0;
-let snapshotSeq = 0;
-const activeSnapshots = new Set<number>();
-
-const isHeld = (entry: ReadEntry): boolean => {
-  for (const id of activeSnapshots) {
-    if (id <= entry.holdUntil) return true;
-  }
-  return false;
-};
-
-const isIdle = (entry: ReadEntry): boolean =>
-  !entry.inflight && entry.desired === entry.confirmed;
+const MARK_IDS_CHUNK_SIZE = 200;
 
 /**
- * Marks a server snapshot request (list page or article detail) in flight. Read state settled
- * while it is pending keeps overriding its stale value; call the returned release after the
- * snapshot has been merged into the store.
+ * Pops the leading intent segment and keeps the last intent per article. An intent is dropped only
+ * when its article's confirmed value is known and already equal to it.
  */
-export const beginRecordSnapshot = (): (() => void) => {
-  snapshotSeq += 1;
-  const id = snapshotSeq;
-  activeSnapshots.add(id);
-  return () => {
-    activeSnapshots.delete(id);
-    for (const [articleId, entry] of entries) {
-      if (isIdle(entry) && !isHeld(entry)) entries.delete(articleId);
-    }
-  };
-};
-
-export const targetOf = (article: LibraryArticle): ReadTarget => ({
-  id: article.id,
-  kind: article.kind,
-  feedId: article.kind === 'feed' ? article.feedId : null,
-  read: article.read,
-});
-
-/** The user's pending read intent for an article, or `undefined` when nothing is pending. */
-export const pendingRead = (articleId: string): boolean | undefined =>
-  entries.get(articleId)?.desired;
-
-const ensureEntry = (target: ReadTarget): ReadEntry => {
-  const existing = entries.get(target.id);
-  if (existing !== undefined) return existing;
-
-  const entry: ReadEntry = {
-    kind: target.kind,
-    feedId: target.feedId,
-    confirmed: target.read,
-    desired: target.read,
-    inflight: false,
-    holdUntil: 0,
-    waiters: [],
-  };
-  entries.set(target.id, entry);
-  return entry;
-};
-
-const adjustUnread = (entry: ReadEntry, read: boolean): void => {
-  const delta = read ? -1 : 1;
-  if (entry.kind === 'later') {
-    sidebar.adjustSavedUnread(delta);
-  } else if (entry.feedId !== null) {
-    sidebar.adjustFeedUnread(entry.feedId, delta);
+const popCoalescedSegment = (): Map<string, boolean> => {
+  const coalesced = new Map<string, boolean>();
+  while (queue[0]?.type === 'intent') {
+    const item = queue.shift() as IntentItem;
+    const entry = entries.get(item.id);
+    if (entry !== undefined) entry.queuedCount -= 1;
+    coalesced.set(item.id, item.read);
   }
-};
-
-/** Shows `read` in the store and, when asked, moves the unread counts by the displayed delta. */
-const show = (id: string, read: boolean, adjustCounts: boolean): void => {
-  const entry = entries.get(id);
-  if (entry === undefined || entry.desired === read) return;
-  entry.desired = read;
-  patchArticle(id, { read });
-  if (adjustCounts) adjustUnread(entry, read);
-};
-
-const sendRead = async (
-  kind: LibraryArticle['kind'],
-  id: string,
-  read: boolean
-): Promise<void> => {
-  if (kind === 'later') {
-    await savedPagesApi.setRead(id, read);
-  } else {
-    await feedItemsApi.setRead(id, read);
+  for (const [id, read] of [...coalesced]) {
+    const entry = entries.get(id);
+    if (
+      entry !== undefined &&
+      !(entry.confirmedKnown && entry.confirmed === read)
+    )
+      continue;
+    coalesced.delete(id);
+    if (entry !== undefined) resolveWaiters(id, entry);
   }
+  return coalesced;
 };
 
-/** Records a settled request; returns whether the shown value was restored to `confirmed`. */
-const settle = (
-  id: string,
-  sent: boolean,
-  ok: boolean,
-  adjustCounts: boolean
-): boolean => {
-  const entry = entries.get(id);
-  if (entry === undefined) return false;
-  entry.inflight = false;
-  entry.holdUntil = snapshotSeq;
-  if (ok) {
-    entry.confirmed = sent;
-    return false;
-  }
-  if (entry.desired !== sent) return false;
-
-  show(id, entry.confirmed, adjustCounts);
-  return true;
-};
-
-const finishSingle = (
-  id: string,
-  entry: ReadEntry,
-  sent: boolean,
+const runSegmentRequest = async (
+  ids: ReadonlyArray<string>,
+  sentRead: boolean,
+  send: () => Promise<void>,
   sentEpoch: number,
-  error: { value: unknown } | null
-): void => {
-  if (sentEpoch !== epoch || entries.get(id) !== entry) return;
-
-  if (settle(id, sent, error === null, true)) {
-    flush();
-    showToast(errorText(error?.value), 'error');
+  onToast: (error: unknown) => void
+): Promise<void> => {
+  try {
+    await send();
+    if (sentEpoch !== queueState.epoch) return;
+    settleSuccess(ids, sentRead);
+  } catch (error) {
+    if (sentEpoch !== queueState.epoch) return;
+    if (settleFailure(ids, error)) onToast(error);
   }
-  pump(id);
 };
 
-/** Sends the next request for an article, or retires its entry once intent matches the server. */
-const pump = (id: string): void => {
-  const entry = entries.get(id);
-  if (entry === undefined || entry.inflight) return;
+const queueMarkRead = (
+  kind: LibraryArticle['kind'],
+  ids: ReadonlyArray<string>,
+  sentEpoch: number,
+  onToast: (error: unknown) => void,
+  tasks: Array<Promise<void>>
+): void => {
+  const sendChunk =
+    ids.length === 1
+      ? (chunk: ReadonlyArray<string>) => sendSetRead(kind, chunk[0], true)
+      : (chunk: ReadonlyArray<string>) => sendMarkIdsRead(kind, chunk);
+  for (let i = 0; i < ids.length; i += MARK_IDS_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + MARK_IDS_CHUNK_SIZE);
+    tasks.push(
+      runSegmentRequest(chunk, true, () => sendChunk(chunk), sentEpoch, onToast)
+    );
+  }
+};
 
-  if (entry.desired === entry.confirmed) {
-    const waiters = entry.waiters.splice(0);
-    if (!isHeld(entry)) entries.delete(id);
-    for (const resolve of waiters) resolve(entry.confirmed);
-    return;
+const executeIntentSegment = async (sentEpoch: number): Promise<void> => {
+  const pending = popCoalescedSegment();
+  if (pending.size === 0) return;
+
+  const laterReadIds: Array<string> = [];
+  const feedReadIds: Array<string> = [];
+  const unreadTargets: Array<{ id: string; kind: LibraryArticle['kind'] }> = [];
+  for (const [id, read] of pending) {
+    const entry = entries.get(id);
+    if (entry === undefined) continue;
+    entry.inflight = true;
+    if (!read) unreadTargets.push({ id, kind: entry.kind });
+    else if (entry.kind === 'later') laterReadIds.push(id);
+    else feedReadIds.push(id);
   }
 
-  const sent = entry.desired;
-  const sentEpoch = epoch;
-  entry.inflight = true;
-  void sendRead(entry.kind, id, sent).then(
-    () => finishSingle(id, entry, sent, sentEpoch, null),
-    (error: unknown) =>
-      finishSingle(id, entry, sent, sentEpoch, { value: error })
-  );
+  let toasted = false;
+  const onToast = (error: unknown): void => {
+    if (toasted) return;
+    toasted = true;
+    showToast(errorText(error), 'error');
+  };
+  const tasks: Array<Promise<void>> = [];
+  queueMarkRead('later', laterReadIds, sentEpoch, onToast, tasks);
+  queueMarkRead('feed', feedReadIds, sentEpoch, onToast, tasks);
+  for (const item of unreadTargets) {
+    tasks.push(
+      runSegmentRequest(
+        [item.id],
+        false,
+        () => sendSetRead(item.kind, item.id, false),
+        sentEpoch,
+        onToast
+      )
+    );
+  }
+  await Promise.allSettled(tasks);
+};
+
+const executeBarrierStep = async (
+  item: BarrierItem,
+  sentEpoch: number
+): Promise<void> => {
+  queueState.activeBarrier = item;
+  let outcome: BarrierOutcome;
+  try {
+    outcome = await item.barrier.execute();
+  } catch (error) {
+    outcome = isAmbiguousError(error) ? 'ambiguous' : 'failed';
+  }
+  if (sentEpoch !== queueState.epoch) return;
+
+  queueState.activeBarrier = null;
+  if (outcome !== 'failed') applyBarrierSettlement(item.barrier, outcome);
+  item.resolve(outcome);
 };
 
 /**
- * Applies one read intent: shows it, moves the unread counts, and queues the request. Resolves
- * with the confirmed value once the article's queue is idle (`null` after a session clear).
+ * Re-fetches articles whose server value an ambiguous failure left unknown. Nothing re-fetches an
+ * article outside the store, so its idle unknown entry is dropped instead.
+ */
+const recoverAmbiguous = (): void => {
+  const ids = [...ambiguousIds];
+  ambiguousIds.clear();
+  for (const id of ids) {
+    const article = articleById(id);
+    const entry = entries.get(id);
+    if (article !== null)
+      void refetchArticleSnapshot(article, queueState.epoch);
+    else if (entry !== undefined && isEntryIdle(entry)) entries.delete(id);
+  }
+};
+
+const drainQueue = (): void => {
+  queueState.dispatching = false;
+  recoverAmbiguous();
+  for (const cb of [...drainListeners]) {
+    try {
+      cb();
+    } catch {
+      // Listener errors must not block subsequent drain callbacks.
+    }
+  }
+};
+
+const runDispatcher = async (): Promise<void> => {
+  const runEpoch = queueState.epoch;
+  while (queue.length > 0 && runEpoch === queueState.epoch) {
+    const head = queue[0];
+    if (head.type === 'barrier') {
+      queue.shift();
+      await executeBarrierStep(head, runEpoch);
+    } else {
+      await executeIntentSegment(runEpoch);
+    }
+  }
+  if (runEpoch === queueState.epoch) drainQueue();
+};
+
+const kickDispatcher = (): void => {
+  if (queueState.dispatching || queue.length === 0) return;
+  queueState.dispatching = true;
+  void runDispatcher();
+};
+
+/**
+ * Applies one read intent: shows it immediately, adjusts unread counts, and enqueues it. Resolves
+ * with the confirmed value once the article has no queued or in-flight intent (`null` on clear or
+ * when the confirmed value is unknown).
  */
 export const requestRead = (
   target: ReadTarget,
   read: boolean
 ): Promise<boolean | null> => {
+  const existing = entries.get(target.id);
+  const currentConfirmed = existing?.confirmed ?? target.read;
+  const settledKnown =
+    existing === undefined ||
+    (isEntryIdle(existing) && existing.confirmedKnown);
+  const hasBarrier =
+    queueState.activeBarrier !== null ||
+    queue.some((item) => item.type === 'barrier');
+  if (settledKnown && currentConfirmed === read && !hasBarrier) {
+    return Promise.resolve(currentConfirmed);
+  }
   const entry = ensureEntry(target);
-  const settled = new Promise<boolean | null>((resolve) => {
-    entry.waiters.push(resolve);
-  });
-  show(target.id, read, true);
+  const settled = new Promise<boolean | null>((resolve) =>
+    entry.waiters.push(resolve)
+  );
+  setDisplay(target.id, entry, read);
+  entry.queuedCount += 1;
+  queueState.mutationEpoch += 1;
+  queue.push({ type: 'intent', id: target.id, read });
   flush();
-  pump(target.id);
+  kickDispatcher();
   return settled;
 };
 
-const beginBatch = (
-  targets: ReadonlyArray<ReadTarget>,
-  adjustCounts: boolean
-): Array<[string, ReadEntry]> => {
-  const owned: Array<[string, ReadEntry]> = [];
+/** Marks `targets` read, adjusting counts only for rows whose display actually changes. */
+export const requestReadMany = (targets: ReadonlyArray<ReadTarget>): void => {
+  let changed = false;
   for (const target of targets) {
+    const existing = entries.get(target.id);
+    if ((existing === undefined && target.read) || existing?.display) continue;
     const entry = ensureEntry(target);
-    show(target.id, true, adjustCounts);
-    if (entry.inflight) continue;
-    entry.inflight = true;
-    owned.push([target.id, entry]);
+    if (setDisplay(target.id, entry, true)) changed = true;
+    entry.queuedCount += 1;
+    queueState.mutationEpoch += 1;
+    queue.push({ type: 'intent', id: target.id, read: true });
   }
-  flush();
-  return owned;
+  if (changed) flush();
+  kickDispatcher();
 };
 
-const settleBatch = (
-  owned: ReadonlyArray<[string, ReadEntry]>,
-  ok: boolean,
-  adjustCounts: boolean
-): number => {
-  let reverted = 0;
-  for (const [id, entry] of owned) {
-    if (entries.get(id) !== entry) continue;
-    if (settle(id, true, ok, adjustCounts)) reverted += 1;
-  }
-  flush();
-  for (const [id] of owned) pump(id);
-  return reverted;
+/** Enqueues an opaque barrier (mark-all) that serializes with surrounding read intents. */
+export const enqueueBarrier = (
+  barrier: ReadBarrier
+): Promise<EnqueueBarrierResult> => {
+  queueState.mutationEpoch += 1;
+  return new Promise<EnqueueBarrierResult>((resolve) => {
+    queue.push({ type: 'barrier', barrier, resolve });
+    kickDispatcher();
+  });
 };
 
-/**
- * Marks `targets` read under one batch request. Articles with their own request in flight are
- * shown read but left to their own queue. `adjustCounts: false` leaves the unread counts to the
- * caller (scope-wide mark-all clears them wholesale).
- */
-export const runReadBatch = async (
-  targets: ReadonlyArray<ReadTarget>,
-  adjustCounts: boolean,
-  send: () => Promise<void>
-): Promise<ReadBatchResult | null> => {
-  const sentEpoch = epoch;
-  const owned = beginBatch(targets, adjustCounts);
-  try {
-    await send();
-  } catch (error) {
-    if (sentEpoch !== epoch) return null;
-    const reverted = settleBatch(owned, false, adjustCounts);
-    return { ok: false, error, reverted };
-  }
-  if (sentEpoch !== epoch) return null;
-  settleBatch(owned, true, adjustCounts);
-  return { ok: true };
+export const queueIdle = (): boolean =>
+  !queueState.dispatching && queue.length === 0;
+
+export const queueEpoch = (): number => queueState.mutationEpoch;
+
+export const onQueueDrained = (cb: () => void): (() => void) => {
+  drainListeners.add(cb);
+  return () => drainListeners.delete(cb);
 };
 
 export const clearReadSyncState = (): void => {
-  epoch += 1;
+  queueState.epoch += 1;
+  queueState.dispatching = false;
   activeSnapshots.clear();
-  const cleared = [...entries.values()];
+  barrierStamps.length = 0;
+  ambiguousIds.clear();
+  const runningBarrier = queueState.activeBarrier;
+  queueState.activeBarrier = null;
+  runningBarrier?.resolve('cleared');
+  for (const item of queue.splice(0)) {
+    if (item.type === 'barrier') item.resolve('cleared');
+  }
+  const clearedEntries = [...entries.values()];
   entries.clear();
-  for (const entry of cleared) {
+  for (const entry of clearedEntries) {
     for (const resolve of entry.waiters) resolve(null);
   }
 };

@@ -6,6 +6,8 @@ import {
   makePage,
 } from './support/state-fixture';
 
+const B = '019363b8-0000-7000-8000-000000000001';
+
 const ctx = createStateTestContext();
 
 beforeEach(async () => {
@@ -38,7 +40,7 @@ describe('first page load', () => {
 describe('first page params', () => {
   it('passes unread and order for single-feed lists', async () => {
     const { state, solid } = ctx;
-    ctx.queue({ items: [], cursor: null });
+    ctx.queue({ items: [], cursor: null, boundary: B });
     await state.loadScopeFirstPage(
       { kind: 'feed', feedId: 'f1' },
       true,
@@ -49,6 +51,7 @@ describe('first page params', () => {
     expect(ctx.requestUrl()).toBe(
       '/api/feeds/f1/items?limit=30&unread=true&order=oldest'
     );
+    expect(state.listBoundary()).toBe(B);
     expect(state.activeUnreadOnly()).toBe(true);
     expect(state.activeOrder()).toBe('oldest');
   });
@@ -57,7 +60,11 @@ describe('first page params', () => {
 describe('scope endpoints', () => {
   it('uses the folder and all-feeds endpoints', async () => {
     const { state, solid } = ctx;
-    ctx.queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: null });
+    ctx.queue({
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      cursor: null,
+      boundary: B,
+    });
     await state.loadScopeFirstPage({ kind: 'folder', folderId: 'd1' }, false);
     solid.flush();
     expect(ctx.requestUrl()).toBe(
@@ -65,7 +72,7 @@ describe('scope endpoints', () => {
     );
     expect(state.rows()[0].kind).toBe('feed');
 
-    ctx.queue({ items: [], cursor: null });
+    ctx.queue({ items: [], cursor: null, boundary: B });
     await state.loadScopeFirstPage({ kind: 'all' }, false, 'oldest');
     solid.flush();
     expect(ctx.requestUrl(1)).toBe('/api/feed-items?limit=30&unread=false');
@@ -146,11 +153,11 @@ describe('feed icon candidates', () => {
 describe('shared list order', () => {
   it('reloads the active aggregate list oldest first and persists the choice', async () => {
     const { state, solid } = ctx;
-    ctx.queue({ items: [], cursor: null });
+    ctx.queue({ items: [], cursor: null, boundary: B });
     await state.loadScopeFirstPage({ kind: 'all' }, false);
     solid.flush();
 
-    ctx.queue({ items: [], cursor: null });
+    ctx.queue({ items: [], cursor: null, boundary: B });
     await state.toggleAggregateOrder();
     solid.flush();
 
@@ -161,7 +168,7 @@ describe('shared list order', () => {
     expect(state.aggregateOrder()).toBe('oldest');
     expect(localStorage.getItem('reader.listOrder')).toBe('oldest');
 
-    ctx.queue({ items: [], cursor: null });
+    ctx.queue({ items: [], cursor: null, boundary: B });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     solid.flush();
     expect(ctx.requestUrl(2)).toBe(

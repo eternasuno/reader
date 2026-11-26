@@ -75,6 +75,12 @@ func mustURL(t *testing.T, raw string) domain.NormalizedURL {
 	return parsed
 }
 
+const maxTestBoundary = "ffffffff-ffff-7fff-8000-ffffffffffff"
+
+func fixedTestID(seq uint64) string {
+	return fmt.Sprintf("01950000-0000-7000-8000-%012x", seq)
+}
+
 func ptr(value string) *string {
 	return &value
 }

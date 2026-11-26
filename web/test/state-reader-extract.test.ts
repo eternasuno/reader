@@ -7,6 +7,8 @@ import {
   makePage,
 } from './support/state-fixture';
 
+const BOUNDARY = '019363b8-0000-7000-8000-000000000000';
+
 const ctx = createStateTestContext();
 
 beforeEach(async () => {
@@ -178,7 +180,11 @@ describe('record store sync and eviction', () => {
     expect(state.articleById('p9')?.id).toBe('p9');
 
     // Reloading list evicts p1 (old list row) while retaining deep-linked p9 for the reader.
-    ctx.queue({ items: [makePage({ id: 'p2', read: true })], cursor: null });
+    ctx.queue({
+      items: [makePage({ id: 'p2', read: true })],
+      cursor: null,
+      boundary: BOUNDARY,
+    });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     solid.flush();
     expect(state.articleById('p1')).toBeNull();

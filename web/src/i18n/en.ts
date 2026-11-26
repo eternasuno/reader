@@ -51,6 +51,7 @@ export const enDict: Dict = {
     unreadOnly: 'Show unread only',
     readToggle: 'Read',
     markAllRead: 'Mark all as read',
+    markingAllRead: 'Marking all as read…',
     moreActions: 'More actions',
     collapseSidebar: 'Collapse sidebar',
     expandSidebar: 'Expand sidebar',

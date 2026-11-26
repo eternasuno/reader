@@ -68,16 +68,22 @@ func toFeedItemJSON(item domain.FeedItem) feedItemJSON {
 	}
 }
 
-func toFeedItemsPage(result domain.PageResult[domain.FeedItem]) pageResponse[feedItemJSON] {
+func toFeedItemsPage(result domain.PageResult[domain.FeedItem], boundary string) pageResponse[feedItemJSON] {
 	return pageResponse[feedItemJSON]{
-		Items:  mapSlice(result.Items, toFeedItemJSON),
-		Cursor: result.Cursor,
+		Items:    mapSlice(result.Items, toFeedItemJSON),
+		Cursor:   result.Cursor,
+		Boundary: boundary,
 	}
 }
 
 type feedUnreadCountJSON struct {
 	FeedID string `json:"feedId"`
 	Count  int    `json:"count"`
+}
+
+type unreadCountsResponse struct {
+	Items    []feedUnreadCountJSON `json:"items"`
+	Boundary string                `json:"boundary"`
 }
 
 type feedPreviewJSON struct {
@@ -371,7 +377,8 @@ func normalizeFolderID(raw *string) (*string, error) {
 }
 
 func (s *server) handleFeedUnreadCounts(w http.ResponseWriter, r *http.Request) {
-	counts, err := s.cfg.FeedItems.UnreadCounts(r.Context())
+	boundary := domain.NewID()
+	counts, err := s.cfg.FeedItems.UnreadCounts(r.Context(), boundary)
 	if err != nil {
 		writeError(w, err)
 
@@ -382,11 +389,18 @@ func (s *server) handleFeedUnreadCounts(w http.ResponseWriter, r *http.Request) 
 		return feedUnreadCountJSON{FeedID: count.FeedID, Count: count.Count}
 	})
 
-	writeJSON(w, http.StatusOK, listResponse[feedUnreadCountJSON]{Items: converted})
+	writeJSON(w, http.StatusOK, unreadCountsResponse{Items: converted, Boundary: boundary})
 }
 
 func (s *server) handleFeedMarkRead(w http.ResponseWriter, r *http.Request) {
-	if err := s.cfg.FeedItems.MarkFeedRead(r.Context(), r.PathValue("id")); err != nil {
+	before, err := decodeReadAllBefore(w, r)
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	if err := s.cfg.FeedItems.MarkFeedRead(r.Context(), r.PathValue("id"), before); err != nil {
 		writeError(w, err)
 
 		return
@@ -403,27 +417,24 @@ func (s *server) handleFeedItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order := domain.SortOrderNewest
-	if query.hasOrder {
-		order = query.order
-	} else {
-		feed, err := s.cfg.Feeds.GetByID(r.Context(), r.PathValue("id"))
+	// Validate and mint the boundary before any data read, so items stored during
+	// the preference lookup fall outside the first page.
+	params, err := query.params(query.orderOrDefault())
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	if !query.hasOrder {
+		storedOrder, err := s.storedFeedOrder(r.Context(), r.PathValue("id"))
 		if err != nil {
 			writeError(w, err)
 
 			return
 		}
 
-		if feed != nil {
-			order = feed.Order
-		}
-	}
-
-	params, err := query.params(order)
-	if err != nil {
-		writeError(w, err)
-
-		return
+		params.Order = storedOrder
 	}
 
 	result, err := s.cfg.FeedItems.ListByFeed(r.Context(), r.PathValue("id"), params)
@@ -433,7 +444,25 @@ func (s *server) handleFeedItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toFeedItemsPage(result))
+	writeJSON(w, http.StatusOK, toFeedItemsPage(result, params.Boundary))
+}
+
+// storedFeedOrder returns the feed's stored sort order, or newest when the feed is unknown.
+func (s *server) storedFeedOrder(ctx context.Context, feedID string) (domain.SortOrder, error) {
+	feed, err := s.cfg.Feeds.GetByID(ctx, feedID)
+	if err != nil {
+		return "", err
+	}
+
+	if feed == nil {
+		return domain.SortOrderNewest, nil
+	}
+
+	if err := domain.ValidateSortOrder(feed.Order); err != nil {
+		return "", err
+	}
+
+	return feed.Order, nil
 }
 
 func (s *server) handleFeedItemList(w http.ResponseWriter, r *http.Request) {
@@ -451,7 +480,7 @@ func (s *server) handleFeedItemList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toFeedItemsPage(result))
+	writeJSON(w, http.StatusOK, toFeedItemsPage(result, params.Boundary))
 }
 
 func (s *server) handleFeedItemGet(w http.ResponseWriter, r *http.Request) {

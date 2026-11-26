@@ -758,7 +758,8 @@ func TestPragmasApplyToEveryPooledConnection(t *testing.T) {
 
 func TestQueryPlansUseIndexes(t *testing.T) {
 	store := newTestStore(t)
-	cursor := domain.NewID()
+	cursor := fixedTestID(10)
+	boundary := fixedTestID(20)
 
 	tests := []struct {
 		name           string
@@ -769,73 +770,73 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 	}{
 		{
 			name:  "list all newest",
-			query: listAllQuery(domain.PageParams{Limit: 30}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Boundary: boundary}).args,
 		},
 		{
 			name:  "list all with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).args,
 		},
 		{
 			name:  "list all unread",
-			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).args,
 			index: "feed_item_read_id",
 		},
 		{
 			name:  "list all oldest with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).args,
 		},
 		{
 			name:  "list all unread with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
 			index: "feed_item_read_id",
 		},
 		{
 			name:  "list feed newest",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30}).args,
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Boundary: boundary}).args,
 			index: "feed_item_feed_id",
 		},
 		{
 			name:  "list feed oldest",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).args,
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).args,
 			index: "feed_item_feed_id",
 		},
 		{
 			name:  "list feed unread",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true}).args,
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).args,
 			index: "feed_item_feed_read_id",
 		},
 		{
 			name:  "list feed unread with cursor",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).args,
-			index: "feed_item_feed_read_id",
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
+			index: "feed_item_read_id",
 		},
 		{
 			name:           "list folder",
-			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30}).query,
-			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30}).args,
+			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Boundary: boundary}).query,
+			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Boundary: boundary}).args,
 			index:          "feed_item_feed_id",
 			allowTempBTree: true,
 		},
 		{
 			name:           "list folder oldest",
-			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).query,
-			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).args,
+			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).query,
+			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).args,
 			index:          "feed_item_feed_id",
 			allowTempBTree: true,
 		},
 		{
 			name:  "list folder unread with cursor",
-			query: listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).query,
-			args:  listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).args,
+			query: listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
 			index: "feed_item_read_id",
 		},
 	}
@@ -845,10 +846,25 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		requireIndexedPlan(t, test.name, details, test.index, test.allowTempBTree)
 	}
 
-	unreadDetails := queryPlan(t, store, unreadCountsQuery)
-	requireIndexedPlan(t, "unread counts", unreadDetails, "feed_item_read_feed_id", false)
+	statementPlans := []struct {
+		name           string
+		query          string
+		args           []any
+		index          string
+		allowTempBTree bool
+	}{
+		{name: "unread counts", query: unreadCountsQuery, args: []any{boundary}, index: "feed_item_read_id", allowTempBTree: true},
+		{name: "saved page unread count", query: savedPageUnreadCountQuery, args: []any{boundary}, index: "saved_page_read_id"},
+		{name: "mark all feed items read", query: markAllItemsReadQuery, args: []any{boundary}, index: "feed_item_read_id"},
+		{name: "mark feed read", query: markFeedReadQuery, args: []any{"feed", boundary}, index: "feed_item_feed_read_id"},
+		{name: "mark folder read", query: markFolderReadQuery, args: []any{boundary, "folder"}, index: "feed_item_feed_read_id"},
+		{name: "mark all saved pages read", query: markAllSavedPagesReadQuery, args: []any{boundary}, index: "saved_page_read_id"},
+	}
+	for _, test := range statementPlans {
+		requireIndexedPlan(t, test.name, queryPlan(t, store, test.query, test.args...), test.index, test.allowTempBTree)
+	}
 
-	for _, params := range []domain.PageParams{{Limit: 30}, {Limit: 30, Unread: true}, {Limit: 30, Unread: true, Cursor: &cursor}, {Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}, {Limit: 30, Unread: true, Order: domain.SortOrderOldest}} {
+	for _, params := range []domain.PageParams{{Limit: 30, Boundary: boundary}, {Limit: 30, Unread: true, Boundary: boundary}, {Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Unread: true, Order: domain.SortOrderOldest, Boundary: boundary}} {
 		query, args := listSavedPagesQuery(params)
 		requireIndexedPlan(t, "list saved pages", queryPlan(t, store, query, args...), "", false)
 	}

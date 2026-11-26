@@ -226,7 +226,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 		t.Fatalf("synced feed failure state = %d/%v, want 0/nil", synced.FailureCount, synced.LastError)
 	}
 
-	stored, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10})
+	stored, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list synced items: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 		t.Fatalf("apply sync with duplicate url: %v", err)
 	}
 
-	afterDuplicate, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10})
+	afterDuplicate, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list items after duplicate sync: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 		t.Fatalf("apply sync with deletions: %v", err)
 	}
 
-	afterDelete, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10})
+	afterDelete, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list items after deletion sync: %v", err)
 	}

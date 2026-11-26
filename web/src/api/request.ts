@@ -6,8 +6,13 @@ import {
   toAbortError,
 } from './deadline';
 import type { Decoder, TypeGuard } from './decoders';
-import { decodeField } from './decoders';
-import type { ErrorResponse, RequestCallOptions } from './types';
+import { decodeField, decodePage } from './decoders';
+import type {
+  ErrorResponse,
+  ListParams,
+  Page,
+  RequestCallOptions,
+} from './types';
 import { ApiError, RequestTimeoutError } from './types';
 
 /** Query-string value accepted by `request`; `null`/`undefined` are dropped. */
@@ -303,3 +308,14 @@ export const item = <T>(
   guard: TypeGuard<T>,
   options?: RequestOptions
 ): Promise<T> => request(path, decodeField('item', guard), options);
+
+export const listPage = <T>(
+  path: string,
+  guard: TypeGuard<T>,
+  params: ListParams = {},
+  options?: RequestCallOptions
+): Promise<Page<T>> =>
+  request(path, decodePage(guard), {
+    ...options,
+    params: params.cursor ? params : { ...params, boundary: undefined },
+  });

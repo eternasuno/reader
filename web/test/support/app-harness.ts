@@ -22,20 +22,60 @@ const load = async () => {
 export const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status });
 
+const DEFAULT_BOUNDARY = '019363b8-0000-7000-8000-000000000000';
+
 const NO_CONTENT_METHODS = new Set(['PATCH', 'PUT', 'DELETE']);
 
-const defaultResponse = (url: string, init: RequestInit): Response =>
-  NO_CONTENT_METHODS.has(init.method ?? 'GET')
+const listBoundary = (url: string): string => {
+  const queryIndex = url.indexOf('?');
+  if (queryIndex === -1) return DEFAULT_BOUNDARY;
+  const params = new URLSearchParams(url.slice(queryIndex + 1));
+  const cursor = params.get('cursor');
+  const boundary = params.get('boundary');
+  return cursor && boundary ? boundary : DEFAULT_BOUNDARY;
+};
+
+const readAllResponse = (init: RequestInit): Response => {
+  if (typeof init.body !== 'string') {
+    return json({ error: 'RequestFailed' }, 400);
+  }
+  try {
+    const parsed = JSON.parse(init.body) as { before?: unknown };
+    if (typeof parsed?.before === 'string' && parsed.before.length > 0) {
+      return new Response(null, { status: 204 });
+    }
+  } catch {
+    // Fall through to 400.
+  }
+  return json({ error: 'RequestFailed' }, 400);
+};
+
+const isReadAllRequest = (url: string, init: RequestInit): boolean =>
+  (init.method ?? 'GET') === 'POST' && url.split('?')[0].endsWith('/read-all');
+
+const defaultResponse = (url: string, init: RequestInit): Response => {
+  if (isReadAllRequest(url, init)) return readAllResponse(init);
+  return NO_CONTENT_METHODS.has(init.method ?? 'GET')
     ? new Response(null, { status: 204 })
     : json(defaultBody(url));
+};
 
 const defaultBody = (url: string): unknown => {
   if (url.includes('/api/auth/session')) return { authenticated: true };
   if (url.includes('/api/kindle/sends')) return { running: false, items: [] };
-  if (url.includes('/api/saved-pages/unread-count')) return { count: 0 };
-  if (url.includes('/api/feeds/unread-counts')) return { items: [] };
+  if (url.includes('/api/saved-pages/unread-count')) {
+    return { count: 0, boundary: DEFAULT_BOUNDARY };
+  }
+  if (url.includes('/api/feeds/unread-counts')) {
+    return { items: [], boundary: DEFAULT_BOUNDARY };
+  }
   if (url.includes('/api/settings')) return { retention: 100 };
-  return { items: [], cursor: null, item: null };
+  return {
+    items: [],
+    cursor: null,
+    boundary: listBoundary(url),
+    item: null,
+  };
 };
 
 class AppHarness {

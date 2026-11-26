@@ -314,7 +314,7 @@ func TestKindleSendRepoListUnreadForKindle(t *testing.T) {
 	zetaItems := addItems(t, store, zeta, 2)
 	readItems := addItems(t, store, readFeed, 2)
 
-	if err := store.FeedItems().MarkFeedRead(ctx, readFeed.ID); err != nil {
+	if err := store.FeedItems().MarkFeedRead(ctx, readFeed.ID, maxTestBoundary); err != nil {
 		t.Fatalf("mark read feed read: %v", err)
 	}
 

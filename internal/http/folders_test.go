@@ -103,23 +103,48 @@ func TestFolderItemsAndReadAll(t *testing.T) {
 
 	var page pageResponse[feedItemJSON]
 	decodeBody(t, recorder, &page)
-	if len(page.Items) != 1 || page.Items[0].ID != unread.ID {
-		t.Fatalf("folder unread items = %+v", page.Items)
+	if len(page.Items) != 1 || page.Items[0].ID != unread.ID || !domain.IsValidUUIDv7(page.Boundary) {
+		t.Fatalf("folder unread items = %+v boundary = %q", page.Items, page.Boundary)
 	}
 
-	requireStatus(t, h.authed(http.MethodPost, "/api/folders/"+folder.ID+"/read-all", nil), http.StatusNoContent)
+	invalidID := domain.NewID()
+	for _, body := range []string{
+		"",
+		`{}`,
+		`null`,
+		`{"before":null}`,
+		`{"before":"not-a-uuid"}`,
+		`{"before":"` + invalidID + `","extra":1}`,
+	} {
+		requireAPIError(t, h.do(h.rawRequest(http.MethodPost, "/api/folders/"+folder.ID+"/read-all", body)), http.StatusBadRequest, "RequestFailed")
+	}
+
+	if h.feedItemByID(unread.ID).Read {
+		t.Fatal("invalid folder read-all changed read state")
+	}
+
+	boundary := domain.NewID()
+	postBoundary := h.seedItem(inFolder.ID, "https://example.com/after", nil)
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/folders/"+folder.ID+"/read-all", map[string]any{"before": boundary}), http.StatusNoContent)
 	if !h.feedItemByID(unread.ID).Read || !h.feedItemByID(read.ID).Read {
 		t.Fatal("folder read-all did not mark items read")
+	}
+
+	if h.feedItemByID(postBoundary.ID).Read {
+		t.Fatal("folder read-all marked post-boundary item read")
 	}
 
 	if h.feedItemByID(outsideItem.ID).Read {
 		t.Fatal("folder read-all marked outside item read")
 	}
 
+	requireStatus(t, h.authed(http.MethodPost, "/api/folders/"+domain.NewID()+"/read-all", map[string]any{"before": domain.NewID()}), http.StatusNoContent)
+
 	recorder = h.authed(http.MethodGet, "/api/folders/"+domain.NewID()+"/items", nil)
 	requireStatus(t, recorder, http.StatusOK)
 	decodeBody(t, recorder, &page)
-	if len(page.Items) != 0 {
-		t.Fatalf("unknown folder items = %+v", page.Items)
+	if len(page.Items) != 0 || !domain.IsValidUUIDv7(page.Boundary) {
+		t.Fatalf("unknown folder items = %+v boundary = %q", page.Items, page.Boundary)
 	}
 }

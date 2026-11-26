@@ -310,7 +310,7 @@ func (r *fakeFeedItemRepository) GetByID(ctx context.Context, id string) (*domai
 	return nil, nil
 }
 
-func (r *fakeFeedItemRepository) UnreadCounts(ctx context.Context) ([]domain.FeedUnreadCount, error) {
+func (r *fakeFeedItemRepository) UnreadCounts(ctx context.Context, _ string) ([]domain.FeedUnreadCount, error) {
 	return nil, nil
 }
 
@@ -322,15 +322,15 @@ func (r *fakeFeedItemRepository) MarkIDsRead(ctx context.Context, ids []string) 
 	return nil
 }
 
-func (r *fakeFeedItemRepository) MarkAllRead(ctx context.Context) error {
+func (r *fakeFeedItemRepository) MarkAllRead(ctx context.Context, _ string) error {
 	return nil
 }
 
-func (r *fakeFeedItemRepository) MarkFeedRead(ctx context.Context, feedID string) error {
+func (r *fakeFeedItemRepository) MarkFeedRead(ctx context.Context, feedID, _ string) error {
 	return nil
 }
 
-func (r *fakeFeedItemRepository) MarkFolderRead(ctx context.Context, folderID string) error {
+func (r *fakeFeedItemRepository) MarkFolderRead(ctx context.Context, folderID, _ string) error {
 	return nil
 }
 

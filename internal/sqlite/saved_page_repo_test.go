@@ -93,7 +93,7 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
-	empty, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2})
+	empty, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list empty saved pages: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 		pages[i] = created
 	}
 
-	first, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2})
+	first, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list first saved page page: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 		t.Fatalf("first saved page cursor = %v, want %s", first.Cursor, pages[3].ID)
 	}
 
-	second, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: first.Cursor})
+	second, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: first.Cursor, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list second saved page page: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 		t.Fatalf("second saved page ids = %v", got)
 	}
 
-	third, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: second.Cursor})
+	third, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: second.Cursor, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list third saved page page: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 			var cursor *string
 			for start := 0; start < len(tc.want); start += 2 {
 				end := min(start+2, len(tc.want))
-				page, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Unread: tc.unread, Order: tc.order, Cursor: cursor})
+				page, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Unread: tc.unread, Order: tc.order, Cursor: cursor, Boundary: maxTestBoundary})
 				if err != nil {
 					t.Fatalf("list: %v", err)
 				}
@@ -202,7 +202,7 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 		t.Fatalf("mark saved page ids read: %v", err)
 	}
 
-	unread, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 10, Unread: true})
+	unread, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 10, Unread: true, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list unread saved pages: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 		t.Fatalf("unread saved page ids = %v", got)
 	}
 
-	unreadCount, err := store.SavedPages().UnreadCount(ctx)
+	unreadCount, err := store.SavedPages().UnreadCount(ctx, maxTestBoundary)
 	if err != nil {
 		t.Fatalf("saved page unread count: %v", err)
 	}
@@ -220,11 +220,11 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 		t.Fatalf("saved page unread count = %d, want 2", unreadCount)
 	}
 
-	if err := store.SavedPages().MarkAllRead(ctx); err != nil {
+	if err := store.SavedPages().MarkAllRead(ctx, maxTestBoundary); err != nil {
 		t.Fatalf("mark all saved pages read: %v", err)
 	}
 
-	unreadCount, err = store.SavedPages().UnreadCount(ctx)
+	unreadCount, err = store.SavedPages().UnreadCount(ctx, maxTestBoundary)
 	if err != nil {
 		t.Fatalf("saved page unread count after mark all: %v", err)
 	}
@@ -248,5 +248,118 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 
 	if err := store.SavedPages().Delete(ctx, "missing"); err != nil {
 		t.Fatalf("delete missing saved page: %v", err)
+	}
+}
+
+func TestSavedPageBoundaryIsolationAndContinuation(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	createFixed := func(seq uint64) {
+		id := fixedTestID(seq)
+		if _, err := store.SavedPages().Create(ctx, domain.SavedPage{
+			ID:      id,
+			URL:     mustURL(t, "https://example.com/pages/"+id),
+			Title:   fmt.Sprintf("Page %d", seq),
+			Content: "<p>body</p>",
+		}); err != nil {
+			t.Fatalf("create saved page %d: %v", seq, err)
+		}
+	}
+
+	for seq := uint64(1); seq <= 5; seq++ {
+		createFixed(seq)
+	}
+	if err := store.SavedPages().SetRead(ctx, fixedTestID(2), true); err != nil {
+		t.Fatalf("mark page 2 read: %v", err)
+	}
+
+	boundary := fixedTestID(5)
+
+	page1, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Boundary: boundary})
+	if err != nil {
+		t.Fatalf("list page 1: %v", err)
+	}
+	if got := savedPageIDs(page1.Items); !slices.Equal(got, []string{fixedTestID(5), fixedTestID(4)}) {
+		t.Fatalf("page 1 ids = %v", got)
+	}
+
+	createFixed(6)
+	createFixed(7)
+
+	page2, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: page1.Cursor, Boundary: boundary})
+	if err != nil {
+		t.Fatalf("list page 2: %v", err)
+	}
+	if got := savedPageIDs(page2.Items); !slices.Equal(got, []string{fixedTestID(3), fixedTestID(2)}) {
+		t.Fatalf("page 2 ids = %v", got)
+	}
+
+	page3, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: page2.Cursor, Boundary: boundary})
+	if err != nil {
+		t.Fatalf("list page 3: %v", err)
+	}
+	if got := savedPageIDs(page3.Items); !slices.Equal(got, []string{fixedTestID(1)}) || page3.Cursor != nil {
+		t.Fatalf("page 3 = %v cursor=%v", savedPageIDs(page3.Items), page3.Cursor)
+	}
+
+	allAsc := []string{fixedTestID(1), fixedTestID(2), fixedTestID(3), fixedTestID(4), fixedTestID(5)}
+	unreadAsc := []string{fixedTestID(1), fixedTestID(3), fixedTestID(4), fixedTestID(5)}
+
+	for _, order := range []domain.SortOrder{domain.SortOrderNewest, domain.SortOrderOldest} {
+		for _, unreadOnly := range []bool{false, true} {
+			want := slices.Clone(allAsc)
+			if unreadOnly {
+				want = slices.Clone(unreadAsc)
+			}
+			if order == domain.SortOrderNewest {
+				slices.Reverse(want)
+			}
+
+			var collected []string
+			var cursor *string
+			for {
+				page, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Unread: unreadOnly, Order: order, Cursor: cursor, Boundary: boundary})
+				if err != nil {
+					t.Fatalf("order=%s unread=%v: %v", order, unreadOnly, err)
+				}
+				collected = append(collected, savedPageIDs(page.Items)...)
+				if page.Cursor == nil {
+					break
+				}
+				cursor = page.Cursor
+			}
+			if !slices.Equal(collected, want) {
+				t.Fatalf("order=%s unread=%v got %v, want %v", order, unreadOnly, collected, want)
+			}
+		}
+	}
+
+	count, err := store.SavedPages().UnreadCount(ctx, boundary)
+	if err != nil {
+		t.Fatalf("bounded unread count: %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("bounded unread count = %d, want 4", count)
+	}
+
+	if err := store.SavedPages().MarkAllRead(ctx, boundary); err != nil {
+		t.Fatalf("mark all read: %v", err)
+	}
+
+	count, err = store.SavedPages().UnreadCount(ctx, boundary)
+	if err != nil {
+		t.Fatalf("bounded unread count after mark all: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("bounded unread count after mark all = %d, want 0", count)
+	}
+
+	unbounded, err := store.SavedPages().UnreadCount(ctx, maxTestBoundary)
+	if err != nil {
+		t.Fatalf("unbounded unread count: %v", err)
+	}
+	if unbounded != 2 {
+		t.Fatalf("post-boundary unread count = %d, want 2", unbounded)
 	}
 }

@@ -4,12 +4,12 @@
  * selected ID. Writes go through store drafts so a field change (for example `read`) only re-runs
  * the bindings that read that field; server data is reconciled so record identity is preserved.
  * Deep-linked records are retained independently of list membership and evicted when neither view
- * needs them.
+ * needs them. Rows dropped by a pending feed move stay pinned until the move settles.
  */
 
 import { createSignal, createStore, flush, reconcile } from 'solid-js';
 import type { FeedItem, SavedPage, SortOrder } from '../api';
-import { pendingRead } from './read-sync';
+import { mergeSnapshotRead } from './read-sync';
 import type { LibraryScope } from './scope';
 import { onSessionCleared } from './session';
 import { getItem, setItem } from './storage';
@@ -20,6 +20,17 @@ export const PAGE_SIZE = 30;
 export type LibraryArticle =
   | ({ kind: 'later' } & SavedPage)
   | ({ kind: 'feed' } & FeedItem);
+
+export const articleKindOf = (scope: LibraryScope): LibraryArticle['kind'] =>
+  scope.kind === 'later' ? 'later' : 'feed';
+
+export const toLibraryArticle = (
+  kind: LibraryArticle['kind'],
+  item: SavedPage | FeedItem
+): LibraryArticle =>
+  kind === 'later'
+    ? { ...(item as SavedPage), kind: 'later' }
+    : { ...(item as FeedItem), kind: 'feed' };
 
 export interface LibraryArticlePatch {
   read?: boolean;
@@ -69,6 +80,7 @@ const [records, setRecords] = createStore<LibraryRecords>({
   retainedId: null,
 });
 const [cursor, setCursor] = createSignal<string | null>(null);
+const [listBoundary, setListBoundary] = createSignal<string | null>(null);
 const [loadingInitial, setLoadingInitial] = createSignal(false);
 const [loadingMore, setLoadingMore] = createSignal(false);
 const [loadError, setLoadError] = createSignal<string | null>(null);
@@ -79,6 +91,7 @@ export {
   activeUnreadOnly,
   aggregateOrder,
   cursor,
+  listBoundary,
   loadError,
   loadingInitial,
   loadingMore,
@@ -87,6 +100,7 @@ export {
   setActiveUnreadOnly,
   setAggregateOrder,
   setCursor,
+  setListBoundary,
   setLoadError,
   setLoadingInitial,
   setLoadingMore,
@@ -141,9 +155,19 @@ export const rows = (): ReadonlyArray<LibraryArticle> => {
   return list;
 };
 
+/**
+ * Canonical records of rows dropped by a feed move, keyed by feed ID. They stay in `byId` until
+ * `releaseFeedRows`, so a rollback restores list membership and order and never overwrites a read
+ * state or server field that changed while the move was pending.
+ */
+const pinnedFeedRows = new Map<string, Array<string>>();
+
 const evictUnused = (draft: LibraryRecords): void => {
   const keep = new Set(draft.ids);
   if (draft.retainedId !== null) keep.add(draft.retainedId);
+  for (const ids of pinnedFeedRows.values()) {
+    for (const id of ids) keep.add(id);
+  }
   for (const id of Object.keys(draft.byId)) {
     if (!keep.has(id)) delete draft.byId[id];
   }
@@ -154,11 +178,15 @@ const evictUnused = (draft: LibraryRecords): void => {
  * request stays at the user's latest intent, and extracted content fetched after the snapshot was
  * dispatched is kept.
  */
-const mergeRecord = (draft: LibraryRecords, incoming: LibraryArticle): void => {
+const mergeRecord = (
+  draft: LibraryRecords,
+  incoming: LibraryArticle,
+  snapshotSeq?: number
+): void => {
   const existing = draft.byId[incoming.id];
-  const intent = pendingRead(incoming.id);
+  const read = mergeSnapshotRead(incoming, snapshotSeq);
   const merged: LibraryArticle =
-    intent === undefined ? { ...incoming } : { ...incoming, read: intent };
+    read === incoming.read ? { ...incoming } : { ...incoming, read };
   if (
     merged.kind === 'feed' &&
     existing?.kind === 'feed' &&
@@ -177,11 +205,12 @@ const mergeRecord = (draft: LibraryRecords, incoming: LibraryArticle): void => {
 
 const appendUnique = (
   draft: LibraryRecords,
-  items: ReadonlyArray<LibraryArticle>
+  items: ReadonlyArray<LibraryArticle>,
+  snapshotSeq?: number
 ): void => {
   const seen = new Set(draft.ids);
   for (const item of items) {
-    mergeRecord(draft, item);
+    mergeRecord(draft, item, snapshotSeq);
     if (seen.has(item.id)) continue;
     seen.add(item.id);
     draft.ids.push(item.id);
@@ -196,9 +225,12 @@ export const retainReaderArticle = (articleId: string | null): void => {
   });
 };
 
-export const upsertArticle = (article: LibraryArticle): void => {
+export const upsertArticle = (
+  article: LibraryArticle,
+  snapshotSeq?: number
+): void => {
   setRecords((draft) => {
-    mergeRecord(draft, article);
+    mergeRecord(draft, article, snapshotSeq);
   });
 };
 
@@ -209,17 +241,23 @@ export const clearRows = (): void => {
   });
 };
 
-export const replaceRows = (items: ReadonlyArray<LibraryArticle>): void => {
+export const replaceRows = (
+  items: ReadonlyArray<LibraryArticle>,
+  snapshotSeq?: number
+): void => {
   setRecords((draft) => {
     draft.ids.length = 0;
-    appendUnique(draft, items);
+    appendUnique(draft, items, snapshotSeq);
     evictUnused(draft);
   });
 };
 
-export const appendRows = (items: ReadonlyArray<LibraryArticle>): void => {
+export const appendRows = (
+  items: ReadonlyArray<LibraryArticle>,
+  snapshotSeq?: number
+): void => {
   setRecords((draft) => {
-    appendUnique(draft, items);
+    appendUnique(draft, items, snapshotSeq);
   });
 };
 
@@ -248,44 +286,65 @@ export const removeRow = (articleId: string): void => {
   });
 };
 
-/** Removes a feed's rows and returns them with the previous order, for a later restore. */
+/**
+ * Removes a feed's rows from the list and returns their IDs with the previous order, for a later
+ * restore. The records stay pinned until `releaseFeedRows` runs for the feed.
+ */
 export const dropFeedRows = (
   feedId: string
 ): {
-  rows: ReadonlyArray<LibraryArticle>;
+  ids: ReadonlyArray<string>;
   orderIds: ReadonlyArray<string>;
 } => {
   let orderIds: Array<string> = [];
-  const dropped: Array<LibraryArticle> = [];
+  const ids: Array<string> = [];
   setRecords((draft) => {
     orderIds = [...draft.ids];
     draft.ids = draft.ids.filter((id) => {
       const article = draft.byId[id];
       if (article?.kind !== 'feed' || article.feedId !== feedId) return true;
-      dropped.push({ ...article });
+      ids.push(id);
       return false;
     });
-    evictUnused(draft);
   });
-  return { rows: dropped, orderIds };
+  if (ids.length > 0) {
+    pinnedFeedRows.set(feedId, [...(pinnedFeedRows.get(feedId) ?? []), ...ids]);
+  }
+  return { ids, orderIds };
 };
 
+/**
+ * Ends a feed move's hold on its dropped records; evicts them unless the list or reader still
+ * needs them.
+ */
+export const releaseFeedRows = (feedId: string): void => {
+  if (!pinnedFeedRows.delete(feedId)) return;
+  setRecords((draft) => {
+    evictUnused(draft);
+  });
+};
+
+/**
+ * Re-adds a failed move's dropped rows at their previous positions. Only membership and order
+ * return: the pinned records are still in the store, so they are never re-merged from a copy.
+ */
 export const restoreFeedRows = (
-  removed: ReadonlyArray<LibraryArticle>,
+  ids: ReadonlyArray<string>,
   previousOrderIds: ReadonlyArray<string>
 ): void => {
   setRecords((draft) => {
     const present = new Set(draft.ids);
-    const missing = removed.filter((item) => !present.has(item.id));
+    const missing = ids.filter(
+      (id) => !present.has(id) && draft.byId[id] !== undefined
+    );
     if (missing.length === 0) return;
 
     const positions = new Map(previousOrderIds.map((id, index) => [id, index]));
     const position = (id: string): number =>
       positions.get(id) ?? Number.MAX_SAFE_INTEGER;
-    for (const item of missing) {
-      mergeRecord(draft, item);
-      const at = draft.ids.findIndex((id) => position(id) > position(item.id));
-      draft.ids.splice(at < 0 ? draft.ids.length : at, 0, item.id);
+    for (const id of missing) {
+      const at = draft.ids.findIndex((other) => position(other) > position(id));
+      draft.ids.splice(at < 0 ? draft.ids.length : at, 0, id);
     }
   });
 };
@@ -307,6 +366,7 @@ export const patchArticle = (
 export const clearLibraryStoreState = (): void => {
   requestState.generation += 1;
   requestState.pageInFlight = false;
+  pinnedFeedRows.clear();
   setRecords((draft) => {
     draft.ids.length = 0;
     draft.retainedId = null;
@@ -316,6 +376,7 @@ export const clearLibraryStoreState = (): void => {
   setActiveUnreadOnly(false);
   setActiveOrder('newest');
   setCursor(null);
+  setListBoundary(null);
   setLoadingInitial(false);
   setLoadingMore(false);
   setLoadError(null);

@@ -92,7 +92,14 @@ func (s *server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleFolderMarkRead(w http.ResponseWriter, r *http.Request) {
-	if err := s.cfg.FeedItems.MarkFolderRead(r.Context(), r.PathValue("id")); err != nil {
+	before, err := decodeReadAllBefore(w, r)
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	if err := s.cfg.FeedItems.MarkFolderRead(r.Context(), r.PathValue("id"), before); err != nil {
 		writeError(w, err)
 
 		return
@@ -116,5 +123,5 @@ func (s *server) handleFolderItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toFeedItemsPage(result))
+	writeJSON(w, http.StatusOK, toFeedItemsPage(result, params.Boundary))
 }

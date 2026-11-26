@@ -72,7 +72,7 @@ describe('sidebar failures', () => {
     ctx.queue({ items: [makeFeed({ id: 'f1' }), makeFeed({ id: 'f2' })] });
     fetchMock.mockRejectedValueOnce(new TypeError('folders failed'));
     fetchMock.mockRejectedValueOnce(new TypeError('counts failed'));
-    ctx.queue({ count: 7 });
+    ctx.queue({ count: 7, boundary: '019363b8-0000-7000-8000-000000000007' });
     await state.refreshSidebar();
     solid.flush();
 

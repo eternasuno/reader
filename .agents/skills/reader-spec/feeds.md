@@ -35,14 +35,14 @@ Feed subscriptions, feed-item scopes, OPML import/export, per-feed reading prefe
 | POST | `/api/feeds/:id/refresh` | `id` | `202` | `FeedRepositoryError` 500 |
 | PUT | `/api/feeds/:id/reader-mode` | `{ readerMode }` | `204` | `FeedRepositoryError` 500 |
 | PUT | `/api/feeds/:id/order` | `{ order }` | `204` | `FeedRepositoryError` 500 |
-| GET | `/api/feeds/unread-counts` | — | `200 { items: [{ feedId, count }] }` | `FeedItemRepositoryError` 500 |
-| POST | `/api/feeds/:id/read-all` | `id` | `204` | `FeedItemRepositoryError` 500 |
-| GET | `/api/feeds/:id/items` | `limit`, `unread`, `order?`, `cursor?` | `200 { items, cursor }` | `FeedItemRepositoryError` 500 |
-| GET | `/api/feed-items` | `limit`, `unread`, `order?`, `cursor?` | `200 { items, cursor }` | `FeedItemRepositoryError` 500 |
+| GET | `/api/feeds/unread-counts` | — | `200 { items: [{ feedId, count }], boundary }` | `FeedItemRepositoryError` 500 |
+| POST | `/api/feeds/:id/read-all` | `id`, `{ before }` | `204` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
+| GET | `/api/feeds/:id/items` | `limit`, `unread`, `order?`, `cursor?`, `boundary?` | `200 { items, cursor, boundary }` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
+| GET | `/api/feed-items` | `limit`, `unread`, `order?`, `cursor?`, `boundary?` | `200 { items, cursor, boundary }` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
 | GET | `/api/feed-items/:id` | `id` | `200 { item \| null }` | `FeedItemRepositoryError` 500 |
 | PATCH | `/api/feed-items/:id` | `{ read }` | `204` | `FeedItemRepositoryError` 500 |
 | POST | `/api/feed-items/read` | `{ ids }` | `204` | `FeedItemRepositoryError` 500 |
-| POST | `/api/feed-items/read-all` | — | `204` | `FeedItemRepositoryError` 500 |
+| POST | `/api/feed-items/read-all` | `{ before }` | `204` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
 | POST | `/api/feed-items/:id/extract` | `id` | `200 { item }` | `FeedItemNotFound` 404, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
 | GET | `/api/opml` | — | `200` (`text/x-opml+xml` attachment) | `FeedRepositoryError` 500 |
 | POST | `/api/opml` | multipart file or XML body | `200 { importedFeeds, skippedFeeds, createdFolders }` | `InvalidOpml` 400, 500 |

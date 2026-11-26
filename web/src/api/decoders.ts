@@ -12,11 +12,13 @@ import type {
   Page,
   ReaderMode,
   SavedPage,
+  SavedPageUnreadCount,
   Session,
   Settings,
   SMTPSecurity,
   SmtpSettingsView,
   SortOrder,
+  UnreadCounts,
 } from './types';
 import { ApiError } from './types';
 import { isServerHttpUrl } from './url';
@@ -40,6 +42,16 @@ const isBoolean = (value: unknown): value is boolean =>
 
 export const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
+
+const UUID_V7 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/**
+ * Mirrors `domain.IsValidUUIDv7`: canonical lowercase RFC 4122 UUID, version 7, variant 8/9/a/b.
+ * Pagination and count boundaries are server-minted UUIDv7 values.
+ */
+export const isUuidV7 = (value: unknown): value is string =>
+  isString(value) && UUID_V7.test(value);
 
 const isOptionalString = (value: unknown): value is string | undefined =>
   value === undefined || typeof value === 'string';
@@ -100,7 +112,12 @@ export const decodePage =
       throw invalidResponse(status);
     }
 
-    return { items: payload.items, cursor };
+    const boundary = payload.boundary;
+    if (!isUuidV7(boundary)) {
+      throw invalidResponse(status);
+    }
+
+    return { items: payload.items, cursor, boundary };
   };
 
 export const isNullable =
@@ -137,6 +154,24 @@ export const isFeedUnreadCount: TypeGuard<FeedUnreadCount> = (
   value
 ): value is FeedUnreadCount =>
   isRecord(value) && isString(value.feedId) && isFiniteNumber(value.count);
+
+export const isUnreadCounts: TypeGuard<UnreadCounts> = (
+  value
+): value is UnreadCounts =>
+  isRecord(value) &&
+  isArrayOf(isFeedUnreadCount)(value.items) &&
+  isUuidV7(value.boundary);
+
+export const isSavedPageUnreadCount: TypeGuard<SavedPageUnreadCount> = (
+  value
+): value is SavedPageUnreadCount =>
+  isRecord(value) && isFiniteNumber(value.count) && isUuidV7(value.boundary);
+
+export const decodeUnreadCounts: Decoder<UnreadCounts> =
+  decodeWith(isUnreadCounts);
+
+export const decodeSavedPageUnreadCount: Decoder<SavedPageUnreadCount> =
+  decodeWith(isSavedPageUnreadCount);
 
 export const isFeedPreview: TypeGuard<FeedPreview> = (
   value
