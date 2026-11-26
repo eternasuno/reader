@@ -77,7 +77,7 @@ const swPrecachePlugin = (): Plugin => {
     configResolved(config: ResolvedConfig) {
       outDir = resolve(config.root, config.build.outDir);
     },
-    closeBundle() {
+    writeBundle() {
       writeSwManifest(outDir);
     },
   };
