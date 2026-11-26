@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  isValidImageMessage,
-  isValidKeyMessage,
-} from '../src/components/ArticleFrame';
-import { buildReaderStyles } from '../src/components/articleFrameStyles';
+import { FONT_FAMILIES } from '../src/components/articleTypography';
 
 type StateModule = typeof import('../src/state');
 
@@ -157,92 +153,22 @@ describe('sidebarCollapsed state', () => {
   });
 });
 
-describe('buildReaderStyles', () => {
-  it('outputs serif font family, numeric font-size, and line-height', () => {
-    const css = buildReaderStyles({
-      fontSize: 18,
-      fontFamily: 'serif',
-      lineWidth: 6,
-      lineHeight: 2.0,
-    });
-
-    expect(css).toContain('Georgia, "Times New Roman"');
-    expect(css).toContain('serif');
-    expect(css).toContain('font-size: 18px;');
-    expect(css).toContain('line-height: 2;');
-
-    const defaults = buildReaderStyles();
-    expect(defaults).toContain('sans-serif');
-    expect(defaults).toContain('font-size: 16px;');
-    expect(defaults).toContain('line-height: 1.8;');
-  });
-});
-
-const imgMsg = (
-  overrides: Record<string, unknown> = {}
-): Record<string, unknown> => ({
-  type: 'article-frame-image',
-  token: 'tok',
-  src: 'https://example.com/a.jpg',
-  ...overrides,
-});
-
-const INVALID_IMAGE_CASES: ReadonlyArray<[unknown, string]> = [
-  [imgMsg({ token: 'wrong' }), 'tok'],
-  [imgMsg({ token: '' }), ''],
-  [imgMsg({ type: 'article-frame-resize' }), 'tok'],
-  [imgMsg({ src: 'javascript:alert(1)' }), 'tok'],
-  [imgMsg({ src: 'data:image/png;base64,AA' }), 'tok'],
-  [imgMsg({ src: '/relative.png' }), 'tok'],
-  [imgMsg({ alt: 123 }), 'tok'],
-  [null, 'tok'],
-];
-
-describe('isValidImageMessage', () => {
-  it('accepts http(s) image messages with a matching token', () => {
-    expect(isValidImageMessage(imgMsg(), 'tok')).toBe(true);
-    expect(
-      isValidImageMessage(
-        imgMsg({ src: 'http://example.com/b.png', alt: 'photo' }),
-        'tok'
-      )
-    ).toBe(true);
+describe('FONT_FAMILIES reader stacks', () => {
+  it('maps every font choice to a distinct stack with a generic fallback', () => {
+    expect(Object.keys(FONT_FAMILIES).sort()).toEqual(['sans', 'serif']);
+    expect(FONT_FAMILIES.sans).not.toBe(FONT_FAMILIES.serif);
+    expect(FONT_FAMILIES.sans.endsWith(', sans-serif')).toBe(true);
+    expect(FONT_FAMILIES.serif.startsWith('Georgia, "Times New Roman"')).toBe(
+      true
+    );
+    expect(FONT_FAMILIES.serif.endsWith(', serif')).toBe(true);
   });
 
-  it('rejects mismatched tokens, wrong types, and unsafe image URLs', () => {
-    for (const [data, token] of INVALID_IMAGE_CASES) {
-      expect(isValidImageMessage(data, token)).toBe(false);
-    }
-  });
-});
+  it('lists Latin fonts before CJK fonts in both stacks', () => {
+    const precedes = (stack: string, latin: string, cjk: string) =>
+      stack.indexOf(latin) !== -1 && stack.indexOf(latin) < stack.indexOf(cjk);
 
-describe('isValidKeyMessage', () => {
-  it('accepts Escape with a matching token', () => {
-    {
-      const key = 'Escape';
-      expect(
-        isValidKeyMessage(
-          { type: 'article-frame-key', token: 'tok', key },
-          'tok'
-        )
-      ).toBe(true);
-    }
-  });
-
-  it('rejects mismatched tokens, wrong types, and other keys', () => {
-    const cases: Array<[unknown, string]> = [
-      [{ type: 'article-frame-key', token: 'wrong', key: 'Escape' }, 'tok'],
-      [{ type: 'article-frame-key', token: '', key: 'Escape' }, ''],
-      [{ type: 'article-frame-image', token: 'tok', key: 'Escape' }, 'tok'],
-      [{ type: 'article-frame-key', token: 'tok', key: 'j' }, 'tok'],
-      [{ type: 'article-frame-key', token: 'tok', key: 'Enter' }, 'tok'],
-      [{ type: 'article-frame-key', token: 'tok', key: 'a' }, 'tok'],
-      [{ type: 'article-frame-key', token: 'tok', key: 42 }, 'tok'],
-      [null, 'tok'],
-    ];
-
-    for (const [data, token] of cases) {
-      expect(isValidKeyMessage(data, token)).toBe(false);
-    }
+    expect(precedes(FONT_FAMILIES.sans, 'Arial', 'PingFang SC')).toBe(true);
+    expect(precedes(FONT_FAMILIES.serif, 'Georgia', 'Songti SC')).toBe(true);
   });
 });

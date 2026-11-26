@@ -1,4 +1,4 @@
-import type { JSX } from '@solidjs/web';
+import { type JSX, Portal } from '@solidjs/web';
 import { createEffect, onSettled, Show } from 'solid-js';
 import { t } from '../i18n';
 import { Button, Icon } from '../ui';
@@ -74,41 +74,43 @@ export function ImageLightbox(props: ImageLightboxProps): JSX.Element {
   return (
     <Show when={props.src}>
       {(src) => (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={t('reader.imagePreview')}
-          class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
-        >
+        <Portal>
           <div
-            aria-hidden="true"
-            class="fixed inset-0"
-            onClick={() => props.onClose()}
-          />
-          <Button
-            ref={(el) => {
-              closeButtonRef = el;
-            }}
-            variant="icon"
-            size="sm"
-            class="absolute top-4 right-4 z-10 text-white/80 hover:text-white"
-            aria-label={t('common.close')}
-            onClick={() => props.onClose()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('reader.imagePreview')}
+            class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
           >
-            <Icon name="close" size={20} />
-          </Button>
-          <img
-            src={src()}
-            alt={props.alt ?? ''}
-            referrerpolicy="no-referrer"
-            class="relative z-10 max-h-[85vh] max-w-[92vw] rounded-field object-contain shadow-2xl"
-          />
-          <Show when={props.alt && props.alt.trim().length > 0}>
-            <p class="relative z-10 mt-3 max-w-2xl text-center text-xs text-white/75">
-              {props.alt}
-            </p>
-          </Show>
-        </div>
+            <div
+              aria-hidden="true"
+              class="fixed inset-0"
+              onClick={() => props.onClose()}
+            />
+            <Button
+              ref={(el) => {
+                closeButtonRef = el;
+              }}
+              variant="icon"
+              size="sm"
+              class="absolute top-4 right-4 z-10 text-white/80 hover:text-white"
+              aria-label={t('common.close')}
+              onClick={() => props.onClose()}
+            >
+              <Icon name="close" size={20} />
+            </Button>
+            <img
+              src={src()}
+              alt={props.alt ?? ''}
+              referrerpolicy="no-referrer"
+              class="relative z-10 max-h-[85vh] max-w-[92vw] rounded-field object-contain shadow-2xl"
+            />
+            <Show when={props.alt && props.alt.trim().length > 0}>
+              <p class="relative z-10 mt-3 max-w-2xl text-center text-xs text-white/75">
+                {props.alt}
+              </p>
+            </Show>
+          </div>
+        </Portal>
       )}
     </Show>
   );

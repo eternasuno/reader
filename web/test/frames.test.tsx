@@ -1,11 +1,7 @@
-import { render } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
 import { describe, expect, it } from 'vitest';
-import {
-  ArticleFrame,
-  buildArticleSrcdoc,
-  isValidResizeMessage,
-} from '../src/components/ArticleFrame';
+import { ArticleBody, prepareArticleHtml } from '../src/components/ArticleBody';
+import { FONT_FAMILIES } from '../src/components/articleTypography';
 import { EmbeddedWebpageFrame } from '../src/components/EmbeddedWebpageFrame';
 import { mount, setupInteractions } from './support/list-helpers';
 
@@ -14,184 +10,155 @@ setupInteractions();
 const iframeOf = (container: HTMLElement): HTMLIFrameElement =>
   container.querySelector('iframe') as HTMLIFrameElement;
 
-const srcdocOf = (iframe: HTMLIFrameElement): string =>
-  iframe.getAttribute('srcdoc') ?? '';
-const nonceOf = (srcdoc: string): string =>
-  /script-src 'nonce-([^']+)'/.exec(srcdoc)?.[1] ?? '';
-const tokenOf = (srcdoc: string): string =>
-  /var token = "([^"]+)"/.exec(srcdoc)?.[1] ?? '';
+const IMAGE_LABEL = '图片预览';
 
-const dispatchResize = (source: Window | null, data: unknown): void => {
-  window.dispatchEvent(new MessageEvent('message', { data, source }));
-  flush();
+const parsed = (html: string): HTMLElement => {
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  return root;
 };
 
-const SRCDOC = buildArticleSrcdoc({
-  html: '<div class="prose wide" id="keep" style="color:red">Hello</div><p class="a"><span class="b">hi</span></p><img class="shot" src="a.png" alt="a">',
-  nonce: 'nonce123',
-  token: 'token456',
-  appOrigin: 'https://app.example',
-  stylesheetHrefs: ['https://app.example/assets/app.css'],
-});
-const RESIZE_MESSAGE = { type: 'article-frame-resize' };
+const prepared = (html: string, label = IMAGE_LABEL): HTMLElement =>
+  parsed(prepareArticleHtml(html, label));
 
-describe('buildArticleSrcdoc sanitization', () => {
-  it('strips stored source classes from block and nested markup', () => {
-    expect(SRCDOC).not.toContain('class="prose wide"');
-    expect(SRCDOC).not.toContain('class="a"');
-    expect(SRCDOC).not.toContain('class="b"');
-    expect(SRCDOC).not.toContain('class="shot"');
-    expect(SRCDOC).toContain('<div id="keep" style="color:red">Hello</div>');
-    expect(SRCDOC).toContain('<p><span>hi</span></p>');
-    expect(SRCDOC).toContain('<img src="a.png" alt="a">');
-  });
+const bodyOf = (container: HTMLElement): HTMLElement =>
+  container.querySelector('.article-body') as HTMLElement;
 
-  it('omits stylesheets when absent and escapes hrefs', () => {
-    const bare = buildArticleSrcdoc({
-      html: '<p>x</p>',
-      nonce: 'n',
-      token: 't',
-      appOrigin: '',
-    });
-    const escaped = buildArticleSrcdoc({
-      html: '',
-      nonce: 'n',
-      token: 't',
-      appOrigin: 'https://app.example',
-      stylesheetHrefs: ['https://cdn.example/a.css?x="1"&y=<2>'],
-    });
-
-    expect(bare).not.toContain('<link rel="stylesheet"');
-    expect(bare).toContain("style-src 'unsafe-inline'; script-src 'nonce-n'");
-    expect(escaped).toContain(
-      'href="https://cdn.example/a.css?x=&quot;1&quot;&amp;y=&lt;2&gt;"'
+describe('prepareArticleHtml attribute stripping', () => {
+  it('strips class, id, name, and style from block and nested markup', () => {
+    const root = prepared(
+      '<div class="prose wide" id="keep" style="color:red">Hello</div>' +
+        '<p class="a" name="n"><span class="b" id="s" style="x:y">hi</span></p>' +
+        '<a class="l" id="top" name="top" href="https://example.com/x" title="T">link</a>' +
+        '<img class="shot" id="i" name="img" style="width:9px" src="a.png" alt="a">'
     );
-  });
-});
 
-describe('buildArticleSrcdoc policy', () => {
-  it('renders the CSP meta tag with the nonce and app origin', () => {
-    expect(SRCDOC).toContain('http-equiv="Content-Security-Policy"');
-    expect(SRCDOC).toContain(
-      "default-src 'none'; img-src https: http:; style-src 'unsafe-inline' https://app.example; script-src 'nonce-nonce123'; base-uri 'none'; form-action 'none'"
+    expect(root.querySelectorAll('[class],[id],[name],[style]')).toHaveLength(
+      0
     );
+    expect(root.querySelector('div')?.outerHTML).toBe('<div>Hello</div>');
+    expect(root.querySelector('p')?.outerHTML).toBe('<p><span>hi</span></p>');
+  });
+
+  it('keeps meaningful attributes such as href, title, src, and alt', () => {
+    const root = prepared(
+      '<a class="l" href="https://example.com/x" title="T">link</a><img class="shot" src="a.png" alt="a">'
+    );
+    const link = root.querySelector('a');
+    const image = root.querySelector('img');
+
+    expect(link?.getAttribute('href')).toBe('https://example.com/x');
+    expect(link?.getAttribute('title')).toBe('T');
+    expect(link?.textContent).toBe('link');
+    expect(image?.getAttribute('src')).toBe('a.png');
+    expect(image?.getAttribute('alt')).toBe('a');
+  });
+
+  it('adds referrerpolicy="no-referrer" to every image', () => {
+    const root = prepared(
+      '<img src="https://example.com/a.png">' +
+        '<a href="https://example.com"><img src="https://example.com/b.png"></a>' +
+        '<img src="data:image/png;base64,AA"><img src="a.png">'
+    );
+    const images = root.querySelectorAll('img');
+
+    expect(images).toHaveLength(4);
+    for (const image of images) {
+      expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
+    }
   });
 });
 
-describe('isValidResizeMessage', () => {
-  const token = 'token456';
-  const resize = (overrides: Record<string, unknown>): unknown => ({
-    ...RESIZE_MESSAGE,
-    token,
-    height: 10,
-    ...overrides,
-  });
+describe('prepareArticleHtml image keyboard operability', () => {
+  it('makes unlinked http(s) images focusable buttons', () => {
+    const root = prepared(
+      '<img src="https://example.com/a.png" alt="A"><img src="HTTP://example.com/b.png" alt="B">'
+    );
 
-  it('accepts well-formed resize messages within bounds', () => {
-    for (const height of [1, 1_000_000, 321.4]) {
-      expect(isValidResizeMessage(resize({ height }), token)).toBe(true);
+    expect(root.querySelectorAll('img')).toHaveLength(2);
+    for (const image of root.querySelectorAll('img')) {
+      expect(image.getAttribute('tabindex')).toBe('0');
+      expect(image.getAttribute('role')).toBe('button');
     }
   });
 
-  it('rejects foreign tokens, wrong types, and out-of-range heights', () => {
-    for (const data of [null, undefined, 'article-frame-resize', 42, [], {}])
-      expect(isValidResizeMessage(data, token)).toBe(false);
-    for (const height of [0, -5, 1_000_001, '100', Infinity, null])
-      expect(isValidResizeMessage(resize({ height }), token)).toBe(false);
-    for (const bad of [
-      { type: 'other' },
-      { token: 'other' },
-      { token: undefined },
-    ])
-      expect(isValidResizeMessage(resize(bad), token)).toBe(false);
-    expect(isValidResizeMessage(resize({}), '')).toBe(false);
-  });
-});
-
-describe('ArticleFrame sandbox', () => {
-  it('renders an isolated sandboxed iframe without allow-same-origin', () => {
-    const iframe = iframeOf(
-      mount(() => <ArticleFrame html='<p class="lead">Body</p>' title="文章" />)
+  it('labels only images without alt text, using the given label', () => {
+    const root = prepared(
+      '<img src="https://example.com/none.png">' +
+        '<img src="https://example.com/empty.png" alt="">' +
+        '<img src="https://example.com/blank.png" alt="   ">' +
+        '<img src="https://example.com/alt.png" alt="Described">' +
+        '<img src="https://example.com/own.png" aria-label="Own">',
+      'Image preview'
     );
-    const sandbox = iframe.getAttribute('sandbox') ?? '';
+    const label = (name: string) =>
+      root.querySelector(`img[src$="${name}"]`)?.getAttribute('aria-label') ??
+      null;
 
-    expect(sandbox.split(' ')).toEqual([
-      'allow-scripts',
-      'allow-popups',
-      'allow-popups-to-escape-sandbox',
-    ]);
-    expect(iframe.getAttribute('title')).toBe('文章');
+    expect(label('none.png')).toBe('Image preview');
+    expect(label('empty.png')).toBe('Image preview');
+    expect(label('blank.png')).toBe('Image preview');
+    expect(label('alt.png')).toBeNull();
+    expect(label('own.png')).toBe('Own');
   });
 
-  it('links the active app stylesheet into the srcdoc', () => {
-    const stylesheet = document.createElement('link');
-    stylesheet.rel = 'stylesheet';
-    stylesheet.href = '/assets/app.css';
-    document.head.append(stylesheet);
-    const doc = srcdocOf(
-      iframeOf(mount(() => <ArticleFrame html="<p>Body</p>" />))
+  it('leaves linked and non-http(s) images out of the keyboard flow', () => {
+    const root = prepared(
+      '<a href="https://example.com/post"><img src="https://example.com/linked.png"></a>' +
+        '<a href="https://example.com/post"><span><img src="https://example.com/nested.png"></span></a>' +
+        '<img src="data:image/png;base64,AA">' +
+        '<img src="javascript:alert(1)">'
     );
-    expect(doc).toContain(
-      `<link rel="stylesheet" href="${new URL('/assets/app.css', document.baseURI).href}">`
-    );
-    stylesheet.remove();
-  });
-});
 
-describe('ArticleFrame tokens', () => {
-  it('issues a fresh nonce and token per render and on html change', () => {
-    const docFor = (h: string) =>
-      srcdocOf(iframeOf(mount(() => <ArticleFrame html={h} />)));
-    const first = docFor('<p>a</p>');
-    const second = docFor('<p>a</p>');
-    const [html, setHtml] = createSignal('<p>one</p>');
-    const iframe = iframeOf(mount(() => <ArticleFrame html={html()} />));
-    const before = srcdocOf(iframe);
-
-    setHtml('<p>two</p>');
-    flush();
-
-    const after = srcdocOf(iframe);
-    expect(nonceOf(first).length).toBeGreaterThan(7);
-    expect(tokenOf(first).length).toBeGreaterThan(7);
-    expect(nonceOf(second)).not.toBe(nonceOf(first));
-    expect(tokenOf(second)).not.toBe(tokenOf(first));
-    expect(after).toContain('two');
-    expect(nonceOf(after)).not.toBe(nonceOf(before));
-    expect(tokenOf(after)).not.toBe(tokenOf(before));
-  });
-});
-
-describe('ArticleFrame resize messages', () => {
-  it('applies only same-source, same-token, in-range resize messages', () => {
-    const iframe = iframeOf(mount(() => <ArticleFrame html="<p>one</p>" />));
-    const token = tokenOf(srcdocOf(iframe));
-    const cases: Array<[number, Window | null, string, string]> = [
-      [321.4, iframe.contentWindow, token, '322px'],
-      [100, iframe.contentWindow, 'stale', '322px'],
-      [100, window, token, '322px'],
-      [2_000_000, iframe.contentWindow, token, '322px'],
-      [44, iframe.contentWindow, token, '44px'],
-    ];
-
-    for (const [height, source, tok, expected] of cases) {
-      dispatchResize(source, { ...RESIZE_MESSAGE, token: tok, height });
-      expect(iframe.style.height).toBe(expected);
+    expect(root.querySelectorAll('img')).toHaveLength(4);
+    for (const image of root.querySelectorAll('img')) {
+      expect(image.hasAttribute('tabindex')).toBe(false);
+      expect(image.hasAttribute('role')).toBe(false);
+      expect(image.hasAttribute('aria-label')).toBe(false);
     }
   });
 
-  it('stops listening once the frame is disposed', () => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    const dispose = render(() => <ArticleFrame html="<p>one</p>" />, container);
-    flush();
-    const iframe = iframeOf(container);
-    const token = tokenOf(srcdocOf(iframe));
+  it('treats an anchor without href as no link', () => {
+    const root = prepared('<a><img src="https://example.com/a.png"></a>');
 
-    dispose();
-    const msg = { ...RESIZE_MESSAGE, token, height: 500 };
-    dispatchResize(iframe.contentWindow, msg);
-    expect(iframe.style.height).toBe('');
+    expect(root.querySelector('img')?.getAttribute('role')).toBe('button');
+  });
+});
+
+describe('ArticleBody', () => {
+  it('renders sanitized html inline instead of in an iframe', () => {
+    const container = mount(() => (
+      <ArticleBody html='<p class="lead" id="x">Body</p>' />
+    ));
+    const paragraph = bodyOf(container).querySelector('p');
+
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(paragraph?.textContent).toBe('Body');
+    expect(paragraph?.hasAttribute('class')).toBe(false);
+    expect(paragraph?.hasAttribute('id')).toBe(false);
+  });
+
+  it('applies the default typography as CSS variables', () => {
+    const style = bodyOf(mount(() => <ArticleBody html="<p>Body</p>" />)).style;
+
+    expect(style.getPropertyValue('--article-font-size')).toBe('16px');
+    expect(style.getPropertyValue('--article-font-family')).toBe(
+      FONT_FAMILIES.sans
+    );
+    expect(style.getPropertyValue('--article-line-height')).toBe('1.8');
+  });
+
+  it('re-renders the body when html changes', () => {
+    const [html, setHtml] = createSignal('<p class="a">One</p>');
+    const body = bodyOf(mount(() => <ArticleBody html={html()} />));
+    expect(body.textContent).toBe('One');
+
+    setHtml('<h2 class="b">Two</h2>');
+    flush();
+
+    expect(body.textContent).toBe('Two');
+    expect(body.querySelector('p')).toBeNull();
+    expect(body.querySelector('h2')?.hasAttribute('class')).toBe(false);
   });
 });
 

@@ -1,9 +1,7 @@
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  ArticleFrame,
-  buildArticleSrcdoc,
-} from '../src/components/ArticleFrame';
+import { ArticleBody } from '../src/components/ArticleBody';
+import { FONT_FAMILIES } from '../src/components/articleTypography';
 import { ReaderStoredBody } from '../src/components/ReaderArticle';
 import { ReaderPane } from '../src/components/ReaderPane';
 import {
@@ -23,14 +21,14 @@ import {
 setupInteractions();
 let fetchMock: ReturnType<typeof vi.fn>;
 
-const iframeOf = (root: ParentNode): HTMLIFrameElement =>
-  root.querySelector('iframe') as HTMLIFrameElement;
+const bodyOf = (root: ParentNode): HTMLElement =>
+  root.querySelector('.article-body') as HTMLElement;
 
-const srcdocOf = (iframe: HTMLIFrameElement): string =>
-  iframe.getAttribute('srcdoc') ?? '';
-
-const tokenOf = (srcdoc: string): string =>
-  /var token = "([^"]+)"/.exec(srcdoc)?.[1] ?? '';
+const typography = (body: HTMLElement) => ({
+  size: body.style.getPropertyValue('--article-font-size'),
+  family: body.style.getPropertyValue('--article-font-family'),
+  lineHeight: body.style.getPropertyValue('--article-line-height'),
+});
 
 const deferredResponse = (): {
   promise: Promise<Response>;
@@ -77,53 +75,72 @@ afterEach(() => {
   state.clearReaderState();
 });
 
-describe('ArticleFrame theme and width', () => {
-  it('updates srcdoc data-theme reactively and omits it for auto', () => {
-    const explicitLight = buildArticleSrcdoc({
-      html: '<p>x</p>',
-      nonce: 'n',
-      token: 't',
-      appOrigin: '',
-      theme: 'light',
+describe('ArticleBody typography', () => {
+  it('updates the typography CSS variables when appearance changes', () => {
+    const body = bodyOf(mount(() => <ArticleBody html="<p>Post</p>" />));
+    expect(typography(body)).toEqual({
+      size: '16px',
+      family: FONT_FAMILIES.sans,
+      lineHeight: '1.8',
     });
-    expect(explicitLight).toContain('<html data-theme="light">');
-
-    const iframe = iframeOf(mount(() => <ArticleFrame html="<p>Post</p>" />));
-    expect(srcdocOf(iframe)).toContain('<!DOCTYPE html><html>');
-
-    state.setReaderTheme('light');
-    expect(srcdocOf(iframe)).toContain('<html data-theme="light">');
-
-    state.setReaderTheme('dark');
-    expect(srcdocOf(iframe)).toContain('<html data-theme="dark">');
-
-    state.setReaderTheme('auto');
-    expect(srcdocOf(iframe)).toContain('<!DOCTYPE html><html>');
-  });
-
-  it('does not reload srcdoc when lineWidth changes, but updates when fontSize changes', () => {
-    const iframe = iframeOf(mount(() => <ArticleFrame html="<p>Post</p>" />));
-    const initial = srcdocOf(iframe);
-    const initialToken = tokenOf(initial);
-
-    state.stepLineWidth(-1);
-    expect(srcdocOf(iframe)).toBe(initial);
-    expect(tokenOf(srcdocOf(iframe))).toBe(initialToken);
 
     state.stepFontSize(1);
-    expect(srcdocOf(iframe)).not.toBe(initial);
-    expect(srcdocOf(iframe)).toContain('font-size: 18px;');
+    expect(typography(body).size).toBe('18px');
+
+    state.updateReaderAppearance({ fontFamily: 'serif' });
+    expect(typography(body).family).toBe(FONT_FAMILIES.serif);
+
+    state.updateReaderAppearance({ lineHeight: 2.0 });
+    expect(typography(body)).toEqual({
+      size: '18px',
+      family: FONT_FAMILIES.serif,
+      lineHeight: '2',
+    });
+
+    state.resetReaderAppearance();
+    expect(typography(body)).toEqual({
+      size: '16px',
+      family: FONT_FAMILIES.sans,
+      lineHeight: '1.8',
+    });
+  });
+
+  it('does not rebuild article nodes or typography when lineWidth changes', () => {
+    const body = bodyOf(mount(() => <ArticleBody html="<p>Post</p>" />));
+    const paragraph = body.querySelector('p');
+    const before = typography(body);
+
+    state.stepLineWidth(-1);
+    expect(body.querySelector('p')).toBe(paragraph);
+    expect(typography(body)).toEqual(before);
+
+    state.stepFontSize(1);
+    expect(body.querySelector('p')).toBe(paragraph);
+    expect(typography(body).size).toBe('18px');
   });
 });
 
-describe('ArticleFrame height and image label', () => {
-  it('injects localized imageLabel and only adds aria-label when alt is blank', () => {
-    const iframe = iframeOf(mount(() => <ArticleFrame html="<p>Post</p>" />));
-    expect(srcdocOf(iframe)).toContain('var imageLabel = "图片预览"');
+describe('ArticleBody image label', () => {
+  it('localizes the image label and only adds aria-label when alt is blank', () => {
+    const body = bodyOf(
+      mount(() => (
+        <ArticleBody
+          html={
+            '<img src="https://example.com/a.png">' +
+            '<img src="https://example.com/b.png" alt="Described">'
+          }
+        />
+      ))
+    );
+    const labels = () =>
+      Array.from(body.querySelectorAll('img')).map((img) =>
+        img.getAttribute('aria-label')
+      );
+    expect(labels()).toEqual(['图片预览', null]);
 
     setLocale('en');
     flush();
-    expect(srcdocOf(iframe)).toContain('var imageLabel = "Image preview"');
+    expect(labels()).toEqual(['Image preview', null]);
   });
 });
 
@@ -143,7 +160,8 @@ describe('ReaderStoredBody extraction', () => {
     flush();
     expect(state.extracting()).toBe(true);
     expect(container.querySelector('[role="status"]')).toBeNull();
-    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(bodyOf(container)).not.toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
 
     pending.resolve(
       jsonResponse({

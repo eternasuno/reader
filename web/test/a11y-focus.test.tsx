@@ -1,7 +1,7 @@
 import type { JSX } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
 import { describe, expect, it, vi } from 'vitest';
-import { ArticleFrame } from '../src/components/ArticleFrame';
+import { ArticleBody } from '../src/components/ArticleBody';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
 import { ReaderAppearanceMenu } from '../src/components/ReaderAppearanceMenu';
 import { SidebarBrand } from '../src/components/SidebarBrand';
@@ -11,30 +11,15 @@ import { mount, setupInteractions } from './support/list-helpers';
 
 setupInteractions();
 
-const frameToken = (iframe: HTMLIFrameElement): string =>
-  /var token = "([^"]+)"/.exec(iframe.getAttribute('srcdoc') ?? '')?.[1] ?? '';
-
-const sendFrameMessage = (iframe: HTMLIFrameElement, data: unknown): void => {
-  window.dispatchEvent(
-    new MessageEvent('message', { data, source: iframe.contentWindow })
-  );
-  flush();
-};
-
 const openLightbox = async (
-  html = '<p>Post</p>'
-): Promise<{ iframe: HTMLIFrameElement; token: string }> => {
-  const container = mount(() => <ArticleFrame html={html} />);
-  const iframe = container.querySelector('iframe') as HTMLIFrameElement;
-  const token = frameToken(iframe);
-  sendFrameMessage(iframe, {
-    type: 'article-frame-image',
-    token,
-    src: 'https://example.com/photo.jpg',
-    alt: 'Sample',
-  });
+  html = '<p>Post</p><img src="https://example.com/photo.jpg" alt="Sample">'
+): Promise<HTMLImageElement> => {
+  const container = mount(() => <ArticleBody html={html} />);
+  const image = container.querySelector('img') as HTMLImageElement;
+  image.click();
+  flush();
   await Promise.resolve();
-  return { iframe, token };
+  return image;
 };
 
 describe('ImageLightbox focus lifecycle and Tab trap', () => {
@@ -64,22 +49,51 @@ describe('ImageLightbox focus lifecycle and Tab trap', () => {
   });
 });
 
-describe('ArticleFrame Escape & image keyboard script', () => {
-  it('closes lightbox on bridged Escape', async () => {
-    const seen: Array<string> = [];
-    const onKeyDown = (event: KeyboardEvent) => seen.push(event.key);
-    window.addEventListener('keydown', onKeyDown);
+describe('ArticleBody Escape & image keyboard', () => {
+  it('closes lightbox on Escape', async () => {
+    await openLightbox();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
 
-    const { iframe, token } = await openLightbox();
-    sendFrameMessage(iframe, {
-      type: 'article-frame-key',
-      token,
-      key: 'Escape',
-    });
-    window.removeEventListener('keydown', onKeyDown);
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+    flush();
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(seen).toEqual([]);
+  });
+
+  it('opens from the keyboard and returns focus to the image on close', async () => {
+    const container = mount(() => (
+      <ArticleBody html='<img src="https://example.com/photo.jpg" alt="Sample">' />
+    ));
+    const image = container.querySelector('img') as HTMLImageElement;
+    expect(image.getAttribute('role')).toBe('button');
+    expect(image.tabIndex).toBe(0);
+    image.focus();
+    expect(document.activeElement).toBe(image);
+
+    image.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    flush();
+    await Promise.resolve();
+    const closeBtn = document.querySelector<HTMLButtonElement>(
+      '[role="dialog"][aria-label="图片预览"] button[aria-label="关闭"]'
+    );
+    expect(closeBtn).not.toBeNull();
+    expect(document.activeElement).toBe(closeBtn);
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+    flush();
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(image);
   });
 });
 

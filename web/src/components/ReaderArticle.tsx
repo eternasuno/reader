@@ -3,7 +3,7 @@ import { Show } from 'solid-js';
 import { browserHref } from '../api/url';
 import { formatDateTime, locale, t } from '../i18n';
 import { articleSource, hostnameOf, type LibraryArticle } from '../state';
-import { ArticleFrame } from './ArticleFrame';
+import { ArticleBody } from './ArticleBody';
 import { bodyHtml } from './readerBody';
 import { SiteIcon } from './SiteIcon';
 
@@ -84,7 +84,7 @@ export function ReaderStoredBody(props: {
         <p class="text-sm text-base-content/60">{t('reader.noContent')}</p>
       }
     >
-      {(html) => <ArticleFrame html={html()} title={props.article.title} />}
+      {(html) => <ArticleBody html={html()} />}
     </Show>
   );
 }
