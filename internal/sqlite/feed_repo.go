@@ -10,23 +10,35 @@ import (
 )
 
 const (
-	// The trailing three columns derive updated_at, failure_count, and last_error
-	// from feed_refresh (see feed_refresh_feed_id_id); a feed holds no refresh state.
-	feedColumns = `id, url, title, site_url, icon_url, folder_id, reader_mode, sort_order,
-		(SELECT finished_at FROM feed_refresh WHERE feed_id = feed.id AND status = 'succeeded' ORDER BY id DESC LIMIT 1),
-		(SELECT COUNT(*) FROM feed_refresh WHERE feed_id = feed.id AND status = 'failed'
-			AND id > COALESCE((SELECT MAX(id) FROM feed_refresh WHERE feed_id = feed.id AND status = 'succeeded'), '')),
-		(SELECT CASE WHEN status = 'failed' THEN error END FROM feed_refresh WHERE feed_id = feed.id ORDER BY id DESC LIMIT 1)`
-	listFeedsQuery           = `SELECT ` + feedColumns + ` FROM feed ORDER BY title ASC, id ASC`
-	getFeedQuery             = `SELECT ` + feedColumns + ` FROM feed WHERE id = ?`
+	feedBaseColumns = `id, url, title, site_url, icon_url, folder_id, reader_mode, sort_order`
+	// The trailing three columns are the feed's refresh aggregates, stored in feed_schedule.
+	feedColumns    = feedBaseColumns + `, last_success_at, consecutive_failures, last_error`
+	feedFrom       = `feed JOIN feed_schedule ON feed_schedule.feed_id = feed.id`
+	listFeedsQuery = `SELECT ` + feedColumns + ` FROM ` + feedFrom + ` ORDER BY title ASC, id ASC`
+	getFeedQuery   = `SELECT ` + feedColumns + ` FROM ` + feedFrom + ` WHERE id = ?`
+	// A new feed has no refresh history, so the joined aggregates are constants.
+	createFeedQuery = `INSERT INTO feed (id, url, title, folder_id, reader_mode, sort_order) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (url) DO NOTHING RETURNING ` + feedBaseColumns + `, NULL, 0, NULL`
+	insertFeedScheduleQuery  = `INSERT INTO feed_schedule (feed_id, next_refresh_at) VALUES (?, ?)`
 	loadFolderIDsByNameQuery = `SELECT id, name FROM folder WHERE name IN (SELECT value FROM json_each(?))`
-	insertFeedRefreshQuery   = `INSERT INTO feed_refresh (id, feed_id, status, error, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)`
-	// Pruning keeps the newest feedRefreshLimit rows and the newest succeeded row,
-	// which alone carries the feed's updated_at once enough failures follow it.
-	pruneFeedRefreshQuery = `DELETE FROM feed_refresh WHERE feed_id = ?
-		AND id NOT IN (SELECT id FROM feed_refresh WHERE feed_id = ? ORDER BY id DESC LIMIT ?)
-		AND id NOT IN (SELECT id FROM feed_refresh WHERE feed_id = ? AND status = ? ORDER BY id DESC LIMIT 1)`
-	feedRefreshLimit = 10
+	requestRefreshQuery      = `UPDATE feed_schedule SET next_refresh_at = ? WHERE feed_id = ? AND next_refresh_at > ?`
+	// Claiming picks the oldest due feed without a running attempt and records the
+	// attempt in one statement; next_refresh_at stays until the attempt finishes.
+	claimDueRefreshQuery = `INSERT INTO feed_refresh (id, feed_id, status, started_at)
+		SELECT ?, feed_id, ?, ? FROM feed_schedule
+		WHERE next_refresh_at <= ?
+			AND NOT EXISTS (SELECT 1 FROM feed_refresh WHERE feed_refresh.feed_id = feed_schedule.feed_id AND feed_refresh.status = ?)
+		ORDER BY next_refresh_at, feed_id LIMIT 1
+		RETURNING feed_id`
+	finishFeedRefreshQuery      = `UPDATE feed_refresh SET status = ?, error = ?, finished_at = ? WHERE id = ? AND feed_id = ? AND status = ?`
+	releaseFeedRefreshQuery     = `DELETE FROM feed_refresh WHERE id = ? AND feed_id = ? AND status = ?`
+	interruptFeedRefreshesQuery = `UPDATE feed_refresh SET status = ?, error = ?, finished_at = ? WHERE status = ? RETURNING feed_id`
+	succeedFeedScheduleQuery    = `UPDATE feed_schedule SET next_refresh_at = ?, last_success_at = ?, consecutive_failures = 0, last_error = NULL WHERE feed_id = ?`
+	failFeedScheduleQuery       = `UPDATE feed_schedule SET next_refresh_at = ?, consecutive_failures = consecutive_failures + 1, last_error = ? WHERE feed_id = ?`
+	pruneFeedRefreshQuery       = `DELETE FROM feed_refresh WHERE feed_id = ? AND status <> ?
+		AND id NOT IN (SELECT id FROM feed_refresh WHERE feed_id = ? AND status <> ? ORDER BY id DESC LIMIT ?)`
+	feedRefreshLimit        = 10
+	interruptedRefreshError = "interrupted"
 )
 
 type FeedRepo struct {
@@ -35,11 +47,11 @@ type FeedRepo struct {
 }
 
 type opmlImporter struct {
-	ctx        context.Context
-	tx         *sql.Tx
-	folderIDs  map[string]string
-	result     domain.OPMLImportResult
-	createdIDs []string
+	ctx       context.Context
+	tx        *sql.Tx
+	now       time.Time
+	folderIDs map[string]string
+	result    domain.OPMLImportResult
 }
 
 func (r *FeedRepo) List(ctx context.Context) ([]domain.Feed, error) {
@@ -136,22 +148,38 @@ func (r *FeedRepo) GetByID(ctx context.Context, id string) (*domain.Feed, error)
 	return &feed, nil
 }
 
-func (r *FeedRepo) Create(ctx context.Context, feed domain.Feed) (domain.Feed, error) {
-	created, err := scanFeed(r.write.QueryRowContext(
-		ctx,
-		`INSERT INTO feed (id, url, title, folder_id, reader_mode, sort_order) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (url) DO NOTHING RETURNING `+feedColumns,
-		feed.ID,
-		feed.URL.Raw(),
-		feed.Title,
-		optionalString(feed.FolderID),
-		string(feed.ReaderMode),
-		string(feed.Order),
-	))
+// Create inserts the feed and its schedule, due at now, in one transaction.
+func (r *FeedRepo) Create(ctx context.Context, feed domain.Feed, now time.Time) (domain.Feed, error) {
+	var created domain.Feed
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		var err error
+		created, err = scanFeed(tx.QueryRowContext(
+			ctx,
+			createFeedQuery,
+			feed.ID,
+			feed.URL.Raw(),
+			feed.Title,
+			optionalString(feed.FolderID),
+			string(feed.ReaderMode),
+			string(feed.Order),
+		))
+		if err != nil {
+			return err
+		}
+
+		return insertFeedSchedule(ctx, tx, created.ID, now)
+	})
 	if err != nil {
 		return domain.Feed{}, mapCreateFeedError(err, feed.URL)
 	}
 
 	return created, nil
+}
+
+func insertFeedSchedule(ctx context.Context, tx *sql.Tx, feedID string, now time.Time) error {
+	_, err := tx.ExecContext(ctx, insertFeedScheduleQuery, feedID, timeToMillis(now))
+
+	return err
 }
 
 func mapCreateFeedError(err error, url domain.NormalizedURL) error {
@@ -202,36 +230,80 @@ func (r *FeedRepo) MoveToFolder(ctx context.Context, id string, folderID *string
 	return nil
 }
 
-// RecordRefreshFailure is a no-op when the feed was deleted while its refresh ran.
-func (r *FeedRepo) RecordRefreshFailure(ctx context.Context, feedID string, errSummary string, startedAt, finishedAt time.Time) error {
-	summary := domain.SanitizeErrorText(errSummary)
-	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		return recordFeedRefresh(ctx, tx, feedID, domain.FeedRefreshFailed, &summary, startedAt, finishedAt)
-	})
-	if err != nil && !isForeignKeyViolation(err) {
+// RequestRefresh makes the feed due at now unless it is already due, and ignores a
+// missing feed. A running attempt overwrites next_refresh_at when it finishes.
+func (r *FeedRepo) RequestRefresh(ctx context.Context, feedID string, now time.Time) error {
+	if _, err := r.write.ExecContext(ctx, requestRefreshQuery, timeToMillis(now), feedID, timeToMillis(now)); err != nil {
 		return domain.NewError(domain.ErrFeedRepositoryError, err)
 	}
 
 	return nil
 }
 
-// ApplySync is a no-op when the feed was deleted while its refresh ran.
-func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, meta domain.FeedSyncMeta, startedAt, finishedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
+// ClaimDueRefresh records a running attempt for the oldest due feed that has none,
+// and returns nil when no feed is due.
+func (r *FeedRepo) ClaimDueRefresh(ctx context.Context, attemptID string, now time.Time) (*domain.Feed, error) {
+	var claimed *domain.Feed
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		found, err := updateFeedSyncMeta(ctx, tx, feedID, meta)
-		if err != nil || !found {
+		var err error
+		claimed, err = claimDueRefreshInTx(ctx, tx, attemptID, now)
+
+		return err
+	})
+	if err != nil {
+		return nil, wrapRepositoryError(err, domain.ErrFeedRepositoryError)
+	}
+
+	return claimed, nil
+}
+
+func claimDueRefreshInTx(ctx context.Context, tx *sql.Tx, attemptID string, now time.Time) (*domain.Feed, error) {
+	var feedID string
+	err := tx.QueryRowContext(
+		ctx,
+		claimDueRefreshQuery,
+		attemptID,
+		string(domain.FeedRefreshRunning),
+		timeToMillis(now),
+		timeToMillis(now),
+		string(domain.FeedRefreshRunning),
+	).Scan(&feedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	feed, err := scanFeed(tx.QueryRowContext(ctx, getFeedQuery, feedID))
+	if err != nil {
+		return nil, err
+	}
+
+	return &feed, nil
+}
+
+// SucceedRefresh finishes the running attempt, applies the sync, and schedules the
+// next refresh. It writes nothing when the attempt is not running (feed deleted or
+// outcome already recorded).
+func (r *FeedRepo) SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta domain.FeedSyncMeta, newItems []domain.FeedItem, deleteIDs []string, finishedAt, nextRefreshAt time.Time) error {
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		finished, err := finishFeedRefresh(ctx, tx, attemptID, feedID, domain.FeedRefreshSucceeded, nil, finishedAt)
+		if err != nil || !finished {
 			return err
 		}
 
-		if err := insertSyncItems(ctx, tx, feedID, newItems); err != nil {
+		if err := applyFeedSync(ctx, tx, feedID, meta, newItems, deleteIDs); err != nil {
 			return err
 		}
 
-		if err := deleteSyncItems(ctx, tx, feedID, deleteIDs); err != nil {
+		_, err = tx.ExecContext(ctx, succeedFeedScheduleQuery, timeToMillis(nextRefreshAt), timeToMillis(finishedAt), feedID)
+		if err != nil {
 			return err
 		}
 
-		return recordFeedRefresh(ctx, tx, feedID, domain.FeedRefreshSucceeded, nil, startedAt, finishedAt)
+		return pruneFeedRefresh(ctx, tx, feedID)
 	})
 	if err != nil {
 		return wrapRepositoryError(err, domain.ErrFeedRepositoryError)
@@ -240,14 +312,108 @@ func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, meta domain.Fee
 	return nil
 }
 
-func updateFeedSyncMeta(ctx context.Context, tx *sql.Tx, feedID string, meta domain.FeedSyncMeta) (bool, error) {
+// FailRefresh finishes the running attempt as failed, counts the failure, and
+// schedules the next refresh. It writes nothing when the attempt is not running.
+func (r *FeedRepo) FailRefresh(ctx context.Context, attemptID string, feedID string, errSummary string, finishedAt, nextRefreshAt time.Time) error {
+	summary := domain.SanitizeErrorText(errSummary)
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		finished, err := finishFeedRefresh(ctx, tx, attemptID, feedID, domain.FeedRefreshFailed, &summary, finishedAt)
+		if err != nil || !finished {
+			return err
+		}
+
+		_, err = tx.ExecContext(ctx, failFeedScheduleQuery, timeToMillis(nextRefreshAt), summary, feedID)
+		if err != nil {
+			return err
+		}
+
+		return pruneFeedRefresh(ctx, tx, feedID)
+	})
+	if err != nil {
+		return wrapRepositoryError(err, domain.ErrFeedRepositoryError)
+	}
+
+	return nil
+}
+
+// ReleaseRefresh drops the running attempt without an outcome, so the feed stays
+// due and its aggregates are unchanged.
+func (r *FeedRepo) ReleaseRefresh(ctx context.Context, attemptID string, feedID string) error {
+	if _, err := r.write.ExecContext(ctx, releaseFeedRefreshQuery, attemptID, feedID, string(domain.FeedRefreshRunning)); err != nil {
+		return domain.NewError(domain.ErrFeedRepositoryError, err)
+	}
+
+	return nil
+}
+
+// RecoverRunningRefreshes marks attempts left running by a previous process as
+// failed. The feed schedule is untouched, so those feeds stay due.
+func (r *FeedRepo) RecoverRunningRefreshes(ctx context.Context, now time.Time) error {
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		feedIDs, err := interruptRunningRefreshes(ctx, tx, now)
+		if err != nil {
+			return err
+		}
+
+		for _, feedID := range feedIDs {
+			if err := pruneFeedRefresh(ctx, tx, feedID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return wrapRepositoryError(err, domain.ErrFeedRepositoryError)
+	}
+
+	return nil
+}
+
+func interruptRunningRefreshes(ctx context.Context, tx *sql.Tx, now time.Time) ([]string, error) {
+	rows, err := tx.QueryContext(
+		ctx,
+		interruptFeedRefreshesQuery,
+		string(domain.FeedRefreshFailed),
+		interruptedRefreshError,
+		timeToMillis(now),
+		string(domain.FeedRefreshRunning),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	defer closeRows(rows)
+
+	feedIDs := []string{}
+	for rows.Next() {
+		var feedID string
+		if err := rows.Scan(&feedID); err != nil {
+			return nil, err
+		}
+
+		feedIDs = append(feedIDs, feedID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return feedIDs, nil
+}
+
+// finishFeedRefresh reports whether the attempt was still running; false means
+// the feed was deleted or the outcome was already recorded.
+func finishFeedRefresh(ctx context.Context, tx *sql.Tx, attemptID string, feedID string, status domain.FeedRefreshStatus, errSummary *string, finishedAt time.Time) (bool, error) {
 	result, err := tx.ExecContext(
 		ctx,
-		`UPDATE feed SET title = ?, site_url = ?, icon_url = ? WHERE id = ?`,
-		meta.Title,
-		optionalString(meta.SiteURL),
-		optionalString(meta.IconURL),
+		finishFeedRefreshQuery,
+		string(status),
+		optionalString(errSummary),
+		timeToMillis(finishedAt),
+		attemptID,
 		feedID,
+		string(domain.FeedRefreshRunning),
 	)
 	if err != nil {
 		return false, err
@@ -258,22 +424,34 @@ func updateFeedSyncMeta(ctx context.Context, tx *sql.Tx, feedID string, meta dom
 	return affected > 0, err
 }
 
-func recordFeedRefresh(ctx context.Context, tx *sql.Tx, feedID string, status domain.FeedRefreshStatus, errSummary *string, startedAt, finishedAt time.Time) error {
-	_, err := tx.ExecContext(
-		ctx,
-		insertFeedRefreshQuery,
-		domain.NewID(),
-		feedID,
-		string(status),
-		optionalString(errSummary),
-		timeToMillis(startedAt),
-		timeToMillis(finishedAt),
-	)
-	if err != nil {
+func pruneFeedRefresh(ctx context.Context, tx *sql.Tx, feedID string) error {
+	running := string(domain.FeedRefreshRunning)
+	_, err := tx.ExecContext(ctx, pruneFeedRefreshQuery, feedID, running, feedID, running, feedRefreshLimit)
+
+	return err
+}
+
+func applyFeedSync(ctx context.Context, tx *sql.Tx, feedID string, meta domain.FeedSyncMeta, newItems []domain.FeedItem, deleteIDs []string) error {
+	if err := updateFeedSyncMeta(ctx, tx, feedID, meta); err != nil {
 		return err
 	}
 
-	_, err = tx.ExecContext(ctx, pruneFeedRefreshQuery, feedID, feedID, feedRefreshLimit, feedID, string(domain.FeedRefreshSucceeded))
+	if err := insertSyncItems(ctx, tx, feedID, newItems); err != nil {
+		return err
+	}
+
+	return deleteSyncItems(ctx, tx, feedID, deleteIDs)
+}
+
+func updateFeedSyncMeta(ctx context.Context, tx *sql.Tx, feedID string, meta domain.FeedSyncMeta) error {
+	_, err := tx.ExecContext(
+		ctx,
+		`UPDATE feed SET title = ?, site_url = ?, icon_url = ? WHERE id = ?`,
+		meta.Title,
+		optionalString(meta.SiteURL),
+		optionalString(meta.IconURL),
+		feedID,
+	)
 
 	return err
 }
@@ -316,16 +494,17 @@ func deleteSyncItems(ctx context.Context, tx *sql.Tx, feedID string, deleteIDs [
 	return err
 }
 
-func (r *FeedRepo) ImportOPML(ctx context.Context, doc domain.OPMLDocument) (domain.OPMLImportResult, []string, error) {
-	importer := &opmlImporter{ctx: ctx, result: domain.OPMLImportResult{SkippedFeeds: doc.SkippedInvalid}, createdIDs: []string{}}
+// ImportOPML inserts the new feeds, each with a schedule due at now, in one transaction.
+func (r *FeedRepo) ImportOPML(ctx context.Context, doc domain.OPMLDocument, now time.Time) (domain.OPMLImportResult, error) {
+	importer := &opmlImporter{ctx: ctx, now: now, result: domain.OPMLImportResult{SkippedFeeds: doc.SkippedInvalid}}
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
 		return importer.run(tx, doc)
 	})
 	if err != nil {
-		return domain.OPMLImportResult{}, nil, wrapRepositoryError(err, domain.ErrFeedRepositoryError)
+		return domain.OPMLImportResult{}, wrapRepositoryError(err, domain.ErrFeedRepositoryError)
 	}
 
-	return importer.result, importer.createdIDs, nil
+	return importer.result, nil
 }
 
 func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
@@ -486,12 +665,7 @@ func (i *opmlImporter) importFeed(input domain.OPMLFeedInput) error {
 		return nil
 	}
 
-	i.recordCreatedFeed(id)
-
-	return nil
-}
-
-func (i *opmlImporter) recordCreatedFeed(id string) {
 	i.result.ImportedFeeds++
-	i.createdIDs = append(i.createdIDs, id)
+
+	return insertFeedSchedule(i.ctx, i.tx, id, i.now)
 }

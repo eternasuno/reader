@@ -14,8 +14,11 @@ import (
 )
 
 const (
-	defaultRefreshConcurrency = 5
-	defaultRefreshInterval    = 30 * time.Minute
+	defaultRefreshConcurrency  = 5
+	defaultRefreshInterval     = 30 * time.Minute
+	defaultRefreshPollInterval = time.Minute
+	releaseMaxAttempts         = 3
+	defaultReleaseBaseBackoff  = 50 * time.Millisecond
 )
 
 type RefreshConfig struct {
@@ -25,30 +28,44 @@ type RefreshConfig struct {
 	Fetcher     domain.FeedFetcher
 	Parser      domain.FeedParser
 	Concurrency int
-	Interval    time.Duration
-	Now         func() time.Time
-	OnFatal     func(error)
+	// Interval is the delay from a refresh finishing to the feed becoming due again.
+	Interval time.Duration
+	// PollInterval is how often idle workers look for due feeds without a Wake.
+	PollInterval time.Duration
+	Now          func() time.Time
+	OnFatal      func(error)
 }
 
-// RefreshQueue refreshes feeds through a bounded worker pool while deduplicating
-// queued and running feed ids.
+// RefreshQueue refreshes due feeds through a bounded worker pool. The database
+// is the queue: each worker claims one due feed at a time, so no in-memory
+// queue or dedupe state exists.
 type RefreshQueue struct {
-	feeds           domain.FeedRepository
-	feedItems       domain.FeedItemRepository
-	settings        domain.SettingRepository
-	fetcher         domain.FeedFetcher
-	parser          domain.FeedParser
-	concurrency     int
-	interval        time.Duration
-	now             func() time.Time
-	onFatal         func(error)
-	dbFailureStreak atomic.Int32
+	feeds              domain.FeedRepository
+	feedItems          domain.FeedItemRepository
+	settings           domain.SettingRepository
+	fetcher            domain.FeedFetcher
+	parser             domain.FeedParser
+	concurrency        int
+	interval           time.Duration
+	pollInterval       time.Duration
+	releaseBaseBackoff time.Duration
+	now                func() time.Time
+	onFatal            func(error)
 
-	mu     sync.Mutex
-	queue  []string
-	queued map[string]struct{}
-	notify chan struct{}
-	wg     sync.WaitGroup
+	// Consecutive database failures, counted per path: an empty claim by one
+	// worker says nothing about another worker's failing refresh.
+	claimFailures   atomic.Int32
+	refreshFailures atomic.Int32
+
+	wake chan struct{}
+	wg   sync.WaitGroup
+}
+
+// feedSyncPlan is the planned database change for one successfully fetched feed.
+type feedSyncPlan struct {
+	meta      domain.FeedSyncMeta
+	newItems  []domain.FeedItem
+	deleteIDs []string
 }
 
 func NewRefreshQueue(cfg RefreshConfig) *RefreshQueue {
@@ -62,105 +79,188 @@ func NewRefreshQueue(cfg RefreshConfig) *RefreshQueue {
 		interval = defaultRefreshInterval
 	}
 
+	pollInterval := cfg.PollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultRefreshPollInterval
+	}
+
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
 
 	return &RefreshQueue{
-		feeds:       cfg.Feeds,
-		feedItems:   cfg.FeedItems,
-		settings:    cfg.Settings,
-		fetcher:     cfg.Fetcher,
-		parser:      cfg.Parser,
-		concurrency: concurrency,
-		interval:    interval,
-		now:         now,
-		onFatal:     cfg.OnFatal,
-		queued:      make(map[string]struct{}),
-		notify:      make(chan struct{}, 1),
+		feeds:              cfg.Feeds,
+		feedItems:          cfg.FeedItems,
+		settings:           cfg.Settings,
+		fetcher:            cfg.Fetcher,
+		parser:             cfg.Parser,
+		concurrency:        concurrency,
+		interval:           interval,
+		pollInterval:       pollInterval,
+		releaseBaseBackoff: defaultReleaseBaseBackoff,
+		now:                now,
+		onFatal:            cfg.OnFatal,
+		wake:               make(chan struct{}, 1),
 	}
 }
 
-// Enqueue schedules feeds for refresh, dropping ids that are already queued or
-// running.
-func (q *RefreshQueue) Enqueue(feedIDs ...string) {
-	q.mu.Lock()
+// Wake asks an idle worker to look for due feeds. It never blocks, and wakes
+// that arrive while a signal is already pending coalesce into it.
+func (q *RefreshQueue) Wake() {
+	select {
+	case q.wake <- struct{}{}:
+	default:
+	}
+}
 
-	added := false
-	for _, feedID := range feedIDs {
-		if _, ok := q.queued[feedID]; ok {
-			continue
+// Start launches the worker pool and the scheduler tick, and wakes the pool once
+// so overdue feeds refresh immediately. They run until ctx is canceled.
+func (q *RefreshQueue) Start(ctx context.Context) {
+	for range q.concurrency {
+		q.wg.Add(1)
+
+		go func() {
+			defer q.wg.Done()
+			q.work(ctx)
+		}()
+	}
+
+	q.wg.Add(1)
+
+	go func() {
+		defer q.wg.Done()
+		q.runScheduler(ctx)
+	}()
+
+	q.Wake()
+}
+
+// Wait blocks until all workers and the scheduler started by Start have exited.
+func (q *RefreshQueue) Wait() {
+	q.wg.Wait()
+}
+
+func (q *RefreshQueue) runScheduler(ctx context.Context) {
+	tickLoop(ctx, q.pollInterval, func(context.Context) { q.Wake() })
+}
+
+func (q *RefreshQueue) work(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-q.wake:
+			q.drain(ctx)
+		}
+	}
+}
+
+// drain claims and refreshes due feeds until none is due, the database failed,
+// or ctx is canceled. Every claim wakes another idle worker so a backlog of due
+// feeds is shared across the pool.
+func (q *RefreshQueue) drain(ctx context.Context) {
+	for ctx.Err() == nil {
+		attemptID := domain.NewID()
+
+		feed, err := q.feeds.ClaimDueRefresh(ctx, attemptID, q.now().UTC())
+		if err != nil {
+			if ctx.Err() == nil {
+				q.recordDBFailure(&q.claimFailures, "claim due feed refresh failed", err)
+			}
+
+			return
 		}
 
-		q.queued[feedID] = struct{}{}
-		q.queue = append(q.queue, feedID)
-		added = true
-	}
+		q.claimFailures.Store(0)
 
-	q.mu.Unlock()
-
-	if added {
-		q.signal()
-	}
-}
-
-func (q *RefreshQueue) EnqueueAll(ctx context.Context) error {
-	feeds, err := q.feeds.List(ctx)
-	if err != nil {
-		if !isCanceled(ctx, err) && isDatabaseError(err) {
-			q.recordDBFailure("enqueue feeds failed", err)
+		if feed == nil {
+			return
 		}
 
-		return err
+		q.Wake()
+
+		// After a database error the worker waits for the next wake or tick
+		// instead of immediately re-claiming the feed it just released.
+		if !q.refresh(ctx, attemptID, *feed) {
+			return
+		}
 	}
-
-	q.dbFailureStreak.Store(0)
-
-	feedIDs := make([]string, 0, len(feeds))
-	for _, feed := range feeds {
-		feedIDs = append(feedIDs, feed.ID)
-	}
-
-	q.Enqueue(feedIDs...)
-
-	return nil
 }
 
-// RefreshOne fetches, parses, and syncs a single feed, recording a sanitized
-// failure summary when an external step fails and tracking database errors.
-func (q *RefreshQueue) RefreshOne(ctx context.Context, feedID string) error {
-	startedAt := q.now().UTC()
+// refresh runs one claimed attempt to a final state: succeeded or failed for
+// external outcomes, released for internal database errors so the feed stays
+// due. On shutdown it writes nothing and startup recovery marks the attempt
+// interrupted. It reports whether the attempt was recorded.
+func (q *RefreshQueue) refresh(ctx context.Context, attemptID string, feed domain.Feed) bool {
+	plan, err := q.planSync(ctx, feed)
+	if ctx.Err() != nil {
+		return false
+	}
 
-	err := q.refreshFeed(ctx, feedID, startedAt)
+	finishedAt := q.now().UTC()
+	nextRefreshAt := finishedAt.Add(q.interval)
+
+	switch {
+	case err == nil:
+		err = q.feeds.SucceedRefresh(ctx, attemptID, feed.ID, plan.meta, plan.newItems, plan.deleteIDs, finishedAt, nextRefreshAt)
+	case !isDatabaseError(err):
+		logFailure(slog.LevelWarn, "feed refresh failed", err, "feed_id", feed.ID)
+
+		err = q.feeds.FailRefresh(ctx, attemptID, feed.ID, domain.SanitizeErrorText(err.Error()), finishedAt, nextRefreshAt)
+	}
+
 	if err == nil {
-		q.dbFailureStreak.Store(0)
+		q.refreshFailures.Store(0)
 
-		return nil
+		return true
 	}
 
-	if isCanceled(ctx, err) {
-		return err
+	if ctx.Err() == nil {
+		q.recordDBFailure(&q.refreshFailures, "feed refresh failed", err, "feed_id", feed.ID)
+		q.releaseClaim(ctx, attemptID, feed.ID)
 	}
 
-	if isDatabaseError(err) {
-		q.recordDBFailure("feed refresh failed", err, "feed_id", feedID)
-
-		return err
-	}
-
-	q.recordFailure(ctx, feedID, err, startedAt)
-
-	return err
+	return false
 }
 
-func (q *RefreshQueue) refreshFeed(ctx context.Context, feedID string, startedAt time.Time) error {
-	feed, err := q.feeds.GetByID(ctx, feedID)
-	if err != nil || feed == nil {
-		return err
+// planSync fetches and parses the feed and plans its item changes. Settings and
+// stored refs reads fail with database errors; fetch and parse failures are
+// external.
+func (q *RefreshQueue) planSync(ctx context.Context, feed domain.Feed) (feedSyncPlan, error) {
+	// A settings read failure aborts the refresh: pruning with an unknown
+	// retention setting could delete items the user asked to keep.
+	settings, err := q.settings.Get(ctx)
+	if err != nil {
+		return feedSyncPlan{}, err
 	}
 
-	return q.syncFeed(ctx, *feed, startedAt)
+	body, finalURL, err := q.fetcher.FetchFeed(ctx, feed.URL)
+	if err != nil {
+		return feedSyncPlan{}, err
+	}
+
+	parsed, err := q.parseFeed(body, finalURL)
+	if err != nil {
+		return feedSyncPlan{}, err
+	}
+
+	storedRefs, err := q.feedItems.ListStoredRefsByFeed(ctx, feed.ID)
+	if err != nil {
+		return feedSyncPlan{}, err
+	}
+
+	newItems, deleteIDs := domain.PlanFeedSync(feed.ID, parsed.Entries, storedRefs, settings.Retention, domain.NewID)
+
+	return feedSyncPlan{
+		meta: domain.FeedSyncMeta{
+			Title:   resolveFeedTitle(parsed.Title, feed),
+			SiteURL: parsed.SiteURL,
+			IconURL: parsed.IconURL,
+		},
+		newItems:  newItems,
+		deleteIDs: deleteIDs,
+	}, nil
 }
 
 // parseFeed turns a parser panic on untrusted feed bytes into an external
@@ -175,40 +275,6 @@ func (q *RefreshQueue) parseFeed(body []byte, finalURL string) (parsed domain.Pa
 	return q.parser.ParseFeed(body, finalURL)
 }
 
-func (q *RefreshQueue) syncFeed(ctx context.Context, feed domain.Feed, startedAt time.Time) error {
-	// A settings read failure aborts the refresh: pruning with an unknown
-	// retention setting could delete items the user asked to keep.
-	settings, err := q.settings.Get(ctx)
-	if err != nil {
-		return err
-	}
-
-	body, finalURL, err := q.fetcher.FetchFeed(ctx, feed.URL)
-	if err != nil {
-		return err
-	}
-
-	parsed, err := q.parseFeed(body, finalURL)
-	if err != nil {
-		return err
-	}
-
-	storedRefs, err := q.feedItems.ListStoredRefsByFeed(ctx, feed.ID)
-	if err != nil {
-		return err
-	}
-
-	newItems, deleteIDs := domain.PlanFeedSync(feed.ID, parsed.Entries, storedRefs, settings.Retention, domain.NewID)
-
-	meta := domain.FeedSyncMeta{
-		Title:   resolveFeedTitle(parsed.Title, feed),
-		SiteURL: parsed.SiteURL,
-		IconURL: parsed.IconURL,
-	}
-
-	return q.feeds.ApplySync(ctx, feed.ID, meta, startedAt, q.now().UTC(), newItems, deleteIDs)
-}
-
 func resolveFeedTitle(parsedTitle string, feed domain.Feed) string {
 	if title := strings.TrimSpace(parsedTitle); title != "" {
 		return title
@@ -221,139 +287,40 @@ func resolveFeedTitle(parsedTitle string, feed domain.Feed) string {
 	return feed.URL.Host()
 }
 
-// Start launches the worker pool, refreshes every feed once, and keeps
-// enqueueing all feeds on the configured interval until ctx is canceled.
-func (q *RefreshQueue) Start(ctx context.Context) {
-	for range q.concurrency {
-		q.wg.Add(1)
+// releaseClaim gives a claimed feed back after a database error so it stays
+// due. A release that keeps failing leaves the feed marked running until the
+// next startup, so it is fatal unless the process is shutting down.
+func (q *RefreshQueue) releaseClaim(ctx context.Context, attemptID string, feedID string) {
+	backoff := q.releaseBaseBackoff
 
-		go func() {
-			defer q.wg.Done()
-			q.work(ctx)
-		}()
-	}
+	var err error
 
-	q.enqueueAllLogged(ctx, "initial feed refresh enqueue failed")
-
-	q.wg.Add(1)
-
-	go func() {
-		defer q.wg.Done()
-		q.runScheduler(ctx)
-	}()
-}
-
-// Wait blocks until all workers and the scheduler started by Start have exited.
-func (q *RefreshQueue) Wait() {
-	q.wg.Wait()
-}
-
-func (q *RefreshQueue) runScheduler(ctx context.Context) {
-	tickLoop(ctx, q.interval, func(ctx context.Context) {
-		q.enqueueAllLogged(ctx, "scheduled feed refresh enqueue failed")
-	})
-}
-
-func (q *RefreshQueue) enqueueAllLogged(ctx context.Context, failureMessage string) {
-	if err := q.EnqueueAll(ctx); shouldWarnRefreshError(ctx, err) {
-		logFailure(slog.LevelWarn, failureMessage, err)
-	}
-}
-
-func (q *RefreshQueue) work(ctx context.Context) {
-	for {
-		feedID, ok := q.next(ctx)
-		if !ok {
+	for attempt := 1; attempt <= releaseMaxAttempts; attempt++ {
+		err = q.feeds.ReleaseRefresh(ctx, attemptID, feedID)
+		if err == nil || ctx.Err() != nil {
 			return
 		}
 
-		q.runRefreshJob(ctx, feedID)
-	}
-}
+		logFailure(slog.LevelError, "release feed refresh failed", err, "feed_id", feedID, "attempt", attempt)
 
-func (q *RefreshQueue) runRefreshJob(ctx context.Context, feedID string) {
-	defer q.finish(feedID)
-
-	if err := q.RefreshOne(ctx, feedID); shouldWarnRefreshError(ctx, err) {
-		logFailure(slog.LevelWarn, "feed refresh failed", err, "feed_id", feedID)
-	}
-}
-
-func (q *RefreshQueue) next(ctx context.Context) (string, bool) {
-	for {
-		if ctx.Err() != nil {
-			return "", false
+		if attempt == releaseMaxAttempts || !sleepWithContext(ctx, backoff) {
+			break
 		}
 
-		q.mu.Lock()
-		if len(q.queue) > 0 {
-			feedID := q.queue[0]
-			q.queue[0] = ""
-			q.queue = q.queue[1:]
+		backoff *= 2
+	}
 
-			hasMore := len(q.queue) > 0
-			q.mu.Unlock()
-
-			if hasMore {
-				q.signal()
-			}
-
-			return feedID, true
-		}
-
-		q.mu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			return "", false
-		case <-q.notify:
-		}
+	if ctx.Err() == nil {
+		q.onFatal(fmt.Errorf("release feed refresh feed_id=%s: %w", feedID, sanitizedError{cause: err}))
 	}
 }
 
-func (q *RefreshQueue) finish(feedID string) {
-	q.mu.Lock()
-	delete(q.queued, feedID)
-	q.mu.Unlock()
-}
-
-func (q *RefreshQueue) signal() {
-	select {
-	case q.notify <- struct{}{}:
-	default:
-	}
-}
-
-func (q *RefreshQueue) recordFailure(ctx context.Context, feedID string, err error, startedAt time.Time) {
-	recErr := q.feeds.RecordRefreshFailure(ctx, feedID, domain.SanitizeErrorText(err.Error()), startedAt, q.now().UTC())
-	if recErr == nil {
-		q.dbFailureStreak.Store(0)
-
-		return
-	}
-
-	if isCanceled(ctx, recErr) {
-		return
-	}
-
-	if isDatabaseError(recErr) {
-		q.recordDBFailure("record feed refresh failure failed", recErr, "feed_id", feedID)
-
-		return
-	}
-
-	logFailure(slog.LevelWarn, "record feed refresh failure failed", recErr, "feed_id", feedID)
-}
-
-func (q *RefreshQueue) recordDBFailure(msg string, err error, attrs ...any) {
+func (q *RefreshQueue) recordDBFailure(streak *atomic.Int32, msg string, err error, attrs ...any) {
 	logFailure(slog.LevelError, msg, err, attrs...)
-	if q.dbFailureStreak.Add(1) == fatalFailureStreak {
+
+	if streak.Add(1) == fatalFailureStreak {
 		q.onFatal(fmt.Errorf("feed refresh database failed %d consecutive times: %w", fatalFailureStreak, sanitizedError{cause: err}))
 	}
-}
-
-func shouldWarnRefreshError(ctx context.Context, err error) bool {
-	return err != nil && !isCanceled(ctx, err) && !isDatabaseError(err)
 }
 
 func isCanceled(ctx context.Context, err error) bool {

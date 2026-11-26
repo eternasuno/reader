@@ -158,6 +158,12 @@ func recoverStartupState(ctx context.Context, store *sqlite.Store, spoolDir stri
 		return fmt.Errorf("recover kindle sends: %w", err)
 	}
 
+	// Likewise for feed refreshes: a leftover running attempt would keep its
+	// feed from ever being claimed again.
+	if err := store.Feeds().RecoverRunningRefreshes(ctx, now); err != nil {
+		return fmt.Errorf("recover feed refreshes: %w", err)
+	}
+
 	if err := epub.PrepareSpoolDir(spoolDir); err != nil {
 		return fmt.Errorf("prepare epub spool: %w", err)
 	}

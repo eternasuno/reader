@@ -158,6 +158,7 @@ const (
 type FeedRefreshStatus string
 
 const (
+	FeedRefreshRunning   FeedRefreshStatus = "running"
 	FeedRefreshSucceeded FeedRefreshStatus = "succeeded"
 	FeedRefreshFailed    FeedRefreshStatus = "failed"
 )
@@ -294,9 +295,9 @@ type KindleSchedule struct {
 }
 
 type KindleSettings struct {
-	KindleEmail       string
-	Schedule          *KindleSchedule // nil = scheduled sending off
-	ScheduleUpdatedAt *time.Time      // owned by the repository; nil when Schedule is nil
+	KindleEmail string
+	Schedule    *KindleSchedule // nil = scheduled sending off
+	NextSendAt  *time.Time      // read-only, from kindle_schedule; nil when Schedule is nil; ignored by UpdateKindle
 }
 
 type Settings struct {
@@ -315,13 +316,15 @@ type KindleDelivery struct {
 }
 
 // ClaimedKindleSend is the atomic result of claiming a manual or scheduled send.
-// ScheduleLocation is the claimed schedule's timezone for scheduled sends and
-// nil for manual sends, which carry no date.
+// ScheduleLocation is the claimed schedule's timezone and ScheduledFor the
+// latest due occurrence (snapshotted at claim) for scheduled sends; both are
+// nil/zero for manual sends, which carry no date.
 type ClaimedKindleSend struct {
 	Claimed          bool
 	Record           KindleSendRecord
 	Delivery         KindleDelivery
 	ScheduleLocation *time.Location
+	ScheduledFor     time.Time
 }
 
 type KindleSendRecord struct {
@@ -369,14 +372,18 @@ type FolderRepository interface {
 type FeedRepository interface {
 	List(ctx context.Context) ([]Feed, error)
 	GetByID(ctx context.Context, id string) (*Feed, error)
-	Create(ctx context.Context, feed Feed) (Feed, error)
+	Create(ctx context.Context, feed Feed, now time.Time) (Feed, error)
 	Delete(ctx context.Context, id string) error
 	UpdateReaderMode(ctx context.Context, id string, mode ReaderMode) error
 	UpdateOrder(ctx context.Context, id string, order SortOrder) error
 	MoveToFolder(ctx context.Context, id string, folderID *string) error
-	RecordRefreshFailure(ctx context.Context, feedID string, errSummary string, startedAt, finishedAt time.Time) error
-	ApplySync(ctx context.Context, feedID string, meta FeedSyncMeta, startedAt, finishedAt time.Time, newItems []FeedItem, deleteIDs []string) error
-	ImportOPML(ctx context.Context, doc OPMLDocument) (OPMLImportResult, []string, error)
+	RequestRefresh(ctx context.Context, feedID string, now time.Time) error
+	RecoverRunningRefreshes(ctx context.Context, now time.Time) error
+	ClaimDueRefresh(ctx context.Context, attemptID string, now time.Time) (*Feed, error)
+	SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta FeedSyncMeta, newItems []FeedItem, deleteIDs []string, finishedAt, nextRefreshAt time.Time) error
+	FailRefresh(ctx context.Context, attemptID string, feedID string, errSummary string, finishedAt, nextRefreshAt time.Time) error
+	ReleaseRefresh(ctx context.Context, attemptID string, feedID string) error
+	ImportOPML(ctx context.Context, doc OPMLDocument, now time.Time) (OPMLImportResult, error)
 	ExportOPML(ctx context.Context) ([]OPMLExportFolder, []Feed, error)
 }
 
@@ -426,7 +433,6 @@ type KindleSendRepository interface {
 	ListRecent(ctx context.Context) ([]KindleSendRecord, error)
 	ClaimManualSend(ctx context.Context, sendID string, now time.Time) (ClaimedKindleSend, error)
 	ClaimDueSend(ctx context.Context, sendID string, now time.Time, slotBusy bool) (ClaimedKindleSend, error)
-	LastScheduledStartedAt(ctx context.Context) (*time.Time, error)
 	ListUnreadForKindle(ctx context.Context) ([]KindleArticleRef, error)
 	GetKindleArticle(ctx context.Context, ref KindleArticleRef) (*SavedPage, *Feed, *FeedItem, error)
 	// RecordBookAccepted records book read marks and send counters idempotently

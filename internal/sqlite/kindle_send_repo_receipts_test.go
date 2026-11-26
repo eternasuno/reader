@@ -2,10 +2,12 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"reader/internal/domain"
 	"testing"
 	"time"
+
+	"reader/internal/domain"
 )
 
 func TestKindleSendRepoRecordBookAccepted(t *testing.T) {
@@ -261,4 +263,127 @@ func TestKindleSendRepoRecordBookAcceptedRequiresRunningSend(t *testing.T) {
 	if len(recent) != 1 || recent[0].ArticleCount != 0 || recent[0].BookCount != 0 {
 		t.Fatalf("send counters = %+v, want 0 articles and 0 books", recent)
 	}
+}
+
+type receiptFixture struct {
+	store  *Store
+	sendID string
+	page   domain.SavedPage
+	item   domain.FeedItem
+}
+
+// newReceiptFixture claims a running manual send beside one unread saved page
+// and one unread feed item.
+func newReceiptFixture(t *testing.T) receiptFixture {
+	t.Helper()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	feed := createFeed(t, store, "Example", nil)
+	items := addItems(t, store, feed, 1)
+
+	page, err := store.SavedPages().Create(ctx, domain.SavedPage{
+		ID:      domain.NewID(),
+		URL:     mustURL(t, "https://example.com/saved/"+domain.NewID()),
+		Title:   "Saved",
+		Content: "<p>body</p>",
+	})
+	if err != nil {
+		t.Fatalf("create saved page: %v", err)
+	}
+
+	configureManualKindleForTest(t, store)
+
+	claimed, err := store.KindleSends().ClaimManualSend(ctx, domain.NewID(), time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("claim manual send: %v", err)
+	}
+
+	return receiptFixture{store: store, sendID: claimed.Record.ID, page: page, item: items[0]}
+}
+
+func (f receiptFixture) requireArticlesRead(t *testing.T, stage string, want bool) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	page, err := f.store.SavedPages().GetByID(ctx, f.page.ID)
+	if err != nil || page == nil {
+		t.Fatalf("%s: get saved page = (%+v, %v)", stage, page, err)
+	}
+
+	item, err := f.store.FeedItems().GetByID(ctx, f.item.ID)
+	if err != nil || item == nil {
+		t.Fatalf("%s: get feed item = (%+v, %v)", stage, item, err)
+	}
+
+	if page.Read != want || item.Read != want {
+		t.Fatalf("%s: saved page read = %v, feed item read = %v, want both %v", stage, page.Read, item.Read, want)
+	}
+}
+
+func (f receiptFixture) requireCounters(t *testing.T, stage string, wantArticles int, wantBooks int) {
+	t.Helper()
+
+	recent, err := f.store.KindleSends().ListRecent(context.Background())
+	if err != nil {
+		t.Fatalf("%s: list recent sends: %v", stage, err)
+	}
+
+	if len(recent) != 1 || recent[0].ArticleCount != wantArticles || recent[0].BookCount != wantBooks {
+		t.Fatalf("%s: send counters = %+v, want %d articles and %d books", stage, recent, wantArticles, wantBooks)
+	}
+}
+
+func TestKindleSendRepoRecordBookAcceptedReplayKeepsUserUnreadMarks(t *testing.T) {
+	f := newReceiptFixture(t)
+	ctx := context.Background()
+	repo := f.store.KindleSends()
+
+	if err := repo.RecordBookAccepted(ctx, f.sendID, 0, []string{f.page.ID}, []string{f.item.ID}, 2); err != nil {
+		t.Fatalf("record first book: %v", err)
+	}
+
+	f.requireArticlesRead(t, "after the first receipt", true)
+
+	// The user marks both articles unread before the receipt is replayed.
+	if err := f.store.SavedPages().SetRead(ctx, f.page.ID, false); err != nil {
+		t.Fatalf("mark saved page unread: %v", err)
+	}
+
+	if err := f.store.FeedItems().SetRead(ctx, f.item.ID, false); err != nil {
+		t.Fatalf("mark feed item unread: %v", err)
+	}
+
+	if err := repo.RecordBookAccepted(ctx, f.sendID, 0, []string{f.page.ID}, []string{f.item.ID}, 2); err != nil {
+		t.Fatalf("replay first book: %v", err)
+	}
+
+	f.requireArticlesRead(t, "after the replayed receipt", false)
+	f.requireCounters(t, "after the replayed receipt", 2, 1)
+}
+
+func TestKindleSendRepoRecordBookAcceptedRejectsSkippedBookIndex(t *testing.T) {
+	f := newReceiptFixture(t)
+	ctx := context.Background()
+	repo := f.store.KindleSends()
+
+	err := repo.RecordBookAccepted(ctx, f.sendID, 1, []string{f.page.ID}, []string{f.item.ID}, 2)
+	requireCode(t, err, domain.ErrSettingRepositoryError)
+
+	if errors.Is(err, domain.ErrKindleSendNotFound) {
+		t.Fatalf("skipped book index reported as a missing send: %v", err)
+	}
+
+	f.requireArticlesRead(t, "after the rejected receipt", false)
+	f.requireCounters(t, "after the rejected receipt", 0, 0)
+
+	// The rejected receipt left the sequence where it was.
+	if err := repo.RecordBookAccepted(ctx, f.sendID, 0, []string{f.page.ID}, []string{f.item.ID}, 2); err != nil {
+		t.Fatalf("record first book after the rejected one: %v", err)
+	}
+
+	f.requireArticlesRead(t, "after the first receipt", true)
+	f.requireCounters(t, "after the first receipt", 2, 1)
 }

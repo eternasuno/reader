@@ -94,8 +94,8 @@ func TestSettingsRedaction(t *testing.T) {
 		t.Fatalf("smtp auth = %+v", payload.SMTP)
 	}
 
-	// The schedule changed at the harness clock (08:00 UTC), after that day's
-	// 08:30 Asia/Shanghai occurrence (00:30 UTC), so the next send is the following day's.
+	// The schedule was saved at the harness clock (08:00 UTC), after that day's
+	// 08:30 Asia/Shanghai occurrence (00:30 UTC), so the stored next send is the following day's.
 	if payload.Kindle.KindleEmail != "reader@kindle.com" || payload.Kindle.Schedule.Timezone != "Asia/Shanghai" || payload.Kindle.Schedule.Hour != 8 || payload.Kindle.Schedule.Minute != 30 || payload.Kindle.NextSendAt != "2026-03-02T00:30:00Z" {
 		t.Fatalf("kindle = %+v", payload.Kindle)
 	}
@@ -151,8 +151,13 @@ func TestSettingsRedaction(t *testing.T) {
 			t.Fatalf("clear settings: %v", err)
 		}
 	}
-	if _, err := h.db.WriteDB().ExecContext(ctx, `UPDATE setting SET kindle_email = NULL, send_hour = NULL, send_minute = NULL, schedule_updated_at = NULL WHERE id = 1`); err != nil {
-		t.Fatalf("clear kindle settings: %v", err)
+	for _, statement := range []string{
+		`DELETE FROM kindle_schedule WHERE setting_id = 1`,
+		`UPDATE setting SET kindle_email = NULL, send_hour = NULL, send_minute = NULL WHERE id = 1`,
+	} {
+		if _, err := h.db.WriteDB().ExecContext(ctx, statement); err != nil {
+			t.Fatalf("clear kindle settings: %v", err)
+		}
 	}
 
 	recorder = h.authed(http.MethodGet, "/api/settings", nil)
@@ -338,15 +343,17 @@ func TestKindleSettingsUpdate(t *testing.T) {
 		t.Fatalf("schedule = %v, want 09:30 Asia/Shanghai", stored.Schedule)
 	}
 
-	if stored.ScheduleUpdatedAt == nil || !stored.ScheduleUpdatedAt.Equal(h.clock.Now()) {
-		t.Fatalf("schedule updated at = %v, want the request time %v", stored.ScheduleUpdatedAt, h.clock.Now())
+	// 09:30 Asia/Shanghai on the harness day (01:30 UTC) is before the request time (08:00 UTC).
+	wantNextSendAt := time.Date(2026, time.March, 2, 1, 30, 0, 0, time.UTC)
+	if stored.NextSendAt == nil || !stored.NextSendAt.Equal(wantNextSendAt) {
+		t.Fatalf("next send at = %v, want %v", stored.NextSendAt, wantNextSendAt)
 	}
 
 	delete(body, "schedule")
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusNoContent)
 
 	stored = h.loadSettings().Kindle
-	if stored.Schedule != nil || stored.ScheduleUpdatedAt != nil {
+	if stored.Schedule != nil || stored.NextSendAt != nil {
 		t.Fatalf("disabled schedule = %+v, want no schedule", stored)
 	}
 
@@ -403,7 +410,7 @@ func TestKindleSettingsUpdateRequiresScheduleHourAndMinute(t *testing.T) {
 	}
 }
 
-func seedKindleSchedule(t *testing.T, h *harness, updatedAt time.Time) {
+func seedKindleSchedule(t *testing.T, h *harness, now time.Time) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -423,72 +430,35 @@ func seedKindleSchedule(t *testing.T, h *harness, updatedAt time.Time) {
 		Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "Asia/Shanghai"},
 	}
 
-	if err := h.db.Settings().UpdateKindle(ctx, kindle, updatedAt); err != nil {
+	if err := h.db.Settings().UpdateKindle(ctx, kindle, now); err != nil {
 		t.Fatalf("seed kindle: %v", err)
 	}
 }
 
-func TestSettingsKindleNextSendAtUsesScheduleAnchor(t *testing.T) {
+func TestSettingsKindleNextSendAtReturnsStoredValue(t *testing.T) {
 	t.Parallel()
 
-	// The harness clock is 2026-03-01 08:00 UTC, after that day's 08:30
-	// Asia/Shanghai occurrence at 00:30 UTC.
-	occurrence := time.Date(2026, time.March, 1, 0, 30, 0, 0, time.UTC)
-	nextDay := occurrence.AddDate(0, 0, 1)
-
-	type seededSend struct {
-		trigger   string
-		startedAt time.Time
+	// The stored time is returned as is, so an overdue send that has not been
+	// claimed yet stays visible instead of being recomputed to the next day.
+	cases := map[string]time.Duration{
+		"upcoming": time.Hour,
+		"overdue":  -3 * time.Hour,
 	}
 
-	cases := []struct {
-		name              string
-		scheduleUpdatedAt time.Time
-		sends             []seededSend
-		want              time.Time
-	}{
-		{
-			name:              "unsent occurrence after the schedule changed is still due",
-			scheduleUpdatedAt: occurrence.Add(-time.Hour),
-			want:              occurrence,
-		},
-		{
-			name:              "schedule changed after the occurrence waits for the next day",
-			scheduleUpdatedAt: occurrence.Add(time.Hour),
-			want:              nextDay,
-		},
-		{
-			name:              "scheduled send after the occurrence waits for the next day",
-			scheduleUpdatedAt: occurrence.Add(-time.Hour),
-			sends:             []seededSend{{trigger: "scheduled", startedAt: occurrence.Add(time.Minute)}},
-			want:              nextDay,
-		},
-		{
-			name:              "manual send does not consume the occurrence",
-			scheduleUpdatedAt: occurrence.Add(-time.Hour),
-			sends:             []seededSend{{trigger: "manual", startedAt: occurrence.Add(time.Minute)}},
-			want:              occurrence,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for name, offset := range cases {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			h := newHarness(t)
-			seedKindleSchedule(t, h, tc.scheduleUpdatedAt)
+			seedKindleSchedule(t, h, h.clock.Now())
 
-			for _, send := range tc.sends {
-				if _, err := h.db.WriteDB().ExecContext(
-					context.Background(),
-					`INSERT INTO kindle_send (id, trigger, status, article_count, book_count, started_at, finished_at) VALUES (?, ?, 'succeeded', 0, 0, ?, ?)`,
-					domain.NewID(),
-					send.trigger,
-					send.startedAt.UnixMilli(),
-					send.startedAt.Add(time.Minute).UnixMilli(),
-				); err != nil {
-					t.Fatalf("seed kindle send: %v", err)
-				}
+			stored := h.clock.Now().Add(offset)
+			if _, err := h.db.WriteDB().ExecContext(
+				context.Background(),
+				`UPDATE kindle_schedule SET next_send_at = ? WHERE setting_id = 1`,
+				stored.UnixMilli(),
+			); err != nil {
+				t.Fatalf("store next send time: %v", err)
 			}
 
 			recorder := h.authed(http.MethodGet, "/api/settings", nil)
@@ -501,8 +471,8 @@ func TestSettingsKindleNextSendAtUsesScheduleAnchor(t *testing.T) {
 			}
 			decodeBody(t, recorder, &payload)
 
-			if payload.Kindle.NextSendAt != tc.want.Format(time.RFC3339) {
-				t.Fatalf("nextSendAt = %q, want %q", payload.Kindle.NextSendAt, tc.want.Format(time.RFC3339))
+			if payload.Kindle.NextSendAt != stored.Format(time.RFC3339) {
+				t.Fatalf("nextSendAt = %q, want the stored %q", payload.Kindle.NextSendAt, stored.Format(time.RFC3339))
 			}
 		})
 	}

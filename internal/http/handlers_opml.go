@@ -60,14 +60,14 @@ func (s *server) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, newFeedIDs, err := s.cfg.Feeds.ImportOPML(r.Context(), document)
+	result, err := s.cfg.Feeds.ImportOPML(r.Context(), document, s.cfg.Now().UTC())
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	s.cfg.Refresher.Enqueue(newFeedIDs...)
+	s.cfg.Refresher.Wake()
 
 	writeJSON(w, http.StatusOK, opmlImportResponse{
 		ImportedFeeds:  result.ImportedFeeds,

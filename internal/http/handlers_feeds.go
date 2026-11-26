@@ -244,12 +244,12 @@ func (s *server) createFeedSubscription(ctx context.Context, feedURL domain.Norm
 		FolderID:   folderID,
 		ReaderMode: domain.ReaderModeDefault,
 		Order:      domain.SortOrderNewest,
-	})
+	}, s.cfg.Now().UTC())
 	if err != nil {
 		return domain.Feed{}, err
 	}
 
-	s.cfg.Refresher.Enqueue(created.ID)
+	s.cfg.Refresher.Wake()
 
 	return created, nil
 }
@@ -265,16 +265,13 @@ func (s *server) handleFeedDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleFeedRefresh(w http.ResponseWriter, r *http.Request) {
-	feed, err := s.cfg.Feeds.GetByID(r.Context(), r.PathValue("id"))
-	if err != nil {
+	if err := s.cfg.Feeds.RequestRefresh(r.Context(), r.PathValue("id"), s.cfg.Now().UTC()); err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	if feed != nil {
-		s.cfg.Refresher.Enqueue(feed.ID)
-	}
+	s.cfg.Refresher.Wake()
 
 	w.WriteHeader(http.StatusAccepted)
 }

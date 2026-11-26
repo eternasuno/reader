@@ -13,6 +13,7 @@ import (
 func TestFeedRepoCreate(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
+	now := refreshAt(7)
 
 	created, err := store.Feeds().Create(ctx, domain.Feed{
 		ID:         domain.NewID(),
@@ -20,7 +21,7 @@ func TestFeedRepoCreate(t *testing.T) {
 		Title:      "Example",
 		ReaderMode: domain.ReaderModeDefault,
 		Order:      domain.SortOrderNewest,
-	})
+	}, now)
 	if err != nil {
 		t.Fatalf("create feed: %v", err)
 	}
@@ -33,13 +34,16 @@ func TestFeedRepoCreate(t *testing.T) {
 		t.Fatalf("created feed carries unexpected values: %+v", created)
 	}
 
+	requireNextRefreshAt(t, store, created, now)
+	requireFeedState(t, store, created, nil, 0, nil)
+
 	_, err = store.Feeds().Create(ctx, domain.Feed{
 		ID:         domain.NewID(),
 		URL:        mustURL(t, "https://user:secret@example.com/feed.xml"),
 		Title:      "Duplicate",
 		ReaderMode: domain.ReaderModeDefault,
 		Order:      domain.SortOrderNewest,
-	})
+	}, now)
 	conflict := requireCode(t, err, domain.ErrFeedAlreadyExists)
 	if conflict.URL != "https://example.com/feed.xml" {
 		t.Fatalf("conflict url = %q, want %q", conflict.URL, "https://example.com/feed.xml")
@@ -57,8 +61,37 @@ func TestFeedRepoCreate(t *testing.T) {
 		FolderID:   &missingFolder,
 		ReaderMode: domain.ReaderModeDefault,
 		Order:      domain.SortOrderNewest,
-	})
+	}, now)
 	requireCode(t, err, domain.ErrFolderNotFound)
+
+	if feeds, schedules := countRows(t, store, `SELECT COUNT(*) FROM feed`), countRows(t, store, `SELECT COUNT(*) FROM feed_schedule`); feeds != 1 || schedules != 1 {
+		t.Fatalf("feeds and schedules after rejected creates = %d/%d, want 1/1", feeds, schedules)
+	}
+}
+
+func TestFeedRepoCreateRollsBackFeedWhenScheduleFails(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := store.WriteDB().ExecContext(
+		ctx,
+		`CREATE TRIGGER fail_schedule_insert BEFORE INSERT ON feed_schedule BEGIN SELECT RAISE(ABORT, 'boom'); END;`,
+	); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	_, err := store.Feeds().Create(ctx, domain.Feed{
+		ID:         domain.NewID(),
+		URL:        mustURL(t, "https://example.com/feed.xml"),
+		Title:      "Example",
+		ReaderMode: domain.ReaderModeDefault,
+		Order:      domain.SortOrderNewest,
+	}, refreshAt(0))
+	requireCode(t, err, domain.ErrFeedRepositoryError)
+
+	if got := countRows(t, store, `SELECT COUNT(*) FROM feed`); got != 0 {
+		t.Fatalf("feeds after a failed schedule insert = %d, want the feed rolled back", got)
+	}
 }
 
 func TestFeedRepoLookupAndList(t *testing.T) {
@@ -77,7 +110,7 @@ func TestFeedRepoLookupAndList(t *testing.T) {
 		FolderID:   &folder.ID,
 		ReaderMode: domain.ReaderModeExtracted,
 		Order:      domain.SortOrderOldest,
-	})
+	}, refreshAt(0))
 	if err != nil {
 		t.Fatalf("create folder feed: %v", err)
 	}
@@ -167,7 +200,7 @@ func TestFeedRepoMutations(t *testing.T) {
 	}
 }
 
-func TestFeedRepoApplySync(t *testing.T) {
+func TestFeedRepoSucceedRefresh(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	feed := createFeed(t, store, "Example", nil)
@@ -183,9 +216,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 	}
 
 	meta := domain.FeedSyncMeta{Title: "Synced", SiteURL: ptr("https://example.com/"), IconURL: ptr("https://example.com/icon.png")}
-	if err := store.Feeds().ApplySync(ctx, feed.ID, meta, startedAt, finishedAt, items, nil); err != nil {
-		t.Fatalf("apply sync: %v", err)
-	}
+	succeedRefresh(t, store, feed, meta, items, nil, finishedAt)
 
 	synced, err := store.Feeds().GetByID(ctx, feed.ID)
 	if err != nil {
@@ -222,9 +253,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 	}
 
 	duplicate := []domain.FeedItem{{ID: domain.NewID(), URL: mustURL(t, "https://example.com/a"), Title: "A again"}}
-	if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: "Synced"}, startedAt, finishedAt, duplicate, nil); err != nil {
-		t.Fatalf("apply sync with duplicate url: %v", err)
-	}
+	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: "Synced"}, duplicate, nil, finishedAt.Add(time.Minute))
 
 	cleared, err := store.Feeds().GetByID(ctx, feed.ID)
 	if err != nil {
@@ -248,9 +277,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 		t.Fatalf("duplicate changed original item: %+v", got)
 	}
 
-	if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: "Synced"}, startedAt, finishedAt, nil, []string{items[0].ID}); err != nil {
-		t.Fatalf("apply sync with deletions: %v", err)
-	}
+	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: "Synced"}, nil, []string{items[0].ID}, finishedAt.Add(2*time.Minute))
 
 	afterDelete, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
 	if err != nil {
@@ -296,12 +323,29 @@ func TestStoreExportOPML(t *testing.T) {
 	}
 }
 
+func feedsByTitle(t *testing.T, store *Store) map[string]domain.Feed {
+	t.Helper()
+
+	feeds, err := store.Feeds().List(context.Background())
+	if err != nil {
+		t.Fatalf("list feeds: %v", err)
+	}
+
+	byTitle := make(map[string]domain.Feed, len(feeds))
+	for _, feed := range feeds {
+		byTitle[feed.Title] = feed
+	}
+
+	return byTitle
+}
+
 func TestStoreImportOPML(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
+	now := refreshAt(10)
 
 	tech := createFolder(t, store, "Tech")
-	existing := createFeed(t, store, "Existing", &tech.ID)
+	existing := createFeedDueAt(t, store, "Existing", &tech.ID, refreshAt(0))
 
 	doc := domain.OPMLDocument{
 		Folders: []string{"News", "Tech"},
@@ -315,7 +359,7 @@ func TestStoreImportOPML(t *testing.T) {
 		SkippedInvalid: 2,
 	}
 
-	result, createdIDs, err := store.Feeds().ImportOPML(ctx, doc)
+	result, err := store.Feeds().ImportOPML(ctx, doc, now)
 	if err != nil {
 		t.Fatalf("import opml: %v", err)
 	}
@@ -332,34 +376,30 @@ func TestStoreImportOPML(t *testing.T) {
 		t.Fatalf("skipped feeds = %d, want 3", result.SkippedFeeds)
 	}
 
-	if len(createdIDs) != 4 {
-		t.Fatalf("created feed ids = %d, want 4", len(createdIDs))
-	}
-
 	newsFolderID := folderIDByName(t, store, "News")
-	createdTitles := make([]string, len(createdIDs))
-	for i, id := range createdIDs {
-		feed, err := store.Feeds().GetByID(ctx, id)
-		if err != nil || feed == nil {
-			t.Fatalf("get created feed %q: (%v, %v)", id, feed, err)
-		}
-
-		createdTitles[i] = feed.Title
-		if feed.ReaderMode != domain.ReaderModeDefault || feed.Order != domain.SortOrderNewest {
-			t.Fatalf("created feed defaults = %+v", feed)
-		}
-
-		if i == 0 && (feed.FolderID == nil || *feed.FolderID != newsFolderID) {
-			t.Fatalf("news feed folder = %v, want %s", feed.FolderID, newsFolderID)
-		}
-
-		if i == 2 && feed.FolderID != nil {
-			t.Fatalf("top level feed folder = %v, want nil", *feed.FolderID)
-		}
+	byTitle := feedsByTitle(t, store)
+	if len(byTitle) != 5 {
+		t.Fatalf("feeds after import = %d, want 5", len(byTitle))
 	}
 
-	if want := []string{"News 1", "News 2", "Top", "Tech 1"}; !slices.Equal(createdTitles, want) {
-		t.Fatalf("created feed titles = %v, want %v", createdTitles, want)
+	for _, title := range []string{"News 1", "News 2", "Top", "Tech 1"} {
+		feed := byTitle[title]
+		if feed.ReaderMode != domain.ReaderModeDefault || feed.Order != domain.SortOrderNewest {
+			t.Fatalf("imported feed %q defaults = %+v", title, feed)
+		}
+
+		requireFeedState(t, store, feed, nil, 0, nil)
+		requireNextRefreshAt(t, store, feed, now)
+	}
+
+	requireNextRefreshAt(t, store, existing, refreshAt(0))
+
+	if folderID := byTitle["News 1"].FolderID; folderID == nil || *folderID != newsFolderID {
+		t.Fatalf("news feed folder = %v, want %s", folderID, newsFolderID)
+	}
+
+	if folderID := byTitle["Top"].FolderID; folderID != nil {
+		t.Fatalf("top level feed folder = %v, want nil", *folderID)
 	}
 
 	folders, err := store.Folders().List(ctx)
@@ -371,13 +411,13 @@ func TestStoreImportOPML(t *testing.T) {
 		t.Fatalf("folders after import = %d, want 2", len(folders))
 	}
 
-	repoResult, repoIDs, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{
+	repoResult, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{
 		Folders: []string{"Later"},
 		Feeds: []domain.OPMLFeedInput{
 			{URL: mustURL(t, "https://example.com/later-1"), Title: "Later 1", FolderName: ptr("Later")},
 			{URL: mustURL(t, "https://example.com/top"), Title: "Top duplicate"},
 		},
-	})
+	}, refreshAt(20))
 	if err != nil {
 		t.Fatalf("import opml through feed repo: %v", err)
 	}
@@ -386,18 +426,44 @@ func TestStoreImportOPML(t *testing.T) {
 		t.Fatalf("feed repo import result = %+v", repoResult)
 	}
 
-	if len(repoIDs) != 1 {
-		t.Fatalf("feed repo imported ids = %v, want one", repoIDs)
+	later := feedsByTitle(t, store)["Later 1"]
+	if later.ID == "" {
+		t.Fatal("imported feed Later 1 is missing")
 	}
 
-	imported, err := store.Feeds().GetByID(ctx, repoIDs[0])
+	requireNextRefreshAt(t, store, later, refreshAt(20))
+	requireNextRefreshAt(t, store, byTitle["Top"], now)
+}
+
+func TestImportOPMLDuplicateURLsCreateOneFeedAndSchedule(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	url := mustURL(t, "https://example.com/duplicate")
+
+	result, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{
+		Feeds: []domain.OPMLFeedInput{
+			{URL: url, Title: "First"},
+			{URL: url, Title: "Second"},
+		},
+	}, refreshAt(3))
 	if err != nil {
-		t.Fatalf("get imported feed: %v", err)
+		t.Fatalf("import opml: %v", err)
 	}
 
-	if imported == nil || imported.Title != "Later 1" {
-		t.Fatalf("imported feed = %+v", imported)
+	if result.ImportedFeeds != 1 || result.SkippedFeeds != 1 {
+		t.Fatalf("import result = %+v, want one imported and one skipped", result)
 	}
+
+	if feeds, schedules := countRows(t, store, `SELECT COUNT(*) FROM feed`), countRows(t, store, `SELECT COUNT(*) FROM feed_schedule`); feeds != 1 || schedules != 1 {
+		t.Fatalf("feeds and schedules = %d/%d, want 1/1", feeds, schedules)
+	}
+
+	feed := feedsByTitle(t, store)["First"]
+	if feed.ID == "" {
+		t.Fatal("the first duplicate was not the one imported")
+	}
+
+	requireNextRefreshAt(t, store, feed, refreshAt(3))
 }
 
 func TestImportOPMLIsAtomic(t *testing.T) {
@@ -419,7 +485,7 @@ func TestImportOPMLIsAtomic(t *testing.T) {
 		},
 	}
 
-	if _, _, err := store.Feeds().ImportOPML(ctx, doc); err == nil {
+	if _, err := store.Feeds().ImportOPML(ctx, doc, refreshAt(0)); err == nil {
 		t.Fatal("expected the import to fail")
 	} else {
 		requireCode(t, err, domain.ErrFeedRepositoryError)
@@ -434,13 +500,8 @@ func TestImportOPMLIsAtomic(t *testing.T) {
 		t.Fatalf("folders after failed import = %v, want none", folders)
 	}
 
-	feeds, err := store.Feeds().List(ctx)
-	if err != nil {
-		t.Fatalf("list feeds after failed import: %v", err)
-	}
-
-	if len(feeds) != 0 {
-		t.Fatalf("feeds after failed import = %v, want none", feeds)
+	if got := countRows(t, store, `SELECT (SELECT COUNT(*) FROM feed) + (SELECT COUNT(*) FROM feed_schedule)`); got != 0 {
+		t.Fatalf("feed and schedule rows after failed import = %d, want none", got)
 	}
 }
 
@@ -450,17 +511,17 @@ func TestImportOPMLNoFolders(t *testing.T) {
 
 	unrelated := createFolder(t, store, "Unrelated")
 
-	topResult, topIDs, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{
+	topResult, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{
 		Feeds: []domain.OPMLFeedInput{
 			{URL: mustURL(t, "https://example.com/no-folder"), Title: "No Folder"},
 		},
-	})
+	}, refreshAt(0))
 	if err != nil {
 		t.Fatalf("import opml without folders: %v", err)
 	}
 
-	if topResult.CreatedFolders != 0 || topResult.ImportedFeeds != 1 || len(topIDs) != 1 {
-		t.Fatalf("top-level import = (%+v, %v)", topResult, topIDs)
+	if topResult.CreatedFolders != 0 || topResult.ImportedFeeds != 1 {
+		t.Fatalf("top-level import = %+v", topResult)
 	}
 
 	folders, err := store.Folders().List(ctx)
@@ -479,6 +540,10 @@ func TestFeedRepoListRejectsStoredURLWithInvalidPort(t *testing.T) {
 
 	if _, err := store.WriteDB().ExecContext(ctx, `INSERT INTO feed (id, url, title) VALUES ('bad', 'http://example.com:99999/feed', 'Bad')`); err != nil {
 		t.Fatalf("insert feed: %v", err)
+	}
+
+	if _, err := store.WriteDB().ExecContext(ctx, `INSERT INTO feed_schedule (feed_id, next_refresh_at) VALUES ('bad', 0)`); err != nil {
+		t.Fatalf("insert feed schedule: %v", err)
 	}
 
 	if _, err := store.Feeds().List(ctx); err == nil {

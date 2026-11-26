@@ -14,23 +14,145 @@ import (
 	"time"
 )
 
-func TestRefreshOneSyncsFeed(t *testing.T) {
-	t.Parallel()
+var refreshTestNow = time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
 
-	startedAt := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	finishedAt := startedAt.Add(7 * time.Second)
-	feed := domain.Feed{
-		ID:         "feed-1",
-		URL:        testURL(t, "https://example.com/feed.xml"),
-		Title:      "Old Title",
-		ReaderMode: domain.ReaderModeDefault,
-		Order:      domain.SortOrderNewest,
+type refreshFixture struct {
+	feeds    *fakeFeedRepository
+	items    *fakeFeedItemRepository
+	settings *fakeSettingRepository
+	fetcher  *fakeFeedFetcher
+	parser   *fakeFeedParser
+	fatals   fatalRecorder
+	cfg      RefreshConfig
+}
+
+// newRefreshFixture wires fakes where the given feeds are due. The poll
+// interval is an hour so wakes stay explicit; tests that need ticks shorten it.
+func newRefreshFixture(due ...domain.Feed) *refreshFixture {
+	fx := &refreshFixture{
+		feeds:    newTestFeedRepository(due...),
+		items:    &fakeFeedItemRepository{},
+		settings: &fakeSettingRepository{},
+		fetcher:  &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"},
+		parser:   &fakeFeedParser{},
 	}
 
-	feeds := newTestFeedRepository(feed)
-	settings := &fakeSettingRepository{settings: domain.Settings{Retention: 1}}
-	fetcher := &fakeFeedFetcher{body: []byte("<rss>"), finalURL: "https://example.com/feed.xml"}
-	parser := &fakeFeedParser{parsed: domain.ParsedFeed{
+	fx.cfg = RefreshConfig{
+		Feeds:        fx.feeds,
+		FeedItems:    fx.items,
+		Settings:     fx.settings,
+		Fetcher:      fx.fetcher,
+		Parser:       fx.parser,
+		PollInterval: time.Hour,
+		Now:          func() time.Time { return refreshTestNow },
+	}
+
+	return fx
+}
+
+// start runs the queue until stop is called or the test ends; stop cancels the
+// queue and waits for its goroutines.
+func (fx *refreshFixture) start(t *testing.T) (queue *RefreshQueue, stop func()) {
+	t.Helper()
+
+	queue = newTestRefreshQueue(t, fx.cfg)
+	queue.releaseBaseBackoff = time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stop = func() {
+		cancel()
+		queue.Wait()
+	}
+
+	t.Cleanup(stop)
+	queue.Start(ctx)
+
+	return queue, stop
+}
+
+func testRefreshFeed(t *testing.T, id string) domain.Feed {
+	t.Helper()
+
+	return domain.Feed{ID: id, URL: testURL(t, "https://example.com/"+id+".xml")}
+}
+
+func (fx *refreshFixture) recordedCount() int {
+	return len(fx.feeds.succeededList()) + len(fx.feeds.failedList())
+}
+
+// failFirstSettings fails the first Get with err and then delegates.
+type failFirstSettings struct {
+	domain.SettingRepository
+	err  error
+	once sync.Once
+}
+
+func (s *failFirstSettings) Get(ctx context.Context) (domain.Settings, error) {
+	var err error
+
+	s.once.Do(func() { err = s.err })
+
+	if err != nil {
+		return domain.Settings{}, err
+	}
+
+	return s.SettingRepository.Get(ctx)
+}
+
+// failFirstItems fails the first ListStoredRefsByFeed with err and then delegates.
+type failFirstItems struct {
+	domain.FeedItemRepository
+	err  error
+	once sync.Once
+}
+
+func (r *failFirstItems) ListStoredRefsByFeed(ctx context.Context, feedID string) ([]domain.StoredRef, error) {
+	var err error
+
+	r.once.Do(func() { err = r.err })
+
+	if err != nil {
+		return nil, err
+	}
+
+	return r.FeedItemRepository.ListStoredRefsByFeed(ctx, feedID)
+}
+
+// captureLogs routes the default logger into a buffer for the test and returns
+// a reader of what was logged.
+func captureLogs(t *testing.T) func() string {
+	t.Helper()
+
+	var (
+		mu  sync.Mutex
+		buf bytes.Buffer
+	)
+
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{mu: &mu, buf: &buf}, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(prev)
+	})
+
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return buf.String()
+	}
+}
+
+func TestRefreshSyncsDueFeed(t *testing.T) {
+	t.Parallel()
+
+	finishedAt := refreshTestNow.Add(7 * time.Second)
+	feed := testRefreshFeed(t, "feed-1")
+	feed.Title = "Old Title"
+
+	fx := newRefreshFixture(feed)
+	fx.cfg.Now = sequenceClock(refreshTestNow, finishedAt)
+	fx.settings.settings = domain.Settings{Retention: 1}
+	fx.parser.parsed = domain.ParsedFeed{
 		Title:   "Fresh Title",
 		SiteURL: ptrTo("https://example.com/"),
 		IconURL: ptrTo("https://example.com/icon.png"),
@@ -38,34 +160,39 @@ func TestRefreshOneSyncsFeed(t *testing.T) {
 			parsedEntry(t, "https://example.com/one", "One"),
 			parsedEntry(t, "https://example.com/two", "Two"),
 		},
-	}}
-	items := &fakeFeedItemRepository{}
-
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:     feeds,
-		FeedItems: items,
-		Settings:  settings,
-		Fetcher:   fetcher,
-		Parser:    parser,
-		Now:       sequenceClock(startedAt, finishedAt),
-	})
-
-	if err := queue.RefreshOne(context.Background(), "feed-1"); err != nil {
-		t.Fatalf("RefreshOne() error = %v", err)
 	}
 
-	if len(fetcher.calls) != 1 || fetcher.calls[0] != feed.URL.Raw() {
-		t.Fatalf("fetched URLs = %v, want [%s]", fetcher.calls, feed.URL.Raw())
+	_, stop := fx.start(t)
+
+	waitFor(t, func() bool { return fx.recordedCount() == 1 }, "feed refreshed")
+	stop()
+
+	claims := fx.feeds.claimList()
+	if len(claims) != 1 || claims[0].feedID != "feed-1" || !claims[0].now.Equal(refreshTestNow) {
+		t.Fatalf("claims = %+v, want one claim of feed-1 at %v", claims, refreshTestNow)
 	}
 
-	syncs := feeds.syncList()
-	if len(syncs) != 1 {
-		t.Fatalf("ApplySync calls = %d, want 1", len(syncs))
+	if !slices.Equal(fx.fetcher.calls, []string{feed.URL.Raw()}) {
+		t.Fatalf("fetched URLs = %v, want [%s]", fx.fetcher.calls, feed.URL.Raw())
 	}
 
-	applied := syncs[0]
-	if applied.feedID != "feed-1" {
-		t.Fatalf("feedID = %q, want %q", applied.feedID, "feed-1")
+	succeeded := fx.feeds.succeededList()
+	if len(succeeded) != 1 {
+		t.Fatalf("SucceedRefresh calls = %d, want 1", len(succeeded))
+	}
+
+	assertSucceededRefresh(t, succeeded[0], claims[0].attemptID, finishedAt)
+
+	if failed, released := fx.feeds.failedList(), fx.feeds.releasedList(); len(failed) != 0 || len(released) != 0 {
+		t.Fatalf("failed = %v, released = %v, want none", failed, released)
+	}
+}
+
+func assertSucceededRefresh(t *testing.T, got succeededRefresh, attemptID string, finishedAt time.Time) {
+	t.Helper()
+
+	if got.attemptID != attemptID || got.feedID != "feed-1" {
+		t.Fatalf("succeeded attempt/feed = %q/%q, want %q/feed-1", got.attemptID, got.feedID, attemptID)
 	}
 
 	wantMeta := domain.FeedSyncMeta{
@@ -73,36 +200,25 @@ func TestRefreshOneSyncsFeed(t *testing.T) {
 		SiteURL: ptrTo("https://example.com/"),
 		IconURL: ptrTo("https://example.com/icon.png"),
 	}
-	if !reflect.DeepEqual(applied.meta, wantMeta) {
-		t.Fatalf("meta = %+v, want %+v", applied.meta, wantMeta)
+	if !reflect.DeepEqual(got.meta, wantMeta) {
+		t.Fatalf("meta = %+v, want %+v", got.meta, wantMeta)
 	}
 
-	if !applied.startedAt.Equal(startedAt) || !applied.finishedAt.Equal(finishedAt) {
-		t.Fatalf("refresh window = [%v, %v], want [%v, %v]", applied.startedAt, applied.finishedAt, startedAt, finishedAt)
+	if len(got.newItems) != 1 || got.newItems[0].URL.Raw() != "https://example.com/one" || got.newItems[0].ID == "" {
+		t.Fatalf("newItems = %+v, want the first entry only (retention honoured) with a generated id", got.newItems)
 	}
 
-	if len(applied.newItems) != 1 {
-		t.Fatalf("newItems = %d, want 1 (retention honoured)", len(applied.newItems))
+	if len(got.deleteIDs) != 0 {
+		t.Fatalf("deleteIDs = %v, want none", got.deleteIDs)
 	}
 
-	if applied.newItems[0].URL.Raw() != "https://example.com/one" {
-		t.Fatalf("newItems[0].URL = %q, want https://example.com/one", applied.newItems[0].URL.Raw())
-	}
-
-	if applied.newItems[0].ID == "" {
-		t.Fatal("newItems[0].ID = empty, want generated id")
-	}
-
-	if len(applied.deleteIDs) != 0 {
-		t.Fatalf("deleteIDs = %v, want none", applied.deleteIDs)
-	}
-
-	if failures := feeds.failureList(); len(failures) != 0 {
-		t.Fatalf("recorded failures = %v, want none", failures)
+	wantNext := finishedAt.Add(defaultRefreshInterval)
+	if !got.finishedAt.Equal(finishedAt) || !got.nextRefreshAt.Equal(wantNext) {
+		t.Fatalf("finished/next = %v/%v, want %v/%v", got.finishedAt, got.nextRefreshAt, finishedAt, wantNext)
 	}
 }
 
-func TestRefreshOneFallsBackToFeedTitleAndHost(t *testing.T) {
+func TestRefreshFallsBackToFeedTitleAndHost(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -120,36 +236,25 @@ func TestRefreshOneFallsBackToFeedTitleAndHost(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-			feed := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml"), Title: tc.feedTitle}
-			feeds := newTestFeedRepository(feed)
+			feed := testRefreshFeed(t, "feed-1")
+			feed.Title = tc.feedTitle
 
-			queue := newTestRefreshQueue(t, RefreshConfig{
-				Feeds:     feeds,
-				FeedItems: &fakeFeedItemRepository{},
-				Settings:  &fakeSettingRepository{},
-				Fetcher:   &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"},
-				Parser:    &fakeFeedParser{parsed: domain.ParsedFeed{Title: tc.parsedTitle}},
-				Now:       func() time.Time { return now },
-			})
+			fx := newRefreshFixture(feed)
+			fx.parser.parsed = domain.ParsedFeed{Title: tc.parsedTitle}
+			_, stop := fx.start(t)
 
-			if err := queue.RefreshOne(context.Background(), "feed-1"); err != nil {
-				t.Fatalf("RefreshOne() error = %v", err)
-			}
+			waitFor(t, func() bool { return fx.recordedCount() == 1 }, "feed refreshed")
+			stop()
 
-			syncs := feeds.syncList()
-			if len(syncs) != 1 {
-				t.Fatalf("ApplySync calls = %d, want 1", len(syncs))
-			}
-
-			if syncs[0].meta.Title != tc.want {
-				t.Fatalf("title = %q, want %q", syncs[0].meta.Title, tc.want)
+			succeeded := fx.feeds.succeededList()
+			if len(succeeded) != 1 || succeeded[0].meta.Title != tc.want {
+				t.Fatalf("succeeded = %+v, want one refresh titled %q", succeeded, tc.want)
 			}
 		})
 	}
 }
 
-func TestRefreshOneRecordsFailures(t *testing.T) {
+func TestRefreshRecordsExternalFailures(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -184,162 +289,232 @@ func TestRefreshOneRecordsFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			startedAt := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-			finishedAt := startedAt.Add(3 * time.Second)
-			feed := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml")}
-			feeds := newTestFeedRepository(feed)
-			items := &fakeFeedItemRepository{}
-			fetcher := &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"}
-			parser := &fakeFeedParser{}
-			tc.setup(fetcher, parser)
+			finishedAt := refreshTestNow.Add(3 * time.Second)
+			interval := 10 * time.Minute
 
-			queue := newTestRefreshQueue(t, RefreshConfig{
-				Feeds:     feeds,
-				FeedItems: items,
-				Settings:  &fakeSettingRepository{},
-				Fetcher:   fetcher,
-				Parser:    parser,
-				Now:       sequenceClock(startedAt, finishedAt),
-			})
+			fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
+			fx.cfg.Interval = interval
+			fx.cfg.Now = sequenceClock(refreshTestNow, finishedAt)
+			tc.setup(fx.fetcher, fx.parser)
 
-			if err := queue.RefreshOne(context.Background(), "feed-1"); err == nil {
-				t.Fatal("RefreshOne() error = nil, want error")
+			_, stop := fx.start(t)
+
+			waitFor(t, func() bool { return fx.recordedCount() == 1 }, "failure recorded")
+			stop()
+
+			claims := fx.feeds.claimList()
+			failed := fx.feeds.failedList()
+
+			if len(claims) != 1 || len(failed) != 1 {
+				t.Fatalf("claims = %d, failed = %d, want 1 and 1", len(claims), len(failed))
 			}
 
-			failures := feeds.failureList()
-			if len(failures) != 1 {
-				t.Fatalf("recorded failures = %d, want 1", len(failures))
+			want := failedRefresh{
+				attemptID:     claims[0].attemptID,
+				feedID:        "feed-1",
+				summary:       tc.summary,
+				finishedAt:    finishedAt,
+				nextRefreshAt: finishedAt.Add(interval),
+			}
+			if failed[0] != want {
+				t.Fatalf("FailRefresh = %+v, want %+v", failed[0], want)
 			}
 
-			if failures[0].feedID != "feed-1" {
-				t.Fatalf("failure feedID = %q, want feed-1", failures[0].feedID)
-			}
-
-			if failures[0].summary != tc.summary {
-				t.Fatalf("failure summary = %q, want %q", failures[0].summary, tc.summary)
-			}
-
-			if !failures[0].startedAt.Equal(startedAt) || !failures[0].finishedAt.Equal(finishedAt) {
-				t.Fatalf("failure window = [%v, %v], want [%v, %v]", failures[0].startedAt, failures[0].finishedAt, startedAt, finishedAt)
-			}
-
-			if strings.Contains(failures[0].summary, "alice:secret") {
-				t.Fatalf("failure summary leaks credentials: %q", failures[0].summary)
-			}
-
-			if len(feeds.syncList()) != 0 {
-				t.Fatal("ApplySync called after failure")
+			if len(fx.feeds.succeededList()) != 0 || len(fx.feeds.releasedList()) != 0 {
+				t.Fatal("external failure must not succeed or release the attempt")
 			}
 		})
 	}
 }
 
-func TestRefreshOneCanceledLookupRecordsNothing(t *testing.T) {
+func TestRefreshExternalFailuresNeverFatal(t *testing.T) {
 	t.Parallel()
 
-	canceledFeeds := newTestFeedRepository()
-	canceledFeeds.getErr = context.Canceled
-	canceledQueue := newTestRefreshQueue(t, RefreshConfig{Feeds: canceledFeeds, Settings: &fakeSettingRepository{}})
+	feed := testRefreshFeed(t, "feed-1")
+	fx := newRefreshFixture()
+	fx.fetcher.err = domain.NewError(domain.ErrFetchFeedError, errors.New("upstream 502"))
 
-	if err := canceledQueue.RefreshOne(context.Background(), "feed-1"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("RefreshOne(canceled) error = %v, want context.Canceled", err)
+	queue, stop := fx.start(t)
+
+	for i := range 10 {
+		fx.feeds.makeDue(feed)
+		queue.Wake()
+
+		waitFor(t, func() bool { return len(fx.feeds.failedList()) == i+1 }, "failure recorded")
 	}
 
-	if failures := canceledFeeds.failureList(); len(failures) != 0 {
-		t.Fatalf("recorded failures on canceled lookup = %+v, want none", failures)
+	stop()
+
+	if released := fx.feeds.releasedList(); len(released) != 0 {
+		t.Fatalf("released = %v, want none for external failures", released)
 	}
 }
 
-func TestRefreshOneDatabaseErrorsDoNotIncrementFailureCountAndLog(t *testing.T) {
+func TestRefreshDrainsMoreDueFeedsThanWorkers(t *testing.T) {
+	t.Parallel()
+
+	ids := []string{"a", "b", "c", "d", "e", "f"}
+	feeds := make([]domain.Feed, 0, len(ids))
+
+	for _, id := range ids {
+		feeds = append(feeds, testRefreshFeed(t, id))
+	}
+
+	fx := newRefreshFixture(feeds...)
+	fx.cfg.Concurrency = 2
+
+	release := make(chan struct{})
+	entered := make(chan struct{}, len(feeds))
+
+	var (
+		mu                sync.Mutex
+		active, maxActive int
+	)
+
+	fx.fetcher.fetch = func(ctx context.Context, url domain.NormalizedURL) ([]byte, string, error) {
+		mu.Lock()
+		active++
+		maxActive = max(maxActive, active)
+		mu.Unlock()
+
+		entered <- struct{}{}
+
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+
+		mu.Lock()
+		active--
+		mu.Unlock()
+
+		return []byte("x"), url.Raw(), nil
+	}
+
+	_, stop := fx.start(t)
+
+	// Start wakes the pool once; the second worker only claims because the
+	// first claim signals it.
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(testWaitTimeout):
+			t.Fatal("timed out waiting for two concurrent refreshes")
+		}
+	}
+
+	close(release)
+	waitFor(t, func() bool { return len(fx.feeds.succeededList()) == len(feeds) }, "all due feeds refreshed")
+	stop()
+
+	var got []string
+	for _, refresh := range fx.feeds.succeededList() {
+		got = append(got, refresh.feedID)
+	}
+
+	slices.Sort(got)
+
+	if !slices.Equal(got, ids) {
+		t.Fatalf("refreshed feeds = %v, want each of %v once", got, ids)
+	}
+
+	if maxActive != 2 {
+		t.Fatalf("max concurrent refreshes = %d, want 2", maxActive)
+	}
+}
+
+func TestWakeClaimsNewlyDueFeed(t *testing.T) {
+	t.Parallel()
+
+	feed := testRefreshFeed(t, "feed-1")
+	fx := newRefreshFixture()
+	queue, stop := fx.start(t)
+
+	// The startup pass finds nothing and the tick is an hour away, so only Wake
+	// can surface the feed.
+	waitFor(t, func() bool { return fx.feeds.claimCallCount() >= 1 }, "startup claim pass")
+	fx.feeds.makeDue(feed)
+	queue.Wake()
+
+	waitFor(t, func() bool { return len(fx.feeds.succeededList()) == 1 }, "woken refresh")
+	stop()
+
+	if claims := fx.feeds.claimList(); len(claims) != 1 || claims[0].feedID != feed.ID {
+		t.Fatalf("claims = %+v, want one claim of %s", claims, feed.ID)
+	}
+}
+
+func TestSchedulerTickClaimsNewlyDueFeed(t *testing.T) {
+	t.Parallel()
+
+	feed := testRefreshFeed(t, "feed-1")
+	fx := newRefreshFixture()
+	fx.cfg.PollInterval = 5 * time.Millisecond
+	_, stop := fx.start(t)
+
+	waitFor(t, func() bool { return fx.feeds.claimCallCount() >= 1 }, "startup claim pass")
+	fx.feeds.makeDue(feed)
+
+	waitFor(t, func() bool { return len(fx.feeds.succeededList()) == 1 }, "refresh on tick")
+	stop()
+}
+
+func TestRefreshReleasesClaimOnDatabaseErrorAndRetriesWithoutRestart(t *testing.T) {
 	cases := []struct {
-		name     string
-		want     error
-		settings *fakeSettingRepository
-		setup    func(feeds *fakeFeedRepository, items *fakeFeedItemRepository, want error)
+		name       string
+		code       domain.ErrorCode
+		inject     func(fx *refreshFixture, err error)
+		wantFailed bool
 	}{
 		{
-			name: "get by id failure",
-			want: domain.NewError(domain.ErrFeedRepositoryError, errors.New("get failed for https://alice:secret@example.com/db")),
-			setup: func(feeds *fakeFeedRepository, items *fakeFeedItemRepository, want error) {
-				feeds.getErr = want
+			name: "settings read",
+			code: domain.ErrSettingRepositoryError,
+			inject: func(fx *refreshFixture, err error) {
+				fx.cfg.Settings = &failFirstSettings{SettingRepository: fx.settings, err: err}
 			},
 		},
 		{
-			name:     "settings failure aborts before fetching",
-			want:     domain.NewError(domain.ErrSettingRepositoryError, errors.New("settings failed for https://alice:secret@example.com/db")),
-			settings: &fakeSettingRepository{},
-			setup:    nil,
-		},
-		{
-			name: "list stored refs failure",
-			want: domain.NewError(domain.ErrFeedItemRepositoryError, errors.New("items failed for https://alice:secret@example.com/db")),
-			setup: func(feeds *fakeFeedRepository, items *fakeFeedItemRepository, want error) {
-				items.listErr = want
+			name: "stored refs read",
+			code: domain.ErrFeedItemRepositoryError,
+			inject: func(fx *refreshFixture, err error) {
+				fx.cfg.FeedItems = &failFirstItems{FeedItemRepository: fx.items, err: err}
 			},
 		},
 		{
-			name: "apply sync failure",
-			want: domain.NewError(domain.ErrFeedRepositoryError, errors.New("apply sync failed for https://alice:secret@example.com/db")),
-			setup: func(feeds *fakeFeedRepository, items *fakeFeedItemRepository, want error) {
-				feeds.applyErr = want
+			name: "succeed write",
+			code: domain.ErrFeedRepositoryError,
+			inject: func(fx *refreshFixture, err error) {
+				fx.feeds.succeedScript.steps = []error{err}
 			},
+		},
+		{
+			name: "fail write",
+			code: domain.ErrFeedRepositoryError,
+			inject: func(fx *refreshFixture, err error) {
+				fx.fetcher.err = domain.NewError(domain.ErrFetchFeedError, errors.New("upstream 502"))
+				fx.feeds.failScript.steps = []error{err}
+			},
+			wantFailed: true,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			var logMu sync.Mutex
-			prev := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{mu: &logMu, buf: &buf}, nil)))
-			t.Cleanup(func() {
-				slog.SetDefault(prev)
-			})
+			logs := captureLogs(t)
+			dbErr := domain.NewError(tc.code, errors.New("db failed for https://alice:secret@example.com/db"))
 
-			feed := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml")}
-			feeds := newTestFeedRepository(feed)
-			items := &fakeFeedItemRepository{}
-			fetcher := &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"}
-			parser := &fakeFeedParser{}
-			settings := tc.settings
-			if settings == nil {
-				settings = &fakeSettingRepository{}
-			} else {
-				settings.getErr = tc.want
-			}
+			fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
+			fx.cfg.PollInterval = 5 * time.Millisecond
+			tc.inject(fx, dbErr)
 
-			if tc.setup != nil {
-				tc.setup(feeds, items, tc.want)
-			}
+			_, stop := fx.start(t)
 
-			queue := newTestRefreshQueue(t, RefreshConfig{
-				Feeds:     feeds,
-				FeedItems: items,
-				Settings:  settings,
-				Fetcher:   fetcher,
-				Parser:    parser,
-			})
+			waitFor(t, func() bool { return fx.recordedCount() == 1 }, "refresh recorded after the release")
+			stop()
 
-			if err := queue.RefreshOne(context.Background(), "feed-1"); !errors.Is(err, tc.want) {
-				t.Fatalf("RefreshOne() error = %v, want %v", err, tc.want)
-			}
+			assertReleasedThenRecorded(t, fx, tc.wantFailed)
 
-			if failures := feeds.failureList(); len(failures) != 0 {
-				t.Fatalf("recorded failures = %+v, want none", failures)
-			}
-
-			if len(feeds.syncList()) != 0 {
-				t.Fatal("ApplySync recorded after failure")
-			}
-
-			if tc.settings != nil && fetcher.callCount() != 0 {
-				t.Fatalf("feed fetched %d times after settings DB failure, want 0", fetcher.callCount())
-			}
-
-			logMu.Lock()
-			out := buf.String()
-			logMu.Unlock()
-
+			out := logs()
 			if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "feed refresh failed") {
 				t.Fatalf("expected ERROR log for DB failure, got:\n%s", out)
 			}
@@ -351,626 +526,238 @@ func TestRefreshOneDatabaseErrorsDoNotIncrementFailureCountAndLog(t *testing.T) 
 	}
 }
 
-func TestRefreshOneDeletedFeedRecordsNothing(t *testing.T) {
-	t.Parallel()
+// assertReleasedThenRecorded checks that the first attempt was released
+// without any write and that a second attempt of the same feed recorded the
+// outcome.
+func assertReleasedThenRecorded(t *testing.T, fx *refreshFixture, wantFailed bool) {
+	t.Helper()
 
-	feed := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml")}
-	feeds := newTestFeedRepository(feed)
-	if err := feeds.Delete(context.Background(), feed.ID); err != nil {
-		t.Fatalf("Delete() error = %v", err)
-	}
-
-	fetcher := &fakeFeedFetcher{}
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:     feeds,
-		FeedItems: &fakeFeedItemRepository{},
-		Settings:  &fakeSettingRepository{},
-		Fetcher:   fetcher,
-		Parser:    &fakeFeedParser{},
-	})
-
-	if err := queue.RefreshOne(context.Background(), feed.ID); err != nil {
-		t.Fatalf("RefreshOne() error = %v, want nil", err)
+	claims := fx.feeds.claimList()
+	if len(claims) != 2 || claims[0].attemptID == claims[1].attemptID || claims[0].feedID != claims[1].feedID {
+		t.Fatalf("claims = %+v, want two attempts of the same feed", claims)
 	}
 
-	if failures := feeds.failureList(); len(failures) != 0 {
-		t.Fatalf("recorded failures = %+v, want none for deleted feed", failures)
+	released := fx.feeds.releasedList()
+	if want := (releasedRefresh{attemptID: claims[0].attemptID, feedID: "feed-1"}); len(released) != 1 || released[0] != want {
+		t.Fatalf("released = %+v, want [%+v]", released, want)
 	}
 
-	if len(feeds.syncList()) != 0 {
-		t.Fatal("ApplySync called for deleted feed")
+	var recorded []string
+	for _, refresh := range fx.feeds.succeededList() {
+		recorded = append(recorded, refresh.attemptID)
 	}
 
-	if fetcher.callCount() != 0 {
-		t.Fatalf("fetcher calls = %d, want 0 for deleted feed", fetcher.callCount())
+	for _, refresh := range fx.feeds.failedList() {
+		recorded = append(recorded, refresh.attemptID)
 	}
-}
 
-func TestEnqueueDeduplicatesPendingFeeds(t *testing.T) {
-	t.Parallel()
-	feeds := newTestFeedRepository(
-		domain.Feed{ID: "a", URL: testURL(t, "https://example.com/a")},
-		domain.Feed{ID: "b", URL: testURL(t, "https://example.com/b")},
-		domain.Feed{ID: "c", URL: testURL(t, "https://example.com/c")},
-	)
-	// Start with no startup feeds so the enqueue operation must wake a worker.
-	feeds.list = nil
-	lookedUp := make(chan string, 10)
-	synced := make(chan string, 3)
-	feeds.onGet = func(id string) { lookedUp <- id }
-	feeds.onSync = func(id string) { synced <- id }
-	queue := newTestRefreshQueue(t, RefreshConfig{Feeds: feeds, FeedItems: &fakeFeedItemRepository{}, Settings: &fakeSettingRepository{}, Fetcher: &fakeFeedFetcher{}, Parser: &fakeFeedParser{}, Interval: time.Hour})
-	queue.Enqueue("a", "a", "b")
-	queue.Enqueue("a", "b")
-	ctx, cancel := context.WithCancel(context.Background())
-	queue.Start(ctx)
-	for range 2 {
-		select {
-		case <-synced:
-		case <-time.After(testWaitTimeout):
-			cancel()
-			queue.Wait()
-			t.Fatal("workers did not process pending feeds")
-		}
+	if !slices.Equal(recorded, []string{claims[1].attemptID}) {
+		t.Fatalf("recorded attempts = %v, want only the second attempt %s", recorded, claims[1].attemptID)
 	}
-	queue.Enqueue("c")
-	select {
-	case <-synced:
-	case <-time.After(testWaitTimeout):
-		cancel()
-		queue.Wait()
-		t.Fatal("worker did not process the later enqueue")
-	}
-	cancel()
-	queue.Wait()
-	close(lookedUp)
-	var got []string
-	for id := range lookedUp {
-		got = append(got, id)
-	}
-	slices.Sort(got)
-	if !slices.Equal(got, []string{"a", "b", "c"}) {
-		t.Fatalf("looked up IDs = %v, want [a b c]", got)
+
+	if gotFailed := len(fx.feeds.failedList()) == 1; gotFailed != wantFailed {
+		t.Fatalf("failure recorded = %t, want %t", gotFailed, wantFailed)
 	}
 }
 
-func TestEnqueueAllReturnsListError(t *testing.T) {
+func TestRefreshReleaseRetriesUntilItSucceeds(t *testing.T) {
 	t.Parallel()
 
-	want := errors.New("list failed")
-	feeds := newTestFeedRepository()
-	feeds.listErr = want
+	releaseErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("release failed"))
+	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("settings failed"))
 
-	queue := newTestRefreshQueue(t, RefreshConfig{Feeds: feeds})
+	fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
+	fx.cfg.PollInterval = 5 * time.Millisecond
+	fx.cfg.Settings = &failFirstSettings{SettingRepository: fx.settings, err: dbErr}
+	fx.feeds.releaseScript.steps = []error{releaseErr, releaseErr}
 
-	if err := queue.EnqueueAll(context.Background()); !errors.Is(err, want) {
-		t.Fatalf("EnqueueAll() error = %v, want %v", err, want)
+	_, stop := fx.start(t)
+
+	waitFor(t, func() bool { return fx.recordedCount() == 1 }, "refresh recorded after the release")
+	stop()
+
+	if got := fx.feeds.releaseScript.calls; got != releaseMaxAttempts {
+		t.Fatalf("ReleaseRefresh calls = %d, want %d", got, releaseMaxAttempts)
+	}
+
+	if released := fx.feeds.releasedList(); len(released) != 1 {
+		t.Fatalf("released = %+v, want exactly one successful release", released)
 	}
 }
 
-func TestStartRefreshesAllFeedsAtStartup(t *testing.T) {
+func TestRefreshFatalWhenReleaseKeepsFailing(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name                 string
-		interval             time.Duration
-		feedCount, wantSyncs int
-	}{
-		{"startup", time.Hour, 2, 2},
-		{"periodic", 20 * time.Millisecond, 1, 3},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-			entries := []domain.Feed{{ID: "feed-1", URL: testURL(t, "https://example.com/one.xml")}, {ID: "feed-2", URL: testURL(t, "https://example.com/two.xml")}}
-			feeds := newTestFeedRepository(entries[:tc.feedCount]...)
-			synced := make(chan string, 100)
-			feeds.onSync = func(id string) { synced <- id }
-			queue := newTestRefreshQueue(t, RefreshConfig{Feeds: feeds, FeedItems: &fakeFeedItemRepository{}, Settings: &fakeSettingRepository{}, Fetcher: &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"}, Parser: &fakeFeedParser{}, Interval: tc.interval, Now: func() time.Time { return now }})
-			ctx, cancel := context.WithCancel(context.Background())
-			queue.Start(ctx)
-			for range tc.wantSyncs {
-				select {
-				case <-synced:
-				case <-time.After(testWaitTimeout):
-					cancel()
-					queue.Wait()
-					t.Fatal("refresh did not complete")
-				}
-			}
-			cancel()
-			queue.Wait()
-			syncs := feeds.syncList()
-			if len(syncs) < tc.wantSyncs {
-				t.Fatalf("ApplySync calls = %d, want at least %d", len(syncs), tc.wantSyncs)
-			}
-			if tc.name == "startup" {
-				ids := []string{syncs[0].feedID, syncs[1].feedID}
-				slices.Sort(ids)
-				if !slices.Equal(ids, []string{"feed-1", "feed-2"}) {
-					t.Fatalf("synced IDs = %v", ids)
-				}
-			}
-		})
+
+	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("settings failed"))
+	releaseErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("release failed for https://alice:secret@example.com/db"))
+
+	fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
+	fx.cfg.OnFatal = fx.fatals.Record
+	fx.settings.getErr = dbErr
+	fx.feeds.releaseScript.after = releaseErr
+
+	_, stop := fx.start(t)
+
+	waitFor(t, func() bool { return fx.fatals.Count() >= 1 }, "OnFatal after the release budget is exhausted")
+	stop()
+
+	fatals := fx.fatals.Errors()
+	if len(fatals) != 1 || !errors.Is(fatals[0], releaseErr) {
+		t.Fatalf("fatals = %v, want one wrapping %v", fatals, releaseErr)
+	}
+
+	if strings.Contains(fatals[0].Error(), "alice:secret") {
+		t.Fatalf("fatal error leaks credentials: %q", fatals[0].Error())
+	}
+
+	if got := fx.feeds.releaseScript.calls; got != releaseMaxAttempts {
+		t.Fatalf("ReleaseRefresh calls = %d, want %d", got, releaseMaxAttempts)
+	}
+
+	if fx.recordedCount() != 0 || len(fx.feeds.releasedList()) != 0 {
+		t.Fatal("nothing may be recorded or released when the release keeps failing")
 	}
 }
 
-func TestStartBoundsConcurrency(t *testing.T) {
+func TestRefreshShutdownDuringFetchWritesNothing(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	feeds := make([]domain.Feed, 0, 6)
-	for i := range 6 {
-		id := string(rune('a' + i))
-		feeds = append(feeds, domain.Feed{ID: id, URL: testURL(t, "https://example.com/"+id+".xml")})
-	}
+	fx := newRefreshFixture(testRefreshFeed(t, "feed-1"), testRefreshFeed(t, "feed-2"), testRefreshFeed(t, "feed-3"))
+	fx.cfg.Concurrency = 1
 
-	release := make(chan struct{})
-	entered := make(chan struct{}, len(feeds))
-
-	var mu sync.Mutex
-	active, maxActive := 0, 0
-
-	fetcher := &fakeFeedFetcher{}
-	fetcher.fetch = func(ctx context.Context, url domain.NormalizedURL) ([]byte, string, error) {
-		mu.Lock()
-		active++
-		if active > maxActive {
-			maxActive = active
-		}
-
-		mu.Unlock()
-
+	entered := make(chan struct{}, 1)
+	fx.fetcher.fetch = func(ctx context.Context, url domain.NormalizedURL) ([]byte, string, error) {
 		entered <- struct{}{}
-		<-release
 
-		mu.Lock()
-		active--
-		mu.Unlock()
-
-		return []byte("x"), "https://example.com/feed", nil
-	}
-
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:       newTestFeedRepository(feeds...),
-		FeedItems:   &fakeFeedItemRepository{},
-		Settings:    &fakeSettingRepository{},
-		Fetcher:     fetcher,
-		Parser:      &fakeFeedParser{},
-		Concurrency: 2,
-		Interval:    time.Hour,
-		Now:         func() time.Time { return now },
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	queue.Start(ctx)
-
-	for range 2 {
-		select {
-		case <-entered:
-		case <-time.After(testWaitTimeout):
-			t.Fatal("timed out waiting for concurrent workers")
-		}
-	}
-
-	mu.Lock()
-	gotMax := maxActive
-	mu.Unlock()
-
-	if gotMax != 2 {
-		t.Fatalf("max concurrent refreshes = %d, want 2", gotMax)
-	}
-
-	close(release)
-
-	waitFor(t, func() bool { return fetcher.callCount() >= len(feeds) }, "all feeds refreshed")
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if maxActive > 2 {
-		t.Fatalf("max concurrent refreshes = %d, want <= 2", maxActive)
-	}
-}
-
-func TestEnqueueDropsRunningFeed(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
-	feed1 := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml")}
-	feed2 := domain.Feed{ID: "feed-2", URL: testURL(t, "https://example.com/2.xml")}
-	feeds := newTestFeedRepository(feed1, feed2)
-	feeds.list = []domain.Feed{feed1}
-
-	release := make(chan struct{})
-	started := make(chan struct{}, 1)
-
-	fetcher := &fakeFeedFetcher{}
-	fetcher.fetch = func(ctx context.Context, url domain.NormalizedURL) ([]byte, string, error) {
-		if url == feed1.URL && fetcher.callCount() == 1 {
-			started <- struct{}{}
-			<-release
-		}
-
-		return []byte("x"), url.Raw(), nil
-	}
-
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:       feeds,
-		FeedItems:   &fakeFeedItemRepository{},
-		Settings:    &fakeSettingRepository{},
-		Fetcher:     fetcher,
-		Parser:      &fakeFeedParser{},
-		Concurrency: 1,
-		Interval:    time.Hour,
-		Now:         func() time.Time { return now },
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	queue.Start(ctx)
-
-	select {
-	case <-started:
-	case <-time.After(testWaitTimeout):
-		t.Fatal("timed out waiting for first refresh to start")
-	}
-
-	// Enqueue duplicate feed-1 followed by feed-2 while feed-1 is running;
-	// concurrency-1 FIFO order proves duplicate feed-1 was dropped.
-	queue.Enqueue("feed-1")
-	queue.Enqueue("feed-2")
-
-	close(release)
-
-	waitFor(t, func() bool { return fetcher.callCount() == 2 }, "feed-2 processed after feed-1")
-
-	fetcher.mu.Lock()
-	calls := append([]string(nil), fetcher.calls...)
-	fetcher.mu.Unlock()
-	if !slices.Equal(calls, []string{feed1.URL.Raw(), feed2.URL.Raw()}) {
-		t.Fatalf("fetch calls = %v, want [%s %s]", calls, feed1.URL.Raw(), feed2.URL.Raw())
-	}
-
-	queue.Enqueue("feed-1")
-
-	waitFor(t, func() bool { return fetcher.callCount() == 3 }, "re-enqueue after completion")
-
-	cancel()
-	queue.Wait()
-}
-
-func TestRefreshQueueWaitStopsDequeuingOnCancel(t *testing.T) {
-	t.Parallel()
-
-	feeds := newTestFeedRepository(
-		domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/1.xml")},
-		domain.Feed{ID: "feed-2", URL: testURL(t, "https://example.com/2.xml")},
-		domain.Feed{ID: "feed-3", URL: testURL(t, "https://example.com/3.xml")},
-	)
-
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	fetcher := &fakeFeedFetcher{}
-	fetcher.fetch = func(ctx context.Context, url domain.NormalizedURL) ([]byte, string, error) {
-		started <- struct{}{}
-		<-release
+		<-ctx.Done()
 
 		return nil, "", ctx.Err()
 	}
 
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:       feeds,
-		FeedItems:   &fakeFeedItemRepository{},
-		Settings:    &fakeSettingRepository{},
-		Fetcher:     fetcher,
-		Parser:      &fakeFeedParser{},
-		Concurrency: 1,
-		Interval:    time.Hour,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	queue.Start(ctx)
+	_, stop := fx.start(t)
 
 	select {
-	case <-started:
+	case <-entered:
 	case <-time.After(testWaitTimeout):
-		t.Fatal("timed out waiting for first worker to start")
+		t.Fatal("timed out waiting for the refresh to start")
 	}
 
-	cancel()
-	close(release)
+	stop()
 
-	done := make(chan struct{})
-	go func() {
-		queue.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(testWaitTimeout):
-		t.Fatal("timed out waiting for RefreshQueue.Wait()")
+	if fx.recordedCount() != 0 || len(fx.feeds.releasedList()) != 0 {
+		t.Fatalf("succeeded = %v, failed = %v, released = %v, want no writes on shutdown",
+			fx.feeds.succeededList(), fx.feeds.failedList(), fx.feeds.releasedList())
 	}
 
-	if got := fetcher.callCount(); got != 1 {
-		t.Fatalf("fetch calls after cancel = %d, want 1 (pending feeds should not be drained)", got)
+	if claims := fx.feeds.claimList(); len(claims) != 1 {
+		t.Fatalf("claims = %+v, want 1 (pending feeds must not be claimed after shutdown)", claims)
 	}
 
-	if failures := feeds.failureList(); len(failures) != 0 {
-		t.Fatalf("failures recorded for cancelled pending feeds = %v, want none", failures)
+	if got := fx.fetcher.callCount(); got != 1 {
+		t.Fatalf("fetch calls = %d, want 1", got)
 	}
 }
 
-func TestRefreshQueueSurfacesErrorsWithoutSecrets(t *testing.T) {
-	var buf bytes.Buffer
-	var logMu sync.Mutex
-	handler := slog.NewTextHandler(&lockedWriter{mu: &logMu, buf: &buf}, nil)
-	prev := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	t.Cleanup(func() {
-		slog.SetDefault(prev)
-	})
+func TestRefreshClaimFailuresAreFatalAfterThreeConsecutive(t *testing.T) {
+	t.Parallel()
 
-	feeds := newTestFeedRepository(domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/1.xml")})
-	feeds.listErr = errors.New("list failed for https://alice:secret@example.com/list " + strings.Repeat("x", 600))
-	feeds.recordErr = errors.New("record failed for https://bob:pw@example.com/rec")
+	dbErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("claim failed for https://alice:secret@example.com/db"))
 
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:     feeds,
-		FeedItems: &fakeFeedItemRepository{},
-		Settings:  &fakeSettingRepository{},
-		Fetcher:   &fakeFeedFetcher{err: errors.New("fetch failed")},
-		Parser:    &fakeFeedParser{},
-		Interval:  10 * time.Millisecond,
-	})
+	fx := newRefreshFixture()
+	fx.cfg.Concurrency = 1
+	fx.cfg.PollInterval = 2 * time.Millisecond
+	fx.cfg.OnFatal = fx.fatals.Record
+	fx.feeds.claimScript.after = dbErr
 
-	ctx, cancel := context.WithCancel(context.Background())
-	queue.Start(ctx)
+	_, stop := fx.start(t)
 
-	waitFor(t, func() bool {
-		logMu.Lock()
-		defer logMu.Unlock()
-		out := buf.String()
+	waitFor(t, func() bool { return fx.fatals.Count() >= 1 }, "OnFatal after consecutive claim failures")
+	stop()
 
-		return strings.Contains(out, "initial feed refresh enqueue failed") &&
-			strings.Contains(out, "scheduled feed refresh enqueue failed")
-	}, "startup and scheduled enqueue errors logged")
-
-	cancel()
-	queue.Wait()
-
-	if err := queue.RefreshOne(context.Background(), "feed-1"); err == nil {
-		t.Fatal("RefreshOne() error = nil, want fetch error")
+	fatals := fx.fatals.Errors()
+	if len(fatals) != 1 || !errors.Is(fatals[0], dbErr) {
+		t.Fatalf("fatals = %v, want exactly one wrapping %v", fatals, dbErr)
 	}
 
-	logMu.Lock()
-	out := buf.String()
-	logMu.Unlock()
+	if strings.Contains(fatals[0].Error(), "alice:secret") {
+		t.Fatalf("fatal error leaks credentials: %q", fatals[0].Error())
+	}
+}
 
-	if !strings.Contains(out, "record feed refresh failure failed") {
-		t.Fatalf("expected recordFailure error to be logged, got:\n%s", out)
+func TestRefreshEmptyClaimResetsFailureStreak(t *testing.T) {
+	t.Parallel()
+
+	dbErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("claim failed"))
+
+	fx := newRefreshFixture()
+	fx.cfg.Concurrency = 1
+	fx.cfg.PollInterval = 2 * time.Millisecond
+	fx.feeds.claimScript.steps = []error{dbErr, dbErr, nil, dbErr, dbErr}
+
+	_, stop := fx.start(t)
+
+	waitFor(t, func() bool { return fx.feeds.claimCallCount() >= 7 }, "claims past the scripted failures")
+	stop()
+
+	if got := fx.fatals.Count(); got != 0 {
+		t.Fatalf("OnFatal calls = %d, want 0 (a successful claim resets the streak)", got)
+	}
+}
+
+func TestRefreshDatabaseFailuresDuringRefreshAreFatalAfterThreeConsecutive(t *testing.T) {
+	t.Parallel()
+
+	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("settings failed for https://alice:secret@example.com/db"))
+
+	fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
+	fx.cfg.PollInterval = 2 * time.Millisecond
+	fx.cfg.OnFatal = fx.fatals.Record
+	fx.settings.getErr = dbErr
+
+	_, stop := fx.start(t)
+
+	waitFor(t, func() bool { return fx.fatals.Count() >= 1 }, "OnFatal after consecutive refresh database failures")
+	stop()
+
+	fatals := fx.fatals.Errors()
+	if len(fatals) != 1 || !errors.Is(fatals[0], dbErr) {
+		t.Fatalf("fatals = %v, want exactly one wrapping %v", fatals, dbErr)
 	}
 
-	for _, secret := range []string{"alice:secret", "bob:pw"} {
-		if strings.Contains(out, secret) {
-			t.Fatalf("logs leaked secret %q:\n%s", secret, out)
-		}
+	if strings.Contains(fatals[0].Error(), "alice:secret") {
+		t.Fatalf("fatal error leaks credentials: %q", fatals[0].Error())
+	}
+
+	if claims := fx.feeds.claimList(); len(claims) < fatalFailureStreak {
+		t.Fatalf("claims = %d, want at least %d before going fatal", len(claims), fatalFailureStreak)
+	}
+
+	if fx.recordedCount() != 0 {
+		t.Fatal("database failures must never be recorded as feed failures")
+	}
+}
+
+func TestRefreshLogsClaimFailureWithoutSecretsAndTruncated(t *testing.T) {
+	logs := captureLogs(t)
+	dbErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("claim failed for https://alice:secret@example.com/db "+strings.Repeat("x", 600)))
+
+	fx := newRefreshFixture()
+	fx.cfg.Concurrency = 1
+	fx.cfg.PollInterval = 2 * time.Millisecond
+	fx.cfg.OnFatal = fx.fatals.Record
+	fx.feeds.claimScript.after = dbErr
+
+	_, stop := fx.start(t)
+
+	waitFor(t, func() bool { return strings.Contains(logs(), "claim due feed refresh failed") }, "claim failure logged")
+	stop()
+
+	out := logs()
+	if strings.Contains(out, "alice:secret") {
+		t.Fatalf("logs leaked credentials:\n%s", out)
 	}
 
 	if !strings.Contains(out, "...") {
 		t.Fatalf("expected oversized log error to be truncated:\n%s", out)
-	}
-}
-
-func TestRefreshQueueFatalAfterThreeConsecutiveDatabaseFailuresAndResets(t *testing.T) {
-	t.Parallel()
-
-	feed := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml")}
-	feeds := newTestFeedRepository(feed)
-	items := &fakeFeedItemRepository{}
-	settings := &fakeSettingRepository{}
-	fetcher := &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"}
-	parser := &fakeFeedParser{}
-
-	var fatals fatalRecorder
-
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:     feeds,
-		FeedItems: items,
-		Settings:  settings,
-		Fetcher:   fetcher,
-		Parser:    parser,
-		OnFatal:   fatals.Record,
-	})
-
-	dbErr1 := domain.NewError(domain.ErrFeedRepositoryError, errors.New("list failed"))
-	dbErr2 := domain.NewError(domain.ErrSettingRepositoryError, errors.New("settings failed"))
-	dbErr3 := domain.NewError(domain.ErrFeedRepositoryError, errors.New("apply failed for https://alice:secret@example.com/db"))
-
-	// Two DB failures followed by a successful ApplySync reset the streak.
-	feeds.listErr = dbErr1
-	if err := queue.EnqueueAll(context.Background()); !errors.Is(err, dbErr1) {
-		t.Fatalf("EnqueueAll() error = %v, want %v", err, dbErr1)
-	}
-
-	feeds.listErr = nil
-	settings.getErr = dbErr2
-	if err := queue.RefreshOne(context.Background(), feed.ID); !errors.Is(err, dbErr2) {
-		t.Fatalf("RefreshOne() error = %v, want %v", err, dbErr2)
-	}
-
-	if got := fatals.Count(); got != 0 {
-		t.Fatalf("OnFatal calls = %d, want 0 before threshold", got)
-	}
-
-	settings.getErr = nil
-	if err := queue.RefreshOne(context.Background(), feed.ID); err != nil {
-		t.Fatalf("RefreshOne(success) error = %v", err)
-	}
-
-	// Two DB failures followed by a successful EnqueueAll also reset the streak.
-	items.listErr = dbErr2
-	_ = queue.RefreshOne(context.Background(), feed.ID)
-	items.listErr = nil
-	feeds.applyErr = dbErr3
-	_ = queue.RefreshOne(context.Background(), feed.ID)
-
-	if err := queue.EnqueueAll(context.Background()); err != nil {
-		t.Fatalf("EnqueueAll(success) error = %v", err)
-	}
-
-	// A successful RecordRefreshFailure write proves the database works and resets the streak:
-	// EnqueueAll DB failure, reset by the recorded external failure, then RecordRefreshFailure,
-	// ApplySync and ApplySync DB failures reach the threshold => 1 fatal.
-	feeds.applyErr = nil
-	feeds.listErr = dbErr1
-	_ = queue.EnqueueAll(context.Background())
-
-	feeds.listErr = nil
-	fetcher.err = domain.NewError(domain.ErrFetchFeedError, errors.New("upstream 503"))
-	_ = queue.RefreshOne(context.Background(), feed.ID)
-	if len(feeds.failureList()) != 1 {
-		t.Fatalf("failures = %d, want 1 from external fetch error", len(feeds.failureList()))
-	}
-
-	feeds.recordErr = dbErr2
-	_ = queue.RefreshOne(context.Background(), feed.ID)
-
-	fetcher.err = nil
-	feeds.recordErr = nil
-	feeds.applyErr = dbErr3
-	_ = queue.RefreshOne(context.Background(), feed.ID)
-
-	_ = queue.RefreshOne(context.Background(), feed.ID)
-
-	// 4th consecutive DB failure does not trigger OnFatal a second time.
-	_ = queue.RefreshOne(context.Background(), feed.ID)
-
-	gotFatal := fatals.Errors()
-	if len(gotFatal) != 1 {
-		t.Fatalf("OnFatal calls = %d, want 1", len(gotFatal))
-	}
-
-	if !errors.Is(gotFatal[0], dbErr3) {
-		t.Fatalf("fatal error = %v, want wrapping %v", gotFatal[0], dbErr3)
-	}
-
-	if strings.Contains(gotFatal[0].Error(), "alice:secret") {
-		t.Fatalf("fatal error leaks credentials: %q", gotFatal[0].Error())
-	}
-}
-
-func TestRefreshQueueExternalErrorsNeverTriggerFatal(t *testing.T) {
-	t.Parallel()
-
-	feed := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml")}
-	feeds := newTestFeedRepository(feed)
-	fetcher := &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"}
-	parser := &fakeFeedParser{}
-
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:     feeds,
-		FeedItems: &fakeFeedItemRepository{},
-		Settings:  &fakeSettingRepository{},
-		Fetcher:   fetcher,
-		Parser:    parser,
-	})
-
-	for i := range 10 {
-		if i%2 == 0 {
-			fetcher.err = domain.NewError(domain.ErrFetchFeedError, errors.New("upstream 502"))
-			parser.err = nil
-		} else {
-			fetcher.err = nil
-			parser.err = domain.NewError(domain.ErrFeedParserError, errors.New("malformed xml"))
-		}
-
-		if err := queue.RefreshOne(context.Background(), feed.ID); err == nil {
-			t.Fatalf("RefreshOne() #%d error = nil, want external error", i+1)
-		}
-	}
-
-	if got := len(feeds.failureList()); got != 10 {
-		t.Fatalf("recorded failures = %d, want 10", got)
-	}
-}
-
-func TestRefreshQueueCanceledContextNeverFatal(t *testing.T) {
-	t.Parallel()
-
-	feed := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml")}
-	feeds := newTestFeedRepository(feed)
-	feeds.listErr = domain.NewError(domain.ErrFeedRepositoryError, context.Canceled)
-	feeds.getErr = domain.NewError(domain.ErrFeedRepositoryError, errors.New("driver closing"))
-
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:     feeds,
-		FeedItems: &fakeFeedItemRepository{},
-		Settings:  &fakeSettingRepository{},
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	for range 5 {
-		_ = queue.EnqueueAll(ctx)
-		_ = queue.RefreshOne(ctx, feed.ID)
-	}
-
-	if failures := feeds.failureList(); len(failures) != 0 {
-		t.Fatalf("recorded failures = %+v, want none when canceled", failures)
-	}
-}
-
-func TestRefreshQueueWorkerPoolConcurrentDatabaseFailuresFatalOnce(t *testing.T) {
-	t.Parallel()
-
-	feeds := newTestFeedRepository(
-		domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/1.xml")},
-		domain.Feed{ID: "feed-2", URL: testURL(t, "https://example.com/2.xml")},
-		domain.Feed{ID: "feed-3", URL: testURL(t, "https://example.com/3.xml")},
-		domain.Feed{ID: "feed-4", URL: testURL(t, "https://example.com/4.xml")},
-		domain.Feed{ID: "feed-5", URL: testURL(t, "https://example.com/5.xml")},
-	)
-	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("db locked"))
-
-	var fatals fatalRecorder
-
-	queue := newTestRefreshQueue(t, RefreshConfig{
-		Feeds:       feeds,
-		FeedItems:   &fakeFeedItemRepository{},
-		Settings:    &fakeSettingRepository{getErr: dbErr},
-		Fetcher:     &fakeFeedFetcher{},
-		Parser:      &fakeFeedParser{},
-		Concurrency: 5,
-		Interval:    time.Hour,
-		OnFatal:     fatals.Record,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	queue.Start(ctx)
-
-	waitFor(t, func() bool {
-		return fatals.Count() >= 1
-	}, "OnFatal after 3 worker DB failures")
-
-	cancel()
-	queue.Wait()
-
-	gotFatal := fatals.Errors()
-
-	if len(gotFatal) != 1 {
-		t.Fatalf("OnFatal calls = %d, want 1", len(gotFatal))
-	}
-
-	if !errors.Is(gotFatal[0], dbErr) {
-		t.Fatalf("fatal error = %v, want wrapping %v", gotFatal[0], dbErr)
-	}
-
-	if failures := feeds.failureList(); len(failures) != 0 {
-		t.Fatalf("recorded failures = %+v, want none", failures)
 	}
 }

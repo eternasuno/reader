@@ -29,18 +29,16 @@ func requireUTCTime(t *testing.T, got, want time.Time) {
 }
 
 var (
-	at0800      = KindleSchedule{Hour: 8, Minute: 0}
-	at0805      = KindleSchedule{Hour: 8, Minute: 5}
-	at0000      = KindleSchedule{Hour: 0, Minute: 0}
-	at2330      = KindleSchedule{Hour: 23, Minute: 30}
-	at0230      = KindleSchedule{Hour: 2, Minute: 30}
-	at0300      = KindleSchedule{Hour: 3, Minute: 0}
-	at0930      = KindleSchedule{Hour: 9, Minute: 30}
-	at0130      = KindleSchedule{Hour: 1, Minute: 30}
-	newYork     = "America/New_York"
-	utcZone     = "UTC"
-	noAnchor    = time.Time{}
-	previousRun = utcTime(2026, time.February, 28, 8, 0)
+	at0800  = KindleSchedule{Hour: 8, Minute: 0}
+	at0805  = KindleSchedule{Hour: 8, Minute: 5}
+	at0000  = KindleSchedule{Hour: 0, Minute: 0}
+	at2330  = KindleSchedule{Hour: 23, Minute: 30}
+	at0230  = KindleSchedule{Hour: 2, Minute: 30}
+	at0300  = KindleSchedule{Hour: 3, Minute: 0}
+	at0930  = KindleSchedule{Hour: 9, Minute: 30}
+	at0130  = KindleSchedule{Hour: 1, Minute: 30}
+	newYork = "America/New_York"
+	utcZone = "UTC"
 )
 
 func TestLoadKindleLocation(t *testing.T) {
@@ -156,67 +154,4 @@ func TestKindleOccurrencesSkipRemovedCivilDate(t *testing.T) {
 		got := NextKindleOccurrence(at0800, apia, localTime(apia, 2011, time.December, 29, 9, 0))
 		requireUTCTime(t, got, afterGap.UTC())
 	})
-}
-
-func TestDueKindleOccurrence(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name     string
-		schedule KindleSchedule
-		zone     string
-		now      time.Time
-		anchor   time.Time
-		wantAt   time.Time
-		wantDue  bool
-	}{
-		{"anchor before occurrence", at0800, utcZone, utcTime(2026, 3, 1, 8, 0), utcTime(2026, 3, 1, 7, 59), utcTime(2026, 3, 1, 8, 0), true},
-		{"anchor equal to occurrence", at0800, utcZone, utcTime(2026, 3, 1, 8, 10), utcTime(2026, 3, 1, 8, 0), utcTime(2026, 3, 1, 8, 0), false},
-		{"schedule saved after occurrence", at0800, utcZone, utcTime(2026, 3, 1, 8, 10), utcTime(2026, 3, 1, 8, 3), utcTime(2026, 3, 1, 8, 0), false},
-		{"yesterday's occurrence already handled", at0800, utcZone, utcTime(2026, 3, 1, 7, 0), previousRun, previousRun, false},
-		{"missed during downtime fires only the latest", at0800, utcZone, utcTime(2026, 3, 1, 9, 0), utcTime(2026, 2, 25, 8, 0), utcTime(2026, 3, 1, 8, 0), true},
-		{"no history is due", at0800, utcZone, utcTime(2026, 3, 1, 9, 0), noAnchor, utcTime(2026, 3, 1, 8, 0), true},
-		{"fall first occurrence handled", at0130, newYork, utcTime(2026, 11, 1, 6, 0), utcTime(2026, 11, 1, 5, 30), utcTime(2026, 11, 1, 5, 30), false},
-		{"fall second occurrence due", at0130, newYork, utcTime(2026, 11, 1, 6, 30), utcTime(2026, 11, 1, 5, 30), utcTime(2026, 11, 1, 6, 30), true},
-		{"spring gap day is never due", at0230, newYork, utcTime(2026, 3, 8, 12, 0), utcTime(2026, 3, 7, 7, 30), utcTime(2026, 3, 7, 7, 30), false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			gotAt, gotDue := DueKindleOccurrence(tc.schedule, mustLoadLocation(t, tc.zone), tc.now, tc.anchor)
-			requireUTCTime(t, gotAt, tc.wantAt)
-
-			if gotDue != tc.wantDue {
-				t.Fatalf("due = %v, want %v", gotDue, tc.wantDue)
-			}
-		})
-	}
-}
-
-func TestKindleNextSendAt(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name     string
-		schedule KindleSchedule
-		zone     string
-		now      time.Time
-		anchor   time.Time
-		want     time.Time
-	}{
-		{"due occurrence is shown", at0800, utcZone, utcTime(2026, 3, 1, 9, 0), previousRun, utcTime(2026, 3, 1, 8, 0)},
-		{"handled occurrence shows the next", at0800, utcZone, utcTime(2026, 3, 1, 9, 0), utcTime(2026, 3, 1, 8, 0), utcTime(2026, 3, 2, 8, 0)},
-		{"spring gap day shows the next valid day", at0230, newYork, utcTime(2026, 3, 8, 12, 0), utcTime(2026, 3, 7, 7, 30), utcTime(2026, 3, 9, 6, 30)},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := KindleNextSendAt(tc.schedule, mustLoadLocation(t, tc.zone), tc.now, tc.anchor)
-			requireUTCTime(t, got, tc.want)
-		})
-	}
 }

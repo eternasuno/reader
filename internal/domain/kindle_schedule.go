@@ -41,20 +41,6 @@ func LatestKindleOccurrence(s KindleSchedule, loc *time.Location, now time.Time)
 	}
 }
 
-func DueKindleOccurrence(s KindleSchedule, loc *time.Location, now, anchor time.Time) (time.Time, bool) {
-	latest := LatestKindleOccurrence(s, loc, now)
-
-	return latest, latest.After(anchor)
-}
-
-func KindleNextSendAt(s KindleSchedule, loc *time.Location, now, anchor time.Time) time.Time {
-	if occurrence, due := DueKindleOccurrence(s, loc, now, anchor); due {
-		return occurrence
-	}
-
-	return NextKindleOccurrence(s, loc, now)
-}
-
 // civilDate returns t's date in loc as a UTC midnight cursor. Stepping it with
 // AddDate never skips or repeats a date, which stepping a time in loc does when
 // the zone removes a whole date.

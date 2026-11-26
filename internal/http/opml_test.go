@@ -51,7 +51,8 @@ func TestOPMLImportRawXML(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.seedFeed("Go Blog", "https://go.example.com/rss", nil)
+	existing := h.seedFeed("Go Blog", "https://go.example.com/rss", nil)
+	h.succeedRefresh(existing.ID, domain.FeedSyncMeta{Title: existing.Title}, nil, h.clock.Now())
 
 	document := `<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -77,9 +78,8 @@ func TestOPMLImportRawXML(t *testing.T) {
 		t.Fatalf("import result = %+v", result)
 	}
 
-	enqueued := h.refresher.enqueued()
-	if len(enqueued) != 1 {
-		t.Fatalf("refresher batches = %+v", h.refresher.batches)
+	if wakes := h.refresher.wakeCount(); wakes != 1 {
+		t.Fatalf("refresher wakes after import = %d, want 1", wakes)
 	}
 
 	feeds := h.allFeeds()
@@ -94,8 +94,12 @@ func TestOPMLImportRawXML(t *testing.T) {
 		t.Fatalf("imported feed missing: %+v", feeds)
 	}
 
-	if enqueued[0] != imported.ID {
-		t.Fatalf("enqueued %q, want new feed %q", enqueued[0], imported.ID)
+	if claimed := h.claimDueFeed(); claimed == nil || claimed.ID != imported.ID {
+		t.Fatalf("claimed feed = %+v, want only the imported feed %s due", claimed, imported.ID)
+	}
+
+	if claimed := h.claimDueFeed(); claimed != nil {
+		t.Fatalf("a skipped duplicate must keep its schedule, claimed %+v", claimed)
 	}
 
 	folders := h.allFolders()
@@ -156,8 +160,14 @@ func TestOPMLImportMultipart(t *testing.T) {
 		t.Fatalf("import result = %+v", result)
 	}
 
-	if enqueued := h.refresher.enqueued(); len(enqueued) != 2 {
-		t.Fatalf("enqueued = %+v", h.refresher.batches)
+	if wakes := h.refresher.wakeCount(); wakes != 1 {
+		t.Fatalf("refresher wakes after import = %d, want 1", wakes)
+	}
+
+	for range 2 {
+		if claimed := h.claimDueFeed(); claimed == nil {
+			t.Fatal("every imported feed must be due immediately")
+		}
 	}
 }
 
@@ -193,8 +203,8 @@ func TestOPMLImportRejectsMalformedDocuments(t *testing.T) {
 				t.Fatal("malformed OPML must not write anything")
 			}
 
-			if len(h.refresher.batches) != 0 {
-				t.Fatalf("malformed OPML must not enqueue refreshes: %+v", h.refresher.batches)
+			if wakes := h.refresher.wakeCount(); wakes != 0 {
+				t.Fatalf("malformed OPML must not wake refreshers, got %d wakes", wakes)
 			}
 		})
 	}
@@ -359,8 +369,8 @@ func TestOPMLImportMultipartRejectsMultipleFilesAndOversize(t *testing.T) {
 				t.Fatal("rejected OPML multipart upload must not write anything")
 			}
 
-			if len(h.refresher.batches) != 0 {
-				t.Fatalf("rejected OPML multipart upload must not enqueue refreshes: %+v", h.refresher.batches)
+			if wakes := h.refresher.wakeCount(); wakes != 0 {
+				t.Fatalf("rejected OPML multipart upload must not wake refreshers, got %d wakes", wakes)
 			}
 		})
 	}

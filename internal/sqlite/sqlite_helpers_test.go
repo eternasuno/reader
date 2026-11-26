@@ -127,22 +127,74 @@ func createFolder(t *testing.T, store *Store, name string) domain.Folder {
 	return folder
 }
 
+const testRefreshInterval = 30 * time.Minute
+
 func createFeed(t *testing.T, store *Store, title string, folderID *string) domain.Feed {
 	t.Helper()
 
+	return createFeedDueAt(t, store, title, folderID, time.Now().UTC())
+}
+
+func createFeedDueAt(t *testing.T, store *Store, title string, folderID *string, dueAt time.Time) domain.Feed {
+	t.Helper()
+
+	return createFeedWithIDDueAt(t, store, domain.NewID(), title, folderID, dueAt)
+}
+
+func createFeedWithIDDueAt(t *testing.T, store *Store, id string, title string, folderID *string, dueAt time.Time) domain.Feed {
+	t.Helper()
+
 	feed, err := store.Feeds().Create(context.Background(), domain.Feed{
-		ID:         domain.NewID(),
+		ID:         id,
 		URL:        mustURL(t, "https://example.com/feeds/"+domain.NewID()),
 		Title:      title,
 		FolderID:   folderID,
 		ReaderMode: domain.ReaderModeDefault,
 		Order:      domain.SortOrderNewest,
-	})
+	}, dueAt)
 	if err != nil {
 		t.Fatalf("create feed %q: %v", title, err)
 	}
 
 	return feed
+}
+
+// startRefresh records a running attempt for the feed the way ClaimDueRefresh
+// does, without choosing the feed by schedule order.
+func startRefresh(t *testing.T, store *Store, feed domain.Feed, startedAt time.Time) string {
+	t.Helper()
+
+	attemptID := domain.NewID()
+	_, err := store.WriteDB().ExecContext(
+		context.Background(),
+		`INSERT INTO feed_refresh (id, feed_id, status, started_at) VALUES (?, ?, 'running', ?)`,
+		attemptID,
+		feed.ID,
+		timeToMillis(startedAt),
+	)
+	if err != nil {
+		t.Fatalf("start refresh for feed %q: %v", feed.Title, err)
+	}
+
+	return attemptID
+}
+
+// succeedRefresh runs one successful refresh attempt that finishes at finishedAt.
+func succeedRefresh(t *testing.T, store *Store, feed domain.Feed, meta domain.FeedSyncMeta, items []domain.FeedItem, deleteIDs []string, finishedAt time.Time) {
+	t.Helper()
+
+	attemptID := startRefresh(t, store, feed, finishedAt.Add(-time.Second))
+	err := store.Feeds().SucceedRefresh(context.Background(), attemptID, feed.ID, meta, items, deleteIDs, finishedAt, finishedAt.Add(testRefreshInterval))
+	if err != nil {
+		t.Fatalf("succeed refresh of feed %q: %v", feed.Title, err)
+	}
+}
+
+// syncFeed stores items in the feed through one successful refresh attempt.
+func syncFeed(t *testing.T, store *Store, feed domain.Feed, items []domain.FeedItem, deleteIDs []string) {
+	t.Helper()
+
+	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: feed.Title}, items, deleteIDs, time.Now().UTC())
 }
 
 func addItems(t *testing.T, store *Store, feed domain.Feed, count int) []domain.FeedItem {
@@ -158,11 +210,7 @@ func addItems(t *testing.T, store *Store, feed domain.Feed, count int) []domain.
 		}
 	}
 
-	now := time.Now().UTC()
-	err := store.Feeds().ApplySync(context.Background(), feed.ID, domain.FeedSyncMeta{Title: feed.Title}, now, now, items, nil)
-	if err != nil {
-		t.Fatalf("sync items for feed %q: %v", feed.Title, err)
-	}
+	syncFeed(t, store, feed, items, nil)
 
 	return items
 }
@@ -256,22 +304,15 @@ func assertKindleSettings(t *testing.T, got domain.KindleSettings, want domain.K
 	}
 }
 
-func requireScheduleUpdatedAt(t *testing.T, store *Store, want *time.Time) {
+func countRows(t *testing.T, store *Store, query string, args ...any) int {
 	t.Helper()
 
-	settings, err := store.Settings().Get(context.Background())
-	if err != nil {
-		t.Fatalf("get settings: %v", err)
+	var count int
+	if err := store.ReadDB().QueryRowContext(context.Background(), query, args...).Scan(&count); err != nil {
+		t.Fatalf("count rows %q: %v", query, err)
 	}
 
-	if settings.Kindle == nil {
-		t.Fatal("kindle settings are missing")
-	}
-
-	got := settings.Kindle.ScheduleUpdatedAt
-	if (got == nil) != (want == nil) || (got != nil && !got.Equal(*want)) {
-		t.Fatalf("schedule updated at = %v, want %v", got, want)
-	}
+	return count
 }
 
 func queryPlan(t *testing.T, store *Store, query string, args ...any) []string {
@@ -317,7 +358,7 @@ func requireIndexedPlan(t *testing.T, name string, details []string, index strin
 	}
 
 	for _, detail := range details {
-		if detail == "SCAN feed_item" || detail == "SCAN saved_page" || detail == "SCAN feed_refresh" {
+		if detail == "SCAN feed_item" || detail == "SCAN saved_page" || detail == "SCAN feed_refresh" || detail == "SCAN feed_schedule" {
 			t.Fatalf("%s: plan scans the table without an index:\n%s", name, plan)
 		}
 	}
@@ -327,8 +368,8 @@ func requireIndexedPlan(t *testing.T, name string, details []string, index strin
 	}
 }
 
-// requireRefreshLookupsIndexed checks every feed_refresh access in a derived
-// feed-state plan is a keyed SEARCH, never a table or full index scan.
+// requireRefreshLookupsIndexed checks every feed_refresh access in a plan is a
+// keyed SEARCH on feed_refresh_feed_id_id, never a table or full index scan.
 func requireRefreshLookupsIndexed(t *testing.T, name string, details []string) {
 	t.Helper()
 
@@ -340,6 +381,29 @@ func requireRefreshLookupsIndexed(t *testing.T, name string, details []string) {
 		if !strings.HasPrefix(detail, "SEARCH ") || !planUsesIndex([]string{detail}, "feed_refresh_feed_id_id") {
 			t.Fatalf("%s: feed_refresh lookup is not a keyed search on feed_refresh_feed_id_id: %q", name, detail)
 		}
+	}
+}
+
+// requireFeedScheduleJoinedByKey checks the feed_schedule side of a feed query
+// is a keyed SEARCH on feed_id, never a scan.
+func requireFeedScheduleJoinedByKey(t *testing.T, name string, details []string) {
+	t.Helper()
+
+	joinedByKey := slices.ContainsFunc(details, func(detail string) bool {
+		return strings.HasPrefix(detail, "SEARCH feed_schedule USING ") && strings.HasSuffix(detail, "(feed_id=?)")
+	})
+	if !joinedByKey {
+		t.Fatalf("%s: feed_schedule is not joined by a keyed search on feed_id:\n%s", name, strings.Join(details, "\n"))
+	}
+}
+
+// requireNoRefreshHistoryAccess checks a feed query reads its refresh
+// aggregates from feed_schedule and never touches feed_refresh.
+func requireNoRefreshHistoryAccess(t *testing.T, name string, details []string) {
+	t.Helper()
+
+	if slices.ContainsFunc(details, func(detail string) bool { return strings.Contains(detail, "feed_refresh") }) {
+		t.Fatalf("%s: plan reads feed_refresh:\n%s", name, strings.Join(details, "\n"))
 	}
 }
 

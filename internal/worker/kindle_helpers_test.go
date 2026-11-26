@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reader/internal/domain"
 	"sync"
 	"time"
@@ -145,28 +146,29 @@ func (r *fakeKindleSendRepository) ClaimDueSend(ctx context.Context, sendID stri
 		return domain.ClaimedKindleSend{}, err
 	}
 
-	if settings.SMTP == nil || settings.Kindle == nil || settings.Kindle.Schedule == nil {
+	// The stored next send time exists only while the schedule is on.
+	if settings.SMTP == nil || settings.Kindle == nil || settings.Kindle.Schedule == nil || settings.Kindle.NextSendAt == nil {
 		return domain.ClaimedKindleSend{}, nil
 	}
 
 	// Mirrors the sqlite repository: a stored schedule that fails validation is
 	// corrupt data, reported as a repository error.
-	if _, err := domain.ValidateKindleSchedule(*settings.Kindle.Schedule); err != nil {
+	schedule := *settings.Kindle.Schedule
+	if _, err := domain.ValidateKindleSchedule(schedule); err != nil {
 		return domain.ClaimedKindleSend{}, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	loc, err := domain.LoadKindleLocation(settings.Kindle.Schedule.Timezone)
+	loc, err := domain.LoadKindleLocation(schedule.Timezone)
 	if err != nil {
 		return domain.ClaimedKindleSend{}, err
 	}
 
-	anchor := r.scheduleAnchorLocked(*settings.Kindle)
-	if _, due := domain.DueKindleOccurrence(*settings.Kindle.Schedule, loc, now, anchor); !due {
+	if settings.Kindle.NextSendAt.After(now) {
 		return domain.ClaimedKindleSend{}, nil
 	}
 
-	// A busy slot or a persisted running row defers the claim without writing,
-	// so the occurrence stays due for a later tick.
+	// A busy slot or a persisted running row leaves the schedule due without
+	// writing, so a later tick claims it.
 	if slotBusy || r.running {
 		return domain.ClaimedKindleSend{}, nil
 	}
@@ -179,47 +181,26 @@ func (r *fakeKindleSendRepository) ClaimDueSend(ctx context.Context, sendID stri
 	}
 	r.running = true
 	r.created = append(r.created, record)
+	r.storeNextSendAtLocked(domain.NextKindleOccurrence(schedule, loc, now))
 
 	return domain.ClaimedKindleSend{
 		Claimed:          true,
 		Record:           record,
 		Delivery:         deliverySnapshot(settings),
 		ScheduleLocation: loc,
+		ScheduledFor:     domain.LatestKindleOccurrence(schedule, loc, now),
 	}, nil
 }
 
-func (r *fakeKindleSendRepository) LastScheduledStartedAt(ctx context.Context) (*time.Time, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// storeNextSendAtLocked advances the stored next send time on a copy of the
+// Kindle settings, so readers holding the previous pointer never race with it.
+func (r *fakeKindleSendRepository) storeNextSendAtLocked(next time.Time) {
+	r.settingsRepo.mu.Lock()
+	defer r.settingsRepo.mu.Unlock()
 
-	return r.lastScheduledStartedAtLocked(), nil
-}
-
-func (r *fakeKindleSendRepository) lastScheduledStartedAtLocked() *time.Time {
-	var latest *time.Time
-
-	for _, record := range r.created {
-		if record.Trigger == domain.KindleTriggerScheduled && (latest == nil || record.StartedAt.After(*latest)) {
-			startedAt := record.StartedAt
-			latest = &startedAt
-		}
-	}
-
-	return latest
-}
-
-// scheduleAnchorLocked is max(ScheduleUpdatedAt, start of the newest scheduled send).
-func (r *fakeKindleSendRepository) scheduleAnchorLocked(kindle domain.KindleSettings) time.Time {
-	var anchor time.Time
-	if kindle.ScheduleUpdatedAt != nil {
-		anchor = *kindle.ScheduleUpdatedAt
-	}
-
-	if lastStarted := r.lastScheduledStartedAtLocked(); lastStarted != nil && lastStarted.After(anchor) {
-		anchor = *lastStarted
-	}
-
-	return anchor
+	updated := *r.settingsRepo.settings.Kindle
+	updated.NextSendAt = &next
+	r.settingsRepo.settings.Kindle = &updated
 }
 
 func (r *fakeKindleSendRepository) setClaimFailure(count int, err error) {
@@ -365,6 +346,17 @@ func (r *fakeKindleSendRepository) RecordBookAccepted(ctx context.Context, sendI
 		return r.recordErr
 	}
 
+	// Mirrors the sqlite repository: the next book applies, a replayed book is a
+	// no-op, and a skipped book is an error.
+	bookCount := r.acceptedCountLocked(sendID)
+	if bookIndex < bookCount {
+		return nil
+	}
+
+	if bookIndex > bookCount {
+		return fmt.Errorf("book index %d skips accepted book count %d", bookIndex, bookCount)
+	}
+
 	r.accepted = append(r.accepted, acceptedBook{
 		sendID:       sendID,
 		bookIndex:    bookIndex,
@@ -374,6 +366,18 @@ func (r *fakeKindleSendRepository) RecordBookAccepted(ctx context.Context, sendI
 	})
 
 	return nil
+}
+
+func (r *fakeKindleSendRepository) acceptedCountLocked(sendID string) int {
+	count := 0
+
+	for _, book := range r.accepted {
+		if book.sendID == sendID {
+			count++
+		}
+	}
+
+	return count
 }
 
 func (r *fakeKindleSendRepository) CompleteSend(ctx context.Context, sendID string, status domain.KindleStatus, errSummary *string, finishedAt time.Time) error {

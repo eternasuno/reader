@@ -13,11 +13,9 @@ import (
 const (
 	kindleSendColumns = `id, trigger, status, article_count, book_count, error, started_at, finished_at`
 	kindleSendLimit   = 20
-	// Keeps the newest kindleSendLimit completed rows plus the newest scheduled
-	// row, whose started_at anchors the schedule; running rows are never deleted.
+	// Keeps the newest kindleSendLimit completed rows; running rows are never deleted.
 	pruneKindleSends = `DELETE FROM kindle_send WHERE status != 'running'
-		AND id NOT IN (SELECT id FROM kindle_send WHERE status != 'running' ORDER BY started_at DESC, id DESC LIMIT ?)
-		AND id IS NOT (SELECT id FROM kindle_send WHERE trigger = 'scheduled' ORDER BY started_at DESC, id DESC LIMIT 1)`
+		AND id NOT IN (SELECT id FROM kindle_send WHERE status != 'running' ORDER BY started_at DESC, id DESC LIMIT ?)`
 )
 
 type KindleSendRepo struct {
@@ -26,14 +24,23 @@ type KindleSendRepo struct {
 }
 
 func (r *KindleSendRepo) RecoverRunningOnStartup(ctx context.Context, now time.Time) error {
-	_, err := r.write.ExecContext(
-		ctx,
-		`UPDATE kindle_send SET status = 'failed', error = ?, finished_at = ? WHERE status = 'running'`,
-		"server restarted while send was in progress",
-		timeToMillis(now),
-	)
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(
+			ctx,
+			`UPDATE kindle_send SET status = 'failed', error = ?, finished_at = ? WHERE status = 'running'`,
+			"server restarted while send was in progress",
+			timeToMillis(now),
+		)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.ExecContext(ctx, pruneKindleSends, kindleSendLimit)
+
+		return err
+	})
 	if err != nil {
-		return domain.NewError(domain.ErrSettingRepositoryError, err)
+		return wrapRepositoryError(err, domain.ErrSettingRepositoryError)
 	}
 
 	return nil
@@ -83,10 +90,11 @@ func (r *KindleSendRepo) ClaimManualSend(ctx context.Context, sendID string, now
 	return claimed, nil
 }
 
-// ClaimDueSend claims the scheduled send for the latest occurrence that no
-// scheduled send or schedule change has covered yet. A busy local slot or a
-// running send leaves the occurrence unclaimed and writes nothing, so it
-// fires on a later tick.
+// ClaimDueSend claims the scheduled send once the stored next_send_at has
+// passed, then advances it to the next future occurrence, so occurrences missed
+// while the process was down collapse into one catch-up send. A busy local slot
+// or a running send leaves the schedule due and writes nothing, so it fires on
+// a later tick.
 func (r *KindleSendRepo) ClaimDueSend(ctx context.Context, sendID string, now time.Time, slotBusy bool) (domain.ClaimedKindleSend, error) {
 	var claimed domain.ClaimedKindleSend
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
@@ -100,15 +108,6 @@ func (r *KindleSendRepo) ClaimDueSend(ctx context.Context, sendID string, now ti
 	}
 
 	return claimed, nil
-}
-
-func (r *KindleSendRepo) LastScheduledStartedAt(ctx context.Context) (*time.Time, error) {
-	startedAt, err := lastScheduledStartedAt(ctx, r.read)
-	if err != nil {
-		return nil, domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
-	return startedAt, nil
 }
 
 func claimManualSendInTx(ctx context.Context, tx *sql.Tx, sendID string, now time.Time) (domain.ClaimedKindleSend, error) {
@@ -135,21 +134,7 @@ func claimManualSendInTx(ctx context.Context, tx *sql.Tx, sendID string, now tim
 
 func claimDueSendInTx(ctx context.Context, tx *sql.Tx, sendID string, now time.Time, slotBusy bool) (domain.ClaimedKindleSend, error) {
 	settings, err := loadSettingsInTx(ctx, tx)
-	if err != nil {
-		return domain.ClaimedKindleSend{}, err
-	}
-
-	if settings.SMTP == nil || settings.Kindle == nil || settings.Kindle.Schedule == nil {
-		return domain.ClaimedKindleSend{}, nil
-	}
-
-	loc, err := domain.LoadKindleLocation(settings.Kindle.Schedule.Timezone)
-	if err != nil {
-		return domain.ClaimedKindleSend{}, err
-	}
-
-	due, err := scheduledOccurrenceDueInTx(ctx, tx, *settings.Kindle, loc, now)
-	if err != nil || !due {
+	if err != nil || !scheduledSendDue(settings, now) {
 		return domain.ClaimedKindleSend{}, err
 	}
 
@@ -158,57 +143,45 @@ func claimDueSendInTx(ctx context.Context, tx *sql.Tx, sendID string, now time.T
 		return domain.ClaimedKindleSend{}, err
 	}
 
+	schedule := *settings.Kindle.Schedule
+	loc, err := domain.LoadKindleLocation(schedule.Timezone)
+	if err != nil {
+		return domain.ClaimedKindleSend{}, err
+	}
+
 	claimed, err := startKindleSendInTx(ctx, tx, settings, sendID, domain.KindleTriggerScheduled, now)
 	if err != nil {
 		return domain.ClaimedKindleSend{}, err
 	}
 
+	nextSendAt := timeToMillis(domain.NextKindleOccurrence(schedule, loc, now))
+	if _, err := tx.ExecContext(ctx, `UPDATE kindle_schedule SET next_send_at = ? WHERE setting_id = 1`, nextSendAt); err != nil {
+		return domain.ClaimedKindleSend{}, err
+	}
+
 	claimed.ScheduleLocation = loc
+	claimed.ScheduledFor = domain.LatestKindleOccurrence(schedule, loc, now)
 
 	return claimed, nil
 }
 
-func scheduledOccurrenceDueInTx(ctx context.Context, tx *sql.Tx, kindle domain.KindleSettings, loc *time.Location, now time.Time) (bool, error) {
-	lastScheduled, err := lastScheduledStartedAt(ctx, tx)
-	if err != nil {
-		return false, err
+// scheduledSendDue reports whether delivery is configured and the stored
+// schedule row's next send time has arrived.
+func scheduledSendDue(settings domain.Settings, now time.Time) bool {
+	if settings.SMTP == nil || settings.Kindle == nil || settings.Kindle.Schedule == nil || settings.Kindle.NextSendAt == nil {
+		return false
 	}
 
-	_, due := domain.DueKindleOccurrence(*kindle.Schedule, loc, now, scheduleAnchor(kindle.ScheduleUpdatedAt, lastScheduled))
-
-	return due, nil
-}
-
-// scheduleAnchor is the instant at or before which occurrences no longer fire:
-// the later of the last schedule change and the last scheduled send start.
-func scheduleAnchor(scheduleUpdatedAt *time.Time, lastScheduledStartedAt *time.Time) time.Time {
-	var anchor time.Time
-	for _, candidate := range []*time.Time{scheduleUpdatedAt, lastScheduledStartedAt} {
-		if candidate != nil && candidate.After(anchor) {
-			anchor = *candidate
-		}
-	}
-
-	return anchor
+	return !settings.Kindle.NextSendAt.After(now)
 }
 
 func loadSettingsInTx(ctx context.Context, tx *sql.Tx) (domain.Settings, error) {
-	row, err := scanSettingsRow(tx.QueryRowContext(ctx, `SELECT `+settingColumns+` FROM setting WHERE id = 1`))
+	row, err := loadSettingsRow(ctx, tx)
 	if err != nil {
 		return domain.Settings{}, err
 	}
 
 	return settingsFromRow(row)
-}
-
-func lastScheduledStartedAt(ctx context.Context, querier rowQuerier) (*time.Time, error) {
-	var startedAt sql.NullInt64
-	err := querier.QueryRowContext(ctx, `SELECT MAX(started_at) FROM kindle_send WHERE trigger = ?`, string(domain.KindleTriggerScheduled)).Scan(&startedAt)
-	if err != nil {
-		return nil, err
-	}
-
-	return optionalMillis(startedAt), nil
 }
 
 func hasRunningKindleSendInTx(ctx context.Context, tx *sql.Tx) (bool, error) {
@@ -337,18 +310,13 @@ func (r *KindleSendRepo) getFeedItemForKindle(ctx context.Context, id string) (*
 	return nil, &feed, &item, nil
 }
 
+// RecordBookAccepted uses the running send's book_count as a sequence guard:
+// the next expected book advances the counters and marks its articles read, a
+// replayed earlier book changes nothing, and a skipped book is an error.
 func (r *KindleSendRepo) RecordBookAccepted(ctx context.Context, sendID string, bookIndex int, savedPageIDs []string, feedItemIDs []string, articleDelta int) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		inserted, err := recordKindleSendBookInTx(ctx, tx, sendID, bookIndex)
-		if err != nil {
-			return err
-		}
-
-		if !inserted {
-			return nil
-		}
-
-		if err := incrementKindleSendBookInTx(ctx, tx, sendID, articleDelta); err != nil {
+		advanced, err := advanceKindleSendBookInTx(ctx, tx, sendID, bookIndex, articleDelta)
+		if err != nil || !advanced {
 			return err
 		}
 
@@ -365,64 +333,40 @@ func (r *KindleSendRepo) RecordBookAccepted(ctx context.Context, sendID string, 
 	return nil
 }
 
-func recordKindleSendBookInTx(ctx context.Context, tx *sql.Tx, sendID string, bookIndex int) (bool, error) {
-	if err := requireRunningKindleSendInTx(ctx, tx, sendID); err != nil {
-		return false, err
-	}
-
-	result, err := tx.ExecContext(
-		ctx,
-		`INSERT OR IGNORE INTO kindle_send_book (send_id, book_index) VALUES (?, ?)`,
-		sendID,
-		bookIndex,
-	)
-	if err != nil {
-		return false, err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-
-	return affected > 0, nil
-}
-
-func requireRunningKindleSendInTx(ctx context.Context, tx *sql.Tx, sendID string) error {
-	var exists int
-	err := tx.QueryRowContext(ctx, `SELECT 1 FROM kindle_send WHERE id = ? AND status = 'running'`, sendID).Scan(&exists)
+// advanceKindleSendBookInTx records bookIndex on the running send and reports
+// whether it was the next expected book; a replayed earlier book is not an
+// error and writes nothing.
+func advanceKindleSendBookInTx(ctx context.Context, tx *sql.Tx, sendID string, bookIndex int, articleDelta int) (bool, error) {
+	var bookCount int
+	err := tx.QueryRowContext(ctx, `SELECT book_count FROM kindle_send WHERE id = ? AND status = 'running'`, sendID).Scan(&bookCount)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("kindle send %s is not running: %w", sendID, domain.ErrKindleSendNotFound)
+		return false, fmt.Errorf("kindle send %s is not running: %w", sendID, domain.ErrKindleSendNotFound)
 	}
 
-	return err
-}
+	if err != nil {
+		return false, err
+	}
 
-func incrementKindleSendBookInTx(ctx context.Context, tx *sql.Tx, sendID string, articleDelta int) error {
-	result, err := tx.ExecContext(
+	if bookCount > bookIndex {
+		return false, nil
+	}
+
+	if bookCount < bookIndex {
+		return false, fmt.Errorf("kindle send %s accepted book %d after only %d books", sendID, bookIndex, bookCount)
+	}
+
+	_, err = tx.ExecContext(
 		ctx,
-		`UPDATE kindle_send SET article_count = article_count + ?, book_count = book_count + 1 WHERE id = ? AND status = 'running'`,
+		`UPDATE kindle_send SET article_count = article_count + ?, book_count = ? WHERE id = ?`,
 		articleDelta,
+		bookIndex+1,
 		sendID,
 	)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	return requireSingleKindleSendRow(result, sendID, "is not running")
-}
-
-func requireSingleKindleSendRow(result sql.Result, sendID string, reason string) error {
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if affected != 1 {
-		return fmt.Errorf("kindle send %s %s: %w", sendID, reason, domain.ErrKindleSendNotFound)
-	}
-
-	return nil
+	return true, nil
 }
 
 func (r *KindleSendRepo) CompleteSend(ctx context.Context, sendID string, status domain.KindleStatus, errSummary *string, finishedAt time.Time) error {
