@@ -18,8 +18,6 @@ func TestSettingsRedaction(t *testing.T) {
 	browserEndpoint := "http://browser.internal:9222"
 	smtpPassword := "smtp-super-secret"
 	smtpUser := "smtp-user"
-	sendTime := "08:00"
-	nextSendAt := time.Date(2026, time.March, 1, 8, 30, 0, 0, time.UTC)
 
 	for _, err := range []error{
 		h.db.Settings().UpdateRetention(ctx, 42),
@@ -36,9 +34,8 @@ func TestSettingsRedaction(t *testing.T) {
 		}),
 		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{
 			KindleEmail: "reader@kindle.com",
-			SendTime:    &sendTime,
-			NextSendAt:  &nextSendAt,
-		}),
+			Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "Asia/Shanghai"},
+		}, h.clock.Now()),
 	} {
 		if err != nil {
 			t.Fatalf("seed settings: %v", err)
@@ -71,8 +68,12 @@ func TestSettingsRedaction(t *testing.T) {
 		} `json:"smtp"`
 		Kindle struct {
 			KindleEmail string `json:"kindleEmail"`
-			SendTime    string `json:"sendTime"`
-			NextSendAt  string `json:"nextSendAt"`
+			Schedule    struct {
+				Hour     int    `json:"hour"`
+				Minute   int    `json:"minute"`
+				Timezone string `json:"timezone"`
+			} `json:"schedule"`
+			NextSendAt string `json:"nextSendAt"`
 		} `json:"kindle"`
 	}
 	decodeBody(t, recorder, &payload)
@@ -93,7 +94,9 @@ func TestSettingsRedaction(t *testing.T) {
 		t.Fatalf("smtp auth = %+v", payload.SMTP)
 	}
 
-	if payload.Kindle.KindleEmail != "reader@kindle.com" || payload.Kindle.SendTime != "08:00" || payload.Kindle.NextSendAt != "2026-03-01T08:30:00Z" {
+	// The schedule changed at the harness clock (08:00 UTC), after that day's
+	// 08:30 Asia/Shanghai occurrence (00:30 UTC), so the next send is the following day's.
+	if payload.Kindle.KindleEmail != "reader@kindle.com" || payload.Kindle.Schedule.Timezone != "Asia/Shanghai" || payload.Kindle.Schedule.Hour != 8 || payload.Kindle.Schedule.Minute != 30 || payload.Kindle.NextSendAt != "2026-03-02T00:30:00Z" {
 		t.Fatalf("kindle = %+v", payload.Kindle)
 	}
 
@@ -105,9 +108,7 @@ func TestSettingsRedaction(t *testing.T) {
 			Port:        587,
 			Security:    domain.SMTPSecuritySTARTTLS,
 		}),
-		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{
-			KindleEmail: "reader@kindle.com",
-		}),
+		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{KindleEmail: "reader@kindle.com"}, h.clock.Now()),
 	} {
 		if err != nil {
 			t.Fatalf("update partial settings: %v", err)
@@ -129,12 +130,16 @@ func TestSettingsRedaction(t *testing.T) {
 	}
 
 	kindleObj := partial["kindle"].(map[string]any)
-	if _, hasSendTime := kindleObj["sendTime"]; hasSendTime {
-		t.Fatalf("kindle.sendTime must be omitted when nil: %s", recorder.Body.String())
+	if _, hasTimezone := kindleObj["timezone"]; hasTimezone {
+		t.Fatalf("kindle.timezone must not be a top-level field: %s", recorder.Body.String())
+	}
+
+	if _, hasSchedule := kindleObj["schedule"]; hasSchedule {
+		t.Fatalf("kindle.schedule must be omitted when scheduled sending is off: %s", recorder.Body.String())
 	}
 
 	if _, hasNextSendAt := kindleObj["nextSendAt"]; hasNextSendAt {
-		t.Fatalf("kindle.nextSendAt must be omitted when nil: %s", recorder.Body.String())
+		t.Fatalf("kindle.nextSendAt must be omitted when scheduled sending is off: %s", recorder.Body.String())
 	}
 
 	for _, err := range []error{
@@ -146,7 +151,7 @@ func TestSettingsRedaction(t *testing.T) {
 			t.Fatalf("clear settings: %v", err)
 		}
 	}
-	if _, err := h.db.WriteDB().ExecContext(ctx, `UPDATE setting SET kindle_email = NULL, send_time = NULL, next_send_at = NULL WHERE id = 1`); err != nil {
+	if _, err := h.db.WriteDB().ExecContext(ctx, `UPDATE setting SET kindle_email = NULL, send_hour = NULL, send_minute = NULL, schedule_updated_at = NULL WHERE id = 1`); err != nil {
 		t.Fatalf("clear kindle settings: %v", err)
 	}
 
@@ -305,7 +310,7 @@ func TestKindleSettingsUpdate(t *testing.T) {
 	h := newHarness(t)
 	body := map[string]any{
 		"kindleEmail": "reader@kindle.com",
-		"sendTime":    "09:30",
+		"schedule":    map[string]any{"hour": 9, "minute": 30, "timezone": "Asia/Shanghai"},
 	}
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusUnprocessableEntity, "SMTPNotConfigured")
@@ -329,30 +334,32 @@ func TestKindleSettingsUpdate(t *testing.T) {
 		t.Fatalf("stored kindle = %+v", stored)
 	}
 
-	if stored.SendTime == nil || *stored.SendTime != "09:30" {
-		t.Fatalf("send time = %v", stored.SendTime)
+	if stored.Schedule == nil || *stored.Schedule != (domain.KindleSchedule{Hour: 9, Minute: 30, Timezone: "Asia/Shanghai"}) {
+		t.Fatalf("schedule = %v, want 09:30 Asia/Shanghai", stored.Schedule)
 	}
 
-	if stored.NextSendAt == nil || stored.NextSendAt.Format(time.RFC3339) != "2026-03-01T09:30:00Z" {
-		t.Fatalf("next send at = %v", stored.NextSendAt)
+	if stored.ScheduleUpdatedAt == nil || !stored.ScheduleUpdatedAt.Equal(h.clock.Now()) {
+		t.Fatalf("schedule updated at = %v, want the request time %v", stored.ScheduleUpdatedAt, h.clock.Now())
 	}
 
-	body["sendTime"] = ""
+	delete(body, "schedule")
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusNoContent)
 
 	stored = h.loadSettings().Kindle
-	if stored.SendTime != nil || stored.NextSendAt != nil {
-		t.Fatalf("disabled schedule = %v / %v", stored.SendTime, stored.NextSendAt)
+	if stored.Schedule != nil || stored.ScheduleUpdatedAt != nil {
+		t.Fatalf("disabled schedule = %+v, want no schedule", stored)
 	}
 
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", map[string]any{
-		"kindleEmail": "not-an-email",
-	}), http.StatusBadRequest, "InvalidKindleSetting")
-
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", map[string]any{
-		"kindleEmail": "reader@kindle.com",
-		"sendTime":    "09:15",
-	}), http.StatusBadRequest, "InvalidKindleSetting")
+	for name, invalid := range map[string]map[string]any{
+		"email":            {"kindleEmail": "not-an-email"},
+		"timezone":         {"kindleEmail": "reader@kindle.com", "schedule": map[string]any{"hour": 9, "minute": 30, "timezone": "Mars/Olympus_Mons"}},
+		"missing timezone": {"kindleEmail": "reader@kindle.com", "schedule": map[string]any{"hour": 9, "minute": 30}},
+		"schedule":         {"kindleEmail": "reader@kindle.com", "schedule": map[string]any{"hour": 9, "minute": 7, "timezone": "UTC"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", invalid), http.StatusBadRequest, "InvalidKindleSetting")
+		})
+	}
 
 	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/smtp", nil), http.StatusNoContent)
 	if kindle := h.loadSettings().Kindle; kindle == nil || kindle.KindleEmail != "reader@kindle.com" {
@@ -360,4 +367,168 @@ func TestKindleSettingsUpdate(t *testing.T) {
 	}
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusUnprocessableEntity, "SMTPNotConfigured")
+}
+
+func TestKindleSettingsUpdateRequiresScheduleHourAndMinute(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	seedKindleSchedule(t, h, h.clock.Now())
+
+	for name, schedule := range map[string]map[string]any{
+		"missing hour":   {"minute": 30, "timezone": "UTC"},
+		"missing minute": {"hour": 9, "timezone": "UTC"},
+		"null hour":      {"hour": nil, "minute": 30, "timezone": "UTC"},
+		"null minute":    {"hour": 9, "minute": nil, "timezone": "UTC"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := map[string]any{"kindleEmail": "reader@kindle.com", "schedule": schedule}
+			requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusBadRequest, "InvalidKindleSetting")
+		})
+	}
+
+	if stored := h.loadSettings().Kindle; stored == nil || stored.Schedule == nil || stored.Schedule.Hour != 8 || stored.Schedule.Minute != 30 {
+		t.Fatalf("rejected updates must keep the stored schedule: %+v", stored)
+	}
+
+	midnight := map[string]any{
+		"kindleEmail": "reader@kindle.com",
+		"schedule":    map[string]any{"hour": 0, "minute": 0, "timezone": "UTC"},
+	}
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/kindle", midnight), http.StatusNoContent)
+
+	stored := h.loadSettings().Kindle
+	if stored == nil || stored.Schedule == nil || *stored.Schedule != (domain.KindleSchedule{Hour: 0, Minute: 0, Timezone: "UTC"}) {
+		t.Fatalf("explicit 00:00 schedule = %+v, want 00:00 UTC", stored)
+	}
+}
+
+func seedKindleSchedule(t *testing.T, h *harness, updatedAt time.Time) {
+	t.Helper()
+
+	ctx := context.Background()
+	smtp := domain.SMTPSettings{
+		SenderEmail: "reader@example.com",
+		Host:        "smtp.example.com",
+		Port:        587,
+		Security:    domain.SMTPSecuritySTARTTLS,
+	}
+
+	if err := h.db.Settings().UpdateSMTP(ctx, smtp); err != nil {
+		t.Fatalf("seed smtp: %v", err)
+	}
+
+	kindle := domain.KindleSettings{
+		KindleEmail: "reader@kindle.com",
+		Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "Asia/Shanghai"},
+	}
+
+	if err := h.db.Settings().UpdateKindle(ctx, kindle, updatedAt); err != nil {
+		t.Fatalf("seed kindle: %v", err)
+	}
+}
+
+func TestSettingsKindleNextSendAtUsesScheduleAnchor(t *testing.T) {
+	t.Parallel()
+
+	// The harness clock is 2026-03-01 08:00 UTC, after that day's 08:30
+	// Asia/Shanghai occurrence at 00:30 UTC.
+	occurrence := time.Date(2026, time.March, 1, 0, 30, 0, 0, time.UTC)
+	nextDay := occurrence.AddDate(0, 0, 1)
+
+	type seededSend struct {
+		trigger   string
+		startedAt time.Time
+	}
+
+	cases := []struct {
+		name              string
+		scheduleUpdatedAt time.Time
+		sends             []seededSend
+		want              time.Time
+	}{
+		{
+			name:              "unsent occurrence after the schedule changed is still due",
+			scheduleUpdatedAt: occurrence.Add(-time.Hour),
+			want:              occurrence,
+		},
+		{
+			name:              "schedule changed after the occurrence waits for the next day",
+			scheduleUpdatedAt: occurrence.Add(time.Hour),
+			want:              nextDay,
+		},
+		{
+			name:              "scheduled send after the occurrence waits for the next day",
+			scheduleUpdatedAt: occurrence.Add(-time.Hour),
+			sends:             []seededSend{{trigger: "scheduled", startedAt: occurrence.Add(time.Minute)}},
+			want:              nextDay,
+		},
+		{
+			name:              "manual send does not consume the occurrence",
+			scheduleUpdatedAt: occurrence.Add(-time.Hour),
+			sends:             []seededSend{{trigger: "manual", startedAt: occurrence.Add(time.Minute)}},
+			want:              occurrence,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t)
+			seedKindleSchedule(t, h, tc.scheduleUpdatedAt)
+
+			for _, send := range tc.sends {
+				if _, err := h.db.WriteDB().ExecContext(
+					context.Background(),
+					`INSERT INTO kindle_send (id, trigger, status, article_count, book_count, started_at, finished_at) VALUES (?, ?, 'succeeded', 0, 0, ?, ?)`,
+					domain.NewID(),
+					send.trigger,
+					send.startedAt.UnixMilli(),
+					send.startedAt.Add(time.Minute).UnixMilli(),
+				); err != nil {
+					t.Fatalf("seed kindle send: %v", err)
+				}
+			}
+
+			recorder := h.authed(http.MethodGet, "/api/settings", nil)
+			requireStatus(t, recorder, http.StatusOK)
+
+			var payload struct {
+				Kindle struct {
+					NextSendAt string `json:"nextSendAt"`
+				} `json:"kindle"`
+			}
+			decodeBody(t, recorder, &payload)
+
+			if payload.Kindle.NextSendAt != tc.want.Format(time.RFC3339) {
+				t.Fatalf("nextSendAt = %q, want %q", payload.Kindle.NextSendAt, tc.want.Format(time.RFC3339))
+			}
+		})
+	}
+}
+
+func TestSettingsGetReportsCorruptedStoredScheduleAsInternalError(t *testing.T) {
+	t.Parallel()
+
+	for name, corrupt := range map[string]string{
+		"hour":              `send_hour = 24`,
+		"minute":            `send_minute = 7`,
+		"timezone":          `timezone = 'Mars/Olympus_Mons'`,
+		"padded timezone":   `timezone = ' Asia/Shanghai'`,
+		"minute out of cap": `send_minute = 60`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t)
+			seedKindleSchedule(t, h, h.clock.Now())
+
+			if _, err := h.db.WriteDB().ExecContext(context.Background(), `UPDATE setting SET `+corrupt+` WHERE id = 1`); err != nil {
+				t.Fatalf("corrupt stored schedule: %v", err)
+			}
+
+			requireAPIError(t, h.authed(http.MethodGet, "/api/settings", nil), http.StatusInternalServerError, "SettingRepositoryError")
+		})
+	}
 }

@@ -109,7 +109,8 @@ func (p *Parser) parseJSONFeedReader(r io.Reader, base *url.URL, limits feedLimi
 	return domain.ParsedFeed{
 		Title:       title,
 		Description: description,
-		IconURL:     feedIconURL(base, feed.Favicon, feed.Icon),
+		SiteURL:     feedURLCandidate(base, feed.HomePageURL),
+		IconURL:     feedURLCandidate(base, feed.Favicon, feed.Icon),
 		Entries:     entries,
 	}, nil
 }
@@ -155,7 +156,8 @@ func (p *Parser) parseRSSFeed(payload []byte, base *url.URL, root string, budget
 	return domain.ParsedFeed{
 		Title:       title,
 		Description: description,
-		IconURL:     feedIconURL(base, rssFeedIcon(feed)),
+		SiteURL:     feedURLCandidate(base, feed.Link),
+		IconURL:     feedURLCandidate(base, rssFeedIcon(feed)),
 		Entries:     entries,
 	}, nil
 }
@@ -181,7 +183,8 @@ func (p *Parser) parseAtomFeed(payload []byte, base *url.URL, scan payloadScan, 
 	return domain.ParsedFeed{
 		Title:       title,
 		Description: description,
-		IconURL:     feedIconURL(base, feed.Icon, feed.Logo),
+		SiteURL:     feedURLCandidate(base, atomAlternateHref(feed.Links)),
+		IconURL:     feedURLCandidate(base, feed.Icon, feed.Logo),
 		Entries:     entries,
 	}, nil
 }
@@ -241,7 +244,7 @@ func (p *Parser) parseAtomEntries(
 			continue
 		}
 
-		entryURL, ok := normalizedEntryURL(base, atomEntryHref(entry.Links))
+		entryURL, ok := normalizedEntryURL(base, atomAlternateHref(entry.Links))
 		if !ok {
 			continue
 		}
@@ -517,7 +520,7 @@ func rssPublishedAt(item *rss.Item, isRDF bool) *time.Time {
 	return parseDate(item.DublinCoreExt.Date[0])
 }
 
-func atomEntryHref(links []*atom.Link) string {
+func atomAlternateHref(links []*atom.Link) string {
 	if href := findAlternateHref(links, func(linkType string) bool {
 		return strings.EqualFold(linkType, "text/html")
 	}); href != "" {
@@ -741,6 +744,8 @@ func decodeJSONFeedField(decoder *json.Decoder, state *jsonFeedDecodeState, key 
 		return decodeJSONFeedString(decoder, &state.feed.Icon)
 	case "favicon":
 		return decodeJSONFeedString(decoder, &state.feed.Favicon)
+	case "home_page_url":
+		return decodeJSONFeedString(decoder, &state.feed.HomePageURL)
 	case "authors":
 		return validateJSONAuthors(decoder)
 	case "items":
@@ -1097,12 +1102,12 @@ func xmlAttributeValue(element xml.StartElement, key string) string {
 	return ""
 }
 
-const maxFeedIconURLBytes = 2048
+const maxFeedURLBytes = 2048
 
-func feedIconURL(base *url.URL, candidates ...string) *string {
+func feedURLCandidate(base *url.URL, candidates ...string) *string {
 	for _, raw := range candidates {
 		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" || len(trimmed) > maxFeedIconURLBytes {
+		if trimmed == "" || len(trimmed) > maxFeedURLBytes {
 			continue
 		}
 
@@ -1112,13 +1117,13 @@ func feedIconURL(base *url.URL, candidates ...string) *string {
 		}
 
 		normalized, err := domain.ParseNormalizedURL(resolved.String(), domain.ErrFeedParserError)
-		if err != nil || normalized.HasCredentials() || len(normalized.Raw()) > maxFeedIconURLBytes {
+		if err != nil || normalized.HasCredentials() || len(normalized.Raw()) > maxFeedURLBytes {
 			continue
 		}
 
-		icon := normalized.Raw()
+		candidate := normalized.Raw()
 
-		return &icon
+		return &candidate
 	}
 
 	return nil

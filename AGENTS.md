@@ -6,7 +6,7 @@ Lantern is a single-user self-hosted RSS reader, read-later app, and Kindle EPUB
 
 - `cmd/reader/` — application entrypoint: config, SQLite startup migration, background workers, HTTP server.
 - `internal/domain/` — core entities, value normalization/validation, selection/retention logic, and repository/adapter interfaces.
-- `internal/sqlite/` — SQLite connection (`modernc.org/sqlite`), embedded SQL migrations, and repository implementations.
+- `internal/sqlite/` — SQLite connection (`modernc.org/sqlite`), goose Go migrations (`migrations/`), and repository implementations.
 - `internal/content/` — feed parsing (`gofeed`), Readability extraction (`codeberg.org/readeck/go-readability/v2`), HTML sanitization (`bluemonday`).
 - `internal/fetcher/` — SSRF-safe HTTP client, optional Jina client, optional external CDP client (`chromedp.NewRemoteAllocator`).
 - `internal/epub/` — EPUB 3 builder (`archive/zip`) with bounded-concurrency image embedding and 20 MiB splitting.
@@ -25,7 +25,7 @@ Read the relevant skill before making changes:
 ## Workflow & Engineering Guardrails
 
 - **Docs split**: `README.md` is for humans (what it is, how to run it, configuration). Anything agents need (architecture, rules, release mechanics, gotchas) lives here and in the project skills, never in the README.
-- **Deployed**: Lantern is deployed; schema changes add a new goose migration under `internal/sqlite/migrations/` (SQL file with `-- +goose Up`, or a Go migration in `internal/sqlite/migrations.go` when conditional logic is needed), never edit an applied migration, and migrations must preserve existing data. Keep application code free of legacy compatibility shims or lenient-read paths outside migrations.
+- **Deployed**: Lantern is deployed; schema changes add a new goose Go migration (one file per version in `internal/sqlite/migrations`), never edit an applied migration, and migrations must preserve existing data. The database enforces only structure (types, keys, `UNIQUE`, `NOT NULL`); business rules live in Go. Keep application code free of legacy compatibility shims or lenient-read paths outside migrations.
 - **Fail fast**: unexpected or unresolvable errors crash the process instead of being worked around; only persistent internal database failures in background code are fatal, never external failures or shutdown. Details in `reader-engineering`.
 
 - **Handoff**: a cross-session or cross-machine handoff lives at the repository root as `HANDOFF.md`, is committed with the branch, and is deleted before the branch merges into `main`.

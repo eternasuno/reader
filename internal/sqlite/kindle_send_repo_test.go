@@ -23,12 +23,11 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 		requireCode(t, err, domain.ErrKindleNotConfigured)
 	}
 
-	dueAt := startedAt.Add(-time.Hour)
+	// The schedule was set a day ago, so the 09:00 occurrence since then is due.
 	configureKindleDeliveryForTest(t, store, domain.KindleSettings{
 		KindleEmail: "reader@kindle.com",
-		SendTime:    ptr("09:00"),
-		NextSendAt:  &dueAt,
-	})
+		Schedule:    &domain.KindleSchedule{Hour: 9, Minute: 0, Timezone: "UTC"},
+	}, startedAt.Add(-24*time.Hour))
 
 	claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), startedAt)
 	if err != nil {
@@ -44,14 +43,18 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 		t.Fatalf("claimed delivery = %+v", claimed.Delivery)
 	}
 
+	if claimed.ScheduleLocation != nil {
+		t.Fatalf("manual claim schedule location = %v, want none", claimed.ScheduleLocation)
+	}
+
 	if _, err := repo.ClaimManualSend(ctx, domain.NewID(), startedAt.Add(time.Minute)); err == nil {
 		t.Fatal("expected a send in progress error")
 	} else {
 		requireCode(t, err, domain.ErrKindleSendInProgress)
 	}
 
-	// Scheduled claim while manual send is active must advance next_send_at and skip.
-	skipped, err := repo.ClaimDueSend(ctx, domain.NewID(), startedAt.Add(time.Minute), time.UTC, false)
+	// A due scheduled claim skips without writing while a manual send runs.
+	skipped, err := repo.ClaimDueSend(ctx, domain.NewID(), startedAt.Add(time.Minute), false)
 	if err != nil {
 		t.Fatalf("claim due send while active: %v", err)
 	}
@@ -60,15 +63,7 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 		t.Fatalf("expected due send to skip while manual send is running: %+v", skipped)
 	}
 
-	settingsAfterSkip, err := store.Settings().Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after skip: %v", err)
-	}
-
-	wantNext := time.Date(2024, 5, 1, 9, 0, 0, 0, time.UTC)
-	if settingsAfterSkip.Kindle == nil || settingsAfterSkip.Kindle.NextSendAt == nil || !settingsAfterSkip.Kindle.NextSendAt.Equal(wantNext) {
-		t.Fatalf("next_send_at after skip = %+v, want %v", settingsAfterSkip.Kindle, wantNext)
-	}
+	requireLastScheduledStartedAt(t, repo, nil)
 
 	recent, err := repo.ListRecent(ctx)
 	if err != nil {
@@ -97,9 +92,9 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 		t.Fatalf("completed send finished at = %v, want %v", recent[0].FinishedAt, finishedAt)
 	}
 
-	// Now ClaimDueSend at 09:30 UTC (after 09:00 UTC) claims and advances to next day.
+	// With the manual send finished, the still-unclaimed occurrence fires once the slot is free.
 	dueClaimAt := time.Date(2024, 5, 1, 9, 30, 0, 0, time.UTC)
-	dueClaim, err := repo.ClaimDueSend(ctx, domain.NewID(), dueClaimAt, time.UTC, false)
+	dueClaim, err := repo.ClaimDueSend(ctx, domain.NewID(), dueClaimAt, false)
 	if err != nil {
 		t.Fatalf("claim due send: %v", err)
 	}
@@ -109,15 +104,8 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 	}
 
 	crashed := dueClaim.Record
-	settingsAfterDue, err := store.Settings().Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after due claim: %v", err)
-	}
+	requireLastScheduledStartedAt(t, repo, &dueClaimAt)
 
-	wantNextDay := time.Date(2024, 5, 2, 9, 0, 0, 0, time.UTC)
-	if settingsAfterDue.Kindle == nil || settingsAfterDue.Kindle.NextSendAt == nil || !settingsAfterDue.Kindle.NextSendAt.Equal(wantNextDay) {
-		t.Fatalf("next_send_at after due claim = %+v, want %v", settingsAfterDue.Kindle, wantNextDay)
-	}
 	recoveredAt := startedAt.Add(time.Hour)
 	if err := repo.RecoverRunningOnStartup(ctx, recoveredAt); err != nil {
 		t.Fatalf("recover running sends: %v", err)
@@ -163,7 +151,7 @@ func TestKindleSendRepoPrunesHistory(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	repo := store.KindleSends()
-	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "reader@kindle.com"})
+	configureManualKindleForTest(t, store)
 
 	base := time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC)
 	ids := make([]string, 21)
@@ -205,11 +193,60 @@ func TestKindleSendRepoPrunesHistory(t *testing.T) {
 	}
 }
 
+func TestKindleSendRepoPruneKeepsNewestScheduledSend(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.KindleSends()
+
+	day := func(day int) time.Time { return time.Date(2024, 5, day, 9, 0, 0, 0, time.UTC) }
+	configureDailyScheduleForTest(t, store, domain.KindleSchedule{Hour: 9, Minute: 0, Timezone: "UTC"}, day(1).Add(-2*time.Hour))
+
+	for _, scheduledAt := range []time.Time{day(1), day(2)} {
+		claimed, err := repo.ClaimDueSend(ctx, domain.NewID(), scheduledAt, false)
+		if err != nil || !claimed.Claimed {
+			t.Fatalf("ClaimDueSend(%v) = (%+v, %v), want a claim", scheduledAt, claimed, err)
+		}
+
+		if err := repo.CompleteSend(ctx, claimed.Record.ID, domain.KindleStatusSucceeded, nil, scheduledAt.Add(time.Minute)); err != nil {
+			t.Fatalf("complete scheduled send: %v", err)
+		}
+	}
+
+	// Enough newer manual history to push every scheduled row out of the newest twenty.
+	for i := 1; i <= 25; i++ {
+		startedAt := day(2).Add(time.Duration(i) * time.Minute)
+		claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), startedAt)
+		if err != nil {
+			t.Fatalf("claim manual send %d: %v", i, err)
+		}
+
+		if err := repo.CompleteSend(ctx, claimed.Record.ID, domain.KindleStatusSucceeded, nil, startedAt.Add(time.Second)); err != nil {
+			t.Fatalf("complete manual send %d: %v", i, err)
+		}
+	}
+
+	if got := countRows(t, store, `SELECT COUNT(*) FROM kindle_send WHERE trigger = 'manual'`); got != 20 {
+		t.Fatalf("manual sends kept = %d, want the newest 20", got)
+	}
+
+	if got := countRows(t, store, `SELECT COUNT(*) FROM kindle_send WHERE trigger = 'scheduled'`); got != 1 {
+		t.Fatalf("scheduled sends kept = %d, want only the newest one", got)
+	}
+
+	requireLastScheduledStartedAt(t, repo, ptrTime(day(2)))
+
+	// The surviving anchor keeps the already-fired occurrence from firing again.
+	again, err := repo.ClaimDueSend(ctx, domain.NewID(), day(2).Add(time.Hour), false)
+	if err != nil || again.Claimed {
+		t.Fatalf("ClaimDueSend() after pruning = (%+v, %v), want no claim", again, err)
+	}
+}
+
 func TestKindleSendRepoPruneKeepsRunningSendWithNewerHistory(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	repo := store.KindleSends()
-	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "reader@kindle.com"})
+	configureManualKindleForTest(t, store)
 
 	page, err := store.SavedPages().Create(ctx, domain.SavedPage{
 		ID:      domain.NewID(),

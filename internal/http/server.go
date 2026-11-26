@@ -50,7 +50,6 @@ type Config struct {
 	AppPassword            string
 	AppURL                 string
 	SessionSecret          []byte
-	Location               *time.Location
 	Now                    func() time.Time
 	ForegroundFetchTimeout time.Duration
 	HealthCheck            func(ctx context.Context) error

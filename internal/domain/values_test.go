@@ -274,77 +274,6 @@ func TestValueBrowserEndpoint(t *testing.T) {
 	}
 }
 
-func TestValueSendTime(t *testing.T) {
-	t.Parallel()
-
-	valid := []struct {
-		in     string
-		hour   int
-		minute int
-	}{
-		{in: "00:00", hour: 0, minute: 0},
-		{in: "09:30", hour: 9, minute: 30},
-		{in: "23:00", hour: 23, minute: 0},
-		{in: " 07:30 ", hour: 7, minute: 30},
-	}
-
-	for _, tc := range valid {
-		hour, minute, err := ValidateSendTime(tc.in)
-		if err != nil {
-			t.Fatalf("send time %q should be valid: %v", tc.in, err)
-		}
-
-		if hour != tc.hour || minute != tc.minute {
-			t.Fatalf("send time %q = %02d:%02d, want %02d:%02d", tc.in, hour, minute, tc.hour, tc.minute)
-		}
-	}
-
-	invalid := []string{"", "24:00", "7:30", "09:15", "09:60", "0930", "aa:bb", "09:3", "-1:00"}
-	for _, raw := range invalid {
-		_, _, err := ValidateSendTime(raw)
-		requireDomainError(t, err, ErrInvalidKindleSetting)
-	}
-}
-
-func TestNextSendAt(t *testing.T) {
-	t.Parallel()
-	ny, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		t.Fatalf("load timezone: %v", err)
-	}
-	fixed := time.FixedZone("UTC+8", 8*60*60)
-	localNow := time.Date(2026, 3, 1, 9, 0, 0, 0, fixed)
-	utcNow := time.Date(2026, 3, 1, 1, 0, 0, 0, time.UTC)
-	cases := []struct {
-		name, send string
-		now        time.Time
-		loc        *time.Location
-		want       time.Time
-	}{
-		{"same day", "09:30", localNow, fixed, time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)},
-		{"next day", "08:30", localNow, fixed, time.Date(2026, 3, 2, 0, 30, 0, 0, time.UTC)},
-		{"equal time", "09:00", localNow, fixed, time.Date(2026, 3, 2, 1, 0, 0, 0, time.UTC)},
-		{"UTC now", "09:30", utcNow, fixed, time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)},
-		{"spring missing time", "02:30", time.Date(2026, 3, 8, 1, 0, 0, 0, ny), ny, time.Date(2026, 3, 9, 6, 30, 0, 0, time.UTC)},
-		{"spring same day", "09:30", time.Date(2026, 3, 8, 1, 0, 0, 0, ny), ny, time.Date(2026, 3, 8, 13, 30, 0, 0, time.UTC)},
-		{"spring after transition", "02:30", time.Date(2026, 3, 8, 12, 0, 0, 0, ny), ny, time.Date(2026, 3, 9, 6, 30, 0, 0, time.UTC)},
-		{"fall repeated time", "01:30", time.Date(2026, 11, 1, 5, 45, 0, 0, time.UTC), ny, time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			next, err := ComputeNextSendAt(tc.send, tc.now, tc.loc)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !next.Equal(tc.want) || next.Location() != time.UTC {
-				t.Fatalf("next = %s (%s), want %s UTC", next, next.Location(), tc.want)
-			}
-		})
-	}
-	_, err = ComputeNextSendAt("09:15", localNow, fixed)
-	requireDomainError(t, err, ErrInvalidKindleSetting)
-}
-
 func TestValueProvider(t *testing.T) {
 	t.Parallel()
 
@@ -478,57 +407,75 @@ func TestValueSMTPSettings(t *testing.T) {
 func TestValueKindleSettings(t *testing.T) {
 	t.Parallel()
 
-	loc := time.FixedZone("UTC+8", 8*60*60)
-	now := time.Date(2026, 3, 1, 9, 0, 0, 0, loc)
-
 	base := func() KindleSettings {
-		sendTime := " 08:00 "
 		return KindleSettings{
-			KindleEmail: "  kindle@example.com ",
-			SendTime:    &sendTime,
+			KindleEmail: "kindle@example.com",
+			Schedule:    &KindleSchedule{Hour: 8, Minute: 0, Timezone: "UTC"},
 		}
 	}
 
-	settings, err := ValidateKindleSettings(base(), now, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	t.Run("normalizes and clears repository-owned timestamp", func(t *testing.T) {
+		t.Parallel()
 
-	if settings.KindleEmail != "kindle@example.com" {
-		t.Fatalf("kindle email = %q", settings.KindleEmail)
-	}
+		updatedAt := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		input := base()
+		input.KindleEmail = "  kindle@example.com "
+		input.Schedule.Timezone = " America/New_York "
+		input.ScheduleUpdatedAt = &updatedAt
 
-	if settings.SendTime == nil || *settings.SendTime != "08:00" {
-		t.Fatalf("send time = %v", settings.SendTime)
-	}
+		settings, err := ValidateKindleSettings(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
-	wantNext := time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC)
-	if settings.NextSendAt == nil || !settings.NextSendAt.Equal(wantNext) {
-		t.Fatalf("next send at = %v, want %s", settings.NextSendAt, wantNext)
-	}
+		if settings.KindleEmail != "kindle@example.com" {
+			t.Fatalf("kindle email = %q", settings.KindleEmail)
+		}
 
-	withoutTime := base()
-	withoutTime.SendTime = nil
-	settings, err = ValidateKindleSettings(withoutTime, now, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		if settings.Schedule == nil || *settings.Schedule != (KindleSchedule{Hour: 8, Minute: 0, Timezone: "America/New_York"}) {
+			t.Fatalf("schedule = %v", settings.Schedule)
+		}
 
-	if settings.SendTime != nil || settings.NextSendAt != nil {
-		t.Fatalf("send time should be cleared")
-	}
+		if settings.ScheduleUpdatedAt != nil {
+			t.Fatalf("schedule updated at = %v, want nil", settings.ScheduleUpdatedAt)
+		}
+	})
 
-	blankTime := base()
-	empty := "   "
-	blankTime.SendTime = &empty
-	settings, err = ValidateKindleSettings(blankTime, now, loc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	t.Run("schedule off clears the schedule and its timestamp", func(t *testing.T) {
+		t.Parallel()
 
-	if settings.SendTime != nil || settings.NextSendAt != nil {
-		t.Fatalf("blank send time should be cleared")
-	}
+		updatedAt := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		input := base()
+		input.Schedule = nil
+		input.ScheduleUpdatedAt = &updatedAt
+
+		settings, err := ValidateKindleSettings(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if settings.Schedule != nil || settings.ScheduleUpdatedAt != nil {
+			t.Fatalf("settings = %+v, want no schedule and no timestamp", settings)
+		}
+	})
+
+	t.Run("schedule bounds", func(t *testing.T) {
+		t.Parallel()
+
+		for _, schedule := range []KindleSchedule{
+			{Hour: 0, Minute: 0, Timezone: "UTC"},
+			{Hour: 8, Minute: 5, Timezone: "UTC"},
+			{Hour: 12, Minute: 30, Timezone: "UTC"},
+			{Hour: 23, Minute: 55, Timezone: "UTC"},
+		} {
+			input := base()
+			input.Schedule = &schedule
+
+			if _, err := ValidateKindleSettings(input); err != nil {
+				t.Fatalf("schedule %+v should be valid: %v", schedule, err)
+			}
+		}
+	})
 
 	invalidCases := map[string]func(*KindleSettings){
 		"empty kindle email":      func(k *KindleSettings) { k.KindleEmail = " " },
@@ -538,14 +485,15 @@ func TestValueKindleSettings(t *testing.T) {
 		"kindle email display":    func(k *KindleSettings) { k.KindleEmail = "Display <a@b.com>" },
 		"empty local part":        func(k *KindleSettings) { k.KindleEmail = "@example.com" },
 		"empty domain":            func(k *KindleSettings) { k.KindleEmail = "kindle@" },
-		"invalid send time": func(k *KindleSettings) {
-			bad := "25:00"
-			k.SendTime = &bad
-		},
-		"invalid send minute": func(k *KindleSettings) {
-			bad := "09:15"
-			k.SendTime = &bad
-		},
+		"empty timezone":          func(k *KindleSettings) { k.Schedule.Timezone = "" },
+		"blank timezone":          func(k *KindleSettings) { k.Schedule.Timezone = "   " },
+		"local timezone":          func(k *KindleSettings) { k.Schedule.Timezone = "Local" },
+		"unknown timezone":        func(k *KindleSettings) { k.Schedule.Timezone = "Mars/Olympus" },
+		"hour below range":        func(k *KindleSettings) { k.Schedule.Hour = -1 },
+		"hour above range":        func(k *KindleSettings) { k.Schedule.Hour = 24 },
+		"minute off step":         func(k *KindleSettings) { k.Schedule.Minute = 3 },
+		"minute above range":      func(k *KindleSettings) { k.Schedule.Minute = 60 },
+		"minute negative":         func(k *KindleSettings) { k.Schedule.Minute = -5 },
 	}
 
 	for name, mutate := range invalidCases {
@@ -554,7 +502,7 @@ func TestValueKindleSettings(t *testing.T) {
 
 			settings := base()
 			mutate(&settings)
-			_, err := ValidateKindleSettings(settings, now, loc)
+			_, err := ValidateKindleSettings(settings)
 			requireDomainError(t, err, ErrInvalidKindleSetting)
 		})
 	}

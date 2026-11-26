@@ -31,7 +31,7 @@ func TestKindleSendRepoRecordBookAccepted(t *testing.T) {
 		savedPages[i] = created
 	}
 
-	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "reader@kindle.com"})
+	configureManualKindleForTest(t, store)
 
 	claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -129,7 +129,7 @@ func TestKindleSendRepoRecordBookAcceptedIdempotentPerBookIndex(t *testing.T) {
 		savedPages[i] = created
 	}
 
-	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "reader@kindle.com"})
+	configureManualKindleForTest(t, store)
 
 	claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -207,7 +207,7 @@ func TestKindleSendRepoRecordBookAcceptedRequiresRunningSend(t *testing.T) {
 		t.Fatalf("create saved page: %v", err)
 	}
 
-	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "reader@kindle.com"})
+	configureManualKindleForTest(t, store)
 
 	claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC))
 	if err != nil {

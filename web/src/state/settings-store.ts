@@ -29,11 +29,36 @@ export interface SettingsDrafts {
   smtpUser: string;
   smtpPassword: string;
   kindleEmail: string;
-  sendTime: string;
+  timezone: string;
+  scheduleEnabled: boolean;
+  scheduleHour: number;
+  scheduleMinute: number;
 }
+
+export type KindleDrafts = Pick<
+  SettingsDrafts,
+  | 'kindleEmail'
+  | 'timezone'
+  | 'scheduleEnabled'
+  | 'scheduleHour'
+  | 'scheduleMinute'
+>;
 
 /** `SET-VAL-1`: retention defaults to 100. */
 const DEFAULT_RETENTION = 100;
+
+/** Draft-only defaults: the server stores no schedule time or timezone until scheduled sending is enabled. */
+const DEFAULT_TIMEZONE = 'UTC';
+const DEFAULT_SCHEDULE_HOUR = 8;
+const DEFAULT_SCHEDULE_MINUTE = 0;
+
+export const kindleDraftsOf = (kindle: Settings['kindle']): KindleDrafts => ({
+  kindleEmail: kindle?.kindleEmail ?? '',
+  timezone: kindle?.schedule?.timezone ?? DEFAULT_TIMEZONE,
+  scheduleEnabled: kindle?.schedule !== undefined,
+  scheduleHour: kindle?.schedule?.hour ?? DEFAULT_SCHEDULE_HOUR,
+  scheduleMinute: kindle?.schedule?.minute ?? DEFAULT_SCHEDULE_MINUTE,
+});
 
 /** `SET-VAL-3`: secret fields are never returned by the API, so drafts always start blank. */
 export const draftsFromSettings = (
@@ -49,8 +74,7 @@ export const draftsFromSettings = (
   smtpSecurity: loaded?.smtp?.security ?? 'tls',
   smtpUser: loaded?.smtp?.user ?? '',
   smtpPassword: '',
-  kindleEmail: loaded?.kindle?.kindleEmail ?? '',
-  sendTime: loaded?.kindle?.sendTime ?? '',
+  ...kindleDraftsOf(loaded?.kindle),
 });
 
 export const clearSecretDrafts = (

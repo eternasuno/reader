@@ -13,6 +13,7 @@ import { sessionGeneration } from './session';
 import type { SettingsDrafts, SettingsSection } from './settings-store';
 import {
   isCurrentKindleSendsGeneration,
+  kindleDraftsOf,
   loadingSettings,
   nextKindleSendsGeneration,
   runSave,
@@ -66,10 +67,7 @@ const sectionDraftPatch = (
     case 'extraction':
       return { provider: loaded.provider };
     case 'kindle':
-      return {
-        kindleEmail: loaded.kindle?.kindleEmail ?? '',
-        sendTime: loaded.kindle?.sendTime ?? '',
-      };
+      return kindleDraftsOf(loaded.kindle);
     case 'services':
       return {
         jinaKey: '',
@@ -111,12 +109,26 @@ const servicesDirty = (drafts: SettingsDrafts, loaded: Settings): boolean =>
   drafts.browserEndpoint.trim().length > 0 ||
   smtpDirty(drafts, loaded.smtp);
 
+/** The schedule time and timezone only count while scheduled sending is enabled. */
 const kindleDirty = (
   drafts: SettingsDrafts,
   kindle: Settings['kindle'] | undefined
-): boolean =>
-  drafts.kindleEmail !== (kindle?.kindleEmail ?? '') ||
-  drafts.sendTime !== (kindle?.sendTime ?? '');
+): boolean => {
+  const saved = kindleDraftsOf(kindle);
+  if (
+    drafts.kindleEmail !== saved.kindleEmail ||
+    drafts.scheduleEnabled !== saved.scheduleEnabled
+  ) {
+    return true;
+  }
+
+  return (
+    drafts.scheduleEnabled &&
+    (drafts.scheduleHour !== saved.scheduleHour ||
+      drafts.scheduleMinute !== saved.scheduleMinute ||
+      drafts.timezone !== saved.timezone)
+  );
+};
 
 /** `settings.md:25`: unsaved changes guard section switches and leaving `/settings`. */
 export const isSectionDirty = (

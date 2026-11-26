@@ -24,7 +24,7 @@ import type { LibraryArticle } from './library-store';
 import * as store from './library-store';
 import { beginRecordSnapshot } from './read-sync';
 import type { LibraryScope } from './scope';
-import { hostnameOf, iconCandidates, siteIconUrl } from './scope';
+import { feedIconCandidates, hostnameOf, siteIconUrl } from './scope';
 import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
 
@@ -79,7 +79,7 @@ export const articleSource = (article: LibraryArticle): ArticleSource => {
 
   return {
     title: feed?.title ?? '',
-    iconSrcs: feed ? iconCandidates([feed.iconUrl, siteIconUrl(feed.url)]) : [],
+    iconSrcs: feed ? feedIconCandidates(feed) : [],
   };
 };
 

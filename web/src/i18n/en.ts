@@ -261,8 +261,10 @@ export const enDict: Dict = {
     sendNowHint:
       'Package every unread article into an EPUB and send it to Kindle now; sent articles are marked read.',
     kindleEmailLabel: 'Kindle email address',
-    sendTimeLabel: 'Daily scheduled send (optional)',
-    sendTimeNone: 'Scheduled sending off',
+    scheduleLabel: 'Daily scheduled send',
+    hourLabel: 'Hour',
+    minuteLabel: 'Minute',
+    timezoneLabel: 'Time zone',
     saveKindle: 'Save Kindle settings',
     sendNow: 'Send now',
     sendingNow: 'Sending…',

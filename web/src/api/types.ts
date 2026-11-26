@@ -33,6 +33,7 @@ export interface Feed {
   updatedAt?: string;
   failureCount: number;
   lastError?: string;
+  siteUrl?: string;
   iconUrl?: string;
   readerMode: ReaderMode;
   order: SortOrder;
@@ -124,9 +125,15 @@ export interface SmtpSettingsInput extends SmtpSettings {
   password?: string;
 }
 
+export interface KindleSchedule {
+  hour: number;
+  minute: number;
+  timezone: string;
+}
+
 export interface KindleSettings {
   kindleEmail: string;
-  sendTime?: string;
+  schedule?: KindleSchedule;
 }
 
 export interface KindleSettingsView extends KindleSettings {

@@ -35,14 +35,48 @@ export const SEND_STATUS_CLASSES = {
   failed: 'border-0 bg-error/15 text-error',
 } as const;
 
-/** `settings.md:16-17`: `sendTime` accepts every half-hour slot of the day. */
-export const SEND_TIME_SLOTS: ReadonlyArray<string> = Array.from(
-  { length: 48 },
-  (_, index) => {
-    const hour = String(Math.floor(index / 2)).padStart(2, '0');
-    return `${hour}:${index % 2 === 0 ? '00' : '30'}`;
-  }
+/** `SET-KINDLE-1`: the schedule hour is 0–23 and the minute is 0–55 in 5-minute steps. */
+export const HOUR_OPTIONS: ReadonlyArray<number> = Array.from(
+  { length: 24 },
+  (_, hour) => hour
 );
+
+export const MINUTE_OPTIONS: ReadonlyArray<number> = Array.from(
+  { length: 12 },
+  (_, step) => step * 5
+);
+
+export const padTwoDigits = (value: number): string =>
+  String(value).padStart(2, '0');
+
+export interface TimezoneOption {
+  value: string;
+  label: string;
+}
+
+/** `longOffset` yields `GMT`, `GMT+08:00`, or `GMT-03:30`; show it as `UTC±HH:MM`. */
+const utcOffsetLabel = (timeZone: string, at: Date): string => {
+  const offset = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'longOffset',
+  })
+    .formatToParts(at)
+    .find((part) => part.type === 'timeZoneName')?.value;
+  if (offset === undefined) throw new Error(`no UTC offset for ${timeZone}`);
+
+  return offset === 'GMT' ? 'UTC+00:00' : offset.replace('GMT', 'UTC');
+};
+
+/** `UTC` first, then every other supported IANA zone labelled `Name (UTC±HH:MM)` for today. */
+export const timezoneOptions = (): ReadonlyArray<TimezoneOption> => {
+  const now = new Date();
+  const zones = new Set(['UTC', ...Intl.supportedValuesOf('timeZone')]);
+
+  return Array.from(zones, (zone) => ({
+    value: zone,
+    label: `${zone} (${utcOffsetLabel(zone, now)})`,
+  }));
+};
 
 /** `kindle.md`: sanitized error summaries never inject markup or stray line breaks. */
 const sanitizeError = (error: string | undefined): string => {

@@ -14,4 +14,14 @@ func TestFormatKindleBookMeta(t *testing.T) {
 	if titleN != "Lantern 2026-11-18 (2/3)" || fileN != "lantern-2026-11-18-2.epub" {
 		t.Fatalf("unexpected multi book meta: %q, %q", titleN, fileN)
 	}
+
+	titleManual, fileManual := FormatKindleBookMeta("", 1, 1)
+	if titleManual != "Lantern" || fileManual != "lantern.epub" {
+		t.Fatalf("unexpected undated single book meta: %q, %q", titleManual, fileManual)
+	}
+
+	titleManualN, fileManualN := FormatKindleBookMeta("", 2, 3)
+	if titleManualN != "Lantern (2/3)" || fileManualN != "lantern-2.epub" {
+		t.Fatalf("unexpected undated multi book meta: %q, %q", titleManualN, fileManualN)
+	}
 }

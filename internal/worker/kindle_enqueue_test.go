@@ -214,11 +214,10 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 17, 0, 0, 0, time.UTC)
-	loc := time.FixedZone("CST", 8*60*60)
 	publishedAt := time.Date(2026, 3, 13, 9, 30, 0, 0, time.UTC)
 
 	deliverySettings := configuredDeliverySettings()
-	deliverySettings.Retention = 100
+	deliverySettings.Kindle.Schedule = &domain.KindleSchedule{Hour: 9, Timezone: "Asia/Shanghai"}
 
 	page := domain.SavedPage{
 		ID:          "page-1",
@@ -244,9 +243,10 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 	}
 
 	sends := &fakeKindleSendRepository{
-		savedPages: []domain.SavedPage{page},
-		feeds:      []domain.Feed{feed},
-		items:      map[string][]domain.FeedItem{"feed-1": {item}},
+		settingsRepo: &fakeSettingRepository{settings: deliverySettings},
+		savedPages:   []domain.SavedPage{page},
+		feeds:        []domain.Feed{feed},
+		items:        map[string][]domain.FeedItem{"feed-1": {item}},
 	}
 
 	builder := &fakeEPUBBuilder{build: func(ctx context.Context, dateStr string, articles []domain.KindleArticle) ([]domain.EPUBBook, error) {
@@ -265,7 +265,6 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 		FeedItems:   &fakeFeedItemRepository{},
 		EPUBBuilder: builder,
 		MailSender:  mailer,
-		Location:    loc,
 		Now:         func() time.Time { return now },
 	})
 
@@ -301,8 +300,8 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 	}
 
 	captured := builder.captured()
-	if captured.dateStr != "2026-03-15" {
-		t.Fatalf("build dateStr = %q, want %q", captured.dateStr, "2026-03-15")
+	if captured.dateStr != "" {
+		t.Fatalf("build dateStr = %q, want none for a manual send", captured.dateStr)
 	}
 
 	if len(captured.articles) != 2 {
@@ -360,6 +359,42 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 
 	if mails[0].delivery.SMTP.Host != "smtp.example.com" {
 		t.Fatalf("mail SMTP host = %q, want smtp.example.com", mails[0].delivery.SMTP.Host)
+	}
+}
+
+func TestEnqueueManualIgnoresUnloadableScheduleTimezone(t *testing.T) {
+	t.Parallel()
+
+	deliverySettings := configuredDeliverySettings()
+	deliverySettings.Kindle.Schedule = &domain.KindleSchedule{Hour: 9, Timezone: "Mars/Olympus_Mons"}
+
+	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
+	sends := &fakeKindleSendRepository{
+		settingsRepo: &fakeSettingRepository{settings: deliverySettings},
+		savedPages:   []domain.SavedPage{page},
+	}
+	builder := &fakeEPUBBuilder{}
+	mailer := &fakeMailSender{}
+
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: builder,
+		MailSender:  mailer,
+	})
+
+	if _, err := sender.EnqueueManual(context.Background()); err != nil {
+		t.Fatalf("EnqueueManual() error = %v", err)
+	}
+
+	sender.Wait()
+
+	completed := sends.completedList()
+	if len(completed) != 1 || completed[0].status != domain.KindleStatusSucceeded {
+		t.Fatalf("completed sends = %+v, want one succeeded send", completed)
+	}
+
+	if builder.callCount() != 1 || builder.captured().dateStr != "" {
+		t.Fatalf("epub builds = %d, date = %q, want one build without a date", builder.callCount(), builder.captured().dateStr)
 	}
 }
 

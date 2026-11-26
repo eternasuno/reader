@@ -17,17 +17,16 @@ func TestNewServerValidatesConfig(t *testing.T) {
 			AppURL:        rawAppURL,
 			SessionSecret: []byte(testSessionSecret),
 			Now:           time.Now,
-			Location:      time.UTC,
 		}); err != nil {
 			t.Fatalf("expected valid config for %q: %v", rawAppURL, err)
 		}
 	}
 
-	if _, err := NewServer(Config{AppURL: "://bad", SessionSecret: []byte(testSessionSecret), Now: time.Now, Location: time.UTC}); err == nil {
+	if _, err := NewServer(Config{AppURL: "://bad", SessionSecret: []byte(testSessionSecret), Now: time.Now}); err == nil {
 		t.Fatal("expected error for invalid app url")
 	}
 
-	if _, err := NewServer(Config{AppURL: "/relative", SessionSecret: []byte(testSessionSecret), Now: time.Now, Location: time.UTC}); err == nil {
+	if _, err := NewServer(Config{AppURL: "/relative", SessionSecret: []byte(testSessionSecret), Now: time.Now}); err == nil {
 		t.Fatal("expected error for app url without host")
 	}
 
@@ -48,7 +47,6 @@ func TestNewServerValidatesConfig(t *testing.T) {
 			AppURL:        rawAppURL,
 			SessionSecret: []byte(testSessionSecret),
 			Now:           time.Now,
-			Location:      time.UTC,
 		})
 		if err == nil {
 			t.Fatalf("NewServer(%q) succeeded, want error", rawAppURL)

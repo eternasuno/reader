@@ -130,7 +130,9 @@ func (q *RefreshQueue) EnqueueAll(ctx context.Context) error {
 // RefreshOne fetches, parses, and syncs a single feed, recording a sanitized
 // failure summary when an external step fails and tracking database errors.
 func (q *RefreshQueue) RefreshOne(ctx context.Context, feedID string) error {
-	err := q.refreshFeed(ctx, feedID)
+	startedAt := q.now().UTC()
+
+	err := q.refreshFeed(ctx, feedID, startedAt)
 	if err == nil {
 		q.dbFailureStreak.Store(0)
 
@@ -147,18 +149,18 @@ func (q *RefreshQueue) RefreshOne(ctx context.Context, feedID string) error {
 		return err
 	}
 
-	q.recordFailure(ctx, feedID, err)
+	q.recordFailure(ctx, feedID, err, startedAt)
 
 	return err
 }
 
-func (q *RefreshQueue) refreshFeed(ctx context.Context, feedID string) error {
+func (q *RefreshQueue) refreshFeed(ctx context.Context, feedID string, startedAt time.Time) error {
 	feed, err := q.feeds.GetByID(ctx, feedID)
 	if err != nil || feed == nil {
 		return err
 	}
 
-	return q.syncFeed(ctx, *feed)
+	return q.syncFeed(ctx, *feed, startedAt)
 }
 
 // parseFeed turns a parser panic on untrusted feed bytes into an external
@@ -173,7 +175,7 @@ func (q *RefreshQueue) parseFeed(body []byte, finalURL string) (parsed domain.Pa
 	return q.parser.ParseFeed(body, finalURL)
 }
 
-func (q *RefreshQueue) syncFeed(ctx context.Context, feed domain.Feed) error {
+func (q *RefreshQueue) syncFeed(ctx context.Context, feed domain.Feed, startedAt time.Time) error {
 	// A settings read failure aborts the refresh: pruning with an unknown
 	// retention setting could delete items the user asked to keep.
 	settings, err := q.settings.Get(ctx)
@@ -198,7 +200,13 @@ func (q *RefreshQueue) syncFeed(ctx context.Context, feed domain.Feed) error {
 
 	newItems, deleteIDs := domain.PlanFeedSync(feed.ID, parsed.Entries, storedRefs, settings.Retention, domain.NewID)
 
-	return q.feeds.ApplySync(ctx, feed.ID, resolveFeedTitle(parsed.Title, feed), parsed.IconURL, q.now().UTC(), newItems, deleteIDs)
+	meta := domain.FeedSyncMeta{
+		Title:   resolveFeedTitle(parsed.Title, feed),
+		SiteURL: parsed.SiteURL,
+		IconURL: parsed.IconURL,
+	}
+
+	return q.feeds.ApplySync(ctx, feed.ID, meta, startedAt, q.now().UTC(), newItems, deleteIDs)
 }
 
 func resolveFeedTitle(parsedTitle string, feed domain.Feed) string {
@@ -316,8 +324,8 @@ func (q *RefreshQueue) signal() {
 	}
 }
 
-func (q *RefreshQueue) recordFailure(ctx context.Context, feedID string, err error) {
-	recErr := q.feeds.RecordRefreshFailure(ctx, feedID, domain.SanitizeErrorText(err.Error()))
+func (q *RefreshQueue) recordFailure(ctx context.Context, feedID string, err error, startedAt time.Time) {
+	recErr := q.feeds.RecordRefreshFailure(ctx, feedID, domain.SanitizeErrorText(err.Error()), startedAt, q.now().UTC())
 	if recErr == nil {
 		q.dbFailureStreak.Store(0)
 

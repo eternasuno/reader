@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +29,7 @@ func requireFileMode(t *testing.T, path string, want os.FileMode) {
 	}
 }
 
-func configureKindleDeliveryForTest(t *testing.T, store *Store, kindle domain.KindleSettings) {
+func configureKindleDeliveryForTest(t *testing.T, store *Store, kindle domain.KindleSettings, now time.Time) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -42,9 +45,33 @@ func configureKindleDeliveryForTest(t *testing.T, store *Store, kindle domain.Ki
 		t.Fatalf("update smtp: %v", err)
 	}
 
-	if err := store.Settings().UpdateKindle(ctx, kindle); err != nil {
+	if err := store.Settings().UpdateKindle(ctx, kindle, now); err != nil {
 		t.Fatalf("update kindle: %v", err)
 	}
+}
+
+// corruptScheduleAssignments are stored values no validated write can produce.
+var corruptScheduleAssignments = map[string]string{
+	"hour above 23":                 `send_hour = 24`,
+	"minute above 55":               `send_minute = 60`,
+	"minute not a multiple of five": `send_minute = 7`,
+	"unloadable timezone":           `timezone = 'Mars/Olympus_Mons'`,
+	"padded timezone":               `timezone = ' UTC'`,
+}
+
+func corruptStoredSchedule(t *testing.T, store *Store, assignment string) {
+	t.Helper()
+
+	if _, err := store.WriteDB().ExecContext(context.Background(), `UPDATE setting SET `+assignment+` WHERE id = 1`); err != nil {
+		t.Fatalf("corrupt stored schedule with %q: %v", assignment, err)
+	}
+}
+
+func configureManualKindleForTest(t *testing.T, store *Store) {
+	t.Helper()
+
+	kindle := domain.KindleSettings{KindleEmail: "reader@kindle.com"}
+	configureKindleDeliveryForTest(t, store, kindle, time.Time{})
 }
 
 func newTestStore(t *testing.T) *Store {
@@ -82,6 +109,10 @@ func fixedTestID(seq uint64) string {
 }
 
 func ptr(value string) *string {
+	return &value
+}
+
+func ptrTime(value time.Time) *time.Time {
 	return &value
 }
 
@@ -127,7 +158,8 @@ func addItems(t *testing.T, store *Store, feed domain.Feed, count int) []domain.
 		}
 	}
 
-	err := store.Feeds().ApplySync(context.Background(), feed.ID, feed.Title, nil, time.Now().UTC(), items, nil)
+	now := time.Now().UTC()
+	err := store.Feeds().ApplySync(context.Background(), feed.ID, domain.FeedSyncMeta{Title: feed.Title}, now, now, items, nil)
 	if err != nil {
 		t.Fatalf("sync items for feed %q: %v", feed.Title, err)
 	}
@@ -219,12 +251,26 @@ func assertKindleSettings(t *testing.T, got domain.KindleSettings, want domain.K
 		t.Fatalf("kindle email = %q, want %q", got.KindleEmail, want.KindleEmail)
 	}
 
-	if got.SendTime == nil || *got.SendTime != *want.SendTime {
-		t.Fatalf("send time = %v, want %v", got.SendTime, want.SendTime)
+	if !reflect.DeepEqual(got.Schedule, want.Schedule) {
+		t.Fatalf("kindle schedule = %+v, want %+v", got.Schedule, want.Schedule)
+	}
+}
+
+func requireScheduleUpdatedAt(t *testing.T, store *Store, want *time.Time) {
+	t.Helper()
+
+	settings, err := store.Settings().Get(context.Background())
+	if err != nil {
+		t.Fatalf("get settings: %v", err)
 	}
 
-	if got.NextSendAt == nil || !got.NextSendAt.Equal(*want.NextSendAt) {
-		t.Fatalf("next send at = %v, want %v", got.NextSendAt, want.NextSendAt)
+	if settings.Kindle == nil {
+		t.Fatal("kindle settings are missing")
+	}
+
+	got := settings.Kindle.ScheduleUpdatedAt
+	if (got == nil) != (want == nil) || (got != nil && !got.Equal(*want)) {
+		t.Fatalf("schedule updated at = %v, want %v", got, want)
 	}
 }
 
@@ -271,12 +317,37 @@ func requireIndexedPlan(t *testing.T, name string, details []string, index strin
 	}
 
 	for _, detail := range details {
-		if detail == "SCAN feed_item" || detail == "SCAN saved_page" {
+		if detail == "SCAN feed_item" || detail == "SCAN saved_page" || detail == "SCAN feed_refresh" {
 			t.Fatalf("%s: plan scans the table without an index:\n%s", name, plan)
 		}
 	}
 
-	if index != "" && !strings.Contains(plan, "USING INDEX "+index) && !strings.Contains(plan, "USING COVERING INDEX "+index) {
+	if index != "" && !planUsesIndex(details, index) {
 		t.Fatalf("%s: plan does not use index %q:\n%s", name, index, plan)
 	}
+}
+
+// requireRefreshLookupsIndexed checks every feed_refresh access in a derived
+// feed-state plan is a keyed SEARCH, never a table or full index scan.
+func requireRefreshLookupsIndexed(t *testing.T, name string, details []string) {
+	t.Helper()
+
+	for _, detail := range details {
+		if !strings.Contains(detail, " feed_refresh ") {
+			continue
+		}
+
+		if !strings.HasPrefix(detail, "SEARCH ") || !planUsesIndex([]string{detail}, "feed_refresh_feed_id_id") {
+			t.Fatalf("%s: feed_refresh lookup is not a keyed search on feed_refresh_feed_id_id: %q", name, detail)
+		}
+	}
+}
+
+// planUsesIndex matches the whole index name so that an index never satisfies
+// a check for another index it is a prefix of (feed_item_feed_id and
+// feed_item_feed_id_url).
+func planUsesIndex(details []string, index string) bool {
+	pattern := regexp.MustCompile(`USING (?:COVERING )?INDEX ` + regexp.QuoteMeta(index) + `(?: |$)`)
+
+	return slices.ContainsFunc(details, pattern.MatchString)
 }

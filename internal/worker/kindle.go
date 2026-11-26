@@ -32,7 +32,6 @@ type KindleConfig struct {
 	Extractor    domain.ArticleExtractor
 	EPUBBuilder  domain.EPUBBuilder
 	MailSender   domain.MailSender
-	Location     *time.Location
 	TickInterval time.Duration
 	Now          func() time.Time
 	OnFatal      func(error)
@@ -48,7 +47,6 @@ type KindleSender struct {
 	extractor           domain.ArticleExtractor
 	epubBuilder         domain.EPUBBuilder
 	mailSender          domain.MailSender
-	loc                 *time.Location
 	tickInterval        time.Duration
 	now                 func() time.Time
 	onFatal             func(error)
@@ -81,7 +79,6 @@ func NewKindleSender(cfg KindleConfig) *KindleSender {
 		extractor:           cfg.Extractor,
 		epubBuilder:         cfg.EPUBBuilder,
 		mailSender:          cfg.MailSender,
-		loc:                 cfg.Location,
 		tickInterval:        tickInterval,
 		now:                 now,
 		onFatal:             cfg.OnFatal,
@@ -124,11 +121,12 @@ func (s *KindleSender) EnqueueManual(ctx context.Context) (domain.KindleSendReco
 	return claimed.Record, nil
 }
 
-// CheckSchedule atomically checks eligibility, advances nextSendAt when due,
-// and starts a scheduled send when no other send is active.
+// CheckSchedule atomically claims a scheduled send when the latest schedule
+// occurrence is due and no other send is active; a busy slot defers the claim
+// to a later tick.
 func (s *KindleSender) CheckSchedule(ctx context.Context) error {
 	s.mu.Lock()
-	claimed, err := s.kindleSends.ClaimDueSend(ctx, domain.NewID(), s.now().UTC(), s.loc, s.running)
+	claimed, err := s.kindleSends.ClaimDueSend(ctx, domain.NewID(), s.now().UTC(), s.running)
 	if err != nil || !claimed.Claimed {
 		s.mu.Unlock()
 
@@ -144,7 +142,7 @@ func (s *KindleSender) CheckSchedule(ctx context.Context) error {
 func (s *KindleSender) startClaimedLocked(claimed domain.ClaimedKindleSend) {
 	s.running = true
 	s.wg.Add(1)
-	go s.runJob(claimed.Record.ID, claimed.Delivery)
+	go s.runJob(claimed)
 }
 
 // StartScheduler catches up a missed schedule once and then re-checks on the
@@ -178,7 +176,7 @@ func (s *KindleSender) checkScheduleLogged(ctx context.Context) {
 	}
 }
 
-func (s *KindleSender) runJob(sendID string, snapshot domain.KindleDelivery) {
+func (s *KindleSender) runJob(claimed domain.ClaimedKindleSend) {
 	defer func() {
 		s.mu.Lock()
 		s.running = false
@@ -188,16 +186,16 @@ func (s *KindleSender) runJob(sendID string, snapshot domain.KindleDelivery) {
 	}()
 
 	ctx := s.baseCtx
-	sendErr := s.executeJob(ctx, sendID, snapshot)
+	sendErr := s.executeJob(ctx, claimed)
 	status := domain.KindleStatusSucceeded
 	if sendErr != nil {
 		status = domain.KindleStatusFailed
 	}
 
-	s.persistTerminalStatus(ctx, sendID, status, sendErr, s.now().UTC())
+	s.persistTerminalStatus(ctx, claimed.Record.ID, status, sendErr, s.now().UTC())
 }
 
-func (s *KindleSender) executeJob(ctx context.Context, sendID string, snapshot domain.KindleDelivery) error {
+func (s *KindleSender) executeJob(ctx context.Context, claimed domain.ClaimedKindleSend) error {
 	refs, err := s.kindleSends.ListUnreadForKindle(ctx)
 	if err != nil {
 		return err
@@ -207,13 +205,13 @@ func (s *KindleSender) executeJob(ctx context.Context, sendID string, snapshot d
 		return nil
 	}
 
-	return s.deliverBooks(ctx, sendID, snapshot, refs)
+	return s.deliverBooks(ctx, claimed, refs)
 }
 
-func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot domain.KindleDelivery, refs []domain.KindleArticleRef) error {
-	dateStr := s.now().In(s.loc).Format(kindleDateLayout)
+func (s *KindleSender) deliverBooks(ctx context.Context, claimed domain.ClaimedKindleSend, refs []domain.KindleArticleRef) error {
+	sendID := claimed.Record.ID
 
-	packer, err := s.epubBuilder.NewPacker(ctx, dateStr)
+	packer, err := s.epubBuilder.NewPacker(ctx, s.bookDate(claimed))
 	if err != nil {
 		return err
 	}
@@ -229,7 +227,17 @@ func (s *KindleSender) deliverBooks(ctx context.Context, sendID string, snapshot
 		return err
 	}
 
-	return s.sendPackedBooks(ctx, sendID, snapshot, packer, bookCount)
+	return s.sendPackedBooks(ctx, sendID, claimed.Delivery, packer, bookCount)
+}
+
+// bookDate is the schedule-local date of a scheduled send; manual sends carry
+// no date.
+func (s *KindleSender) bookDate(claimed domain.ClaimedKindleSend) string {
+	if claimed.ScheduleLocation == nil {
+		return ""
+	}
+
+	return s.now().In(claimed.ScheduleLocation).Format(kindleDateLayout)
 }
 
 func (s *KindleSender) packArticles(ctx context.Context, packer domain.EPUBPacker, refs []domain.KindleArticleRef) (int, error) {

@@ -1,5 +1,5 @@
 import type { JSX } from '@solidjs/web';
-import { For, Show } from 'solid-js';
+import { createUniqueId, For, Show } from 'solid-js';
 import type { KindleSendRecord } from '../api';
 import { t } from '../i18n';
 import {
@@ -16,12 +16,15 @@ import {
 import { Button, Icon, Input, Select, SettingsGroup, SettingsRow } from '../ui';
 import {
   formatTimestamp,
+  HOUR_OPTIONS,
+  MINUTE_OPTIONS,
+  padTwoDigits,
   SEND_STATUS_CLASSES,
   SEND_STATUS_KEYS,
-  SEND_TIME_SLOTS,
   type SettingsDraftProps,
   sendResultText,
   TRIGGER_KEYS,
+  timezoneOptions,
 } from './settingsHelpers';
 
 function SmtpRequiredBanner(props: {
@@ -46,6 +49,85 @@ function SmtpRequiredBanner(props: {
   );
 }
 
+function ScheduleToggleRow(props: SettingsDraftProps): JSX.Element {
+  const toggleId = createUniqueId();
+
+  return (
+    <SettingsRow label={t('kindle.scheduleLabel')} labelFor={toggleId}>
+      <input
+        id={toggleId}
+        type="checkbox"
+        class="toggle toggle-sm toggle-primary disabled:border-base-content/30 disabled:opacity-100"
+        checked={props.drafts.scheduleEnabled}
+        disabled={isSaving()}
+        onChange={(event) => {
+          const scheduleEnabled = event.currentTarget.checked;
+          props.setDrafts((draft) => ({ ...draft, scheduleEnabled }));
+        }}
+      />
+    </SettingsRow>
+  );
+}
+
+function ScheduleTimeRow(props: SettingsDraftProps): JSX.Element {
+  const zones = timezoneOptions();
+  const disabled = (): boolean => isSaving() || !props.drafts.scheduleEnabled;
+
+  return (
+    <SettingsRow stacked>
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-[6rem_6rem_minmax(0,1fr)]">
+        <Select
+          label={t('kindle.hourLabel')}
+          value={props.drafts.scheduleHour}
+          disabled={disabled()}
+          onChange={(event) => {
+            const scheduleHour = Number(event.currentTarget.value);
+            props.setDrafts((draft) => ({ ...draft, scheduleHour }));
+          }}
+        >
+          <For each={HOUR_OPTIONS}>
+            {(hour) => <option value={hour}>{padTwoDigits(hour)}</option>}
+          </For>
+        </Select>
+        <Select
+          label={t('kindle.minuteLabel')}
+          value={props.drafts.scheduleMinute}
+          disabled={disabled()}
+          onChange={(event) => {
+            const scheduleMinute = Number(event.currentTarget.value);
+            props.setDrafts((draft) => ({ ...draft, scheduleMinute }));
+          }}
+        >
+          <For each={MINUTE_OPTIONS}>
+            {(minute) => <option value={minute}>{padTwoDigits(minute)}</option>}
+          </For>
+        </Select>
+        <Select
+          containerClass="col-span-2 sm:col-span-1"
+          label={t('kindle.timezoneLabel')}
+          value={props.drafts.timezone}
+          disabled={disabled()}
+          onChange={(event) => {
+            const timezone = event.currentTarget.value;
+            props.setDrafts((draft) => ({ ...draft, timezone }));
+          }}
+        >
+          <Show
+            when={!zones.some((zone) => zone.value === props.drafts.timezone)}
+          >
+            <option value={props.drafts.timezone}>
+              {props.drafts.timezone}
+            </option>
+          </Show>
+          <For each={zones}>
+            {(zone) => <option value={zone.value}>{zone.label}</option>}
+          </For>
+        </Select>
+      </div>
+    </SettingsRow>
+  );
+}
+
 function DeliveryFields(props: SettingsDraftProps): JSX.Element {
   return (
     <>
@@ -62,22 +144,8 @@ function DeliveryFields(props: SettingsDraftProps): JSX.Element {
           }}
         />
       </SettingsRow>
-      <SettingsRow stacked>
-        <Select
-          label={t('kindle.sendTimeLabel')}
-          value={props.drafts.sendTime}
-          disabled={isSaving()}
-          onChange={(event) => {
-            const sendTime = event.currentTarget.value;
-            props.setDrafts((draft) => ({ ...draft, sendTime }));
-          }}
-        >
-          <option value="">{t('kindle.sendTimeNone')}</option>
-          <For each={SEND_TIME_SLOTS}>
-            {(slot) => <option value={slot}>{slot}</option>}
-          </For>
-        </Select>
-      </SettingsRow>
+      <ScheduleToggleRow drafts={props.drafts} setDrafts={props.setDrafts} />
+      <ScheduleTimeRow drafts={props.drafts} setDrafts={props.setDrafts} />
     </>
   );
 }

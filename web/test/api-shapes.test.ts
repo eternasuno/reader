@@ -37,7 +37,10 @@ const SMTP_IN: SmtpSettingsInput = {
   port: 465,
   security: 'tls',
 };
-const KD_IN: KindleSettings = { kindleEmail: 'k@example.com' };
+const KD_IN: KindleSettings = {
+  kindleEmail: 'k@example.com',
+  schedule: { hour: 8, minute: 30, timezone: 'Asia/Shanghai' },
+};
 const VALID_PAGE = {
   id: 'p',
   url: PAGE,

@@ -65,6 +65,41 @@ describe('FeedOptionsDialog', () => {
   });
 });
 
+const rowValues = (label: string): Array<string> =>
+  Array.from(document.querySelectorAll('[role="dialog"] span'))
+    .filter((span) => span.textContent === label)
+    .map((span) => span.parentElement?.textContent?.replace(label, '') ?? '');
+
+describe('FeedOptionsDialog website and icon', () => {
+  it('shows siteUrl in the website row and its favicon, not the feed URL host', () => {
+    const feed = makeFeed({
+      url: 'https://rsshub.example/twitter/user/alice',
+      siteUrl: 'https://twitter.example/alice',
+    });
+    mount(() => (
+      <FeedOptionsDialog open={true} feed={feed} onClose={vi.fn()} />
+    ));
+
+    expect(rowValues('网站')).toEqual(['https://twitter.example/alice']);
+    expect(rowValues('RSS')).toEqual([feed.url]);
+    expect(
+      document.querySelector('[role="dialog"] img')?.getAttribute('src')
+    ).toBe('https://twitter.example/favicon.ico');
+  });
+
+  it('hides the website row and falls back to the RSS glyph without siteUrl', () => {
+    const feed = makeFeed({ url: 'https://rsshub.example/blog/bob' });
+    mount(() => (
+      <FeedOptionsDialog open={true} feed={feed} onClose={vi.fn()} />
+    ));
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(rowValues('网站')).toEqual([]);
+    expect(rowValues('RSS')).toEqual([feed.url]);
+    expect(dialog?.querySelector('img')).toBeNull();
+  });
+});
+
 describe('FeedOptionsDialog error & reopen', () => {
   it('reverts selection on failure and resets when reopened', async () => {
     fetchMock.mockResolvedValueOnce(

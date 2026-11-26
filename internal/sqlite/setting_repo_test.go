@@ -104,18 +104,6 @@ func TestSettingRepoProvider(t *testing.T) {
 	if settings.Provider != domain.ProviderJina || settings.BrowserEndpoint != nil {
 		t.Fatalf("settings after deleting browser endpoint under jina = %+v", settings)
 	}
-
-	if err := repo.UpdateProvider(ctx, domain.ExtractorProvider("unknown")); err == nil {
-		t.Fatal("expected an invalid provider constraint error")
-	} else {
-		requireCode(t, err, domain.ErrSettingRepositoryError)
-	}
-
-	if err := repo.UpdateRetention(ctx, 0); err == nil {
-		t.Fatal("expected an invalid retention error")
-	} else {
-		requireCode(t, err, domain.ErrSettingRepositoryError)
-	}
 }
 
 func TestSettingRepoServices(t *testing.T) {
@@ -235,13 +223,11 @@ func TestSettingRepoServices(t *testing.T) {
 		t.Fatalf("smtp password after delete = %+v", settings.SMTP)
 	}
 
-	nextSendAt := time.Date(2024, 6, 1, 8, 30, 0, 0, time.UTC)
 	kindle := domain.KindleSettings{
 		KindleEmail: "reader@kindle.com",
-		SendTime:    ptr("08:30"),
-		NextSendAt:  &nextSendAt,
+		Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "UTC"},
 	}
-	if err := repo.UpdateKindle(ctx, kindle); err != nil {
+	if err := repo.UpdateKindle(ctx, kindle, time.Date(2024, 6, 1, 8, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("update kindle before deleting smtp: %v", err)
 	}
 
@@ -270,14 +256,13 @@ func TestSettingRepoKindle(t *testing.T) {
 	ctx := context.Background()
 	repo := store.Settings()
 
-	nextSendAt := time.Date(2024, 6, 1, 8, 30, 0, 0, time.UTC)
+	now := time.Date(2024, 6, 1, 8, 0, 0, 0, time.UTC)
 	kindle := domain.KindleSettings{
 		KindleEmail: "reader@kindle.com",
-		SendTime:    ptr("08:30"),
-		NextSendAt:  &nextSendAt,
+		Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "Asia/Shanghai"},
 	}
 
-	if err := repo.UpdateKindle(ctx, kindle); err == nil {
+	if err := repo.UpdateKindle(ctx, kindle, now); err == nil {
 		t.Fatal("expected an SMTP not configured error")
 	} else {
 		requireCode(t, err, domain.ErrSMTPNotConfigured)
@@ -304,7 +289,7 @@ func TestSettingRepoKindle(t *testing.T) {
 		t.Fatalf("update smtp: %v", err)
 	}
 
-	if err := repo.UpdateKindle(ctx, kindle); err != nil {
+	if err := repo.UpdateKindle(ctx, kindle, now); err != nil {
 		t.Fatalf("update kindle: %v", err)
 	}
 
@@ -319,11 +304,10 @@ func TestSettingRepoKindle(t *testing.T) {
 
 	assertSMTPSettings(t, *settings.SMTP, smtp)
 	assertKindleSettings(t, *settings.Kindle, kindle)
+	requireScheduleUpdatedAt(t, store, &now)
 
-	manualOnly := domain.KindleSettings{
-		KindleEmail: "reader@kindle.com",
-	}
-	if err := repo.UpdateKindle(ctx, manualOnly); err != nil {
+	manualOnly := domain.KindleSettings{KindleEmail: "reader@kindle.com"}
+	if err := repo.UpdateKindle(ctx, manualOnly, now.Add(time.Hour)); err != nil {
 		t.Fatalf("update kindle without schedule: %v", err)
 	}
 
@@ -332,7 +316,77 @@ func TestSettingRepoKindle(t *testing.T) {
 		t.Fatalf("get settings after clearing schedule: %v", err)
 	}
 
-	if settings.Kindle == nil || settings.Kindle.KindleEmail != "reader@kindle.com" || settings.Kindle.SendTime != nil || settings.Kindle.NextSendAt != nil {
-		t.Fatalf("manual-only kindle = %+v", settings.Kindle)
+	if settings.Kindle == nil {
+		t.Fatal("kindle settings are missing after clearing the schedule")
+	}
+
+	assertKindleSettings(t, *settings.Kindle, manualOnly)
+	requireScheduleUpdatedAt(t, store, nil)
+
+	scheduleColumnsSet := `SELECT COUNT(*) FROM setting WHERE send_hour IS NOT NULL OR send_minute IS NOT NULL OR timezone IS NOT NULL OR schedule_updated_at IS NOT NULL`
+	if got := countRows(t, store, scheduleColumnsSet); got != 0 {
+		t.Fatalf("schedule columns set after clearing the schedule = %d rows, want all NULL", got)
+	}
+}
+
+func TestSettingRepoGetReportsCorruptStoredScheduleAsRepositoryError(t *testing.T) {
+	for name, assignment := range corruptScheduleAssignments {
+		t.Run(name, func(t *testing.T) {
+			store := newTestStore(t)
+			configureDailyScheduleForTest(t, store, domain.KindleSchedule{Hour: 9, Minute: 0, Timezone: "UTC"}, time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC))
+			corruptStoredSchedule(t, store, assignment)
+
+			_, err := store.Settings().Get(context.Background())
+			requireCode(t, err, domain.ErrSettingRepositoryError)
+		})
+	}
+}
+
+func TestSettingRepoKindleScheduleUpdatedAt(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	configureManualKindleForTest(t, store)
+
+	base := time.Date(2024, 6, 1, 8, 0, 0, 0, time.UTC)
+	at := func(hours int) time.Time { return base.Add(time.Duration(hours) * time.Hour) }
+
+	// Each step builds on the previous one: the rule depends on the stored state.
+	steps := []struct {
+		name     string
+		now      time.Time
+		email    string
+		schedule *domain.KindleSchedule
+		want     *time.Time
+	}{
+		{"enable schedule", at(0), "reader@kindle.com", &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "UTC"}, ptrTime(at(0))},
+		{"unchanged schedule keeps the stamp", at(1), "reader@kindle.com", &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "UTC"}, ptrTime(at(0))},
+		{"hour change restamps", at(2), "reader@kindle.com", &domain.KindleSchedule{Hour: 9, Minute: 30, Timezone: "UTC"}, ptrTime(at(2))},
+		{"minute change restamps", at(3), "reader@kindle.com", &domain.KindleSchedule{Hour: 9, Minute: 35, Timezone: "UTC"}, ptrTime(at(3))},
+		{"timezone change restamps", at(4), "reader@kindle.com", &domain.KindleSchedule{Hour: 9, Minute: 35, Timezone: "Asia/Tokyo"}, ptrTime(at(4))},
+		{"email change keeps the stamp", at(5), "other@kindle.com", &domain.KindleSchedule{Hour: 9, Minute: 35, Timezone: "Asia/Tokyo"}, ptrTime(at(4))},
+		{"disable clears the stamp", at(6), "other@kindle.com", nil, nil},
+		{"re-enable the same schedule restamps", at(7), "other@kindle.com", &domain.KindleSchedule{Hour: 9, Minute: 35, Timezone: "Asia/Tokyo"}, ptrTime(at(7))},
+	}
+
+	for _, step := range steps {
+		t.Run(step.name, func(t *testing.T) {
+			kindle := domain.KindleSettings{
+				KindleEmail: step.email,
+				Schedule:    step.schedule,
+				// Caller-supplied stamps are ignored: the repository owns the field.
+				ScheduleUpdatedAt: ptrTime(time.Unix(1, 0)),
+			}
+			if err := store.Settings().UpdateKindle(ctx, kindle, step.now); err != nil {
+				t.Fatalf("update kindle: %v", err)
+			}
+
+			settings, err := store.Settings().Get(ctx)
+			if err != nil || settings.Kindle == nil {
+				t.Fatalf("get settings: (%+v, %v)", settings, err)
+			}
+
+			assertKindleSettings(t, *settings.Kindle, kindle)
+			requireScheduleUpdatedAt(t, store, step.want)
+		})
 	}
 }

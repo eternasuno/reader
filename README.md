@@ -22,7 +22,6 @@ services:
     environment:
       APP_PASSWORD: ${APP_PASSWORD:?set APP_PASSWORD}
       APP_URL: http://localhost:8080
-      TZ: Asia/Shanghai
       # SESSION_SECRET: <32+ random bytes>  # keeps logins valid across restarts
     volumes:
       - reader-data:/data
@@ -44,7 +43,6 @@ Only bootstrap options are environment variables. Jina key, external browser end
 | `PORT` | `8080` | HTTP listen port |
 | `DATA_DIR` | `/data` in Docker, `.data` locally | Directory holding `reader.db` |
 | `SESSION_SECRET` | random per start | 32+ bytes; set it so logins survive restarts |
-| `TZ` | system zone | Time zone for the Kindle schedule and EPUB titles |
 | `ALLOW_PRIVATE_NETWORK` | `false` | Allow subscribing to LAN / loopback feeds (otherwise blocked as SSRF protection) |
 
 ## Operations

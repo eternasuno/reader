@@ -276,7 +276,6 @@ func newHarnessWith(t *testing.T, configure func(*Config)) *harness {
 		AppPassword:   testPassword,
 		AppURL:        testAppURL,
 		SessionSecret: []byte(testSessionSecret),
-		Location:      time.UTC,
 		Now:           h.clock.Now,
 		HealthCheck:   func(ctx context.Context) error { return db.ReadDB().PingContext(ctx) },
 		StaticFS:      fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")}},
@@ -520,7 +519,7 @@ func (h *harness) seedItem(feedID string, rawURL string, configure func(*domain.
 		h.t.Fatalf("seed item: unknown feed %s", feedID)
 	}
 
-	if err := h.db.Feeds().ApplySync(ctx, feedID, feed.Title, nil, h.clock.Now(), []domain.FeedItem{item}, nil); err != nil {
+	if err := h.db.Feeds().ApplySync(ctx, feedID, domain.FeedSyncMeta{Title: feed.Title}, h.clock.Now(), h.clock.Now(), []domain.FeedItem{item}, nil); err != nil {
 		h.t.Fatalf("seed item %q: %v", rawURL, err)
 	}
 

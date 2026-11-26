@@ -3,6 +3,8 @@
  * `LIB-ROW-1`). Nothing here is reactive, so it stays trivially testable.
  */
 
+import type { Feed } from '../api';
+
 export type LibraryScope =
   | { kind: 'later' }
   | { kind: 'all' }
@@ -235,3 +237,15 @@ export const iconCandidates = (
 ): ReadonlyArray<string> => [
   ...new Set(candidates.filter((url): url is string => Boolean(url))),
 ];
+
+/**
+ * `LIB-ROW-1`: a feed's declared icon, then its website's favicon. The subscribed feed URL is
+ * never used, because feed generators such as RSSHub would show their own icon.
+ */
+export const feedIconCandidates = (
+  feed: Pick<Feed, 'iconUrl' | 'siteUrl'>
+): ReadonlyArray<string> =>
+  iconCandidates([
+    feed.iconUrl,
+    feed.siteUrl === undefined ? null : siteIconUrl(feed.siteUrl),
+  ]);

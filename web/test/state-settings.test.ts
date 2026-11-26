@@ -81,8 +81,8 @@ const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   },
   kindle: {
     kindleEmail: 'kindle@example.com',
-    sendTime: '08:00',
-    nextSendAt: '2026-11-20T08:00:00Z',
+    schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
+    nextSendAt: '2026-11-20T00:00:00Z',
   },
   ...overrides,
 });
@@ -118,7 +118,10 @@ describe('settings load and derived flags', () => {
     expect(drafts.smtpUser).toBe('smtp-user');
     expect(drafts.smtpPassword).toBe('');
     expect(drafts.kindleEmail).toBe('kindle@example.com');
-    expect(drafts.sendTime).toBe('08:00');
+    expect(drafts.timezone).toBe('Asia/Shanghai');
+    expect(drafts.scheduleEnabled).toBe(true);
+    expect(drafts.scheduleHour).toBe(8);
+    expect(drafts.scheduleMinute).toBe(0);
     expect(state.isBrowserAvailable()).toBe(true);
     expect(state.isSmtpConfigured()).toBe(true);
     expect(state.canSendToKindle()).toBe(true);
@@ -159,13 +162,6 @@ describe('dirty tracking', () => {
     expect(state.isSectionDirty('extraction', drafts)).toBe(false);
 
     setDrafts((d) => ({ ...d, kindleEmail: 'other@kindle.com' }));
-    solid.flush();
-    expect(state.isSectionDirty('kindle', drafts)).toBe(true);
-    setDrafts((d) => ({
-      ...d,
-      kindleEmail: 'kindle@example.com',
-      sendTime: '09:00',
-    }));
     solid.flush();
     expect(state.isSectionDirty('kindle', drafts)).toBe(true);
   });
@@ -226,7 +222,10 @@ describe('draft reset', () => {
       smtpHost: 'other.smtp.com',
       smtpPassword: 'secret',
       kindleEmail: 'other@kindle.com',
-      sendTime: '12:00',
+      timezone: 'UTC',
+      scheduleEnabled: false,
+      scheduleHour: 12,
+      scheduleMinute: 30,
     }));
     solid.flush();
     expect(state.hasAnyUnsavedChanges(drafts)).toBe(true);
@@ -244,7 +243,10 @@ describe('draft reset', () => {
     expect(drafts.smtpHost).toBe('smtp.example.com');
     expect(drafts.smtpPassword).toBe('');
     expect(drafts.kindleEmail).toBe('kindle@example.com');
-    expect(drafts.sendTime).toBe('08:00');
+    expect(drafts.timezone).toBe('Asia/Shanghai');
+    expect(drafts.scheduleEnabled).toBe(true);
+    expect(drafts.scheduleHour).toBe(8);
+    expect(drafts.scheduleMinute).toBe(0);
     expect(state.hasAnyUnsavedChanges(drafts)).toBe(false);
   });
 });
