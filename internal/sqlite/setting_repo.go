@@ -3,12 +3,14 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
+	"time"
 
 	"reader/internal/domain"
 )
 
-const settingColumns = `retention, provider, jina_key, browser_endpoint, kindle_email, sender_email, smtp_host, smtp_port, smtp_security, smtp_user, smtp_password, send_time, next_send_at`
+const settingColumns = `retention, provider, jina_key, browser_endpoint, kindle_email, sender_email, smtp_host, smtp_port, smtp_security, smtp_user, smtp_password, timezone, send_hour, send_minute, schedule_updated_at`
 
 type SettingRepo struct {
 	read  *sql.DB
@@ -16,19 +18,21 @@ type SettingRepo struct {
 }
 
 type settingsRow struct {
-	retention       int64
-	provider        string
-	jinaKey         sql.NullString
-	browserEndpoint sql.NullString
-	kindleEmail     sql.NullString
-	senderEmail     sql.NullString
-	smtpHost        sql.NullString
-	smtpPort        sql.NullInt64
-	smtpSecurity    sql.NullString
-	smtpUser        sql.NullString
-	smtpPassword    sql.NullString
-	sendTime        sql.NullString
-	nextSendAt      sql.NullInt64
+	retention         int64
+	provider          string
+	jinaKey           sql.NullString
+	browserEndpoint   sql.NullString
+	kindleEmail       sql.NullString
+	senderEmail       sql.NullString
+	smtpHost          sql.NullString
+	smtpPort          sql.NullInt64
+	smtpSecurity      sql.NullString
+	smtpUser          sql.NullString
+	smtpPassword      sql.NullString
+	timezone          sql.NullString
+	sendHour          sql.NullInt64
+	sendMinute        sql.NullInt64
+	scheduleUpdatedAt sql.NullInt64
 }
 
 func (r *SettingRepo) Get(ctx context.Context) (domain.Settings, error) {
@@ -37,18 +41,39 @@ func (r *SettingRepo) Get(ctx context.Context) (domain.Settings, error) {
 		return domain.Settings{}, domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
-	return settingsFromRow(row), nil
+	return settingsFromRow(row)
 }
 
-func settingsFromRow(row settingsRow) domain.Settings {
+func settingsFromRow(row settingsRow) (domain.Settings, error) {
+	kindle := buildKindleSettings(row)
+	if err := validateStoredSchedule(kindle); err != nil {
+		return domain.Settings{}, err
+	}
+
 	return domain.Settings{
 		Retention:       int(row.retention),
 		Provider:        domain.ExtractorProvider(row.provider),
 		JinaKey:         optionalText(row.jinaKey),
 		BrowserEndpoint: optionalText(row.browserEndpoint),
 		SMTP:            buildSMTPSettings(row),
-		Kindle:          buildKindleSettings(row),
+		Kindle:          kindle,
+	}, nil
+}
+
+// Schedules are stored only after domain validation, so one that fails it (or
+// that validation would rewrite) is corrupt data: an internal persistence
+// failure, never a bad request.
+func validateStoredSchedule(kindle *domain.KindleSettings) error {
+	if kindle == nil || kindle.Schedule == nil {
+		return nil
 	}
+
+	validated, err := domain.ValidateKindleSchedule(*kindle.Schedule)
+	if err == nil && validated == *kindle.Schedule {
+		return nil
+	}
+
+	return domain.NewError(domain.ErrSettingRepositoryError, fmt.Errorf("stored kindle schedule %+v is invalid", *kindle.Schedule))
 }
 
 func scanSettingsRow(row *sql.Row) (settingsRow, error) {
@@ -65,8 +90,10 @@ func scanSettingsRow(row *sql.Row) (settingsRow, error) {
 		&s.smtpSecurity,
 		&s.smtpUser,
 		&s.smtpPassword,
-		&s.sendTime,
-		&s.nextSendAt,
+		&s.timezone,
+		&s.sendHour,
+		&s.sendMinute,
+		&s.scheduleUpdatedAt,
 	)
 
 	return s, err
@@ -93,10 +120,18 @@ func buildKindleSettings(s settingsRow) *domain.KindleSettings {
 	}
 
 	return &domain.KindleSettings{
-		KindleEmail: s.kindleEmail.String,
-		SendTime:    optionalText(s.sendTime),
-		NextSendAt:  optionalMillis(s.nextSendAt),
+		KindleEmail:       s.kindleEmail.String,
+		Schedule:          buildKindleSchedule(s),
+		ScheduleUpdatedAt: optionalMillis(s.scheduleUpdatedAt),
 	}
+}
+
+func buildKindleSchedule(s settingsRow) *domain.KindleSchedule {
+	if !s.sendHour.Valid || !s.sendMinute.Valid || !s.timezone.Valid {
+		return nil
+	}
+
+	return &domain.KindleSchedule{Hour: int(s.sendHour.Int64), Minute: int(s.sendMinute.Int64), Timezone: s.timezone.String}
 }
 
 func (r *SettingRepo) UpdateRetention(ctx context.Context, retention int) error {
@@ -211,30 +246,29 @@ func (r *SettingRepo) DeleteSMTP(ctx context.Context) error {
 	return nil
 }
 
-func (r *SettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
+// UpdateKindle owns kindle.ScheduleUpdatedAt: it is now when the schedule is
+// newly enabled or its hour, minute, or timezone changed, kept when they are
+// unchanged, and cleared when the schedule is off.
+func (r *SettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSettings, now time.Time) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		var senderEmail sql.NullString
-		var smtpHost sql.NullString
-		var smtpPort sql.NullInt64
-		var smtpSecurity sql.NullString
-		err := tx.QueryRowContext(
-			ctx,
-			`SELECT sender_email, smtp_host, smtp_port, smtp_security FROM setting WHERE id = 1`,
-		).Scan(&senderEmail, &smtpHost, &smtpPort, &smtpSecurity)
+		current, err := scanSettingsRow(tx.QueryRowContext(ctx, `SELECT `+settingColumns+` FROM setting WHERE id = 1`))
 		if err != nil {
 			return err
 		}
 
-		if !hasSMTPSettings(senderEmail, smtpHost, smtpPort, smtpSecurity) {
+		if !hasSMTPSettings(current.senderEmail, current.smtpHost, current.smtpPort, current.smtpSecurity) {
 			return domain.NewError(domain.ErrSMTPNotConfigured, nil)
 		}
 
+		hour, minute, timezone := scheduleColumns(kindle.Schedule)
 		_, err = tx.ExecContext(
 			ctx,
-			`UPDATE setting SET kindle_email = ?, send_time = ?, next_send_at = ? WHERE id = 1`,
+			`UPDATE setting SET kindle_email = ?, send_hour = ?, send_minute = ?, timezone = ?, schedule_updated_at = ? WHERE id = 1`,
 			kindle.KindleEmail,
-			optionalString(kindle.SendTime),
-			optionalTime(kindle.NextSendAt),
+			hour,
+			minute,
+			timezone,
+			optionalTime(nextScheduleUpdatedAt(current, kindle, now)),
 		)
 
 		return err
@@ -244,6 +278,27 @@ func (r *SettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSett
 	}
 
 	return nil
+}
+
+func scheduleColumns(schedule *domain.KindleSchedule) (hour any, minute any, timezone any) {
+	if schedule == nil {
+		return nil, nil, nil
+	}
+
+	return schedule.Hour, schedule.Minute, schedule.Timezone
+}
+
+func nextScheduleUpdatedAt(current settingsRow, kindle domain.KindleSettings, now time.Time) *time.Time {
+	if kindle.Schedule == nil {
+		return nil
+	}
+
+	previous := buildKindleSchedule(current)
+	if previous != nil && *previous == *kindle.Schedule {
+		return optionalMillis(current.scheduleUpdatedAt)
+	}
+
+	return &now
 }
 
 func hasSMTPSettings(senderEmail sql.NullString, smtpHost sql.NullString, smtpPort sql.NullInt64, smtpSecurity sql.NullString) bool {

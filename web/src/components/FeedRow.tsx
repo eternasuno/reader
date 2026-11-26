@@ -3,11 +3,10 @@ import { createSignal, Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
 import {
+  feedIconCandidates,
   feedUnreadCount,
-  iconCandidates,
   isMarkingScope,
   isSameScope,
-  siteIconUrl,
 } from '../state';
 import { Menu, MenuDivider, MenuItem } from '../ui';
 import { deleteFeed } from './articleListActions';
@@ -87,7 +86,7 @@ function FeedRowButton(props: {
       onClick={() => selectFeed(props.state, props.feed)}
     >
       <SiteIcon
-        srcs={iconCandidates([props.feed.iconUrl, siteIconUrl(props.feed.url)])}
+        srcs={feedIconCandidates(props.feed)}
         fallback="rss"
         size={16}
       />

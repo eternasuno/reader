@@ -56,8 +56,8 @@ export const makeKindleSettings = (
   },
   kindle: {
     kindleEmail: 'kindle@example.com',
-    sendTime: '08:00',
-    nextSendAt: '2026-11-20T08:00:00Z',
+    schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
+    nextSendAt: '2026-11-20T00:00:00Z',
   },
   ...overrides,
 });

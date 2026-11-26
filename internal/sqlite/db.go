@@ -80,6 +80,10 @@ func initialize(ctx context.Context, dbPath string, writeDB *sql.DB) (*Store, er
 		return nil, err
 	}
 
+	if _, err := writeDB.ExecContext(ctx, `PRAGMA optimize`); err != nil {
+		return nil, fmt.Errorf("optimize database: %w", err)
+	}
+
 	readDB, err := sql.Open("sqlite", sqliteDSN(dbPath, false))
 	if err != nil {
 		return nil, fmt.Errorf("open read pool: %w", err)
@@ -196,6 +200,10 @@ func tightenSidecarPermissions(absPath string) error {
 
 type rowsQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 type execer interface {

@@ -238,6 +238,21 @@ describe('Kindle record validation', () => {
   });
 });
 
+describe('Kindle settings validation', () => {
+  it.each([
+    { kindleEmail: 'k@example.com' },
+    {
+      kindleEmail: 'k@example.com',
+      schedule: { hour: 8, minute: 30, timezone: 'Asia/Shanghai' },
+      nextSendAt: '2026-11-25T00:30:00Z',
+    },
+  ])('accepts Kindle settings %o', async (kindle) => {
+    const body = { ...SETTINGS_OK, kindle };
+    fetchMock.mockResolvedValueOnce(jsonResponse(body));
+    await expect(settingsApi.get()).resolves.toEqual(body);
+  });
+});
+
 describe('empty or non-JSON bodies on JSON endpoints', () => {
   it.each([
     ['204 no content', new Response(null, { status: 204 }), 204],

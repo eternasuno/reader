@@ -82,43 +82,64 @@ const load = async (loaded: Settings = makeSettings()): Promise<void> => {
   solid.flush();
 };
 
-describe('kindle save', () => {
-  it('saves only kindleEmail and sendTime and clears dirty state', async () => {
-    await load();
-    setDrafts((d) => ({
-      ...d,
-      kindleEmail: ' new@kindle.com ',
-      sendTime: '07:30',
-    }));
-    solid.flush();
+const SAVED_KINDLE = {
+  kindleEmail: 'kindle@example.com',
+  schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
+  nextSendAt: '2026-11-20T00:00:00Z',
+};
 
-    queueEmpty();
-    queue(
-      makeSettings({
-        retention: 999,
-        kindle: {
-          kindleEmail: 'new@kindle.com',
-          sendTime: '07:30',
-          nextSendAt: '2026-11-21T07:30:00Z',
-        },
-      })
-    );
-    await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(true);
-    solid.flush();
+const edit = (patch: Partial<SettingsDrafts>): void => {
+  setDrafts((d) => ({ ...d, ...patch }));
+  solid.flush();
+};
+
+const loadWithoutSchedule = (): Promise<void> =>
+  load(makeSettings({ kindle: { kindleEmail: 'kindle@example.com' } }));
+
+/** Saves successfully and answers the follow-up `GET /api/settings` with `reread`. */
+const saveRereading = async (reread: Settings): Promise<void> => {
+  queueEmpty();
+  queue(reread);
+  await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(true);
+  solid.flush();
+};
+
+const saveWithoutReread = async (): Promise<void> => {
+  queueEmpty();
+  queue({ error: 'SettingRepositoryError' }, 500);
+  await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(true);
+  solid.flush();
+};
+
+describe('kindle save', () => {
+  it('sends the timezone inside the schedule and clears dirty state', async () => {
+    await load();
+    edit({
+      kindleEmail: ' new@kindle.com ',
+      timezone: 'Europe/Paris',
+      scheduleHour: 7,
+      scheduleMinute: 30,
+    });
+    expect(state.isSectionDirty('kindle', drafts)).toBe(true);
+    const savedKindle = {
+      kindleEmail: 'new@kindle.com',
+      schedule: { hour: 7, minute: 30, timezone: 'Europe/Paris' },
+      nextSendAt: '2026-11-21T05:30:00Z',
+    };
+
+    await saveRereading(makeSettings({ retention: 999, kindle: savedKindle }));
 
     expect(requestUrl(2)).toBe('/api/settings/kindle');
     expect(requestInit(2).method).toBe('PUT');
-    expect(requestBody(2)).toEqual({
+    const body = requestBody(2) as Record<string, unknown>;
+    expect(body).toEqual({
       kindleEmail: 'new@kindle.com',
-      sendTime: '07:30',
+      schedule: { hour: 7, minute: 30, timezone: 'Europe/Paris' },
     });
+    expect('timezone' in body).toBe(false);
     expect(requestUrl(3)).toBe('/api/settings');
     expect(state.settings()?.retention).toBe(100);
-    expect(state.settings()?.kindle).toEqual({
-      kindleEmail: 'new@kindle.com',
-      sendTime: '07:30',
-      nextSendAt: '2026-11-21T07:30:00Z',
-    });
+    expect(state.settings()?.kindle).toEqual(savedKindle);
     expect(drafts.kindleEmail).toBe('new@kindle.com');
     expect(state.isSectionDirty('kindle', drafts)).toBe(false);
     expect(ui.currentToast()?.message).toBe(
@@ -127,50 +148,106 @@ describe('kindle save', () => {
   });
 });
 
-describe('kindle schedule disable', () => {
-  it('omits blank sendTime when disabling scheduled sends', async () => {
-    await load();
-    setDrafts((d) => ({ ...d, sendTime: '   ' }));
-    solid.flush();
+describe('kindle schedule enable', () => {
+  it('enables scheduled sending with the default 08:00 time', async () => {
+    await loadWithoutSchedule();
+    edit({ scheduleEnabled: true });
 
-    queueEmpty();
-    queue(makeSettings({ kindle: { kindleEmail: 'kindle@example.com' } }));
-    await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(true);
-    solid.flush();
+    await saveRereading(
+      makeSettings({
+        kindle: {
+          kindleEmail: 'kindle@example.com',
+          schedule: { hour: 8, minute: 0, timezone: 'UTC' },
+          nextSendAt: '2026-11-21T08:00:00Z',
+        },
+      })
+    );
+
+    expect(requestBody(2)).toEqual({
+      kindleEmail: 'kindle@example.com',
+      schedule: { hour: 8, minute: 0, timezone: 'UTC' },
+    });
+    expect(state.isSectionDirty('kindle', drafts)).toBe(false);
+  });
+});
+
+describe('kindle schedule disable', () => {
+  it('omits the schedule and the timezone when scheduled sending is off', async () => {
+    await load();
+    edit({ scheduleEnabled: false, scheduleHour: 21, scheduleMinute: 45 });
+    const disabledKindle = { kindleEmail: 'kindle@example.com' };
+
+    await saveRereading(makeSettings({ kindle: disabledKindle }));
 
     const body = requestBody(2) as Record<string, unknown>;
-    expect(body).toEqual({ kindleEmail: 'kindle@example.com' });
-    expect('sendTime' in body).toBe(false);
-    expect(state.settings()?.kindle).toEqual({
-      kindleEmail: 'kindle@example.com',
-    });
+    expect(body).toEqual(disabledKindle);
+    expect('schedule' in body).toBe(false);
+    expect('timezone' in body).toBe(false);
+    expect(state.settings()?.kindle).toEqual(disabledKindle);
     expect(state.settings()?.kindle?.nextSendAt).toBeUndefined();
+    expect(state.isSectionDirty('kindle', drafts)).toBe(false);
+  });
+
+  it('does not send an edited timezone while scheduled sending stays off', async () => {
+    await loadWithoutSchedule();
+    edit({ kindleEmail: 'other@kindle.com', timezone: 'Asia/Tokyo' });
+
+    await saveRereading(
+      makeSettings({ kindle: { kindleEmail: 'other@kindle.com' } })
+    );
+
+    const body = requestBody(2) as Record<string, unknown>;
+    expect(body).toEqual({ kindleEmail: 'other@kindle.com' });
+    expect('timezone' in body).toBe(false);
     expect(state.isSectionDirty('kindle', drafts)).toBe(false);
   });
 });
 
 describe('kindle save fallback', () => {
-  it('falls back to submitted values and clears nextSendAt when re-read fails', async () => {
+  it('falls back to the submitted values and clears nextSendAt when the schedule changed and the re-read fails', async () => {
     await load();
-    setDrafts((d) => ({
-      ...d,
-      kindleEmail: 'fallback@kindle.com',
-      sendTime: '',
-    }));
-    solid.flush();
+    edit({ kindleEmail: 'fallback@kindle.com', scheduleHour: 9 });
 
-    queueEmpty();
-    queue({ error: 'SettingRepositoryError' }, 500);
-    await expect(state.saveKindle(drafts, setDrafts)).resolves.toBe(true);
-    solid.flush();
+    await saveWithoutReread();
 
     expect(state.settings()?.kindle).toEqual({
       kindleEmail: 'fallback@kindle.com',
+      schedule: { hour: 9, minute: 0, timezone: 'Asia/Shanghai' },
     });
     expect(state.settings()?.kindle?.nextSendAt).toBeUndefined();
+    expect(state.isSectionDirty('kindle', drafts)).toBe(false);
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('settings.kindleSavedToast'))
     );
+  });
+
+  it.each([
+    ['hour', { scheduleHour: 9 }],
+    ['minute', { scheduleMinute: 30 }],
+    ['timezone', { timezone: 'UTC' }],
+    ['schedule toggle', { scheduleEnabled: false }],
+  ])(
+    'clears nextSendAt when the %s changed and the re-read fails',
+    async (_, patch) => {
+      await load();
+      edit(patch);
+
+      await saveWithoutReread();
+
+      expect(state.settings()?.kindle?.nextSendAt).toBeUndefined();
+    }
+  );
+
+  it('keeps nextSendAt when only the address changed and the re-read fails', async () => {
+    await load();
+    edit({ kindleEmail: 'fallback@kindle.com' });
+
+    await saveWithoutReread();
+
+    expect(state.settings()?.kindle).toEqual({
+      ...SAVED_KINDLE,
+      kindleEmail: 'fallback@kindle.com',
+    });
   });
 });
 

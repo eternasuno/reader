@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"reader/internal/domain"
 )
@@ -25,10 +26,16 @@ type smtpSettingsJSON struct {
 	PasswordConfigured bool                `json:"passwordConfigured"`
 }
 
+type kindleScheduleJSON struct {
+	Hour     int    `json:"hour"`
+	Minute   int    `json:"minute"`
+	Timezone string `json:"timezone"`
+}
+
 type kindleSettingsJSON struct {
-	KindleEmail string  `json:"kindleEmail"`
-	SendTime    *string `json:"sendTime,omitempty"`
-	NextSendAt  *string `json:"nextSendAt,omitempty"`
+	KindleEmail string              `json:"kindleEmail"`
+	Schedule    *kindleScheduleJSON `json:"schedule,omitempty"`
+	NextSendAt  *string             `json:"nextSendAt,omitempty"`
 }
 
 type retentionRequest struct {
@@ -56,9 +63,17 @@ type smtpSettingsRequest struct {
 	Password    *string             `json:"password"`
 }
 
+// Hour and Minute are pointers so a missing or null value is rejected instead
+// of silently becoming 00:00.
+type kindleScheduleRequest struct {
+	Hour     *int   `json:"hour"`
+	Minute   *int   `json:"minute"`
+	Timezone string `json:"timezone"`
+}
+
 type kindleSettingsRequest struct {
-	KindleEmail string  `json:"kindleEmail"`
-	SendTime    *string `json:"sendTime"`
+	KindleEmail string                 `json:"kindleEmail"`
+	Schedule    *kindleScheduleRequest `json:"schedule"`
 }
 
 func (s *server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
@@ -88,14 +103,64 @@ func (s *server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if settings.Kindle != nil {
-		response.Kindle = &kindleSettingsJSON{
-			KindleEmail: settings.Kindle.KindleEmail,
-			SendTime:    settings.Kindle.SendTime,
-			NextSendAt:  formatTimestampPtr(settings.Kindle.NextSendAt),
+		kindle, err := s.toKindleSettingsJSON(r.Context(), *settings.Kindle)
+		if err != nil {
+			writeError(w, err)
+
+			return
 		}
+
+		response.Kindle = &kindle
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) toKindleSettingsJSON(ctx context.Context, kindle domain.KindleSettings) (kindleSettingsJSON, error) {
+	response := kindleSettingsJSON{KindleEmail: kindle.KindleEmail}
+	if kindle.Schedule == nil {
+		return response, nil
+	}
+
+	nextSendAt, err := s.kindleNextSendAt(ctx, kindle, *kindle.Schedule)
+	if err != nil {
+		return kindleSettingsJSON{}, err
+	}
+
+	response.Schedule = &kindleScheduleJSON{Hour: kindle.Schedule.Hour, Minute: kindle.Schedule.Minute, Timezone: kindle.Schedule.Timezone}
+	response.NextSendAt = formatTimestampPtr(&nextSendAt)
+
+	return response, nil
+}
+
+func (s *server) kindleNextSendAt(ctx context.Context, kindle domain.KindleSettings, schedule domain.KindleSchedule) (time.Time, error) {
+	loc, err := domain.LoadKindleLocation(schedule.Timezone)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	lastScheduledStartedAt, err := s.cfg.KindleSends.LastScheduledStartedAt(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	anchor := scheduleAnchor(kindle.ScheduleUpdatedAt, lastScheduledStartedAt)
+
+	return domain.KindleNextSendAt(schedule, loc, s.cfg.Now().UTC(), anchor), nil
+}
+
+// scheduleAnchor is the later of the schedule's last change and the start of the
+// newest scheduled send; occurrences at or before it are no longer due.
+func scheduleAnchor(scheduleUpdatedAt, lastScheduledStartedAt *time.Time) time.Time {
+	var anchor time.Time
+
+	for _, candidate := range []*time.Time{scheduleUpdatedAt, lastScheduledStartedAt} {
+		if candidate != nil && candidate.After(anchor) {
+			anchor = *candidate
+		}
+	}
+
+	return anchor
 }
 
 func secretConfigured(value *string) bool {
@@ -180,16 +245,33 @@ func (s *server) handleSMTPPasswordDelete(w http.ResponseWriter, r *http.Request
 
 func (s *server) handleKindleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	decodeAndSave(w, r, func(ctx context.Context, req kindleSettingsRequest) error {
-		validated, err := domain.ValidateKindleSettings(domain.KindleSettings{
-			KindleEmail: req.KindleEmail,
-			SendTime:    req.SendTime,
-		}, s.cfg.Now(), s.cfg.Location)
+		kindle, err := toKindleSettings(req)
 		if err != nil {
 			return err
 		}
 
-		return s.cfg.Settings.UpdateKindle(ctx, validated)
+		validated, err := domain.ValidateKindleSettings(kindle)
+		if err != nil {
+			return err
+		}
+
+		return s.cfg.Settings.UpdateKindle(ctx, validated, s.cfg.Now())
 	})
+}
+
+func toKindleSettings(req kindleSettingsRequest) (domain.KindleSettings, error) {
+	kindle := domain.KindleSettings{KindleEmail: req.KindleEmail}
+	if req.Schedule == nil {
+		return kindle, nil
+	}
+
+	if req.Schedule.Hour == nil || req.Schedule.Minute == nil {
+		return domain.KindleSettings{}, domain.NewError(domain.ErrInvalidKindleSetting, nil)
+	}
+
+	kindle.Schedule = &domain.KindleSchedule{Hour: *req.Schedule.Hour, Minute: *req.Schedule.Minute, Timezone: req.Schedule.Timezone}
+
+	return kindle, nil
 }
 
 func decodeAndSave[Req any](w http.ResponseWriter, r *http.Request, save func(context.Context, Req) error) {

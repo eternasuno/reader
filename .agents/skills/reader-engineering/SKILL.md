@@ -8,7 +8,7 @@ description: How the Lantern target Go + SQLite + SolidJS 2 SPA reader is built.
 Product behavior lives in `reader-spec`; this skill defines the target Go + SQLite + SolidJS 2 architecture and pinned libraries.
 
 Conditional files:
-- Read [database.md](database.md) when modifying SQLite connections, embedded migrations, indexes, or repositories.
+- Read [database.md](database.md) when modifying SQLite connections, migrations, schema, indexes, or repositories.
 - Read [ui.md](ui.md) when modifying styling, layout, shared UI controls, focus handling, or the article iframe.
 - Read [upstream-issues.md](upstream-issues.md) before upgrading dependencies or adopting Solid `action` / optimistic APIs.
 - Read [deployment.md](deployment.md) when modifying `Dockerfile`, `go:embed` static serving, SPA fallback, or container build stages.
@@ -34,7 +34,8 @@ Conditional files:
 cmd/reader        ──> internal/http, internal/worker, internal/sqlite, internal/content, internal/fetcher, internal/epub, internal/mail, web (go:embed)
 internal/http     ──> internal/domain, internal/worker
 internal/worker   ──> internal/domain, internal/fetcher, internal/content, internal/epub, internal/mail
-internal/sqlite   ──> internal/domain
+internal/sqlite   ──> internal/domain, internal/sqlite/migrations
+internal/sqlite/migrations ──> database/sql + goose only (never internal/domain)
 internal/content  ──> internal/domain
 internal/fetcher  ──> internal/domain
 internal/epub     ──> internal/domain
@@ -57,8 +58,8 @@ internal/domain   ──> Go stdlib + github.com/google/uuid only
   - External CDP (`BrowserEndpoint`, which itself may point to a private/Docker service) and Jina execute remote page/subresource fetches outside Go's dialer (`CM-FETCH-2`). Strip `user:pass@` URL credentials from API responses, OPML exports, and logs, and refuse (`422 WebpageFetcherError`) to forward credentialed URLs to `jina` or `browser` (`CM-URL-5`).
 - **Secrets**: `JinaKey`, `BrowserEndpoint`, `SMTPPassword`, `APP_PASSWORD`, `SESSION_SECRET`, and URL credentials must never be returned in API responses or written to structured logs. Settings responses expose them only as `*Configured` booleans. Persisted SMTP errors (`kindle_send.error`) must not carry server text on AUTH failures (`smtp authentication failed (<code>)`), and must redact base64 (`Std`/`RawStd`/`URL`/`RawURL`) forms of the password and `AUTH PLAIN` blob, since servers may echo them. Whitespace-only secret input is treated as blank by both frontend and SQLite; non-blank secrets are stored untrimmed.
 - **Workers**:
-  - `RefreshQueue` deduplicates concurrent refreshes per `feedId` via an in-memory map + mutex, processes jobs through a bounded worker pool (default `5`), and updates `failure_count` / `last_error` in SQLite so repeated failures (`>= 3`) surface in the UI.
-  - `KindleSender` acquires a per-process mutex/slot (`KindleSendInProgress` on conflict), persists the `running` `kindle_send` row with snapshotted delivery config, and **then** spawns the background worker using an application-owned `context.Context` (never `r.Context()`, which cancels when `202` is written). Startup marks any leftover `running` rows as `failed`.
+  - `RefreshQueue` deduplicates concurrent refreshes per `feedId` via an in-memory map + mutex, processes jobs through a bounded worker pool (default `5`), and records each finished external attempt in `feed_refresh` (pruned per feed, `FD-SCHED-3`) so repeated failures (derived `failureCount >= 3`) surface in the UI.
+  - `KindleSender` acquires a per-process mutex/slot (`KindleSendInProgress` on conflict), persists the `running` `kindle_send` row with snapshotted delivery config, and **then** spawns the background worker using an application-owned `context.Context` (never `r.Context()`, which cancels when `202` is written). Startup marks any leftover `running` rows as `failed`. The scheduler stores no next send time: a claim derives the due occurrence from the schedule, `schedule_updated_at`, and the newest scheduled `kindle_send` inside one write transaction, and writes nothing while a send is running (`KD-SCHED-1`).
 - **Fail fast**: do not limp along on unexpected or unresolvable errors (worker goroutines do not `recover()`, except a panic while parsing an untrusted feed body, which becomes an external `FeedParserError`, as the HTTP extraction path already does). Persistent failure of the internal persistence layer (SQLite via domain repositories) in background code exits the process non-zero through the workers' `OnFatal` callback (`context.WithCancelCause` in `serveApp`), after a bounded retry or `3` consecutive failures (consecutive-failure counter); Docker restarts it. External failures (feed sites, SMTP, page fetches) and shutdown cancellation are never fatal. A missing `kindle_send` row (`ErrKindleSendNotFound`) is logged, not fatal. HTTP handlers return `500` for database errors instead of crashing the process. Graceful shutdown is hard-capped at `3s` in total (`shutdownTimeout`); unfinished work is abandoned.
 - **HTTP Errors**: handlers decode/validate request bodies once, map domain errors to `{ "error": "<ErrorCode>" }`, and keep internal causes in server logs only (`writeError` logs every 5xx cause sanitized, bounded, single-line; 4xx are not logged).
 

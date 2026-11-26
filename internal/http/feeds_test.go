@@ -7,6 +7,7 @@ import (
 	"reader/internal/domain"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFeedPreview(t *testing.T) {
@@ -381,5 +382,54 @@ func TestFeedReadAllValidationAndBoundary(t *testing.T) {
 	requireStatus(t, h.authed(http.MethodPost, "/api/feed-items/read-all", map[string]any{"before": allBoundary}), http.StatusNoContent)
 	if !h.feedItemByID(afterItem.ID).Read || !h.feedItemByID(otherBefore.ID).Read || h.feedItemByID(otherAfter.ID).Read {
 		t.Fatalf("bounded feed-items read-all did not respect boundary")
+	}
+}
+
+func TestFeedListExposesSiteURLAndDerivedRefreshState(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	synced := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
+	untouched := h.seedFeed("Untouched", "https://feeds.example.com/other", nil)
+
+	startedAt := h.clock.Now()
+	finishedAt := startedAt.Add(2 * time.Second)
+	meta := domain.FeedSyncMeta{
+		Title:   "Go Blog",
+		SiteURL: strPtr("https://go.dev/blog/"),
+		IconURL: strPtr("https://go.dev/favicon.ico"),
+	}
+
+	if err := h.db.Feeds().ApplySync(context.Background(), synced.ID, meta, startedAt, finishedAt, nil, nil); err != nil {
+		t.Fatalf("apply sync: %v", err)
+	}
+
+	recorder := h.authed(http.MethodGet, "/api/feeds", nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	var payload struct {
+		Items []map[string]any `json:"items"`
+	}
+	decodeBody(t, recorder, &payload)
+
+	byID := make(map[string]map[string]any, len(payload.Items))
+	for _, item := range payload.Items {
+		byID[item["id"].(string)] = item
+	}
+
+	got := byID[synced.ID]
+	if got["siteUrl"] != "https://go.dev/blog/" || got["iconUrl"] != "https://go.dev/favicon.ico" || got["updatedAt"] != finishedAt.Format(time.RFC3339) {
+		t.Fatalf("synced feed = %+v", got)
+	}
+
+	untouchedFeed, listed := byID[untouched.ID]
+	if !listed {
+		t.Fatalf("untouched feed %s missing from %+v", untouched.ID, payload.Items)
+	}
+
+	for _, key := range []string{"siteUrl", "iconUrl", "updatedAt"} {
+		if _, present := untouchedFeed[key]; present {
+			t.Fatalf("%s must be omitted for a feed that was never refreshed: %+v", key, untouchedFeed)
+		}
 	}
 }

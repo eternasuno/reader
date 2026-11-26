@@ -3,18 +3,13 @@ package domain
 import (
 	"net/mail"
 	"net/url"
-	"regexp"
-	"strconv"
 	"strings"
-	"time"
 )
 
 const (
 	defaultPageLimit = 30
 	maxPageLimit     = 200
 )
-
-var sendTimePattern = regexp.MustCompile(`^([01][0-9]|2[0-3]):(00|30)$`)
 
 func ValidatePageParams(limit int, hasLimit bool, unread bool, order SortOrder, cursor *string, boundary *string) (PageParams, error) {
 	if !hasLimit {
@@ -149,75 +144,6 @@ func ValidateBrowserEndpoint(raw string) (string, error) {
 	return trimmed, nil
 }
 
-func ValidateSendTime(raw string) (int, int, error) {
-	match := sendTimePattern.FindStringSubmatch(strings.TrimSpace(raw))
-	if match == nil {
-		return 0, 0, NewError(ErrInvalidKindleSetting, nil)
-	}
-
-	hour, _ := strconv.Atoi(match[1])
-	minute, _ := strconv.Atoi(match[2])
-
-	return hour, minute, nil
-}
-
-func ComputeNextSendAt(sendTime string, now time.Time, loc *time.Location) (time.Time, error) {
-	hour, minute, err := ValidateSendTime(sendTime)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	local := now.In(loc)
-	baseDate := time.Date(local.Year(), local.Month(), local.Day(), 12, 0, 0, 0, loc)
-	for dayOffset := 0; dayOffset < 8; dayOffset++ {
-		target := baseDate.AddDate(0, 0, dayOffset)
-		if candidate, ok := candidateSendTimeForDay(target, hour, minute, now, loc); ok {
-			return candidate, nil
-		}
-	}
-
-	return time.Time{}, NewError(ErrInvalidKindleSetting, nil)
-}
-
-func candidateSendTimeForDay(target time.Time, hour int, minute int, now time.Time, loc *time.Location) (time.Time, bool) {
-	baseCandidate := time.Date(target.Year(), target.Month(), target.Day(), hour, minute, 0, 0, loc)
-	for _, delta := range sendTimeDeltas(dstShift(baseCandidate)) {
-		candidate := baseCandidate.Add(delta).In(loc)
-		if isMatchingLocalTime(candidate, target, hour, minute) && candidate.After(now) {
-			return candidate.UTC(), true
-		}
-	}
-
-	return time.Time{}, false
-}
-
-func dstShift(baseCandidate time.Time) time.Duration {
-	_, beforeOff := baseCandidate.Add(-3 * time.Hour).Zone()
-	_, afterOff := baseCandidate.Add(3 * time.Hour).Zone()
-	shift := time.Duration(beforeOff-afterOff) * time.Second
-	if shift < 0 {
-		return -shift
-	}
-
-	return shift
-}
-
-func sendTimeDeltas(shift time.Duration) []time.Duration {
-	if shift <= 0 {
-		return []time.Duration{0}
-	}
-
-	return []time.Duration{-shift, 0, shift}
-}
-
-func isMatchingLocalTime(candidate time.Time, target time.Time, hour int, minute int) bool {
-	if candidate.Year() != target.Year() || candidate.Month() != target.Month() || candidate.Day() != target.Day() {
-		return false
-	}
-
-	return candidate.Hour() == hour && candidate.Minute() == minute
-}
-
 func ValidateSMTPSettings(s SMTPSettings) (SMTPSettings, error) {
 	senderEmail := strings.TrimSpace(s.SenderEmail)
 	if !isValidEmail(senderEmail) {
@@ -241,40 +167,40 @@ func ValidateSMTPSettings(s SMTPSettings) (SMTPSettings, error) {
 	return settings, nil
 }
 
-func ValidateKindleSettings(k KindleSettings, now time.Time, loc *time.Location) (KindleSettings, error) {
+func ValidateKindleSettings(k KindleSettings) (KindleSettings, error) {
 	kindleEmail := strings.TrimSpace(k.KindleEmail)
 	if !isValidEmail(kindleEmail) {
 		return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
 	}
 
-	sendTime, nextSendAt, err := resolveKindleSchedule(k.SendTime, now, loc)
+	settings := KindleSettings{KindleEmail: kindleEmail}
+	if k.Schedule == nil {
+		return settings, nil
+	}
+
+	schedule, err := ValidateKindleSchedule(*k.Schedule)
 	if err != nil {
 		return KindleSettings{}, err
 	}
 
-	return KindleSettings{
-		KindleEmail: kindleEmail,
-		SendTime:    sendTime,
-		NextSendAt:  nextSendAt,
-	}, nil
+	settings.Schedule = &schedule
+
+	return settings, nil
 }
 
-func resolveKindleSchedule(rawSendTime *string, now time.Time, loc *time.Location) (*string, *time.Time, error) {
-	if rawSendTime == nil {
-		return nil, nil, nil
+func ValidateKindleSchedule(s KindleSchedule) (KindleSchedule, error) {
+	validHour := s.Hour >= 0 && s.Hour <= 23
+	validMinute := s.Minute >= 0 && s.Minute <= 55 && s.Minute%5 == 0
+	if !validHour || !validMinute {
+		return KindleSchedule{}, NewError(ErrInvalidKindleSetting, nil)
 	}
 
-	trimmed := strings.TrimSpace(*rawSendTime)
-	if trimmed == "" {
-		return nil, nil, nil
+	s.Timezone = strings.TrimSpace(s.Timezone)
+	if _, err := LoadKindleLocation(s.Timezone); err != nil {
+		return KindleSchedule{}, err
 	}
 
-	nextSendAt, err := ComputeNextSendAt(trimmed, now, loc)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return &trimmed, &nextSendAt, nil
+	return s, nil
 }
 
 func trimOptional(value *string) *string {

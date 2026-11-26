@@ -12,7 +12,7 @@ const SETTINGS = {
   jinaKeyConfigured: false,
   browserEndpointConfigured: false,
   smtp: { senderEmail: 'a@b', host: 'h', port: 465, security: 'tls' },
-  kindle: { kindleEmail: 'k@b', sendTime: '' },
+  kindle: { kindleEmail: 'k@b' },
 };
 
 const mountSettings = async () => {

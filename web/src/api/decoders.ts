@@ -5,6 +5,7 @@ import type {
   FeedPreview,
   FeedUnreadCount,
   Folder,
+  KindleSchedule,
   KindleSendRecord,
   KindleSends,
   KindleSettingsView,
@@ -146,6 +147,7 @@ export const isFeed: TypeGuard<Feed> = (value): value is Feed =>
   isOptionalString(value.updatedAt) &&
   isFiniteNumber(value.failureCount) &&
   isOptionalString(value.lastError) &&
+  (value.siteUrl === undefined || isServerHttpUrl(value.siteUrl)) &&
   (value.iconUrl === undefined || isServerHttpUrl(value.iconUrl)) &&
   isReaderMode(value.readerMode) &&
   isSortOrder(value.order);
@@ -234,12 +236,20 @@ const isSmtpSettingsView: TypeGuard<SmtpSettingsView> = (
   isOptionalString(value.user) &&
   isOptionalBoolean(value.passwordConfigured);
 
+const isKindleSchedule: TypeGuard<KindleSchedule> = (
+  value
+): value is KindleSchedule =>
+  isRecord(value) &&
+  Number.isInteger(value.hour) &&
+  Number.isInteger(value.minute) &&
+  isString(value.timezone);
+
 const isKindleSettingsView: TypeGuard<KindleSettingsView> = (
   value
 ): value is KindleSettingsView =>
   isRecord(value) &&
   isString(value.kindleEmail) &&
-  isOptionalString(value.sendTime) &&
+  isOptionalObject(value.schedule, isKindleSchedule) &&
   isOptionalString(value.nextSendAt);
 
 export const isSettings: TypeGuard<Settings> = (value): value is Settings =>

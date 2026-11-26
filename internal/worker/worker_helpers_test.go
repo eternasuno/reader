@@ -87,10 +87,6 @@ func newTestKindleSender(t *testing.T, cfg KindleConfig) *KindleSender {
 		cfg.BaseCtx = context.Background()
 	}
 
-	if cfg.Location == nil {
-		cfg.Location = time.UTC
-	}
-
 	if cfg.OnFatal == nil {
 		cfg.OnFatal = func(err error) {
 			t.Errorf("unexpected fatal: %v", err)
@@ -113,16 +109,19 @@ func newTestRefreshQueue(t *testing.T, cfg RefreshConfig) *RefreshQueue {
 }
 
 type recordedFailure struct {
-	feedID  string
-	summary string
+	feedID     string
+	summary    string
+	startedAt  time.Time
+	finishedAt time.Time
 }
 
 type appliedSync struct {
-	feedID    string
-	title     string
-	updatedAt time.Time
-	newItems  []domain.FeedItem
-	deleteIDs []string
+	feedID     string
+	meta       domain.FeedSyncMeta
+	startedAt  time.Time
+	finishedAt time.Time
+	newItems   []domain.FeedItem
+	deleteIDs  []string
 }
 
 type fakeFeedRepository struct {
@@ -209,7 +208,7 @@ func (r *fakeFeedRepository) MoveToFolder(ctx context.Context, id string, folder
 	return nil
 }
 
-func (r *fakeFeedRepository) RecordRefreshFailure(ctx context.Context, id string, errSummary string) error {
+func (r *fakeFeedRepository) RecordRefreshFailure(ctx context.Context, id string, errSummary string, startedAt, finishedAt time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -217,12 +216,12 @@ func (r *fakeFeedRepository) RecordRefreshFailure(ctx context.Context, id string
 		return r.recordErr
 	}
 
-	r.failures = append(r.failures, recordedFailure{feedID: id, summary: errSummary})
+	r.failures = append(r.failures, recordedFailure{feedID: id, summary: errSummary, startedAt: startedAt, finishedAt: finishedAt})
 
 	return nil
 }
 
-func (r *fakeFeedRepository) ApplySync(ctx context.Context, feedID string, newTitle string, iconURL *string, updatedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
+func (r *fakeFeedRepository) ApplySync(ctx context.Context, feedID string, meta domain.FeedSyncMeta, startedAt, finishedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -235,11 +234,12 @@ func (r *fakeFeedRepository) ApplySync(ctx context.Context, feedID string, newTi
 	}
 
 	r.syncs = append(r.syncs, appliedSync{
-		feedID:    feedID,
-		title:     newTitle,
-		updatedAt: updatedAt,
-		newItems:  append([]domain.FeedItem(nil), newItems...),
-		deleteIDs: append([]string(nil), deleteIDs...),
+		feedID:     feedID,
+		meta:       meta,
+		startedAt:  startedAt,
+		finishedAt: finishedAt,
+		newItems:   append([]domain.FeedItem(nil), newItems...),
+		deleteIDs:  append([]string(nil), deleteIDs...),
 	})
 
 	return nil
@@ -429,7 +429,7 @@ func (r *fakeSettingRepository) DeleteSMTP(ctx context.Context) error {
 	return nil
 }
 
-func (r *fakeSettingRepository) UpdateKindle(ctx context.Context, kindle domain.KindleSettings) error {
+func (r *fakeSettingRepository) UpdateKindle(ctx context.Context, kindle domain.KindleSettings, now time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -506,9 +506,7 @@ func configuredSMTPSettings() domain.SMTPSettings {
 }
 
 func configuredKindleSettings() domain.KindleSettings {
-	return domain.KindleSettings{
-		KindleEmail: "reader@kindle.com",
-	}
+	return domain.KindleSettings{KindleEmail: "reader@kindle.com"}
 }
 
 func configuredDeliverySettings() domain.Settings {
@@ -518,5 +516,23 @@ func configuredDeliverySettings() domain.Settings {
 	return domain.Settings{
 		SMTP:   &smtp,
 		Kindle: &kindle,
+	}
+}
+
+// sequenceClock returns each time in order, then repeats the last one.
+func sequenceClock(times ...time.Time) func() time.Time {
+	var (
+		mu   sync.Mutex
+		next int
+	)
+
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+
+		current := times[min(next, len(times)-1)]
+		next++
+
+		return current
 	}
 }

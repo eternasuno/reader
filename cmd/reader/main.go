@@ -56,7 +56,6 @@ type envConfig struct {
 	Port                string
 	DataDir             string
 	SessionSecret       []byte
-	Location            *time.Location
 	AllowPrivateNetwork bool
 }
 
@@ -213,7 +212,6 @@ func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.S
 				SpoolDir:     filepath.Join(cfg.DataDir, epubSpoolDirName),
 			}),
 			MailSender: mail.NewSender(mail.Config{}),
-			Location:   cfg.Location,
 			OnFatal:    onFatal,
 		}),
 	}
@@ -247,7 +245,6 @@ func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (
 		AppPassword:      cfg.AppPassword,
 		AppURL:           cfg.AppURL,
 		SessionSecret:    cfg.SessionSecret,
-		Location:         cfg.Location,
 		Now:              time.Now,
 		HealthCheck:      func(ctx context.Context) error { return store.ReadDB().PingContext(ctx) },
 		StaticFS:         staticFS,
@@ -464,23 +461,12 @@ func loadConfig(getenv func(string) string) (envConfig, error) {
 		return envConfig{}, err
 	}
 
-	location := time.Local
-	if tz := getenv("TZ"); tz != "" {
-		loaded, err := time.LoadLocation(tz)
-		if err != nil {
-			return envConfig{}, fmt.Errorf("load time zone %q: %w", tz, err)
-		}
-
-		location = loaded
-	}
-
 	return envConfig{
 		AppPassword:         appPassword,
 		AppURL:              appURL,
 		Port:                envOrDefault(getenv, "PORT", defaultPort),
 		DataDir:             envOrDefault(getenv, "DATA_DIR", defaultDataDir),
 		SessionSecret:       sessionSecret,
-		Location:            location,
 		AllowPrivateNetwork: isTruthy(getenv("ALLOW_PRIVATE_NETWORK")),
 	}, nil
 }

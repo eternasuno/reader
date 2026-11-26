@@ -110,3 +110,33 @@ describe('site icons', () => {
     expect(state.siteIconUrl('not a url')).toBeNull();
   });
 });
+
+describe('feed icon candidates', () => {
+  it('orders the declared icon before the website favicon and deduplicates', () => {
+    expect(
+      state.feedIconCandidates({
+        iconUrl: 'https://cdn.example/logo.png',
+        siteUrl: 'https://www.example.com/blog/',
+      })
+    ).toEqual([
+      'https://cdn.example/logo.png',
+      'https://www.example.com/favicon.ico',
+    ]);
+    expect(
+      state.feedIconCandidates({
+        iconUrl: 'https://www.example.com/favicon.ico',
+        siteUrl: 'https://www.example.com/blog/',
+      })
+    ).toEqual(['https://www.example.com/favicon.ico']);
+  });
+
+  it('is empty without a declared icon or website', () => {
+    expect(state.feedIconCandidates({})).toEqual([]);
+    expect(
+      state.feedIconCandidates({ iconUrl: 'https://cdn.example/logo.png' })
+    ).toEqual(['https://cdn.example/logo.png']);
+    expect(state.feedIconCandidates({ siteUrl: 'ftp://example.com/' })).toEqual(
+      []
+    );
+  });
+});

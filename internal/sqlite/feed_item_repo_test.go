@@ -344,7 +344,7 @@ func TestFeedItemSaveExtractedContentIfEmpty(t *testing.T) {
 				ExtractedContent: tc.existing,
 			}
 
-			if err := store.Feeds().ApplySync(ctx, feed.ID, feed.Title, nil, time.Now().UTC(), []domain.FeedItem{item}, nil); err != nil {
+			if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: feed.Title}, time.Now().UTC(), time.Now().UTC(), []domain.FeedItem{item}, nil); err != nil {
 				t.Fatalf("seed item: %v", err)
 			}
 
@@ -447,7 +447,7 @@ func TestFeedItemStoredRefsAndRetention(t *testing.T) {
 		{ID: domain.NewID(), URL: mustURL(t, "https://example.com/first"), Title: "First"},
 		{ID: domain.NewID(), URL: mustURL(t, "https://user:secret@example.com/second"), Title: "Second"},
 	}
-	if err := store.Feeds().ApplySync(ctx, feed.ID, "Example", nil, time.Now().UTC(), items, nil); err != nil {
+	if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: "Example"}, time.Now().UTC(), time.Now().UTC(), items, nil); err != nil {
 		t.Fatalf("apply sync: %v", err)
 	}
 
@@ -576,7 +576,7 @@ func TestFeedItemBoundaryIsolationAndContinuation(t *testing.T) {
 				Title:  fmt.Sprintf("%s %d", feed.Title, seq),
 			}
 		}
-		if err := store.Feeds().ApplySync(ctx, feed.ID, feed.Title, nil, time.Now().UTC(), items, nil); err != nil {
+		if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: feed.Title}, time.Now().UTC(), time.Now().UTC(), items, nil); err != nil {
 			t.Fatalf("sync %s: %v", feed.Title, err)
 		}
 	}

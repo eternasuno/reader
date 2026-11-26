@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"reader/internal/domain"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -16,7 +17,8 @@ import (
 func TestRefreshOneSyncsFeed(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+	startedAt := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(7 * time.Second)
 	feed := domain.Feed{
 		ID:         "feed-1",
 		URL:        testURL(t, "https://example.com/feed.xml"),
@@ -29,7 +31,9 @@ func TestRefreshOneSyncsFeed(t *testing.T) {
 	settings := &fakeSettingRepository{settings: domain.Settings{Retention: 1}}
 	fetcher := &fakeFeedFetcher{body: []byte("<rss>"), finalURL: "https://example.com/feed.xml"}
 	parser := &fakeFeedParser{parsed: domain.ParsedFeed{
-		Title: "Fresh Title",
+		Title:   "Fresh Title",
+		SiteURL: ptrTo("https://example.com/"),
+		IconURL: ptrTo("https://example.com/icon.png"),
 		Entries: []domain.ParsedFeedEntry{
 			parsedEntry(t, "https://example.com/one", "One"),
 			parsedEntry(t, "https://example.com/two", "Two"),
@@ -43,7 +47,7 @@ func TestRefreshOneSyncsFeed(t *testing.T) {
 		Settings:  settings,
 		Fetcher:   fetcher,
 		Parser:    parser,
-		Now:       func() time.Time { return now },
+		Now:       sequenceClock(startedAt, finishedAt),
 	})
 
 	if err := queue.RefreshOne(context.Background(), "feed-1"); err != nil {
@@ -64,12 +68,17 @@ func TestRefreshOneSyncsFeed(t *testing.T) {
 		t.Fatalf("feedID = %q, want %q", applied.feedID, "feed-1")
 	}
 
-	if applied.title != "Fresh Title" {
-		t.Fatalf("title = %q, want %q", applied.title, "Fresh Title")
+	wantMeta := domain.FeedSyncMeta{
+		Title:   "Fresh Title",
+		SiteURL: ptrTo("https://example.com/"),
+		IconURL: ptrTo("https://example.com/icon.png"),
+	}
+	if !reflect.DeepEqual(applied.meta, wantMeta) {
+		t.Fatalf("meta = %+v, want %+v", applied.meta, wantMeta)
 	}
 
-	if !applied.updatedAt.Equal(now) {
-		t.Fatalf("updatedAt = %v, want %v", applied.updatedAt, now)
+	if !applied.startedAt.Equal(startedAt) || !applied.finishedAt.Equal(finishedAt) {
+		t.Fatalf("refresh window = [%v, %v], want [%v, %v]", applied.startedAt, applied.finishedAt, startedAt, finishedAt)
 	}
 
 	if len(applied.newItems) != 1 {
@@ -133,8 +142,8 @@ func TestRefreshOneFallsBackToFeedTitleAndHost(t *testing.T) {
 				t.Fatalf("ApplySync calls = %d, want 1", len(syncs))
 			}
 
-			if syncs[0].title != tc.want {
-				t.Fatalf("title = %q, want %q", syncs[0].title, tc.want)
+			if syncs[0].meta.Title != tc.want {
+				t.Fatalf("title = %q, want %q", syncs[0].meta.Title, tc.want)
 			}
 		})
 	}
@@ -175,7 +184,8 @@ func TestRefreshOneRecordsFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			now := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+			startedAt := time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
+			finishedAt := startedAt.Add(3 * time.Second)
 			feed := domain.Feed{ID: "feed-1", URL: testURL(t, "https://example.com/feed.xml")}
 			feeds := newTestFeedRepository(feed)
 			items := &fakeFeedItemRepository{}
@@ -189,7 +199,7 @@ func TestRefreshOneRecordsFailures(t *testing.T) {
 				Settings:  &fakeSettingRepository{},
 				Fetcher:   fetcher,
 				Parser:    parser,
-				Now:       func() time.Time { return now },
+				Now:       sequenceClock(startedAt, finishedAt),
 			})
 
 			if err := queue.RefreshOne(context.Background(), "feed-1"); err == nil {
@@ -207,6 +217,10 @@ func TestRefreshOneRecordsFailures(t *testing.T) {
 
 			if failures[0].summary != tc.summary {
 				t.Fatalf("failure summary = %q, want %q", failures[0].summary, tc.summary)
+			}
+
+			if !failures[0].startedAt.Equal(startedAt) || !failures[0].finishedAt.Equal(finishedAt) {
+				t.Fatalf("failure window = [%v, %v], want [%v, %v]", failures[0].startedAt, failures[0].finishedAt, startedAt, finishedAt)
 			}
 
 			if strings.Contains(failures[0].summary, "alice:secret") {

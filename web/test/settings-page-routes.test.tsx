@@ -39,7 +39,7 @@ const cfg = {
   jinaKeyConfigured: true,
   browserEndpointConfigured: false,
   smtp: { senderEmail: 'a@b', host: 'h', port: 465, security: 'tls' },
-  kindle: { kindleEmail: 'k@b', sendTime: '' },
+  kindle: { kindleEmail: 'k@b' },
 };
 const SENDS = [
   {
@@ -95,25 +95,120 @@ const confirmPair = () =>
     .mockReturnValueOnce(false)
     .mockReturnValueOnce(true);
 
-it('settings: mounts 4 sections, renders Kindle history/slots, and guards edits', async () => {
+it('settings: mounts 4 sections, renders Kindle history, and guards edits', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const { container, history } = await mountSettings();
   expect(container.textContent).toContain('已发送 3 篇（1 封邮件）');
   expect(container.textContent).toContain('smtp: connection refused');
   expect(inputValue(container, 'input[type="number"]')).toBe('50');
-  const slots = Array.from(
-    must<HTMLSelectElement>(container, 'select').options,
-    (o) => o.value
-  );
-  expect(slots).toHaveLength(49);
-  expect(slots.slice(0, 4)).toEqual(['', '00:00', '00:30', '01:00']);
-  expect(slots.at(-1)).toBe('23:30');
   typeInto(container, 'input[type="number"]', '25');
   tab(container, 1, '提取');
   expect(confirm.mock.calls[0]?.[0]).toContain('当前分区有未保存的修改');
   click(btn(container, '返回阅读器'));
   expect(confirm.mock.calls[1]?.[0]).toContain('有未保存的修改');
   expect(history.get()).toBe('/settings');
+});
+
+const labelled = <T extends HTMLElement>(root: ParentNode, text: string): T => {
+  const label = Array.from(root.querySelectorAll('label')).find(
+    (el) => el.textContent === text
+  );
+  if (label === undefined) throw new Error(`label ${text} missing`);
+
+  return must<T>(root, `[id="${label.htmlFor}"]`);
+};
+const optionTexts = (select: HTMLSelectElement): Array<string | null> =>
+  Array.from(select.options, (o) => o.textContent);
+const choose = (select: HTMLSelectElement, value: string): void => {
+  select.value = value;
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  harness.modules.solid.flush();
+};
+const MINUTE_STEPS = Array.from({ length: 12 }, (_, i) =>
+  String(i * 5).padStart(2, '0')
+);
+
+const mountKindle = async (ov?: FetchHandler, body?: unknown) => {
+  const { container } = await mountSettings(ov, body);
+  const kindle = tab(container, 2, 'Kindle');
+
+  return {
+    kindle,
+    toggle: labelled<HTMLInputElement>(kindle, '每日定时发送'),
+    hour: labelled<HTMLSelectElement>(kindle, '小时'),
+    minute: labelled<HTMLSelectElement>(kindle, '分钟'),
+    zone: labelled<HTMLSelectElement>(kindle, '时区'),
+  };
+};
+
+it('settings kindle: schedule selects list hours, 5-minute steps and UTC-first zones, disabled while the toggle is off', async () => {
+  const { toggle, hour, minute, zone } = await mountKindle();
+
+  expect(toggle.type).toBe('checkbox');
+  expect(toggle.checked).toBe(false);
+  expect([hour, minute, zone].map((select) => select.disabled)).toEqual([
+    true,
+    true,
+    true,
+  ]);
+  expect(optionTexts(hour)).toHaveLength(24);
+  expect(optionTexts(hour).slice(0, 2)).toEqual(['00', '01']);
+  expect(optionTexts(hour).at(-1)).toBe('23');
+  expect(optionTexts(minute)).toEqual(MINUTE_STEPS);
+  expect(zone.options[0]?.value).toBe('UTC');
+  expect(zone.options[0]?.textContent).toBe('UTC (UTC+00:00)');
+  const zoneValues = Array.from(zone.options, (o) => o.value);
+  expect(new Set(zoneValues).size).toBe(zoneValues.length);
+  expect(
+    Array.from(zone.options).find((o) => o.value === 'Asia/Shanghai')
+      ?.textContent
+  ).toBe('Asia/Shanghai (UTC+08:00)');
+  expect([hour.value, minute.value, zone.value]).toEqual(['8', '0', 'UTC']);
+});
+
+it('settings kindle: toggling enables the selects and saves the timezone inside the schedule', async () => {
+  let saved: unknown;
+  const { kindle, toggle, hour, minute, zone } = await mountKindle((u, i) => {
+    if (u !== '/api/settings/kindle' || i.method !== 'PUT') return undefined;
+    saved = JSON.parse(String(i.body));
+
+    return new Response(null, { status: 204 });
+  });
+
+  click(toggle);
+  expect(toggle.checked).toBe(true);
+  expect([hour, minute, zone].map((select) => select.disabled)).toEqual([
+    false,
+    false,
+    false,
+  ]);
+  choose(hour, '21');
+  choose(minute, '45');
+  choose(zone, 'Asia/Shanghai');
+  click(btn(kindle, '保存 Kindle 设置'));
+  await settle(4);
+
+  expect(saved).toEqual({
+    kindleEmail: 'k@b',
+    schedule: { hour: 21, minute: 45, timezone: 'Asia/Shanghai' },
+  });
+});
+
+it('settings kindle: shows the saved schedule and keeps an unlisted saved timezone selectable', async () => {
+  const { toggle, hour, minute, zone } = await mountKindle(undefined, {
+    ...cfg,
+    kindle: {
+      kindleEmail: 'k@b',
+      schedule: { hour: 6, minute: 5, timezone: 'Legacy/Zone' },
+      nextSendAt: '2026-11-25T06:05:00Z',
+    },
+  });
+
+  expect(toggle.checked).toBe(true);
+  expect([hour.value, minute.value]).toEqual(['6', '5']);
+  expect(hour.disabled).toBe(false);
+  expect(zone.value).toBe('Legacy/Zone');
+  expect(zone.selectedOptions[0]?.textContent).toBe('Legacy/Zone');
 });
 
 it('settings extraction: toggles browser radio by endpoint config and links to services', async () => {

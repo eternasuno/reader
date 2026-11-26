@@ -20,6 +20,9 @@ const SETTINGS_OK = {
   jinaKeyConfigured: false,
   browserEndpointConfigured: false,
 };
+const KINDLE_OK = { kindleEmail: 'k@example.com' };
+const SCHEDULE_OK = { hour: 8, minute: 0, timezone: 'UTC' };
+const withKindle = (kindle: unknown) => ({ ...SETTINGS_OK, kindle });
 const OPML_FILE = new File(['<opml/>'], 'a.opml', { type: 'text/xml' });
 
 const spList = () => savedPagesApi.list();
@@ -76,6 +79,53 @@ const MALFORMED_CASES: Array<[string, () => Promise<unknown>, unknown]> = [
   ['extract', () => feedItemsApi.extract('i1'), { item: null }],
   ['settings', () => settingsApi.get(), { retention: 100, provider: 'x' }],
   ['settings smtp', () => settingsApi.get(), { ...SETTINGS_OK, smtp: null }],
+  [
+    'kindle schedule without timezone',
+    () => settingsApi.get(),
+    withKindle({ ...KINDLE_OK, schedule: { hour: 8, minute: 0 } }),
+  ],
+  [
+    'kindle top-level timezone only schedule',
+    () => settingsApi.get(),
+    withKindle({
+      ...KINDLE_OK,
+      timezone: 'UTC',
+      schedule: { hour: 8, minute: 0 },
+    }),
+  ],
+  [
+    'kindle schedule timezone type',
+    () => settingsApi.get(),
+    withKindle({ ...KINDLE_OK, schedule: { ...SCHEDULE_OK, timezone: 8 } }),
+  ],
+  [
+    'kindle null schedule',
+    () => settingsApi.get(),
+    withKindle({ ...KINDLE_OK, schedule: null }),
+  ],
+  [
+    'kindle schedule without minute',
+    () => settingsApi.get(),
+    withKindle({
+      ...KINDLE_OK,
+      schedule: { hour: 8, timezone: SCHEDULE_OK.timezone },
+    }),
+  ],
+  [
+    'kindle schedule fractional hour',
+    () => settingsApi.get(),
+    withKindle({ ...KINDLE_OK, schedule: { ...SCHEDULE_OK, hour: 8.5 } }),
+  ],
+  [
+    'kindle schedule string minute',
+    () => settingsApi.get(),
+    withKindle({ ...KINDLE_OK, schedule: { ...SCHEDULE_OK, minute: '30' } }),
+  ],
+  [
+    'kindle nextSendAt type',
+    () => settingsApi.get(),
+    withKindle({ ...KINDLE_OK, nextSendAt: 12 }),
+  ],
   ['kindle send', () => kindleApi.sendNow(), { item: { trigger: 'manual' } }],
   ['kindle sends', () => kindleApi.listSends(), { running: 'yes', items: [] }],
 ];

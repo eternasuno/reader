@@ -9,7 +9,7 @@ Application-wide settings for retention, OPML/quick-save, webpage extraction, Ki
 - `SET-VAL-3`: `JinaKey`, `BrowserEndpoint`, and the SMTP password are secrets: never returned in `GET /api/settings` (which only returns `jinaKeyConfigured`, `browserEndpointConfigured`, `smtp.passwordConfigured`) and never logged. An omitted, empty, or whitespace-only SMTP password on save keeps the stored one; a non-blank password is stored exactly as typed (no trimming).
 - `SET-VAL-4`: All external service settings and secrets live in SQLite and are managed solely via `/settings` (never via container environment variables). Saved changes take effect immediately on the next webpage extraction, manual send, or scheduled tick without restarting the container.
 - `SET-SVC-1`: External services are configured independently of the features that use them, so one service can serve several features: `Jina Key` (optional, `jina` provider), `浏览器服务地址` (`http`/`https`/`ws`/`wss`, `browser` provider), and the **SMTP mail service** (`senderEmail`, `host`, `port` `1..65535`, `security` `"tls"` | `"starttls"`, optional `user`, optional `password`). SMTP counts as configured when sender, host, port, and security are stored.
-- `SET-KINDLE-1`: Kindle delivery stores only `kindleEmail` and optional `sendTime` (`HH:00` or `HH:30`, 24-hour). Saving requires a configured SMTP service (`422 SMTPNotConfigured`) and computes `nextSendAt` as the next occurrence strictly after now in server `TZ` (`KD-SCHED-1`). Kindle sending is usable only while both SMTP and Kindle delivery are configured; clearing SMTP keeps the stored Kindle address but disables sending until SMTP is configured again.
+- `SET-KINDLE-1`: Kindle delivery stores only `kindleEmail` and an optional `schedule { hour, minute, timezone }` (`hour` `0..23`, `minute` `0..55` in steps of `5`, `timezone` an IANA zone name such as `Asia/Shanghai`; `Local` and unknown names are invalid). There is no server-wide time zone setting. Saving requires a configured SMTP service (`422 SMTPNotConfigured`). `nextSendAt` is not stored: `GET /api/settings` computes it on the server and returns it only while a schedule is set (`KD-SCHED-1`). Kindle sending is usable only while both SMTP and Kindle delivery are configured; clearing SMTP keeps the stored Kindle address but disables sending until SMTP is configured again.
 
 ## Interface
 
@@ -17,7 +17,7 @@ Application-wide settings for retention, OPML/quick-save, webpage extraction, Ki
 
 - **`文章与订阅`**: group `文章保留` with an inline narrow retention number input + save (`保存文章设置`); group **OPML 导入与导出** with hint `从其他阅读器迁移订阅，或备份当前的订阅列表。` and equal `导入 OPML` / `导出 OPML` buttons; group **快速保存 Bookmarklet** with a draggable button-styled link (`javascript:location.href='<APP_URL>/save#url='+encodeURIComponent(location.href)`).
 - **`提取`**: provider selector rows, each a radio + name + one-line description (`内置直接抓取（默认，低占用）` — `由服务器直接抓取网页，速度快、占用低，适合大多数页面。` / `Jina（可匿名使用）` — `通过 Jina Reader 抓取，可处理部分动态页面；配置 Key 可提高速率限制。` / `外部浏览器提取服务` — `通过外部浏览器（CDP）渲染页面，适合依赖 JavaScript 的网站。`) + `保存提取设置`. Jina is always selectable. While no browser endpoint is stored, the browser option is disabled and shows `需先在「外部服务」中配置浏览器服务地址` with a `前往外部服务` button.
-- **`Kindle`**: without SMTP, the form is disabled and a warning banner shows `发送到 Kindle 需要先在「外部服务」中配置 SMTP。` with `前往外部服务`. Otherwise: group `投递设置` with `Kindle 接收邮箱` (required) and `每日定时发送（可选）` + `保存 Kindle 设置`; group `手动发送` with hint `立即把所有未读文章打包成 EPUB 发送到 Kindle，发送成功的文章会标为已读。` and `立即发送` (disabled while a send is running or until both SMTP and Kindle delivery are saved); group `最近发送记录` listing each send as status pill, trigger, time, and result text ([kindle.md](kindle.md)).
+- **`Kindle`**: without SMTP, the form is disabled and a warning banner shows `发送到 Kindle 需要先在「外部服务」中配置 SMTP。` with `前往外部服务`. Otherwise: group `投递设置` with `Kindle 接收邮箱` (required), row 1 a `每日定时发送` toggle, row 2 hour (`00`–`23`), minute (`00`–`55`, step 5), and `时区` selects (disabled while the toggle is off; turning it on defaults to `08:00` and the draft time zone, `UTC` unless chosen otherwise), and `保存 Kindle 设置`; group `手动发送` with hint `立即把所有未读文章打包成 EPUB 发送到 Kindle，发送成功的文章会标为已读。` and `立即发送` (disabled while a send is running or until both SMTP and Kindle delivery are saved); group `最近发送记录` listing each send as status pill, trigger, time, and result text ([kindle.md](kindle.md)).
 - **`外部服务`**: three independent cards, each with its status pill in the group heading and its own save and clear controls:
   - **Jina**: status `Jina Key：已保存/未保存`, password input, `保存 Key`, `删除 Key` (when stored).
   - **浏览器提取服务**: status, URL input, `保存地址`, `清除地址` (when stored; confirms `清除浏览器服务地址？使用浏览器提取的设置将改回内置直接抓取。`).
@@ -28,7 +28,7 @@ Application-wide settings for retention, OPML/quick-save, webpage extraction, Ki
 
 | Method | Path | Request | Success | Errors |
 | --- | --- | --- | --- | --- |
-| GET | `/api/settings` | — | `200 { retention, provider, jinaKeyConfigured, browserEndpointConfigured, smtp?: { senderEmail, host, port, security, user?, passwordConfigured }, kindle?: { kindleEmail, sendTime?, nextSendAt? } }` | `SettingRepositoryError` 500 |
+| GET | `/api/settings` | — | `200 { retention, provider, jinaKeyConfigured, browserEndpointConfigured, smtp?: { senderEmail, host, port, security, user?, passwordConfigured }, kindle?: { kindleEmail, schedule?: { hour, minute, timezone }, nextSendAt? } }` | `SettingRepositoryError` 500 |
 | PUT | `/api/settings/retention` | `{ retention }` | `204` | `InvalidRetention` 400, 500 |
 | PUT | `/api/settings/provider` | `{ provider }` | `204` | `InvalidProvider` 400, `BrowserEndpointRequired` 422, 500 |
 | PUT | `/api/settings/services/jina` | `{ key }` | `204` | `InvalidJinaKey` 400, 500 |
@@ -38,7 +38,7 @@ Application-wide settings for retention, OPML/quick-save, webpage extraction, Ki
 | PUT | `/api/settings/services/smtp` | `{ senderEmail, host, port, security, user?, password? }` | `204` | `InvalidSMTPSetting` 400, 500 |
 | DELETE | `/api/settings/services/smtp` | — | `204` | 500 |
 | DELETE | `/api/settings/services/smtp/password` | — | `204` | 500 |
-| PUT | `/api/settings/kindle` | `{ kindleEmail, sendTime? }` | `204` | `InvalidKindleSetting` 400, `SMTPNotConfigured` 422, 500 |
+| PUT | `/api/settings/kindle` | `{ kindleEmail, schedule?: { hour, minute, timezone } }` | `204` | `InvalidKindleSetting` 400, `SMTPNotConfigured` 422, 500 |
 
 ## Messages
 

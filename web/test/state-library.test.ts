@@ -95,12 +95,14 @@ describe('row labels', () => {
           id: 'f1',
           title: 'Go Blog',
           url: 'https://go.dev/blog/feed.atom',
+          siteUrl: 'https://go.dev/blog/',
           iconUrl: 'https://go.dev/images/go-logo.png',
         }),
         makeFeed({
           id: 'f2',
           title: 'Plain',
           url: 'https://plain.example/rss',
+          siteUrl: 'https://plain.example/',
         }),
       ],
     });
@@ -120,6 +122,47 @@ describe('row labels', () => {
   });
 });
 
+describe('feed icon source', () => {
+  it('never derives a feed icon from the subscribed feed URL', async () => {
+    const { state } = ctx;
+    await ctx.queueLoadedLibrary({
+      scope: { kind: 'all' },
+      items: [
+        makeItem({ id: 'i1', feedId: 'f1' }),
+        makeItem({ id: 'i2', feedId: 'f2' }),
+        makeItem({ id: 'i3', feedId: 'f3' }),
+      ],
+      feeds: [
+        makeFeed({
+          id: 'f1',
+          title: 'Generated',
+          url: 'https://rsshub.example/twitter/user/alice',
+          siteUrl: 'https://twitter.example/alice',
+        }),
+        makeFeed({
+          id: 'f2',
+          title: 'No site',
+          url: 'https://rsshub.example/blog/bob',
+        }),
+        makeFeed({
+          id: 'f3',
+          title: 'Declared icon only',
+          url: 'https://rsshub.example/blog/carol',
+          iconUrl: 'https://carol.example/icon.png',
+        }),
+      ],
+    });
+
+    expect(state.articleSource(state.rows()[0]).iconSrcs).toEqual([
+      'https://twitter.example/favicon.ico',
+    ]);
+    expect(state.articleSource(state.rows()[1]).iconSrcs).toEqual([]);
+    expect(state.articleSource(state.rows()[2]).iconSrcs).toEqual([
+      'https://carol.example/icon.png',
+    ]);
+  });
+});
+
 describe('feed icon candidates', () => {
   it('deduplicates feed iconUrl and returns empty candidates when feed is unknown', async () => {
     const { state } = ctx;
@@ -134,6 +177,7 @@ describe('feed icon candidates', () => {
           id: 'f1',
           title: 'Favicon Feed',
           url: 'https://fav.example/rss.xml',
+          siteUrl: 'https://fav.example/',
           iconUrl: 'https://fav.example/favicon.ico',
         }),
       ],

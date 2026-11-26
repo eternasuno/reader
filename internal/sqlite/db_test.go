@@ -2,19 +2,19 @@ package sqlite
 
 import (
 	"context"
-	"errors"
-
 	"database/sql"
-	modernsqlite "modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
 	"testing"
-	"testing/fstest"
 	"time"
+
+	"github.com/pressly/goose/v3"
+	modernsqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"reader/internal/domain"
 )
@@ -60,7 +60,7 @@ func TestOpenMigratesDatabase(t *testing.T) {
 		}
 	}
 
-	for _, table := range []string{"folder", "feed", "feed_item", "saved_page", "setting", "kindle_send", "kindle_send_book"} {
+	for _, table := range []string{"folder", "feed", "feed_item", "saved_page", "feed_refresh", "setting", "kindle_send", "kindle_send_book"} {
 		var name string
 		err := store.ReadDB().
 			QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).
@@ -147,7 +147,35 @@ func TestWithTxRollsBackOnPanic(t *testing.T) {
 	}
 }
 
-func TestApplyMigrationsRollsBackFailedFile(t *testing.T) {
+func createOKTable(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `CREATE TABLE ok_table (id TEXT PRIMARY KEY) STRICT`)
+
+	return err
+}
+
+func failAfterPartialWrite(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(
+		ctx,
+		`CREATE TABLE partial_table (id TEXT PRIMARY KEY) STRICT;
+		INSERT INTO partial_table (id) VALUES ('one');
+		INSERT INTO missing_table (id) VALUES ('boom');`,
+	)
+
+	return err
+}
+
+func tableCount(t *testing.T, db *sql.DB, name string) int {
+	t.Helper()
+
+	var count int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&count); err != nil {
+		t.Fatalf("count table %s: %v", name, err)
+	}
+
+	return count
+}
+
+func TestApplyGoMigrationsRollsBackFailedMigration(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "migration-rollback.db")
 
@@ -159,171 +187,25 @@ func TestApplyMigrationsRollsBackFailedFile(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
 
-	fsys := fstest.MapFS{
-		"001_ok.sql": &fstest.MapFile{
-			Data: []byte("-- +goose Up\nCREATE TABLE ok_table (id TEXT PRIMARY KEY) STRICT;\n"),
-		},
-		"002_bad.sql": &fstest.MapFile{
-			Data: []byte(`-- +goose Up
-				CREATE TABLE partial_table (id TEXT PRIMARY KEY) STRICT;
-				INSERT INTO partial_table (id) VALUES ('one');
-				INSERT INTO missing_table (id) VALUES ('boom');
-			`),
-		},
-	}
-
-	if err := applyMigrationsFromFS(ctx, db, fsys); err == nil {
+	err = applyGoMigrations(
+		ctx,
+		db,
+		goose.NewGoMigration(1, &goose.GoFunc{RunTx: createOKTable}, nil),
+		goose.NewGoMigration(2, &goose.GoFunc{RunTx: failAfterPartialWrite}, nil),
+	)
+	if err == nil {
 		t.Fatal("expected failing migration to return an error")
 	}
 
-	var partialCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'partial_table'`).Scan(&partialCount); err != nil {
-		t.Fatalf("check partial_table: %v", err)
+	if got := tableCount(t, db, "partial_table"); got != 0 {
+		t.Fatalf("partial_table count = %d, want 0 after rollback", got)
 	}
 
-	if partialCount != 0 {
-		t.Fatalf("partial_table count = %d, want 0 after rollback", partialCount)
-	}
-
-	var okCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ok_table'`).Scan(&okCount); err != nil {
-		t.Fatalf("check ok_table: %v", err)
-	}
-
-	if okCount != 1 {
-		t.Fatalf("ok_table count = %d, want 1 from prior committed migration", okCount)
+	if got := tableCount(t, db, "ok_table"); got != 1 {
+		t.Fatalf("ok_table count = %d, want 1 from prior committed migration", got)
 	}
 
 	requireGooseVersions(t, db, 0, 1)
-}
-
-func TestOpenUpgradesDeployedDatabaseAndIsIdempotent(t *testing.T) {
-	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "deployed.db")
-
-	rawDB, err := sql.Open("sqlite", sqliteDSN(dbPath, true))
-	if err != nil {
-		t.Fatalf("open raw db: %v", err)
-	}
-
-	if _, err := rawDB.ExecContext(ctx, deployedSchemaSQL); err != nil {
-		_ = rawDB.Close()
-		t.Fatalf("exec deployed schema: %v", err)
-	}
-
-	if _, err := rawDB.ExecContext(ctx, `
-		INSERT INTO folder (id, name) VALUES ('folder-1', 'Tech');
-		INSERT INTO feed (id, url, title, folder_id) VALUES ('feed-1', 'https://example.com/feed.xml', 'Example Feed', 'folder-1');
-		INSERT INTO feed_item (id, feed_id, url, title) VALUES ('item-1', 'feed-1', 'https://example.com/post-1', 'Post 1');
-		INSERT INTO saved_page (id, url, title, content) VALUES ('page-1', 'https://example.com/saved-1', 'Saved 1', '<p>hello</p>');
-	`); err != nil {
-		_ = rawDB.Close()
-		t.Fatalf("seed deployed rows: %v", err)
-	}
-
-	if err := rawDB.Close(); err != nil {
-		t.Fatalf("close raw db: %v", err)
-	}
-
-	store, err := Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open deployed store: %v", err)
-	}
-
-	requireFeedIconURLColumn(t, store.ReadDB())
-	requireGooseVersions(t, store.ReadDB(), 0, 1, 2)
-
-	folders, err := store.Folders().List(ctx)
-	if err != nil {
-		_ = store.Close()
-		t.Fatalf("list folders: %v", err)
-	}
-	if len(folders) != 1 || folders[0].ID != "folder-1" || folders[0].Name != "Tech" {
-		_ = store.Close()
-		t.Fatalf("folders = %+v, want folder-1/Tech", folders)
-	}
-
-	feeds, err := store.Feeds().List(ctx)
-	if err != nil {
-		_ = store.Close()
-		t.Fatalf("list feeds: %v", err)
-	}
-	if len(feeds) != 1 || feeds[0].ID != "feed-1" || feeds[0].IconURL != nil {
-		_ = store.Close()
-		t.Fatalf("feeds = %+v, want feed-1 with nil IconURL", feeds)
-	}
-
-	item, err := store.FeedItems().GetByID(ctx, "item-1")
-	if err != nil {
-		_ = store.Close()
-		t.Fatalf("get feed item: %v", err)
-	}
-	if item.Title != "Post 1" {
-		_ = store.Close()
-		t.Fatalf("feed item title = %q, want Post 1", item.Title)
-	}
-
-	page, err := store.SavedPages().GetByID(ctx, "page-1")
-	if err != nil {
-		_ = store.Close()
-		t.Fatalf("get saved page: %v", err)
-	}
-	if page.Title != "Saved 1" || page.Content != "<p>hello</p>" {
-		_ = store.Close()
-		t.Fatalf("saved page = %+v, want Saved 1", page)
-	}
-
-	if err := store.Close(); err != nil {
-		t.Fatalf("close upgraded store: %v", err)
-	}
-
-	reopened, err := Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("reopen upgraded store: %v", err)
-	}
-	defer reopened.Close()
-
-	requireFeedIconURLColumn(t, reopened.ReadDB())
-	requireGooseVersions(t, reopened.ReadDB(), 0, 1, 2)
-}
-
-func TestOpenHandlesBranchCreatedDatabaseWithIconURL(t *testing.T) {
-	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "branch.db")
-
-	rawDB, err := sql.Open("sqlite", sqliteDSN(dbPath, true))
-	if err != nil {
-		t.Fatalf("open raw db: %v", err)
-	}
-
-	branchSchema := strings.Replace(
-		deployedSchemaSQL,
-		"  last_error TEXT,\n",
-		"  last_error TEXT,\n  icon_url TEXT,\n",
-		1,
-	)
-	if branchSchema == deployedSchemaSQL {
-		_ = rawDB.Close()
-		t.Fatal("failed to construct branch schema")
-	}
-
-	if _, err := rawDB.ExecContext(ctx, branchSchema); err != nil {
-		_ = rawDB.Close()
-		t.Fatalf("exec branch schema: %v", err)
-	}
-
-	if err := rawDB.Close(); err != nil {
-		t.Fatalf("close raw db: %v", err)
-	}
-
-	store, err := Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open branch store: %v", err)
-	}
-	defer store.Close()
-
-	requireFeedIconURLColumn(t, store.ReadDB())
-	requireGooseVersions(t, store.ReadDB(), 0, 1, 2)
 }
 
 func TestOpenFailsAndRollsBackWhenInitMigrationFails(t *testing.T) {
@@ -381,24 +263,46 @@ func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 	}
 	defer store.Close()
 
-	requireFeedIconURLColumn(t, store.ReadDB())
-	requireGooseVersions(t, store.ReadDB(), 0, 1, 2)
+	requireGooseVersions(t, store.ReadDB(), 0, 1)
+
+	wantTables := []string{"feed", "feed_item", "feed_refresh", "folder", "kindle_send", "kindle_send_book", "saved_page", "setting"}
+	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_list WHERE schema = 'main' AND strict = 1 AND name NOT LIKE 'sqlite_%' ORDER BY name`); !slices.Equal(got, wantTables) {
+		t.Fatalf("strict tables = %v, want %v", got, wantTables)
+	}
+
+	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM sqlite_master WHERE type = 'trigger' OR sql LIKE '%CHECK%'`); len(got) != 0 {
+		t.Fatalf("schema objects with triggers or CHECK constraints = %v, want none", got)
+	}
+
+	if got := queryStrings(t, store.ReadDB(), `SELECT id || ':' || COALESCE(timezone, 'none') FROM setting`); !slices.Equal(got, []string{"1:none"}) {
+		t.Fatalf("seeded setting rows = %v, want the single row without a timezone", got)
+	}
 }
 
-func requireFeedIconURLColumn(t *testing.T, db *sql.DB) {
+func queryStrings(t *testing.T, db *sql.DB, query string, args ...any) []string {
 	t.Helper()
 
-	var count int
-	if err := db.QueryRowContext(
-		context.Background(),
-		`SELECT COUNT(*) FROM pragma_table_info('feed') WHERE name = 'icon_url'`,
-	).Scan(&count); err != nil {
-		t.Fatalf("query pragma_table_info(feed): %v", err)
+	rows, err := db.QueryContext(context.Background(), query, args...)
+	if err != nil {
+		t.Fatalf("query %q: %v", query, err)
+	}
+	defer rows.Close()
+
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatalf("scan %q: %v", query, err)
+		}
+
+		values = append(values, value)
 	}
 
-	if count != 1 {
-		t.Fatalf("feed.icon_url column count = %d, want 1", count)
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate %q: %v", query, err)
 	}
+
+	return values
 }
 
 func requireGooseVersions(t *testing.T, db *sql.DB, want ...int64) {
@@ -433,97 +337,6 @@ func requireGooseVersions(t *testing.T, db *sql.DB, want ...int64) {
 		t.Fatalf("goose versions = %v, want %v", got, want)
 	}
 }
-
-const deployedSchemaSQL = `
-CREATE TABLE IF NOT EXISTS folder (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS folder_name_id ON folder (name, id);
-
-CREATE TABLE IF NOT EXISTS feed (
-  id TEXT PRIMARY KEY,
-  url TEXT NOT NULL UNIQUE,
-  title TEXT NOT NULL,
-  folder_id TEXT REFERENCES folder(id) ON DELETE SET NULL,
-  updated_at INTEGER,
-  failure_count INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
-  reader_mode TEXT NOT NULL DEFAULT 'default' CHECK (reader_mode IN ('default', 'extracted', 'embedded')),
-  sort_order TEXT NOT NULL DEFAULT 'newest' CHECK (sort_order IN ('newest', 'oldest'))
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS feed_folder ON feed (folder_id);
-CREATE INDEX IF NOT EXISTS feed_title ON feed (title, id);
-
-CREATE TABLE IF NOT EXISTS feed_item (
-  id TEXT PRIMARY KEY,
-  feed_id TEXT NOT NULL REFERENCES feed(id) ON DELETE CASCADE,
-  url TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  content TEXT,
-  extracted_content TEXT,
-  published_at INTEGER,
-  read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1)),
-  UNIQUE (feed_id, url)
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS feed_item_read_id ON feed_item (read, id);
-CREATE INDEX IF NOT EXISTS feed_item_read_feed_id ON feed_item (read, feed_id);
-CREATE INDEX IF NOT EXISTS feed_item_feed_id ON feed_item (feed_id, id);
-CREATE INDEX IF NOT EXISTS feed_item_feed_id_url ON feed_item (feed_id, id, url);
-CREATE INDEX IF NOT EXISTS feed_item_feed_read_id ON feed_item (feed_id, read, id);
-
-CREATE TABLE IF NOT EXISTS saved_page (
-  id TEXT PRIMARY KEY,
-  url TEXT NOT NULL UNIQUE,
-  title TEXT NOT NULL,
-  description TEXT,
-  content TEXT NOT NULL,
-  published_at INTEGER,
-  read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1))
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS saved_page_read_id ON saved_page (read, id);
-
-CREATE TABLE IF NOT EXISTS setting (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  retention INTEGER NOT NULL DEFAULT 100 CHECK (retention >= 1),
-  provider TEXT NOT NULL DEFAULT 'direct' CHECK (provider IN ('direct', 'jina', 'browser')),
-  jina_key TEXT,
-  browser_endpoint TEXT,
-  kindle_email TEXT,
-  sender_email TEXT,
-  smtp_host TEXT,
-  smtp_port INTEGER,
-  smtp_security TEXT CHECK (smtp_security IS NULL OR smtp_security IN ('tls', 'starttls')),
-  smtp_user TEXT,
-  smtp_password TEXT,
-  send_time TEXT,
-  next_send_at INTEGER
-) STRICT;
-
-INSERT INTO setting (id, retention, provider) VALUES (1, 100, 'direct') ON CONFLICT (id) DO NOTHING;
-
-CREATE TABLE IF NOT EXISTS kindle_send (
-  id TEXT PRIMARY KEY,
-  trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
-  status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
-  article_count INTEGER NOT NULL DEFAULT 0,
-  book_count INTEGER NOT NULL DEFAULT 0,
-  error TEXT,
-  started_at INTEGER NOT NULL,
-  finished_at INTEGER
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS kindle_send_book (
-  send_id TEXT NOT NULL REFERENCES kindle_send(id) ON DELETE CASCADE,
-  book_index INTEGER NOT NULL,
-  PRIMARY KEY (send_id, book_index)
-) STRICT;
-`
 
 func TestOpenResolvesRelativePaths(t *testing.T) {
 	cases := []struct {
@@ -799,13 +612,25 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			name:  "list feed newest",
 			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Boundary: boundary}).query,
 			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Boundary: boundary}).args,
-			index: "feed_item_feed_id",
+			index: "feed_item_feed_id_url",
 		},
 		{
 			name:  "list feed oldest",
 			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).query,
 			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).args,
-			index: "feed_item_feed_id",
+			index: "feed_item_feed_id_url",
+		},
+		{
+			name:  "list feed newest with cursor",
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).args,
+			index: "feed_item_feed_id_url",
+		},
+		{
+			name:  "list feed oldest with cursor",
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).args,
+			index: "feed_item_feed_id_url",
 		},
 		{
 			name:  "list feed unread",
@@ -817,20 +642,20 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			name:  "list feed unread with cursor",
 			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
 			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
-			index: "feed_item_read_id",
+			index: "feed_item_feed_read_id",
 		},
 		{
 			name:           "list folder",
 			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Boundary: boundary}).query,
 			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Boundary: boundary}).args,
-			index:          "feed_item_feed_id",
+			index:          "feed_item_feed_id_url",
 			allowTempBTree: true,
 		},
 		{
 			name:           "list folder oldest",
 			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).query,
 			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).args,
-			index:          "feed_item_feed_id",
+			index:          "feed_item_feed_id_url",
 			allowTempBTree: true,
 		},
 		{
@@ -859,9 +684,23 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		{name: "mark feed read", query: markFeedReadQuery, args: []any{"feed", boundary}, index: "feed_item_feed_read_id"},
 		{name: "mark folder read", query: markFolderReadQuery, args: []any{boundary, "folder"}, index: "feed_item_feed_read_id"},
 		{name: "mark all saved pages read", query: markAllSavedPagesReadQuery, args: []any{boundary}, index: "saved_page_read_id"},
+		{name: "prune feed refresh history", query: pruneFeedRefreshQuery, args: []any{"feed", "feed", feedRefreshLimit, "feed", string(domain.FeedRefreshSucceeded)}, index: "feed_refresh_feed_id_id"},
 	}
 	for _, test := range statementPlans {
 		requireIndexedPlan(t, test.name, queryPlan(t, store, test.query, test.args...), test.index, test.allowTempBTree)
+	}
+
+	for _, test := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{name: "list feeds with refresh state", query: listFeedsQuery},
+		{name: "get feed with refresh state", query: getFeedQuery, args: []any{"feed"}},
+	} {
+		plan := queryPlan(t, store, test.query, test.args...)
+		requireIndexedPlan(t, test.name, plan, "feed_refresh_feed_id_id", false)
+		requireRefreshLookupsIndexed(t, test.name, plan)
 	}
 
 	for _, params := range []domain.PageParams{{Limit: 30, Boundary: boundary}, {Limit: 30, Unread: true, Boundary: boundary}, {Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Unread: true, Order: domain.SortOrderOldest, Boundary: boundary}} {
@@ -883,5 +722,22 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		return strings.Contains(detail, "SCAN folder")
 	}) {
 		t.Fatalf("opml folder lookup scans folder table:\n%s", strings.Join(opmlFolderPlan, "\n"))
+	}
+}
+
+func TestPlanUsesIndexMatchesWholeIndexName(t *testing.T) {
+	longer := []string{"SEARCH feed_item USING INDEX feed_item_feed_id_url (feed_id=? AND id<?)"}
+	covering := []string{"SEARCH feed_item USING COVERING INDEX feed_item_feed_id (feed_id=?)"}
+
+	if planUsesIndex(longer, "feed_item_feed_id") {
+		t.Fatal("feed_item_feed_id matched feed_item_feed_id_url")
+	}
+
+	if !planUsesIndex(longer, "feed_item_feed_id_url") {
+		t.Fatal("feed_item_feed_id_url did not match itself")
+	}
+
+	if !planUsesIndex(covering, "feed_item_feed_id") {
+		t.Fatal("covering index line did not match its own name")
 	}
 }

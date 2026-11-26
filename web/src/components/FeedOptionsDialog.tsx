@@ -13,12 +13,7 @@ import {
 import type { Feed, ReaderMode } from '../api';
 import { browserHref } from '../api/url';
 import { t } from '../i18n';
-import {
-  changeFeedReaderMode,
-  feeds,
-  iconCandidates,
-  siteIconUrl,
-} from '../state';
+import { changeFeedReaderMode, feedIconCandidates, feeds } from '../state';
 import { Button, Icon, useDialogFocus } from '../ui';
 import { createOpenReset } from './createOpenReset';
 import { SiteIcon } from './SiteIcon';
@@ -115,14 +110,6 @@ export function FeedOptionsDialog(props: FeedOptionsDialogProps): JSX.Element {
   );
 }
 
-const feedSiteOrigin = (url: string): string => {
-  try {
-    return `${new URL(url).origin}/`;
-  } catch {
-    return url;
-  }
-};
-
 function FeedOptionsDrawer(props: {
   feed: Feed;
   mode: ReaderMode;
@@ -182,16 +169,11 @@ function FeedOptionsBody(props: {
   onModeChange: (mode: ReaderMode) => void;
   onUnsubscribe?: (feed: Feed) => void | Promise<void>;
 }): JSX.Element {
-  const siteUrl = () => feedSiteOrigin(props.feed.url);
-
   return (
     <div class="flex flex-1 flex-col gap-7 overflow-y-auto px-5 py-4">
       <div class="my-2 flex justify-center">
         <SiteIcon
-          srcs={iconCandidates([
-            props.feed.iconUrl,
-            siteIconUrl(props.feed.url),
-          ])}
+          srcs={feedIconCandidates(props.feed)}
           fallback="rss"
           size={56}
         />
@@ -209,10 +191,14 @@ function FeedOptionsBody(props: {
         busy={props.busy}
         onModeChange={props.onModeChange}
       />
-      <FeedExternalLinkSection
-        label={t('feeds.websiteLabel')}
-        href={siteUrl()}
-      />
+      <Show when={props.feed.siteUrl}>
+        {(siteUrl) => (
+          <FeedExternalLinkSection
+            label={t('feeds.websiteLabel')}
+            href={siteUrl()}
+          />
+        )}
+      </Show>
       <FeedExternalLinkSection label="RSS" href={props.feed.url} />
       <Show when={props.onUnsubscribe}>
         {(unsubscribe) => (

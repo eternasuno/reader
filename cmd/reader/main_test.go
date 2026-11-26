@@ -26,13 +26,13 @@ func getenvFrom(values map[string]string) func(string) string {
 
 func TestLoadConfigDefaults(t *testing.T) {
 	tests := []struct {
-		name                                       string
-		env                                        map[string]string
-		password, url, port, dir, secret, location string
-		private                                    bool
+		name                             string
+		env                              map[string]string
+		password, url, port, dir, secret string
+		private                          bool
 	}{
 		{name: "defaults", env: map[string]string{"APP_PASSWORD": "secret"}, password: "secret", url: "http://localhost:8080", port: "8080", dir: ".data"},
-		{name: "overrides", env: map[string]string{"APP_PASSWORD": "hunter2", "APP_URL": "https://reader.example.com", "PORT": "9000", "DATA_DIR": "/var/lib/reader", "SESSION_SECRET": "fixed-secret-0123456789abcdef01234", "TZ": "Asia/Shanghai", "ALLOW_PRIVATE_NETWORK": "TRUE"}, password: "hunter2", url: "https://reader.example.com", port: "9000", dir: "/var/lib/reader", secret: "fixed-secret-0123456789abcdef01234", location: "Asia/Shanghai", private: true},
+		{name: "overrides", env: map[string]string{"APP_PASSWORD": "hunter2", "APP_URL": "https://reader.example.com", "PORT": "9000", "DATA_DIR": "/var/lib/reader", "SESSION_SECRET": "fixed-secret-0123456789abcdef01234", "ALLOW_PRIVATE_NETWORK": "TRUE"}, password: "hunter2", url: "https://reader.example.com", port: "9000", dir: "/var/lib/reader", secret: "fixed-secret-0123456789abcdef01234", private: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,13 +58,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 				if bytes.Equal(cfg.SessionSecret, second.SessionSecret) {
 					t.Fatal("generated session secrets must differ between startups")
 				}
-			}
-			if tt.location == "" {
-				if cfg.Location != time.Local {
-					t.Fatalf("location = %v, want time.Local", cfg.Location)
-				}
-			} else if cfg.Location == nil || cfg.Location.String() != tt.location {
-				t.Fatalf("location = %v, want %s", cfg.Location, tt.location)
 			}
 		})
 	}
@@ -507,7 +500,6 @@ func TestLoadConfigValidationErrors(t *testing.T) {
 		{name: "invalid password", env: map[string]string{"APP_PASSWORD": strings.Repeat("a", 5000)}, leak: strings.Repeat("a", 5000)},
 		{name: "invalid app url", env: map[string]string{"APP_PASSWORD": "secret", "APP_URL": "https://user:topsecret@reader.example.com"}, leak: "topsecret"},
 		{name: "short session secret", env: map[string]string{"APP_PASSWORD": "secret", "SESSION_SECRET": "too-short-secret-value"}, leak: "too-short-secret-value"},
-		{name: "invalid timezone", env: map[string]string{"APP_PASSWORD": "secret", "TZ": "Mars/Olympus_Mons"}},
 	}
 
 	for _, tt := range tests {
@@ -546,13 +538,10 @@ func TestRecoverStartupStateCleansSpoolAndRecoversRunningSends(t *testing.T) {
 		t.Fatalf("UpdateSMTP() error = %v", err)
 	}
 
-	if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{
-		KindleEmail: "reader@kindle.com",
-	}); err != nil {
+	startedAt := time.Date(2026, 3, 15, 8, 0, 0, 0, time.UTC)
+	if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{KindleEmail: "reader@kindle.com"}, startedAt); err != nil {
 		t.Fatalf("UpdateKindle() error = %v", err)
 	}
-
-	startedAt := time.Date(2026, 3, 15, 8, 0, 0, 0, time.UTC)
 	if _, err := store.KindleSends().ClaimManualSend(ctx, domain.NewID(), startedAt); err != nil {
 		t.Fatalf("ClaimManualSend() error = %v", err)
 	}

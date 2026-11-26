@@ -10,8 +10,23 @@ import (
 )
 
 const (
-	feedColumns              = `id, url, title, folder_id, updated_at, failure_count, last_error, icon_url, reader_mode, sort_order`
+	// The trailing three columns derive updated_at, failure_count, and last_error
+	// from feed_refresh (see feed_refresh_feed_id_id); a feed holds no refresh state.
+	feedColumns = `id, url, title, site_url, icon_url, folder_id, reader_mode, sort_order,
+		(SELECT finished_at FROM feed_refresh WHERE feed_id = feed.id AND status = 'succeeded' ORDER BY id DESC LIMIT 1),
+		(SELECT COUNT(*) FROM feed_refresh WHERE feed_id = feed.id AND status = 'failed'
+			AND id > COALESCE((SELECT MAX(id) FROM feed_refresh WHERE feed_id = feed.id AND status = 'succeeded'), '')),
+		(SELECT CASE WHEN status = 'failed' THEN error END FROM feed_refresh WHERE feed_id = feed.id ORDER BY id DESC LIMIT 1)`
+	listFeedsQuery           = `SELECT ` + feedColumns + ` FROM feed ORDER BY title ASC, id ASC`
+	getFeedQuery             = `SELECT ` + feedColumns + ` FROM feed WHERE id = ?`
 	loadFolderIDsByNameQuery = `SELECT id, name FROM folder WHERE name IN (SELECT value FROM json_each(?))`
+	insertFeedRefreshQuery   = `INSERT INTO feed_refresh (id, feed_id, status, error, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)`
+	// Pruning keeps the newest feedRefreshLimit rows and the newest succeeded row,
+	// which alone carries the feed's updated_at once enough failures follow it.
+	pruneFeedRefreshQuery = `DELETE FROM feed_refresh WHERE feed_id = ?
+		AND id NOT IN (SELECT id FROM feed_refresh WHERE feed_id = ? ORDER BY id DESC LIMIT ?)
+		AND id NOT IN (SELECT id FROM feed_refresh WHERE feed_id = ? AND status = ? ORDER BY id DESC LIMIT 1)`
+	feedRefreshLimit = 10
 )
 
 type FeedRepo struct {
@@ -64,7 +79,7 @@ func (r *FeedRepo) ExportOPML(ctx context.Context) ([]domain.OPMLExportFolder, [
 }
 
 func queryFeeds(ctx context.Context, querier rowsQuerier) ([]domain.Feed, error) {
-	rows, err := querier.QueryContext(ctx, `SELECT `+feedColumns+` FROM feed ORDER BY title ASC, id ASC`)
+	rows, err := querier.QueryContext(ctx, listFeedsQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +124,7 @@ func groupOPMLFeeds(folders []domain.Folder, feeds []domain.Feed) ([]domain.OPML
 }
 
 func (r *FeedRepo) GetByID(ctx context.Context, id string) (*domain.Feed, error) {
-	feed, err := scanFeed(r.read.QueryRowContext(ctx, `SELECT `+feedColumns+` FROM feed WHERE id = ?`, id))
+	feed, err := scanFeed(r.read.QueryRowContext(ctx, getFeedQuery, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -187,23 +202,24 @@ func (r *FeedRepo) MoveToFolder(ctx context.Context, id string, folderID *string
 	return nil
 }
 
-func (r *FeedRepo) RecordRefreshFailure(ctx context.Context, id string, errSummary string) error {
-	_, err := r.write.ExecContext(
-		ctx,
-		`UPDATE feed SET failure_count = failure_count + 1, last_error = ? WHERE id = ?`,
-		domain.SanitizeErrorText(errSummary),
-		id,
-	)
-	if err != nil {
+// RecordRefreshFailure is a no-op when the feed was deleted while its refresh ran.
+func (r *FeedRepo) RecordRefreshFailure(ctx context.Context, feedID string, errSummary string, startedAt, finishedAt time.Time) error {
+	summary := domain.SanitizeErrorText(errSummary)
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		return recordFeedRefresh(ctx, tx, feedID, domain.FeedRefreshFailed, &summary, startedAt, finishedAt)
+	})
+	if err != nil && !isForeignKeyViolation(err) {
 		return domain.NewError(domain.ErrFeedRepositoryError, err)
 	}
 
 	return nil
 }
 
-func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, newTitle string, iconURL *string, updatedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
+// ApplySync is a no-op when the feed was deleted while its refresh ran.
+func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, meta domain.FeedSyncMeta, startedAt, finishedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		if err := updateFeedSyncMeta(ctx, tx, feedID, newTitle, iconURL, updatedAt); err != nil {
+		found, err := updateFeedSyncMeta(ctx, tx, feedID, meta)
+		if err != nil || !found {
 			return err
 		}
 
@@ -211,7 +227,11 @@ func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, newTitle string
 			return err
 		}
 
-		return deleteSyncItems(ctx, tx, feedID, deleteIDs)
+		if err := deleteSyncItems(ctx, tx, feedID, deleteIDs); err != nil {
+			return err
+		}
+
+		return recordFeedRefresh(ctx, tx, feedID, domain.FeedRefreshSucceeded, nil, startedAt, finishedAt)
 	})
 	if err != nil {
 		return wrapRepositoryError(err, domain.ErrFeedRepositoryError)
@@ -220,15 +240,40 @@ func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, newTitle string
 	return nil
 }
 
-func updateFeedSyncMeta(ctx context.Context, tx *sql.Tx, feedID string, newTitle string, iconURL *string, updatedAt time.Time) error {
-	_, err := tx.ExecContext(
+func updateFeedSyncMeta(ctx context.Context, tx *sql.Tx, feedID string, meta domain.FeedSyncMeta) (bool, error) {
+	result, err := tx.ExecContext(
 		ctx,
-		`UPDATE feed SET title = ?, icon_url = ?, updated_at = ?, failure_count = 0, last_error = NULL WHERE id = ?`,
-		newTitle,
-		iconURL,
-		timeToMillis(updatedAt),
+		`UPDATE feed SET title = ?, site_url = ?, icon_url = ? WHERE id = ?`,
+		meta.Title,
+		optionalString(meta.SiteURL),
+		optionalString(meta.IconURL),
 		feedID,
 	)
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := result.RowsAffected()
+
+	return affected > 0, err
+}
+
+func recordFeedRefresh(ctx context.Context, tx *sql.Tx, feedID string, status domain.FeedRefreshStatus, errSummary *string, startedAt, finishedAt time.Time) error {
+	_, err := tx.ExecContext(
+		ctx,
+		insertFeedRefreshQuery,
+		domain.NewID(),
+		feedID,
+		string(status),
+		optionalString(errSummary),
+		timeToMillis(startedAt),
+		timeToMillis(finishedAt),
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, pruneFeedRefreshQuery, feedID, feedID, feedRefreshLimit, feedID, string(domain.FeedRefreshSucceeded))
 
 	return err
 }
@@ -288,16 +333,17 @@ func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
 		id           string
 		rawURL       string
 		title        string
+		siteURL      sql.NullString
+		iconURL      sql.NullString
 		folderID     sql.NullString
+		readerMode   string
+		sortOrder    string
 		updatedAt    sql.NullInt64
 		failureCount int64
 		lastError    sql.NullString
-		iconURL      sql.NullString
-		readerMode   string
-		sortOrder    string
 	)
 
-	err := row.Scan(&id, &rawURL, &title, &folderID, &updatedAt, &failureCount, &lastError, &iconURL, &readerMode, &sortOrder)
+	err := row.Scan(&id, &rawURL, &title, &siteURL, &iconURL, &folderID, &readerMode, &sortOrder, &updatedAt, &failureCount, &lastError)
 	if err != nil {
 		return domain.Feed{}, err
 	}
@@ -311,11 +357,12 @@ func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
 		ID:           id,
 		URL:          parsedURL,
 		Title:        title,
+		SiteURL:      optionalText(siteURL),
+		IconURL:      optionalText(iconURL),
 		FolderID:     optionalText(folderID),
 		UpdatedAt:    optionalMillis(updatedAt),
 		FailureCount: int(failureCount),
 		LastError:    optionalText(lastError),
-		IconURL:      optionalText(iconURL),
 		ReaderMode:   domain.ReaderMode(readerMode),
 		Order:        domain.SortOrder(sortOrder),
 	}, nil

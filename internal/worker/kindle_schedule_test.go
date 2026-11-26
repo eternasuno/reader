@@ -10,24 +10,39 @@ import (
 	"time"
 )
 
+// The daily 09:00 Asia/Shanghai occurrence on 2026-03-14 is at 01:00 UTC.
+// A schedule updated before it leaves that occurrence due; one updated after
+// it does not.
+func beforeShanghaiOccurrence() time.Time {
+	return time.Date(2026, 3, 13, 12, 0, 0, 0, time.UTC)
+}
+
+func afterShanghaiOccurrence() time.Time {
+	return time.Date(2026, 3, 14, 2, 0, 0, 0, time.UTC)
+}
+
+func scheduledDeliverySettings(updatedAt time.Time) domain.Settings {
+	settings := configuredDeliverySettings()
+	settings.Kindle.Schedule = &domain.KindleSchedule{Hour: 9, Timezone: "Asia/Shanghai"}
+	settings.Kindle.ScheduleUpdatedAt = &updatedAt
+
+	return settings
+}
+
 func TestCheckScheduleStartsDueSend(t *testing.T) {
 	t.Parallel()
 
-	loc := time.FixedZone("CST", 8*60*60)
-	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 3, 14, 17, 0, 0, 0, time.UTC)
 
-	deliverySettings := configuredDeliverySettings()
-	deliverySettings.Kindle.SendTime = ptrTo("09:00")
-	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
-
-	settings := &fakeSettingRepository{settings: deliverySettings}
-	sends := &fakeKindleSendRepository{settingsRepo: settings}
+	settings := &fakeSettingRepository{settings: scheduledDeliverySettings(beforeShanghaiOccurrence())}
+	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
+	sends := &fakeKindleSendRepository{settingsRepo: settings, savedPages: []domain.SavedPage{page}}
+	builder := &fakeEPUBBuilder{}
 
 	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
-		EPUBBuilder: &fakeEPUBBuilder{},
+		EPUBBuilder: builder,
 		MailSender:  &fakeMailSender{},
-		Location:    loc,
 		Now:         func() time.Time { return now },
 	})
 
@@ -36,12 +51,6 @@ func TestCheckScheduleStartsDueSend(t *testing.T) {
 	}
 
 	sender.Wait()
-
-	wantNext := time.Date(2026, 3, 15, 1, 0, 0, 0, time.UTC)
-	advances := sends.advanceList()
-	if len(advances) != 1 || !advances[0].Equal(wantNext) {
-		t.Fatalf("advances = %v, want [%v]", advances, wantNext)
-	}
 
 	created := sends.createdList()
 	if len(created) != 1 {
@@ -60,23 +69,27 @@ func TestCheckScheduleStartsDueSend(t *testing.T) {
 	if len(completed) != 1 || completed[0].status != domain.KindleStatusSucceeded {
 		t.Fatalf("completed sends = %+v", completed)
 	}
+
+	if got := builder.captured().dateStr; got != "2026-03-15" {
+		t.Fatalf("epub date = %q, want 2026-03-15 (the schedule timezone's date)", got)
+	}
+
+	// The started send anchors its occurrence, so the same occurrence is not due again.
+	if err := sender.CheckSchedule(context.Background()); err != nil {
+		t.Fatalf("second CheckSchedule() error = %v", err)
+	}
+
+	sender.Wait()
+
+	if created := sends.createdList(); len(created) != 1 {
+		t.Fatalf("created sends after second check = %d, want 1", len(created))
+	}
 }
 
 func TestCheckScheduleSkipsWhenNotDueOrUnconfigured(t *testing.T) {
 	t.Parallel()
 
-	loc := time.FixedZone("CST", 8*60*60)
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	future := now.Add(time.Hour)
-	past := now.Add(-time.Hour)
-
-	configured := func() domain.Settings {
-		settings := configuredDeliverySettings()
-		settings.Kindle.SendTime = ptrTo("09:00")
-		settings.Kindle.NextSendAt = &past
-
-		return settings
-	}
 
 	cases := []struct {
 		name      string
@@ -102,21 +115,16 @@ func TestCheckScheduleSkipsWhenNotDueOrUnconfigured(t *testing.T) {
 			},
 		},
 		{
-			name: "next send at in the future",
+			name: "schedule updated after the latest occurrence",
 			configure: func(settings *domain.Settings) {
-				settings.Kindle.NextSendAt = &future
+				settings.Kindle.ScheduleUpdatedAt = ptrTo(afterShanghaiOccurrence())
 			},
 		},
 		{
-			name: "missing send time",
+			name: "scheduled sending off",
 			configure: func(settings *domain.Settings) {
-				settings.Kindle.SendTime = nil
-			},
-		},
-		{
-			name: "missing next send at",
-			configure: func(settings *domain.Settings) {
-				settings.Kindle.NextSendAt = nil
+				settings.Kindle.Schedule = nil
+				settings.Kindle.ScheduleUpdatedAt = nil
 			},
 		},
 	}
@@ -125,23 +133,17 @@ func TestCheckScheduleSkipsWhenNotDueOrUnconfigured(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			deliverySettings := configured()
+			deliverySettings := scheduledDeliverySettings(beforeShanghaiOccurrence())
 			tc.configure(&deliverySettings)
-			settings := &fakeSettingRepository{settings: deliverySettings}
-			sends := &fakeKindleSendRepository{settingsRepo: settings}
+			sends := &fakeKindleSendRepository{settingsRepo: &fakeSettingRepository{settings: deliverySettings}}
 
 			sender := newTestKindleSender(t, KindleConfig{
 				KindleSends: sends,
-				Location:    loc,
 				Now:         func() time.Time { return now },
 			})
 
 			if err := sender.CheckSchedule(context.Background()); err != nil {
 				t.Fatalf("CheckSchedule() error = %v", err)
-			}
-
-			if advances := sends.advanceList(); len(advances) != 0 {
-				t.Fatalf("advances = %v, want none", advances)
 			}
 
 			if created := sends.createdList(); len(created) != 0 {
@@ -151,16 +153,14 @@ func TestCheckScheduleSkipsWhenNotDueOrUnconfigured(t *testing.T) {
 	}
 }
 
-func TestCheckScheduleReturnsInvalidSendTimeError(t *testing.T) {
+func TestCheckScheduleReturnsRepositoryErrorForInvalidStoredTimezone(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	deliverySettings := configuredDeliverySettings()
-	deliverySettings.Kindle.SendTime = ptrTo("25:99")
-	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Minute))
+	deliverySettings := scheduledDeliverySettings(beforeShanghaiOccurrence())
+	deliverySettings.Kindle.Schedule.Timezone = "Mars/Olympus_Mons"
 
-	settings := &fakeSettingRepository{settings: deliverySettings}
-	sends := &fakeKindleSendRepository{settingsRepo: settings}
+	sends := &fakeKindleSendRepository{settingsRepo: &fakeSettingRepository{settings: deliverySettings}}
 
 	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
@@ -168,11 +168,7 @@ func TestCheckScheduleReturnsInvalidSendTimeError(t *testing.T) {
 	})
 
 	err := sender.CheckSchedule(context.Background())
-	requireErrorCode(t, err, domain.ErrInvalidKindleSetting)
-
-	if advances := sends.advanceList(); len(advances) != 0 {
-		t.Fatalf("advances = %v, want none", advances)
-	}
+	requireErrorCode(t, err, domain.ErrSettingRepositoryError)
 
 	if created := sends.createdList(); len(created) != 0 {
 		t.Fatalf("created sends = %d, want 0", len(created))
@@ -184,11 +180,8 @@ func TestCheckScheduleReturnsClaimError(t *testing.T) {
 
 	want := errors.New("claim failed")
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	deliverySettings := configuredDeliverySettings()
-	deliverySettings.Kindle.SendTime = ptrTo("09:00")
-	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
-	settings := &fakeSettingRepository{settings: deliverySettings}
+	settings := &fakeSettingRepository{settings: scheduledDeliverySettings(beforeShanghaiOccurrence())}
 	sends := &fakeKindleSendRepository{settingsRepo: settings, claimErr: want}
 
 	sender := newTestKindleSender(t, KindleConfig{
@@ -209,10 +202,8 @@ func TestCheckScheduleDoesNotSendToOldAddressAfterSettingsChange(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	deliverySettings := configuredDeliverySettings()
+	deliverySettings := scheduledDeliverySettings(beforeShanghaiOccurrence())
 	deliverySettings.Kindle.KindleEmail = "old@kindle.com"
-	deliverySettings.Kindle.SendTime = ptrTo("09:00")
-	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
 	settings := &fakeSettingRepository{settings: deliverySettings}
 	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
@@ -223,11 +214,9 @@ func TestCheckScheduleDoesNotSendToOldAddressAfterSettingsChange(t *testing.T) {
 		savedPages:   []domain.SavedPage{page},
 		beforeClaim: func() {
 			// Simulate user editing Kindle email between scheduler wakeup and claim transaction.
-			_ = settings.UpdateKindle(context.Background(), domain.KindleSettings{
-				KindleEmail: "new@kindle.com",
-				SendTime:    ptrTo("09:00"),
-				NextSendAt:  ptrTo(now.Add(-time.Minute)),
-			})
+			updated := *deliverySettings.Kindle
+			updated.KindleEmail = "new@kindle.com"
+			_ = settings.UpdateKindle(context.Background(), updated, now)
 		},
 	}
 
@@ -251,15 +240,13 @@ func TestCheckScheduleDoesNotSendToOldAddressAfterSettingsChange(t *testing.T) {
 		t.Fatalf("sent mails = %+v, want delivery to new@kindle.com only", mails)
 	}
 }
-func TestCheckScheduleSkipsWhileRunning(t *testing.T) {
+
+func TestCheckScheduleDefersWhileRunningThenFiresOnLaterTick(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	deliverySettings := configuredDeliverySettings()
-	deliverySettings.Kindle.SendTime = ptrTo("09:00")
-	deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
 
-	settings := &fakeSettingRepository{settings: deliverySettings}
+	settings := &fakeSettingRepository{settings: scheduledDeliverySettings(beforeShanghaiOccurrence())}
 	page := domain.SavedPage{ID: "page-1", URL: testURL(t, "https://example.com/page"), Title: "Page", Content: "body"}
 	sends := &fakeKindleSendRepository{settingsRepo: settings, savedPages: []domain.SavedPage{page}}
 
@@ -290,35 +277,39 @@ func TestCheckScheduleSkipsWhileRunning(t *testing.T) {
 	}
 
 	if err := sender.CheckSchedule(context.Background()); err != nil {
-		t.Fatalf("CheckSchedule() error = %v", err)
+		t.Fatalf("CheckSchedule() while busy error = %v", err)
 	}
 
-	if advances := sends.advanceList(); len(advances) != 1 {
-		t.Fatalf("advances = %d, want 1", len(advances))
+	created := sends.createdList()
+	if len(created) != 1 || created[0].Trigger != domain.KindleTriggerManual {
+		t.Fatalf("created sends = %+v, want the manual send only", created)
 	}
 
-	if created := sends.createdList(); len(created) != 1 {
-		t.Fatalf("created sends = %d, want 1 (manual only)", len(created))
-	}
-
-	if created := sends.createdList(); created[0].Trigger != domain.KindleTriggerManual {
-		t.Fatalf("created trigger = %s, want manual", created[0].Trigger)
+	if last, err := sends.LastScheduledStartedAt(context.Background()); err != nil || last != nil {
+		t.Fatalf("LastScheduledStartedAt() = %v, %v, want nil (a busy tick must not consume the occurrence)", last, err)
 	}
 
 	close(release)
 	sender.Wait()
+
+	if err := sender.CheckSchedule(context.Background()); err != nil {
+		t.Fatalf("CheckSchedule() after the manual send finished error = %v", err)
+	}
+
+	sender.Wait()
+
+	created = sends.createdList()
+	if len(created) != 2 || created[1].Trigger != domain.KindleTriggerScheduled {
+		t.Fatalf("created sends = %+v, want manual then scheduled", created)
+	}
 }
 
 func TestCheckScheduleDoesNotOrphanRunningRowWhileJobReleasesSlot(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	dueAt := now.Add(-time.Hour)
-	deliverySettings := configuredDeliverySettings()
-	deliverySettings.Kindle.SendTime = ptrTo("09:00")
-	deliverySettings.Kindle.NextSendAt = &dueAt
 
-	settings := &fakeSettingRepository{settings: deliverySettings}
+	settings := &fakeSettingRepository{settings: scheduledDeliverySettings(beforeShanghaiOccurrence())}
 	sends := &fakeKindleSendRepository{settingsRepo: settings}
 
 	// Pause the first job after its terminal status is committed but before it
@@ -360,10 +351,6 @@ func TestCheckScheduleDoesNotOrphanRunningRowWhileJobReleasesSlot(t *testing.T) 
 		t.Fatalf("CheckSchedule() while the slot is releasing error = %v", err)
 	}
 
-	if advances := sends.advanceList(); len(advances) != 1 {
-		t.Fatalf("schedule advances = %d, want 1 (the due schedule is skipped, not retried)", len(advances))
-	}
-
 	if created := sends.createdList(); len(created) != 1 {
 		t.Fatalf("created sends = %d, want 1 (manual only)", len(created))
 	}
@@ -379,15 +366,7 @@ func TestCheckScheduleDoesNotOrphanRunningRowWhileJobReleasesSlot(t *testing.T) 
 		t.Fatalf("after release: slot busy = %v, running row = %v, want both clear", sender.IsRunning(), sends.hasRunningRow())
 	}
 
-	// The next due claim must start normally on the freed slot.
-	if err := settings.UpdateKindle(context.Background(), domain.KindleSettings{
-		KindleEmail: deliverySettings.Kindle.KindleEmail,
-		SendTime:    deliverySettings.Kindle.SendTime,
-		NextSendAt:  &dueAt,
-	}); err != nil {
-		t.Fatalf("make schedule due again: %v", err)
-	}
-
+	// The deferred occurrence is still due and starts on the freed slot.
 	if err := sender.CheckSchedule(context.Background()); err != nil {
 		t.Fatalf("CheckSchedule() on the freed slot error = %v", err)
 	}
@@ -411,47 +390,64 @@ func TestCheckScheduleDoesNotOrphanRunningRowWhileJobReleasesSlot(t *testing.T) 
 
 func TestStartSchedulerChecksImmediately(t *testing.T) {
 	t.Parallel()
+
 	for _, tc := range []struct {
-		name      string
-		interval  time.Duration
-		keepDue   bool
-		wantSends int
+		name       string
+		interval   time.Duration
+		dueAtStart bool
 	}{
-		{"startup", time.Hour, false, 1},
-		{"periodic", 10 * time.Millisecond, true, 2},
+		{"startup", time.Hour, true},
+		{"periodic", 10 * time.Millisecond, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-			deliverySettings := configuredDeliverySettings()
-			deliverySettings.Kindle.SendTime = ptrTo("09:00")
-			deliverySettings.Kindle.NextSendAt = ptrTo(now.Add(-time.Hour))
-			settings := &fakeSettingRepository{settings: deliverySettings}
+			dueSettings := scheduledDeliverySettings(beforeShanghaiOccurrence())
+			initial := dueSettings
+
+			if !tc.dueAtStart {
+				initial = scheduledDeliverySettings(afterShanghaiOccurrence())
+			}
+
+			settings := &fakeSettingRepository{settings: initial}
 			completed := make(chan struct{}, 100)
-			sends := &fakeKindleSendRepository{settingsRepo: settings, keepDue: tc.keepDue, afterComplete: func() { completed <- struct{}{} }}
+			sends := &fakeKindleSendRepository{settingsRepo: settings, afterComplete: func() { completed <- struct{}{} }}
 			sender := newTestKindleSender(t, KindleConfig{KindleSends: sends, EPUBBuilder: &fakeEPUBBuilder{}, MailSender: &fakeMailSender{}, TickInterval: tc.interval, Now: func() time.Time { return now }})
+
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
+
 			go func() { sender.StartScheduler(ctx); close(done) }()
-			for range tc.wantSends {
-				select {
-				case <-completed:
-				case <-time.After(testWaitTimeout):
-					cancel()
-					<-done
-					sender.Wait()
-					t.Fatal("scheduled send did not complete")
+
+			if !tc.dueAtStart {
+				// The occurrence becomes due after startup; a later tick must pick it up.
+				if err := settings.UpdateKindle(ctx, *dueSettings.Kindle, now); err != nil {
+					t.Fatalf("UpdateKindle() error = %v", err)
 				}
 			}
+
+			select {
+			case <-completed:
+			case <-time.After(testWaitTimeout):
+				cancel()
+				<-done
+				sender.Wait()
+				t.Fatal("scheduled send did not complete")
+			}
+
 			cancel()
+
 			select {
 			case <-done:
 			case <-time.After(testWaitTimeout):
 				t.Fatal("StartScheduler did not return after context cancellation")
 			}
+
 			sender.Wait()
-			if got := len(sends.createdList()); got < tc.wantSends {
-				t.Fatalf("created sends = %d, want at least %d", got, tc.wantSends)
+
+			if got := len(sends.createdList()); got != 1 {
+				t.Fatalf("created sends = %d, want exactly 1 (later ticks must not resend the occurrence)", got)
 			}
 		})
 	}
@@ -517,6 +513,47 @@ func TestCheckScheduleLoggedConsecutiveFailuresAndReset(t *testing.T) {
 
 	if strings.Contains(got[0].Error(), "alice:secret") {
 		t.Fatalf("fatal error leaks credentials: %q", got[0].Error())
+	}
+}
+
+func TestCheckScheduleLoggedCorruptStoredScheduleReachesFatalStreak(t *testing.T) {
+	t.Parallel()
+
+	settings := scheduledDeliverySettings(beforeShanghaiOccurrence())
+	settings.Kindle.Schedule.Hour = 24
+	sends := &fakeKindleSendRepository{settingsRepo: &fakeSettingRepository{settings: settings}}
+
+	var fatals fatalRecorder
+
+	sender := newTestKindleSender(t, KindleConfig{
+		KindleSends: sends,
+		EPUBBuilder: &fakeEPUBBuilder{},
+		MailSender:  &fakeMailSender{},
+		OnFatal:     fatals.Record,
+	})
+
+	for range 2 {
+		sender.checkScheduleLogged(context.Background())
+	}
+
+	if got := fatals.Count(); got != 0 {
+		t.Fatalf("OnFatal calls before the 3rd corrupt-schedule failure = %d, want 0", got)
+	}
+
+	sender.checkScheduleLogged(context.Background())
+
+	got := fatals.Errors()
+	if len(got) != 1 {
+		t.Fatalf("OnFatal calls = %d, want 1", len(got))
+	}
+
+	var domainErr *domain.DomainError
+	if !errors.As(got[0], &domainErr) || domainErr.Code != domain.ErrSettingRepositoryError {
+		t.Fatalf("fatal error = %v, want a %s domain error", got[0], domain.ErrSettingRepositoryError)
+	}
+
+	if created := sends.createdList(); len(created) != 0 {
+		t.Fatalf("created sends = %+v, want none from a corrupt schedule", created)
 	}
 }
 

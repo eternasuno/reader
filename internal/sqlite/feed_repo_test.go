@@ -165,28 +165,6 @@ func TestFeedRepoMutations(t *testing.T) {
 	if topLevel.FolderID != nil {
 		t.Fatalf("top level feed folder = %v, want nil", *topLevel.FolderID)
 	}
-
-	failure := "refresh failed for https://user:secret@example.com/feed.xml"
-	if err := store.Feeds().RecordRefreshFailure(ctx, feed.ID, failure); err != nil {
-		t.Fatalf("record refresh failure: %v", err)
-	}
-
-	if err := store.Feeds().RecordRefreshFailure(ctx, feed.ID, failure); err != nil {
-		t.Fatalf("record second refresh failure: %v", err)
-	}
-
-	failed, err := store.Feeds().GetByID(ctx, feed.ID)
-	if err != nil {
-		t.Fatalf("get failed feed: %v", err)
-	}
-
-	if failed.FailureCount != 2 {
-		t.Fatalf("failure count = %d, want 2", failed.FailureCount)
-	}
-
-	if failed.LastError == nil || *failed.LastError != "refresh failed for https://example.com/feed.xml" {
-		t.Fatalf("last error = %v", failed.LastError)
-	}
 }
 
 func TestFeedRepoApplySync(t *testing.T) {
@@ -194,9 +172,9 @@ func TestFeedRepoApplySync(t *testing.T) {
 	ctx := context.Background()
 	feed := createFeed(t, store, "Example", nil)
 
-	if err := store.Feeds().RecordRefreshFailure(ctx, feed.ID, "boom"); err != nil {
-		t.Fatalf("record refresh failure: %v", err)
-	}
+	startedAt := time.Date(2024, 3, 1, 10, 59, 0, 0, time.UTC)
+	finishedAt := time.Date(2024, 3, 1, 11, 0, 0, 0, time.UTC).In(time.FixedZone("plus-two", 2*60*60))
+	recordFailure(t, store, feed, "boom", startedAt)
 
 	publishedAt := time.Date(2024, 3, 1, 10, 30, 0, 0, time.UTC)
 	items := []domain.FeedItem{
@@ -204,8 +182,8 @@ func TestFeedRepoApplySync(t *testing.T) {
 		{ID: domain.NewID(), URL: mustURL(t, "https://example.com/b"), Title: "B"},
 	}
 
-	updatedAt := time.Date(2024, 3, 1, 11, 0, 0, 0, time.UTC).In(time.FixedZone("plus-two", 2*60*60))
-	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", nil, updatedAt, items, nil); err != nil {
+	meta := domain.FeedSyncMeta{Title: "Synced", SiteURL: ptr("https://example.com/"), IconURL: ptr("https://example.com/icon.png")}
+	if err := store.Feeds().ApplySync(ctx, feed.ID, meta, startedAt, finishedAt, items, nil); err != nil {
 		t.Fatalf("apply sync: %v", err)
 	}
 
@@ -218,8 +196,12 @@ func TestFeedRepoApplySync(t *testing.T) {
 		t.Fatalf("synced title = %q, want Synced", synced.Title)
 	}
 
-	if synced.UpdatedAt == nil || !synced.UpdatedAt.Equal(updatedAt) {
-		t.Fatalf("synced updated at = %v, want %v", synced.UpdatedAt, updatedAt)
+	if synced.SiteURL == nil || *synced.SiteURL != "https://example.com/" || synced.IconURL == nil || *synced.IconURL != "https://example.com/icon.png" {
+		t.Fatalf("synced site/icon = %v/%v", synced.SiteURL, synced.IconURL)
+	}
+
+	if synced.UpdatedAt == nil || !synced.UpdatedAt.Equal(finishedAt) {
+		t.Fatalf("synced updated at = %v, want %v", synced.UpdatedAt, finishedAt)
 	}
 
 	if synced.FailureCount != 0 || synced.LastError != nil {
@@ -240,8 +222,17 @@ func TestFeedRepoApplySync(t *testing.T) {
 	}
 
 	duplicate := []domain.FeedItem{{ID: domain.NewID(), URL: mustURL(t, "https://example.com/a"), Title: "A again"}}
-	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", nil, updatedAt, duplicate, nil); err != nil {
+	if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: "Synced"}, startedAt, finishedAt, duplicate, nil); err != nil {
 		t.Fatalf("apply sync with duplicate url: %v", err)
+	}
+
+	cleared, err := store.Feeds().GetByID(ctx, feed.ID)
+	if err != nil {
+		t.Fatalf("get feed after metadata-less sync: %v", err)
+	}
+
+	if cleared.SiteURL != nil || cleared.IconURL != nil {
+		t.Fatalf("site/icon after sync without them = %v/%v, want both replaced by nil", cleared.SiteURL, cleared.IconURL)
 	}
 
 	afterDuplicate, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
@@ -257,7 +248,7 @@ func TestFeedRepoApplySync(t *testing.T) {
 		t.Fatalf("duplicate changed original item: %+v", got)
 	}
 
-	if err := store.Feeds().ApplySync(ctx, feed.ID, "Synced", nil, updatedAt, nil, []string{items[0].ID}); err != nil {
+	if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: "Synced"}, startedAt, finishedAt, nil, []string{items[0].ID}); err != nil {
 		t.Fatalf("apply sync with deletions: %v", err)
 	}
 

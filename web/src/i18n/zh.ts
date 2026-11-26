@@ -248,8 +248,10 @@ export const zhDict = {
     sendNowHint:
       '立即把所有未读文章打包成 EPUB 发送到 Kindle，发送成功的文章会标为已读。',
     kindleEmailLabel: 'Kindle 接收邮箱',
-    sendTimeLabel: '每日定时发送（可选）',
-    sendTimeNone: '不启用定时发送',
+    scheduleLabel: '每日定时发送',
+    hourLabel: '小时',
+    minuteLabel: '分钟',
+    timezoneLabel: '时区',
     saveKindle: '保存 Kindle 设置',
     sendNow: '立即发送',
     sendingNow: '正在发送中…',
