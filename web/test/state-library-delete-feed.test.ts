@@ -61,9 +61,9 @@ describe('deleteFeed scope guard', () => {
     queueEmpty();
     const onNavigate = vi.fn();
 
-    await deleteFeed({ unreadOnly: true, onNavigate }, feedA);
+    await deleteFeed({ unreadOnly: false, onNavigate }, feedA);
 
-    expect(onNavigate).toHaveBeenCalledWith('/all?unread');
+    expect(onNavigate).toHaveBeenCalledWith('/all?all');
   });
 });
 
@@ -88,9 +88,9 @@ describe('deleteFeed open article guard', () => {
     queuePage([makeItem({ id: 'iB1', feedId: 'fB' })]);
     const onNavigate = vi.fn();
 
-    await deleteFeed({ unreadOnly: true, onNavigate }, feedA);
+    await deleteFeed({ unreadOnly: false, onNavigate }, feedA);
 
-    expect(onNavigate).toHaveBeenCalledWith('/all?unread');
+    expect(onNavigate).toHaveBeenCalledWith('/all?all');
   });
 
   it('does not navigate when deleting a feed while viewing a folder and another feed item is open', async () => {

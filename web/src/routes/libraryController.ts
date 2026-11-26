@@ -259,7 +259,7 @@ const useArticleActions = (
   navigate: (url: string) => void
 ) => {
   const openScope = (target: LibraryScope, articleId?: string): void => {
-    navigate(buildLibraryUrl(target, { articleId }));
+    navigate(buildLibraryUrl(target, { articleId, unreadOnly: false }));
   };
 
   const openExistingPage = (page: SavedPage): void =>

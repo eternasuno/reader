@@ -49,16 +49,19 @@ const mountHeader = (unreadOnly: boolean, onToggleUnread = vi.fn()) =>
   ));
 
 describe('ArticleListHeader', () => {
-  it('toggles unread filter and offers 从旧到新 at the top level of the header menu', () => {
+  it('toggles unread filter from the header button and offers 从旧到新 at the top level of the header menu', () => {
     const onToggleUnread = vi.fn();
-    const c1 = mountHeader(false, onToggleUnread);
-    clickAria(c1, '更多操作');
-    const unreadCheckbox = c1.querySelector<HTMLButtonElement>(
-      '[role="menuitemcheckbox"]'
+    const c1 = mountHeader(true, onToggleUnread);
+    expect(ariaBtn(c1, '只显示未读')?.getAttribute('aria-pressed')).toBe(
+      'true'
     );
-    expect(unreadCheckbox?.getAttribute('aria-checked')).toBe('false');
-    unreadCheckbox?.click();
+    clickAria(c1, '只显示未读');
     expect(onToggleUnread).toHaveBeenCalledTimes(1);
+
+    clickAria(c1, '更多操作');
+    expect(c1.querySelector('[role="menu"]')?.textContent).not.toContain(
+      '只显示未读'
+    );
 
     expect(c1.textContent).toContain('从旧到新');
     expect(c1.textContent).not.toContain('视图选项');

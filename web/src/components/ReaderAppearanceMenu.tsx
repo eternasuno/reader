@@ -118,7 +118,7 @@ const StepperRow = (props: StepperRowProps): JSX.Element => (
         data-keep-open="true"
         disabled={!props.canDecrease}
         aria-label={`${props.label} ${t('reader.decrease')}`}
-        class="btn btn-ghost btn-xs btn-square disabled:opacity-30"
+        class="btn btn-ghost btn-xs btn-square disabled:opacity-30 pointer-coarse:size-9"
         onClick={props.onDecrease}
       >
         <Icon name="minus-circle" size={16} />
@@ -132,7 +132,7 @@ const StepperRow = (props: StepperRowProps): JSX.Element => (
         data-keep-open="true"
         disabled={!props.canIncrease}
         aria-label={`${props.label} ${t('reader.increase')}`}
-        class="btn btn-ghost btn-xs btn-square disabled:opacity-30"
+        class="btn btn-ghost btn-xs btn-square disabled:opacity-30 pointer-coarse:size-9"
         onClick={props.onIncrease}
       >
         <Icon name="plus-circle" size={16} />
@@ -273,7 +273,7 @@ export function ReaderAppearanceMenu(): JSX.Element {
     <Menu
       icon="typography"
       label={t('reader.appearance')}
-      triggerClass="btn-sm max-md:size-10"
+      triggerClass="btn-sm max-md:size-10 pointer-coarse:size-10"
     >
       <ReaderViewOptionsPanel />
     </Menu>

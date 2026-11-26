@@ -94,7 +94,7 @@ export function ReaderMoreMenu(props: ReaderMoreMenuProps): JSX.Element {
   return (
     <Menu
       label={t('reader.moreActions')}
-      triggerClass="btn-sm max-md:size-10"
+      triggerClass="btn-sm max-md:size-10 pointer-coarse:size-10"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
       }}

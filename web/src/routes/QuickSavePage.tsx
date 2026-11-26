@@ -9,7 +9,7 @@ import {
   untrack,
 } from 'solid-js';
 import { t, translateErrorCode } from '../i18n';
-import { errorText, sessionStatus } from '../state';
+import { errorText, HOME_PATH, sessionStatus } from '../state';
 import {
   clearQuickSaveDraft,
   consumeQuickSaveLocation,
@@ -126,7 +126,10 @@ function QuickSaveForm(props: QuickSaveFormProps): JSX.Element {
         onInput={(event) => props.onUrl(event.currentTarget.value)}
       />
       <div class="flex items-center justify-between gap-2">
-        <a class="link link-hover text-sm text-base-content/70" href="/later">
+        <a
+          class="link link-hover text-sm text-base-content/70"
+          href={HOME_PATH}
+        >
           {t('common.cancel')}
         </a>
         <Button

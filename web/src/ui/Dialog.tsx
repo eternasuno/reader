@@ -34,7 +34,7 @@ const PANEL_CLASSES =
   'relative z-10 flex max-h-[85dvh] w-full max-w-md flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 text-base-content shadow-2xl focus:outline-none max-sm:max-w-none max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)]';
 
 const CLOSE_CLASSES =
-  'ml-auto -mr-2 btn btn-ghost btn-sm btn-square focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
+  'ml-auto -mr-2 btn btn-ghost btn-sm btn-square pointer-coarse:size-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
 
 const focusableIn = (panel: HTMLElement): Array<HTMLElement> =>
   Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));

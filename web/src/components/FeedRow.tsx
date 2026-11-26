@@ -16,7 +16,7 @@ import { hasRefreshFailures } from './feedFailure';
 import { ScopeMenuItems } from './ScopeRow';
 import { SidebarRowEnd } from './SidebarRowEnd';
 import { SiteIcon } from './SiteIcon';
-import { selectFeed, toggleUnread } from './sidebarActions';
+import { selectFeed } from './sidebarActions';
 import {
   ROW_BUTTON_CLASSES,
   ROW_CLASSES,
@@ -100,7 +100,7 @@ function FeedRowMenu(props: { feed: Feed; state: SidebarProps }): JSX.Element {
   return (
     <Menu
       label={t('library.moreActions')}
-      triggerClass="btn-xs"
+      triggerClass="btn-xs pointer-coarse:size-9"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
       }}
@@ -136,8 +136,6 @@ function FeedRowMainItems(props: {
       <ScopeMenuItems
         scope={{ kind: 'feed', feedId: props.feed.id }}
         feed={props.feed}
-        unreadOnly={props.state.unreadOnly}
-        onToggleUnread={() => toggleUnread(props.state)}
       />
       <MenuDivider />
       <MenuItem submenu onSelect={props.onOpenMove}>

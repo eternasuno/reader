@@ -5,6 +5,7 @@ import {
 } from '@solidjs/router';
 import type { Component } from 'solid-js';
 import { createComponent } from 'solid-js';
+import { HOME_PATH } from '../state';
 import { LibraryPage } from './LibraryPage';
 import { LoginPage } from './LoginPage';
 import { QuickSavePage } from './QuickSavePage';
@@ -12,7 +13,7 @@ import { Redirect, withSession } from './SessionGuard';
 import { SettingsPage } from './SettingsPage';
 
 const RedirectToLibrary: Component = () =>
-  createComponent(Redirect, { to: '/later' });
+  createComponent(Redirect, { to: HOME_PATH });
 const ProtectedLibrary = withSession(LibraryPage);
 const ProtectedQuickSave = withSession(QuickSavePage);
 const ProtectedSettings = withSession(SettingsPage);
@@ -24,7 +25,7 @@ const ScopeOutlet: Component = () => null;
  * `/later`, `/all`, `/feed/:id`, and `/folder/:id` never remounts the page or re-verifies the
  * session — that preserves loaded rows (`LIB-RELOAD-1`) and lets focus recovery (`LIB-VIEW-1`)
  * see which panel CSS just hid. The children render nothing: the URL is the source of truth and
- * `LibraryPage` reads it. Unknown paths redirect to `/later`.
+ * `LibraryPage` reads it. Unknown paths redirect to `/all`.
  */
 export const appRoutes = defineRoutes([
   { path: '/', component: RedirectToLibrary },

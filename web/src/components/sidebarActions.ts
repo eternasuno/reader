@@ -13,13 +13,6 @@ import {
 import { showToast } from '../ui';
 import type { SidebarProps } from './sidebarProps';
 
-/** `LIB-SCOPE-1`: the filter toggles the `?unread` flag of the viewed scope. */
-export const toggleUnread = (props: SidebarProps): void => {
-  props.onNavigate(
-    buildLibraryUrl(props.scope, { unreadOnly: !props.unreadOnly })
-  );
-};
-
 export const selectScope = (props: SidebarProps, scope: LibraryScope): void => {
   props.onNavigate(buildLibraryUrl(scope, { unreadOnly: props.unreadOnly }));
 };

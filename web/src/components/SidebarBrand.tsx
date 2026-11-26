@@ -54,7 +54,7 @@ export function SidebarBrand(props: {
           <Button
             variant="icon"
             size="sm"
-            class="hidden btn-xs md:inline-flex"
+            class="hidden btn-xs md:inline-flex pointer-coarse:size-9"
             data-sidebar-collapse=""
             aria-label={t('library.collapseSidebar')}
             title={t('library.collapseSidebar')}
@@ -137,7 +137,7 @@ function BrandMenu(props: BrandMenuProps): JSX.Element {
     <Menu
       icon="user"
       label={t('library.appMenu')}
-      triggerClass="btn-xs"
+      triggerClass="btn-xs pointer-coarse:size-9"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
       }}

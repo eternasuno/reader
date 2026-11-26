@@ -12,7 +12,7 @@ export function FeedFailureMenu(props: {
   return (
     <Menu
       label={t('feeds.retryRefresh')}
-      triggerClass="btn-xs btn-square"
+      triggerClass="btn-xs btn-square pointer-coarse:size-9"
       trigger={
         <span
           class="inline-flex items-center justify-center"

@@ -286,7 +286,11 @@ export function Icon(props: IconProps): JSX.Element {
       stroke-width={props.strokeWidth ?? 1.75}
       stroke-linecap="round"
       stroke-linejoin="round"
-      class={['inline-block shrink-0', props.class]}
+      style={{ '--icon-size': `${size()}px` }}
+      class={[
+        'inline-block shrink-0 pointer-coarse:size-[calc(var(--icon-size)*1.25)]',
+        props.class,
+      ]}
       role={props.label ? 'img' : undefined}
       aria-label={props.label}
       aria-hidden={props.label ? undefined : 'true'}

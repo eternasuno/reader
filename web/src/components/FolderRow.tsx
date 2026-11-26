@@ -14,7 +14,7 @@ import { Icon, Menu, MenuDivider, MenuItem } from '../ui';
 import { FeedRow } from './FeedRow';
 import { ScopeMenuItems } from './ScopeRow';
 import { SidebarRowEnd } from './SidebarRowEnd';
-import { deleteFolder, selectScope, toggleUnread } from './sidebarActions';
+import { deleteFolder, selectScope } from './sidebarActions';
 import {
   ROW_BUTTON_CLASSES,
   ROW_CLASSES,
@@ -86,7 +86,7 @@ function CollapseButton(props: {
   return (
     <button
       type="button"
-      class="btn btn-ghost btn-xs btn-square shrink-0"
+      class="btn btn-ghost btn-xs btn-square shrink-0 pointer-coarse:size-9"
       aria-label={label()}
       aria-expanded={props.collapsed ? 'false' : 'true'}
       aria-controls={props.controlsId}
@@ -132,12 +132,11 @@ function FolderMenu(props: {
   state: SidebarProps;
 }): JSX.Element {
   return (
-    <Menu label={t('library.moreActions')} triggerClass="btn-xs">
-      <ScopeMenuItems
-        scope={{ kind: 'folder', folderId: props.folder.id }}
-        unreadOnly={props.state.unreadOnly}
-        onToggleUnread={() => toggleUnread(props.state)}
-      />
+    <Menu
+      label={t('library.moreActions')}
+      triggerClass="btn-xs pointer-coarse:size-9"
+    >
+      <ScopeMenuItems scope={{ kind: 'folder', folderId: props.folder.id }} />
       <MenuDivider />
       <MenuItem
         opensDialog

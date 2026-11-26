@@ -89,5 +89,5 @@ it('preserves a changed unread filter when a pending delete navigates', async ()
   await harness.settle();
   resolveDelete(new Response(null, { status: 204 }));
   await harness.settle();
-  expect(history.get()).toBe('/all?unread');
+  expect(history.get()).toBe('/all?all');
 });

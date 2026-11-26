@@ -57,7 +57,7 @@ const mountList = (openId: () => string | null): HTMLDivElement => {
 
 const rowRoot = (scroller: HTMLElement, id: string): HTMLElement | null =>
   scroller
-    .querySelector(`a[href$="/${id}"]`)
+    .querySelector(`a[href$="/${id}?all"]`)
     ?.closest<HTMLElement>('[class*="group/row"]') ?? null;
 
 beforeEach(() => {

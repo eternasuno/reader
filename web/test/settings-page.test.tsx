@@ -141,7 +141,7 @@ describe('settings leave guards', () => {
     await settle(4);
 
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(history.get()).toBe('/later');
+    expect(history.get()).toBe('/all');
 
     const afterLeaveEvent = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(afterLeaveEvent);
@@ -168,7 +168,7 @@ describe('settings secret disposal', () => {
     await settle(4);
 
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(history.get()).toBe('/later');
+    expect(history.get()).toBe('/all');
 
     history.set({ value: '/settings' });
     await settle(4);
@@ -190,7 +190,7 @@ describe('settings secret disposal', () => {
       ?.click();
     await settle(4);
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(history.get()).toBe('/later');
+    expect(history.get()).toBe('/all');
   });
 });
 

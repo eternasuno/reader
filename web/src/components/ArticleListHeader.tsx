@@ -95,8 +95,8 @@ function UnreadToggleButton(props: {
       size="sm"
       class={
         props.unreadOnly
-          ? 'max-md:size-10 bg-primary/15 text-primary hover:bg-primary/20'
-          : 'max-md:size-10'
+          ? 'max-md:size-10 pointer-coarse:size-10 bg-primary/15 text-primary hover:bg-primary/20'
+          : 'max-md:size-10 pointer-coarse:size-10'
       }
       aria-pressed={props.unreadOnly ? 'true' : 'false'}
       aria-label={t('library.unreadOnly')}
@@ -116,7 +116,7 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
         ref={props.navToggleRef}
         variant="icon"
         size="sm"
-        class="max-md:size-10 md:hidden"
+        class="max-md:size-10 pointer-coarse:size-10 md:hidden"
         aria-label={t('library.toggleNav')}
         aria-expanded={props.drawerOpen ? 'true' : 'false'}
         onClick={props.onToggleNav}
@@ -135,7 +135,7 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
       <Button
         variant="icon"
         size="sm"
-        class="max-md:size-10"
+        class="max-md:size-10 pointer-coarse:size-10"
         aria-label={t('library.markLoadedRead')}
         title={t('library.markLoadedRead')}
         onClick={markLoadedRead}
@@ -144,8 +144,6 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
       </Button>
       <ArticleHeaderMenu
         scope={props.scope}
-        unreadOnly={props.unreadOnly}
-        onToggleUnread={props.onToggleUnread}
         onRequestAddLink={props.onRequestAddLink}
         onMoveFeed={props.onMoveFeed}
         onRequestNewFolder={props.onRequestNewFolder}
@@ -158,8 +156,6 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
 
 interface ArticleHeaderMenuProps {
   scope: LibraryScope;
-  unreadOnly: boolean;
-  onToggleUnread: () => void;
   onRequestAddLink: () => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
   onRequestNewFolder: (feed: Feed) => void;
@@ -174,7 +170,7 @@ function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
   return (
     <Menu
       label={t('library.moreActions')}
-      triggerClass="btn-sm max-md:size-10"
+      triggerClass="btn-sm max-md:size-10 pointer-coarse:size-10"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
       }}
@@ -184,8 +180,6 @@ function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
         fallback={
           <ArticleHeaderMainItems
             scope={props.scope}
-            unreadOnly={props.unreadOnly}
-            onToggleUnread={props.onToggleUnread}
             onRequestAddLink={props.onRequestAddLink}
             onOpenMove={() => setPanel('move')}
             onRequestFeedOptions={props.onRequestFeedOptions}
@@ -208,8 +202,6 @@ function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
 
 interface ArticleHeaderMainItemsProps {
   scope: LibraryScope;
-  unreadOnly: boolean;
-  onToggleUnread: () => void;
   onRequestAddLink: () => void;
   onOpenMove: () => void;
   onRequestFeedOptions?: (feed: Feed) => void;
@@ -221,12 +213,7 @@ function ArticleHeaderMainItems(
 ): JSX.Element {
   return (
     <>
-      <ScopeMenuItems
-        scope={props.scope}
-        feed={activeFeed(props.scope)}
-        unreadOnly={props.unreadOnly}
-        onToggleUnread={props.onToggleUnread}
-      />
+      <ScopeMenuItems scope={props.scope} feed={activeFeed(props.scope)} />
       <Show when={props.scope.kind === 'later'}>
         <MenuDivider />
         <MenuItem opensDialog icon="plus" onSelect={props.onRequestAddLink}>

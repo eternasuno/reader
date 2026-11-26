@@ -1,4 +1,4 @@
-import { createSignal, flush } from 'solid-js';
+import { flush } from 'solid-js';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { SidebarBrand } from '../src/components/SidebarBrand';
 import { SidebarFeedTree } from '../src/components/SidebarFeedTree';
@@ -67,21 +67,11 @@ const seedTree = async (): Promise<void> => {
   flush();
 };
 
-it('keeps feed row menu open when toggling order or unread filter', async () => {
+it('keeps feed row menu open when toggling order and omits the unread filter', async () => {
   await seedTree();
   fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
-  const [unreadOnly, setUnreadOnly] = createSignal(false);
-  const onNavigate = vi.fn((url: string) => {
-    setUnreadOnly(url.includes('unread=true') || url.includes('?unread'));
-  });
-  const props: SidebarProps = {
-    ...sidebarProps({ onNavigate }),
-    get unreadOnly() {
-      return unreadOnly();
-    },
-  };
-
+  const props = sidebarProps();
   const container = mount(() => <SidebarFeedTree state={props} />);
   const moreButtons = Array.from(
     container.querySelectorAll<HTMLButtonElement>(
@@ -99,10 +89,9 @@ it('keeps feed row menu open when toggling order or unread filter', async () => 
   flush();
   expect(container.querySelector('[role="menu"]')).not.toBeNull();
 
-  clickButton(container, '只显示未读');
-  flush();
-  expect(onNavigate).toHaveBeenCalledWith('/all?unread');
-  expect(container.querySelector('[role="menu"]')).not.toBeNull();
+  expect(container.querySelector('[role="menu"]')?.textContent).not.toContain(
+    '只显示未读'
+  );
 
   moreButtons[2]?.click();
   flush();

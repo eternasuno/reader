@@ -22,6 +22,9 @@ export interface LibraryUrlOptions {
   unreadOnly?: boolean;
 }
 
+/** The library home: `/` and fallback navigation land on `全部订阅`. */
+export const HOME_PATH = '/all';
+
 export const isSameScope = (a: LibraryScope, b: LibraryScope): boolean => {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'feed' && b.kind === 'feed') return a.feedId === b.feedId;
@@ -45,8 +48,8 @@ export const scopeBasePath = (scope: LibraryScope): string => {
 };
 
 /**
- * `LIB-SCOPE-1`: the unread filter is encoded as a bare `?unread` query flag, so `false` is
- * never serialized.
+ * `LIB-SCOPE-1`: the unread filter is on by default; turning it off is encoded as a bare `?all`
+ * query flag, so the default is never serialized.
  */
 export const buildLibraryUrl = (
   scope: LibraryScope,
@@ -59,7 +62,7 @@ export const buildLibraryUrl = (
       ? base
       : `${base}/${encodeURIComponent(articleId)}`;
 
-  return options.unreadOnly === true ? `${path}?unread` : path;
+  return options.unreadOnly === false ? `${path}?all` : path;
 };
 
 const decodeSegment = (segment: string): string => {
@@ -116,7 +119,7 @@ export const parseLibraryLocation = (
   if (segments.length === 0 || segments.length > 3) return null;
 
   const [root, identifier, extra] = segments;
-  const unreadOnly = new URLSearchParams(search).has('unread');
+  const unreadOnly = !new URLSearchParams(search).has('all');
 
   switch (root) {
     case 'later':
@@ -143,20 +146,20 @@ const hasUnsafeNextPathChar = (value: string): boolean => {
 export const sanitizeNextPath = (
   nextParam: string | null | undefined
 ): string => {
-  if (typeof nextParam !== 'string') return '/later';
+  if (typeof nextParam !== 'string') return HOME_PATH;
 
   const next = nextParam.trim();
-  if (next.length === 0) return '/later';
-  if (!next.startsWith('/')) return '/later';
-  if (next.startsWith('//')) return '/later';
+  if (next.length === 0) return HOME_PATH;
+  if (!next.startsWith('/')) return HOME_PATH;
+  if (next.startsWith('//')) return HOME_PATH;
   // Backslashes and control characters are interpreted differently by browsers and servers.
-  if (hasUnsafeNextPathChar(next)) return '/later';
+  if (hasUnsafeNextPathChar(next)) return HOME_PATH;
 
   try {
     if (new URL(next, 'http://localhost').origin !== 'http://localhost')
-      return '/later';
+      return HOME_PATH;
   } catch {
-    return '/later';
+    return HOME_PATH;
   }
 
   return next;

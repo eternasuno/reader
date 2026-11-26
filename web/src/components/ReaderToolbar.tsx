@@ -67,7 +67,7 @@ function ToolbarButton(props: {
     <Button
       variant="icon"
       size="sm"
-      class="max-md:size-10"
+      class="max-md:size-10 pointer-coarse:size-10"
       aria-label={props.label}
       title={props.label}
       disabled={props.disabled}
