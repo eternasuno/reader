@@ -6,6 +6,10 @@ import {
   noContentResponse as noContent,
 } from './support/state-fixture';
 
+const B = '019363b8-0000-7000-8000-000000000001';
+const queuePage = (items: Array<ReturnType<typeof makeItem>>): void =>
+  queue({ items, cursor: null, boundary: B });
+
 const context = createStateTestContext();
 const { queue, queueEmpty, pending, queueLoadedLibrary } = context;
 let state: typeof context.state;
@@ -37,7 +41,7 @@ describe('deleteFeed scope guard', () => {
     const del = pending();
     const onNavigate = vi.fn();
     const run = deleteFeed({ unreadOnly: false, onNavigate }, feedA);
-    queue({ items: [], cursor: null });
+    queue({ items: [], cursor: null, boundary: B });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     del.resolve(noContent());
     await run;
@@ -81,7 +85,7 @@ describe('deleteFeed open article guard', () => {
 
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     queueEmpty();
-    queue({ items: [makeItem({ id: 'iB1', feedId: 'fB' })], cursor: null });
+    queuePage([makeItem({ id: 'iB1', feedId: 'fB' })]);
     const onNavigate = vi.fn();
 
     await deleteFeed({ unreadOnly: true, onNavigate }, feedA);
@@ -109,7 +113,7 @@ describe('deleteFeed open article guard', () => {
 
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     queueEmpty();
-    queue({ items: [makeItem({ id: 'iB1', feedId: 'fB' })], cursor: null });
+    queuePage([makeItem({ id: 'iB1', feedId: 'fB' })]);
     const onNavigate = vi.fn();
 
     await deleteFeed({ unreadOnly: false, onNavigate }, feedA);

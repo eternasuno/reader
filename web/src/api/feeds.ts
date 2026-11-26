@@ -1,29 +1,28 @@
 import { FETCH_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './deadline';
 import {
   decodeField,
-  decodePage,
+  decodeUnreadCounts,
   decodeWith,
   isArrayOf,
   isExtractedFeedItem,
   isFeed,
   isFeedItem,
   isFeedPreview,
-  isFeedUnreadCount,
   isNullable,
   isOPMLImportResult,
 } from './decoders';
-import { item, request, requestNoContent } from './request';
+import { item, listPage, request, requestNoContent } from './request';
 import type {
   Feed,
   FeedCreateInput,
   FeedItem,
   FeedPreview,
-  FeedUnreadCount,
   ListParams,
   OPMLImportResult,
   Page,
   RequestCallOptions,
   SortOrder,
+  UnreadCounts,
 } from './types';
 
 export const feedsApi = {
@@ -86,31 +85,28 @@ export const feedsApi = {
       method: 'PATCH',
       body: { folderId },
     }),
-  unreadCounts: (
+  unreadCounts: (options?: RequestCallOptions): Promise<UnreadCounts> =>
+    request('/api/feeds/unread-counts', decodeUnreadCounts, options),
+  markAllRead: (
+    id: string,
+    before: string,
     options?: RequestCallOptions
-  ): Promise<Array<FeedUnreadCount>> =>
-    request(
-      '/api/feeds/unread-counts',
-      decodeField('items', isArrayOf(isFeedUnreadCount)),
-      options
-    ),
-  markAllRead: (id: string, options?: RequestCallOptions): Promise<void> =>
+  ): Promise<void> =>
     requestNoContent(`/api/feeds/${encodeURIComponent(id)}/read-all`, {
       ...options,
       method: 'POST',
+      body: { before },
     }),
   listItems: (
     id: string,
     params: ListParams = {},
     options?: RequestCallOptions
   ): Promise<Page<FeedItem>> =>
-    request(
+    listPage(
       `/api/feeds/${encodeURIComponent(id)}/items`,
-      decodePage(isFeedItem),
-      {
-        ...options,
-        params,
-      }
+      isFeedItem,
+      params,
+      options
     ),
   importOpml: (
     file: File,
@@ -133,10 +129,7 @@ export const feedItemsApi = {
     params: ListParams = {},
     options?: RequestCallOptions
   ): Promise<Page<FeedItem>> =>
-    request('/api/feed-items', decodePage(isFeedItem), {
-      ...options,
-      params,
-    }),
+    listPage('/api/feed-items', isFeedItem, params, options),
   getById: (
     id: string,
     options?: RequestCallOptions
@@ -165,10 +158,11 @@ export const feedItemsApi = {
       method: 'POST',
       body: { ids },
     }),
-  markAllRead: (options?: RequestCallOptions): Promise<void> =>
+  markAllRead: (before: string, options?: RequestCallOptions): Promise<void> =>
     requestNoContent('/api/feed-items/read-all', {
       ...options,
       method: 'POST',
+      body: { before },
     }),
   extract: (id: string, options?: RequestCallOptions): Promise<FeedItem> =>
     item(

@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE TABLE IF NOT EXISTS folder (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE

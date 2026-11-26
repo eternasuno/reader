@@ -232,15 +232,20 @@ func TestSavedPagePagingAndReadState(t *testing.T) {
 		t.Fatalf("first page cursor = %v", page.Cursor)
 	}
 
-	recorder = h.authed(http.MethodGet, "/api/saved-pages?limit=2&cursor="+*page.Cursor, nil)
+	if !domain.IsValidUUIDv7(page.Boundary) {
+		t.Fatalf("first page boundary = %q, want valid UUIDv7", page.Boundary)
+	}
+
+	firstBoundary := page.Boundary
+	recorder = h.authed(http.MethodGet, "/api/saved-pages?limit=2&cursor="+*page.Cursor+"&boundary="+firstBoundary, nil)
 	requireStatus(t, recorder, http.StatusOK)
 	decodeBody(t, recorder, &page)
 	if len(page.Items) != 1 || page.Items[0].ID != first.ID {
 		t.Fatalf("second page = %+v", page.Items)
 	}
 
-	if page.Cursor != nil {
-		t.Fatalf("last page cursor must be null, got %q", *page.Cursor)
+	if page.Cursor != nil || page.Boundary != firstBoundary {
+		t.Fatalf("last page cursor=%v boundary=%q, want nil and %q", page.Cursor, page.Boundary, firstBoundary)
 	}
 
 	if err := h.db.SavedPages().SetRead(context.Background(), second.ID, true); err != nil {
@@ -271,8 +276,8 @@ func TestSavedPagePagingAndReadState(t *testing.T) {
 
 	var count countResponse
 	decodeBody(t, recorder, &count)
-	if count.Count != 2 {
-		t.Fatalf("unread count = %d", count.Count)
+	if count.Count != 2 || !domain.IsValidUUIDv7(count.Boundary) {
+		t.Fatalf("unread count = %+v", count)
 	}
 
 	requireStatus(t, h.authed(http.MethodPatch, "/api/saved-pages/"+third.ID, map[string]any{"read": true}), http.StatusNoContent)
@@ -285,7 +290,13 @@ func TestSavedPagePagingAndReadState(t *testing.T) {
 		t.Fatal("POST read did not persist")
 	}
 
-	requireStatus(t, h.authed(http.MethodPost, "/api/saved-pages/read-all", nil), http.StatusNoContent)
+	fourth := h.seedSavedPage("https://example.com/4", false)
+	requireAPIError(t, h.authed(http.MethodPost, "/api/saved-pages/read-all", nil), http.StatusBadRequest, "RequestFailed")
+	if h.savedByID(fourth.ID).Read {
+		t.Fatal("bodyless saved-pages read-all changed read state")
+	}
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/saved-pages/read-all", map[string]any{"before": domain.NewID()}), http.StatusNoContent)
 	for _, saved := range h.allSavedPages() {
 		if !saved.Read {
 			t.Fatalf("page %s still unread after read-all", saved.ID)
@@ -324,6 +335,86 @@ func TestSavedPageRepositoryErrorsAreSanitized(t *testing.T) {
 	}
 
 	requireAPIError(t, h.authed(http.MethodGet, "/api/saved-pages/unread-count", nil), http.StatusInternalServerError, "SavedPageRepositoryError")
+}
+
+type unreadCountSpySavedPageRepo struct {
+	domain.SavedPageRepository
+	gotBoundary string
+	onUnread    func(boundary string)
+}
+
+func (r *unreadCountSpySavedPageRepo) UnreadCount(ctx context.Context, boundary string) (int, error) {
+	r.gotBoundary = boundary
+	if r.onUnread != nil {
+		r.onUnread(boundary)
+	}
+
+	return r.SavedPageRepository.UnreadCount(ctx, boundary)
+}
+
+func TestSavedPageUnreadCountBoundWithReturnedBoundary(t *testing.T) {
+	t.Parallel()
+
+	var spy *unreadCountSpySavedPageRepo
+	h := newHarnessWith(t, func(cfg *Config) {
+		spy = &unreadCountSpySavedPageRepo{SavedPageRepository: cfg.SavedPages}
+		cfg.SavedPages = spy
+	})
+
+	h.seedSavedPage("https://example.com/before", false)
+	spy.onUnread = func(boundary string) {
+		post := h.seedSavedPage("https://example.com/after", false)
+		if post.ID <= boundary {
+			t.Fatalf("post-boundary page %q <= boundary %q", post.ID, boundary)
+		}
+	}
+
+	recorder := h.authed(http.MethodGet, "/api/saved-pages/unread-count", nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	var count countResponse
+	decodeBody(t, recorder, &count)
+	if !domain.IsValidUUIDv7(count.Boundary) || count.Boundary != spy.gotBoundary {
+		t.Fatalf("count boundary = %q, repo saw %q", count.Boundary, spy.gotBoundary)
+	}
+
+	if count.Count != 1 {
+		t.Fatalf("bounded unread count = %d, want 1", count.Count)
+	}
+}
+
+func TestSavedPageReadAllValidationAndBoundary(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	beforePage := h.seedSavedPage("https://example.com/before", false)
+	boundary := domain.NewID()
+	afterPage := h.seedSavedPage("https://example.com/after", false)
+
+	invalidID := domain.NewID()
+	for _, body := range []string{
+		"",
+		`{}`,
+		`null`,
+		`{"before":null}`,
+		`{"before":""}`,
+		`{"before":"not-a-uuid"}`,
+		`{"before":"00000000-0000-4000-8000-000000000000"}`,
+		`{"before":"` + strings.ToUpper(invalidID) + `"}`,
+		`{"before":"` + invalidID + `","extra":true}`,
+		`{"before":"` + invalidID + `"} trailing`,
+	} {
+		requireAPIError(t, h.do(h.rawRequest(http.MethodPost, "/api/saved-pages/read-all", body)), http.StatusBadRequest, "RequestFailed")
+	}
+
+	if h.savedByID(beforePage.ID).Read || h.savedByID(afterPage.ID).Read {
+		t.Fatal("invalid saved-pages read-all changed read state")
+	}
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/saved-pages/read-all", map[string]any{"before": boundary}), http.StatusNoContent)
+	if !h.savedByID(beforePage.ID).Read || h.savedByID(afterPage.ID).Read {
+		t.Fatalf("bounded saved-pages read-all states = (%v, %v), want (true, false)", h.savedByID(beforePage.ID).Read, h.savedByID(afterPage.ID).Read)
+	}
 }
 
 func TestFeedItemSave(t *testing.T) {

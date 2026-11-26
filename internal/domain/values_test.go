@@ -12,7 +12,7 @@ func TestPageParamsValidation(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		t.Parallel()
 
-		params, err := ValidatePageParams(0, false, false, "", nil)
+		params, err := ValidatePageParams(0, false, false, "", nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -32,13 +32,17 @@ func TestPageParamsValidation(t *testing.T) {
 		if params.Cursor != nil {
 			t.Fatalf("cursor should default to nil")
 		}
+
+		if !IsValidUUIDv7(params.Boundary) {
+			t.Fatalf("boundary = %q, want valid UUIDv7", params.Boundary)
+		}
 	})
 
 	t.Run("accepts bounds", func(t *testing.T) {
 		t.Parallel()
 
 		for _, limit := range []int{1, 200} {
-			if _, err := ValidatePageParams(limit, true, true, SortOrderOldest, nil); err != nil {
+			if _, err := ValidatePageParams(limit, true, true, SortOrderOldest, nil, nil); err != nil {
 				t.Fatalf("limit %d should be valid: %v", limit, err)
 			}
 		}
@@ -48,7 +52,7 @@ func TestPageParamsValidation(t *testing.T) {
 		t.Parallel()
 
 		for _, limit := range []int{-1, 0, 201, 1000} {
-			_, err := ValidatePageParams(limit, true, false, SortOrderNewest, nil)
+			_, err := ValidatePageParams(limit, true, false, SortOrderNewest, nil, nil)
 			requireDomainError(t, err, ErrRequestFailed)
 		}
 	})
@@ -56,15 +60,16 @@ func TestPageParamsValidation(t *testing.T) {
 	t.Run("rejects invalid order", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := ValidatePageParams(30, true, false, SortOrder("random"), nil)
+		_, err := ValidatePageParams(30, true, false, SortOrder("random"), nil, nil)
 		requireDomainError(t, err, ErrRequestFailed)
 	})
 
-	t.Run("valid cursor", func(t *testing.T) {
+	t.Run("valid cursor and boundary", func(t *testing.T) {
 		t.Parallel()
 
 		cursor := NewID()
-		params, err := ValidatePageParams(10, true, true, SortOrderOldest, &cursor)
+		boundary := NewID()
+		params, err := ValidatePageParams(10, true, true, SortOrderOldest, &cursor, &boundary)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -73,16 +78,39 @@ func TestPageParamsValidation(t *testing.T) {
 			t.Fatalf("cursor = %v, want %q", params.Cursor, cursor)
 		}
 
+		if params.Boundary != boundary {
+			t.Fatalf("boundary = %q, want %q", params.Boundary, boundary)
+		}
+
 		if !params.Unread || params.Order != SortOrderOldest || params.Limit != 10 {
 			t.Fatalf("unexpected params: %+v", params)
 		}
 	})
 
+	t.Run("rejects boundary without cursor", func(t *testing.T) {
+		t.Parallel()
+
+		valid := NewID()
+		for _, boundary := range []string{valid, "", "   ", "not-a-uuid"} {
+			_, err := ValidatePageParams(30, true, false, SortOrderNewest, nil, &boundary)
+			requireDomainError(t, err, ErrRequestFailed)
+		}
+	})
+
+	t.Run("rejects cursor without boundary", func(t *testing.T) {
+		t.Parallel()
+
+		cursor := NewID()
+		_, err := ValidatePageParams(30, true, false, SortOrderNewest, &cursor, nil)
+		requireDomainError(t, err, ErrRequestFailed)
+	})
+
 	t.Run("rejects blank cursor", func(t *testing.T) {
 		t.Parallel()
 
+		boundary := NewID()
 		for _, blank := range []string{"", "   "} {
-			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &blank)
+			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &blank, &boundary)
 			requireDomainError(t, err, ErrRequestFailed)
 		}
 	})
@@ -91,6 +119,7 @@ func TestPageParamsValidation(t *testing.T) {
 		t.Parallel()
 
 		id := NewID()
+		boundary := NewID()
 		for _, cursor := range []string{
 			"abc",
 			"00000000-0000-4000-8000-000000000000",
@@ -99,7 +128,27 @@ func TestPageParamsValidation(t *testing.T) {
 			"urn:uuid:" + id,
 			" " + id,
 		} {
-			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &cursor)
+			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &cursor, &boundary)
+			requireDomainError(t, err, ErrRequestFailed)
+		}
+	})
+
+	t.Run("rejects invalid boundary with cursor", func(t *testing.T) {
+		t.Parallel()
+
+		cursor := NewID()
+		id := NewID()
+		for _, boundary := range []string{
+			"",
+			"   ",
+			"abc",
+			"00000000-0000-4000-8000-000000000000",
+			strings.ToUpper(id),
+			strings.ReplaceAll(id, "-", ""),
+			"urn:uuid:" + id,
+			" " + id,
+		} {
+			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &cursor, &boundary)
 			requireDomainError(t, err, ErrRequestFailed)
 		}
 	})

@@ -20,6 +20,7 @@ function LaterScopeRow(props: { state: SidebarProps }): JSX.Element {
   return (
     <ScopeRow
       active={isSameScope(props.state.scope, { kind: 'later' })}
+      scope={{ kind: 'later' }}
       icon="bookmark"
       label={t('library.laterScope')}
       count={savedUnreadCount()}
@@ -42,6 +43,7 @@ function AllScopeRow(props: { state: SidebarProps }): JSX.Element {
   return (
     <ScopeRow
       active={isSameScope(props.state.scope, { kind: 'all' })}
+      scope={{ kind: 'all' }}
       icon="inbox"
       label={t('library.allFeedsScope')}
       count={allFeedsUnreadCount()}

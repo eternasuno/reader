@@ -5,7 +5,6 @@ import {
   ArticleListPane,
   FeedOptionsDialog,
   FolderNameDialog,
-  KeyboardShortcutsDialog,
   ReaderPane,
   Sidebar,
   SubscribeFeedDialog,
@@ -27,14 +26,14 @@ export interface LibraryViewProps {
   panelRef: (panel: PanelName, element: HTMLDivElement) => void;
 }
 
-const GRID_CLASSES =
-  'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] md:grid-cols-[15rem_minmax(0,1fr)] lg:grid-cols-[14rem_21rem_minmax(0,1fr)] xl:grid-cols-[16rem_24rem_minmax(0,1fr)]';
-
-const COLLAPSED_GRID_CLASSES =
-  'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[21rem_minmax(0,1fr)] xl:grid-cols-[24rem_minmax(0,1fr)]';
-
-const FULLSCREEN_GRID_CLASSES =
+const GRID_BASE_CLASSES =
   'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)]';
+
+const GRID_CLASSES = `${GRID_BASE_CLASSES} transition-[grid-template-columns] duration-200 ease-out md:grid-cols-[15rem_minmax(0,1fr)] lg:grid-cols-[14rem_21rem_minmax(0,1fr)] xl:grid-cols-[16rem_24rem_minmax(0,1fr)]`;
+
+const COLLAPSED_GRID_CLASSES = `${GRID_BASE_CLASSES} transition-[grid-template-columns] duration-200 ease-out md:grid-cols-[0rem_minmax(0,1fr)] lg:grid-cols-[0rem_21rem_minmax(0,1fr)] xl:grid-cols-[0rem_24rem_minmax(0,1fr)]`;
+
+const FULLSCREEN_GRID_CLASSES = GRID_BASE_CLASSES;
 
 const isFullscreen = (props: LibraryViewProps): boolean =>
   readerFullscreen() && props.ctl.articleId() !== null;
@@ -45,18 +44,29 @@ const gridClasses = (props: LibraryViewProps): string => {
   return sidebarCollapsed() ? COLLAPSED_GRID_CLASSES : GRID_CLASSES;
 };
 
-const sidebarVisibility = (drawerOpen: boolean): string => {
-  if (drawerOpen) return DRAWER_CLASSES;
+const DRAWER_CLASSES =
+  'flex max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-66 max-md:max-w-[85vw] max-md:rounded-r-2xl max-md:bg-base-100 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-xl max-md:transition-[transform,translate,visibility] max-md:duration-200 max-md:ease-out';
 
-  return sidebarCollapsed() ? 'hidden' : 'hidden md:flex';
+const BACKDROP_CLASSES =
+  'fixed inset-0 z-30 bg-black/60 transition-opacity duration-200 md:hidden';
+
+const sidebarClasses = (fullscreen: boolean, drawerOpen: boolean): string => {
+  if (fullscreen) return 'hidden';
+
+  return drawerOpen
+    ? `${DRAWER_CLASSES} max-md:translate-x-0`
+    : `${DRAWER_CLASSES} max-md:-translate-x-full max-md:invisible`;
 };
 
-const DRAWER_CLASSES =
-  'fixed inset-y-0 left-0 z-40 flex w-66 max-w-[85vw] bg-base-100 max-md:overflow-hidden max-md:rounded-r-2xl pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-xl md:relative md:inset-auto md:z-auto md:w-auto md:max-w-none md:pt-0 md:pb-0 md:shadow-none';
+const sidebarInert = (props: LibraryViewProps): boolean =>
+  !props.ctl.drawerOpen() && (isFullscreen(props) || sidebarCollapsed());
 
 interface PanelFrameProps {
   name: PanelName;
   visible: string;
+  childWidth?: string;
+  inert?: boolean;
+  ariaHidden?: 'true';
   panelRef: (element: HTMLDivElement) => void;
   children: JSX.Element;
 }
@@ -68,8 +78,11 @@ function PanelFrame(props: PanelFrameProps): JSX.Element {
       ref={props.panelRef}
       data-panel={props.name}
       tabindex={-1}
+      inert={props.inert}
+      aria-hidden={props.ariaHidden}
       class={[
-        'min-h-0 min-w-0 overflow-hidden outline-none *:min-w-0 *:flex-1',
+        'min-h-0 min-w-0 overflow-hidden outline-none *:flex-1',
+        props.childWidth ?? '*:min-w-0',
         props.visible,
       ]}
     >
@@ -79,15 +92,16 @@ function PanelFrame(props: PanelFrameProps): JSX.Element {
 }
 
 function SidebarPanel(props: LibraryViewProps): JSX.Element {
+  const inert = (): boolean => sidebarInert(props);
+
   return (
     <PanelFrame
       name="sidebar"
       panelRef={(element) => props.panelRef('sidebar', element)}
-      visible={
-        isFullscreen(props)
-          ? 'hidden'
-          : sidebarVisibility(props.ctl.drawerOpen())
-      }
+      visible={sidebarClasses(isFullscreen(props), props.ctl.drawerOpen())}
+      childWidth="*:min-w-0 *:md:min-w-[15rem] *:lg:min-w-[14rem] *:xl:min-w-[16rem]"
+      inert={inert()}
+      ariaHidden={inert() ? 'true' : undefined}
     >
       <Sidebar
         scope={props.ctl.scope()}
@@ -106,16 +120,23 @@ function SidebarPanel(props: LibraryViewProps): JSX.Element {
 }
 
 function SidebarColumn(props: LibraryViewProps): JSX.Element {
+  const backdropOpen = (): boolean =>
+    !isFullscreen(props) && props.ctl.drawerOpen();
+
   return (
     <>
-      <Show when={!isFullscreen(props) && props.ctl.drawerOpen()}>
-        <button
-          type="button"
-          class="fixed inset-0 z-30 bg-black/60 md:hidden"
-          aria-label={t('common.close')}
-          onClick={props.ctl.closeDrawer}
-        />
-      </Show>
+      <button
+        type="button"
+        class={
+          backdropOpen()
+            ? `${BACKDROP_CLASSES} opacity-100`
+            : `${BACKDROP_CLASSES} pointer-events-none opacity-0`
+        }
+        inert={!backdropOpen()}
+        aria-hidden={backdropOpen() ? undefined : 'true'}
+        aria-label={t('library.closeNav')}
+        onClick={props.ctl.closeDrawer}
+      />
       <SidebarPanel ctl={props.ctl} panelRef={props.panelRef} />
     </>
   );
@@ -229,10 +250,6 @@ function ManageDialogs(props: LibraryViewProps): JSX.Element {
             props.ctl.closeFeedOptions();
           }
         }}
-      />
-      <KeyboardShortcutsDialog
-        open={props.ctl.shortcutsOpen()}
-        onClose={props.ctl.closeShortcuts}
       />
     </>
   );

@@ -8,6 +8,8 @@ import {
   noContentResponse,
 } from './support/state-fixture';
 
+const B = '019363b8-0000-7000-8000-000000000001';
+
 const ctx = createStateTestContext();
 
 beforeEach(async () => {
@@ -247,7 +249,11 @@ describe('feed order reload', () => {
   it('reloads the active feed list when its order changes', async () => {
     const { state, solid } = ctx;
     const target = makeFeed({ id: 'f1' });
-    ctx.queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: 'i1' });
+    ctx.queue({
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      cursor: 'i1',
+      boundary: B,
+    });
     await state.loadScopeFirstPage(
       { kind: 'feed', feedId: 'f1' },
       false,
@@ -258,7 +264,11 @@ describe('feed order reload', () => {
     solid.flush();
 
     ctx.queueEmpty();
-    ctx.queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: null });
+    ctx.queue({
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      cursor: null,
+      boundary: B,
+    });
     const before = ctx.fetchCount();
     await state.changeFeedOrder(target, 'oldest');
     solid.flush();
@@ -281,7 +291,7 @@ describe('stored feed order', () => {
     await state.refreshSidebar();
     solid.flush();
 
-    ctx.queue({ items: [], cursor: null });
+    ctx.queue({ items: [], cursor: null, boundary: B });
     await state.loadScopeFirstPage({ kind: 'feed', feedId: 'f1' }, false);
     solid.flush();
 

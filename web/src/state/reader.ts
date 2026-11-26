@@ -5,13 +5,18 @@
  */
 
 import { createSignal, flush } from 'solid-js';
-import type { FeedItem, ReaderMode, SavedPage } from '../api';
-import { ApiError, feedItemsApi, savedPagesApi } from '../api';
-import { t } from '../i18n';
+import type { ReaderMode } from '../api';
+import { feedItemsApi } from '../api';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
 import type { LibraryArticle } from './library';
 import * as library from './library';
+import type { ScopeMatcher } from './library-mark-all';
+import { refreshArticleSnapshot } from './library-mark-all';
+import { articleKindOf } from './library-store';
+import { beginRecordSnapshot, targetOf } from './read-sync';
+import { fetchArticle } from './read-sync-transport';
+import { clearReaderSaveState } from './reader-save';
 import type { LibraryScope } from './scope';
 import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
@@ -22,6 +27,7 @@ const [loadingArticle, setLoadingArticle] = createSignal(false);
 const [displayMode, setDisplayMode] = createSignal<ReaderMode>('default');
 const [extracting, setExtracting] = createSignal(false);
 
+export { saveFeedItemToLater } from './reader-save';
 export { displayMode, extracting, loadingArticle, openArticleId };
 
 /** Derived from the single article record store; no separate copy or cross-store listener. */
@@ -42,19 +48,9 @@ let inFlightExtract: {
   generation: number;
   token: number;
 } | null = null;
-const savingToLaterIds = new Set<string>();
-let saveEpoch = 0;
 
 const isStale = (requestGeneration: number): boolean =>
   requestGeneration !== generation;
-
-const toLibraryArticle = (
-  scope: LibraryScope,
-  item: SavedPage | FeedItem
-): LibraryArticle =>
-  scope.kind === 'later'
-    ? { ...(item as SavedPage), kind: 'later' }
-    : { ...(item as FeedItem), kind: 'feed' };
 
 const hasKnownFeed = (article: LibraryArticle | null): boolean =>
   article !== null &&
@@ -104,28 +100,24 @@ const showOpeningState = (
   flush();
 };
 
-const fetchRemoteArticle = async (
-  scope: LibraryScope,
-  articleId: string
-): Promise<SavedPage | FeedItem | null> =>
-  scope.kind === 'later'
-    ? savedPagesApi.getById(articleId)
-    : feedItemsApi.getById(articleId);
-
 /**
  * `RD-ARTICLE-1`: `undefined` means a newer navigation won or the load failed (already toasted),
- * so the caller stops; `null` means the article does not exist anymore.
+ * so the caller stops; `null` means the article does not exist anymore. A loaded article is
+ * merged into the record store while its snapshot is still tracked by the read sync.
  */
 const loadArticle = async (
   scope: LibraryScope,
   articleId: string,
   requestGeneration: number
 ): Promise<LibraryArticle | null | undefined> => {
+  const snapshot = beginRecordSnapshot();
   try {
-    const remote = await fetchRemoteArticle(scope, articleId);
+    const loaded = await fetchArticle(articleKindOf(scope), articleId);
     if (isStale(requestGeneration)) return undefined;
+    if (loaded === null) return null;
 
-    return remote === null ? null : toLibraryArticle(scope, remote);
+    library.upsertArticle(loaded, snapshot.seq);
+    return loaded;
   } catch (error) {
     if (isStale(requestGeneration)) return undefined;
 
@@ -133,6 +125,8 @@ const loadArticle = async (
     flush();
     showToast(errorText(error), 'error');
     return undefined;
+  } finally {
+    snapshot.release();
   }
 };
 
@@ -206,7 +200,6 @@ export const openArticleByRoute = async (
     cached !== null && (cached.kind === 'later' || hasKnownFeed(cached));
   showOpeningState(scope, articleId, cached, canCommitCached);
 
-  const dispatchVersion = library.captureMutationVersion();
   const loaded = await loadArticle(scope, articleId, requestGeneration);
   if (loaded === undefined) return;
 
@@ -219,7 +212,6 @@ export const openArticleByRoute = async (
     return;
   }
 
-  library.upsertArticle(loaded, dispatchVersion);
   setLoadingArticle(false);
   flush();
 
@@ -239,35 +231,6 @@ export const openArticleByRoute = async (
 
 const shouldExtractCurrent = (article: LibraryArticle | null): boolean =>
   article !== null && article.kind === 'feed' && !article.extractedContent;
-
-const showSaveError = (error: unknown): void => {
-  if (error instanceof ApiError && error.code === 'SavedPageAlreadyExists') {
-    showToast(t('errors.SavedPageAlreadyExists'), 'info');
-
-    return;
-  }
-
-  showToast(errorText(error), 'error');
-};
-
-/** `later.md:17` / `SP-ADD-1`: saves a feed item to Read Later once per concurrent request. */
-export const saveFeedItemToLater = async (articleId: string): Promise<void> => {
-  if (savingToLaterIds.has(articleId)) return;
-
-  const requestEpoch = saveEpoch;
-  savingToLaterIds.add(articleId);
-  try {
-    await savedPagesApi.saveFeedItem(articleId);
-    if (requestEpoch !== saveEpoch) return;
-
-    showToast(t('later.savedFromFeedToast'), 'success');
-    void sidebar.refreshSidebar();
-  } catch (error) {
-    if (requestEpoch === saveEpoch) showSaveError(error);
-  } finally {
-    if (requestEpoch === saveEpoch) savingToLaterIds.delete(articleId);
-  }
-};
 
 /** `RD-EXTRACT-1`: toggles the extracted view, extracting the open feed item when needed. */
 export const toggleExtractedMode = async (): Promise<void> => {
@@ -365,10 +328,33 @@ export const adjacentArticleIds = (): {
   };
 };
 
+/**
+ * Re-fetches the open reader article after mark-all when `covers` matches it, without resetting
+ * selection, display mode, or auto-marking read.
+ */
+export const refreshOpenArticle = async (
+  covers: ScopeMatcher
+): Promise<void> => {
+  const current = openArticle();
+  if (current === null || !covers(targetOf(current))) return;
+
+  const reqGen = generation;
+  await refreshArticleSnapshot(current.kind, current.id, (loaded, seq) => {
+    const stale =
+      isStale(reqGen) || openArticleId() !== current.id || articleMissing();
+    if (stale) return;
+    if (loaded !== null) library.upsertArticle(loaded, seq);
+    else {
+      setArticleMissing(true);
+      library.retainReaderArticle(null);
+    }
+    flush();
+  });
+};
+
 export const clearReaderState = (): void => {
   generation += 1;
-  saveEpoch += 1;
-  savingToLaterIds.clear();
+  clearReaderSaveState();
   clearOpenArticle();
 };
 

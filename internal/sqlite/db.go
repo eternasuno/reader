@@ -3,15 +3,12 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -30,9 +27,6 @@ const (
 	markSavedPagesReadQuery = `UPDATE saved_page SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`
 	markFeedItemsReadQuery  = `UPDATE feed_item SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))`
 )
-
-//go:embed migrations/*.sql
-var migrationFiles embed.FS
 
 type Store struct {
 	writeDB     *sql.DB
@@ -128,37 +122,6 @@ func sqliteDSN(dbPath string, txLockImmediate bool) string {
 	}
 
 	return uri.String()
-}
-
-func applyMigrations(ctx context.Context, db *sql.DB) error {
-	return applyMigrationsFromFS(ctx, db, migrationFiles)
-}
-
-func applyMigrationsFromFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
-	names, err := fs.Glob(fsys, "migrations/*.sql")
-	if err != nil {
-		return fmt.Errorf("list migrations: %w", err)
-	}
-
-	sort.Strings(names)
-
-	for _, name := range names {
-		payload, err := fs.ReadFile(fsys, name)
-		if err != nil {
-			return fmt.Errorf("read migration %s: %w", filepath.Base(name), err)
-		}
-
-		err = withTx(ctx, db, func(tx *sql.Tx) error {
-			_, execErr := tx.ExecContext(ctx, string(payload))
-
-			return execErr
-		})
-		if err != nil {
-			return fmt.Errorf("apply migration %s: %w", filepath.Base(name), err)
-		}
-	}
-
-	return nil
 }
 
 func (s *Store) Close() error {

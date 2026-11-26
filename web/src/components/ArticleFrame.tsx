@@ -9,7 +9,6 @@ import {
 } from '../state';
 import { buildReaderStyles, type ReaderTypography } from './articleFrameStyles';
 import { ImageLightbox } from './ImageLightbox';
-import { BRIDGED_FRAME_KEYS } from './readerShortcutKeys';
 
 export interface ArticleFrameProps {
   html: string;
@@ -32,7 +31,7 @@ export interface ArticleFrameImageMessage {
 export interface ArticleFrameKeyMessage {
   type: 'article-frame-key';
   token: string;
-  key: string;
+  key: 'Escape';
 }
 
 export interface ArticleSrcdocOptions {
@@ -54,7 +53,7 @@ interface LightboxState {
 interface FrameMessageHandlers {
   onResize: (height: number) => void;
   onImage: (image: LightboxState) => void;
-  onKey: (key: string) => void;
+  onEscape: () => void;
 }
 
 const escapeAttribute = (value: string): string =>
@@ -141,7 +140,6 @@ const RESIZE_OBSERVER_SCRIPT = `
   schedule();`;
 
 const FRAME_INTERACTION_SCRIPT = `
-  var keys = ${JSON.stringify(BRIDGED_FRAME_KEYS)};
   function postImage(img) {
     var src = img.currentSrc || img.getAttribute('src') || '';
     if (!/^https?:\\/\\//i.test(src)) return false;
@@ -173,14 +171,15 @@ const FRAME_INTERACTION_SCRIPT = `
   });
   document.addEventListener('keydown', function (event) {
     var target = event.target;
+    if (event.key === 'Escape') {
+      window.parent.postMessage({ type: 'article-frame-key', token: token, key: 'Escape' }, '*');
+      return;
+    }
     if (target && target.tagName === 'IMG' && !target.closest('a[href]') && (event.key === 'Enter' || event.key === ' ')) {
       if (postImage(target)) {
         event.preventDefault();
         return;
       }
-    }
-    if (!event.defaultPrevented && !event.ctrlKey && !event.metaKey && !event.altKey && keys.includes(event.key)) {
-      window.parent.postMessage({ type: 'article-frame-key', token: token, key: event.key }, '*');
     }
   });`;
 
@@ -238,9 +237,8 @@ export const isValidKeyMessage = (
   expectedToken: string
 ): data is ArticleFrameKeyMessage => {
   const record = messageRecord(data, expectedToken, 'article-frame-key');
-  if (!record || typeof record.key !== 'string') return false;
 
-  return BRIDGED_FRAME_KEYS.includes(record.key);
+  return record !== null && record.key === 'Escape';
 };
 
 export const buildArticleSrcdoc = (options: ArticleSrcdocOptions): string => {
@@ -296,7 +294,7 @@ const dispatchFrameMessage = (
   }
 
   if (isValidKeyMessage(data, token)) {
-    handlers.onKey(data.key);
+    handlers.onEscape();
   }
 };
 
@@ -348,10 +346,6 @@ const createFrameContent = (html: () => string) => {
   });
 };
 
-const dispatchWindowKey = (key: string): void => {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-};
-
 /**
  * `RD-FRAME-1`: sanitized article HTML in an isolated `srcdoc` iframe without
  * `allow-same-origin`, linked to the app stylesheet, guarded by CSP, and
@@ -377,15 +371,7 @@ export function ArticleFrame(props: ArticleFrameProps): JSX.Element {
     {
       onResize: setHeight,
       onImage: setLightbox,
-      onKey: (key) => {
-        if (lightbox() !== null) {
-          if (key === 'Escape') setLightbox(null);
-
-          return;
-        }
-
-        dispatchWindowKey(key);
-      },
+      onEscape: () => setLightbox(null),
     }
   );
 

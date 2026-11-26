@@ -156,14 +156,15 @@ func TestApplyMigrationsRollsBackFailedFile(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 
+	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
 
 	fsys := fstest.MapFS{
-		"migrations/001_ok.sql": &fstest.MapFile{
-			Data: []byte(`CREATE TABLE ok_table (id TEXT PRIMARY KEY) STRICT;`),
+		"001_ok.sql": &fstest.MapFile{
+			Data: []byte("-- +goose Up\nCREATE TABLE ok_table (id TEXT PRIMARY KEY) STRICT;\n"),
 		},
-		"migrations/002_bad.sql": &fstest.MapFile{
-			Data: []byte(`
+		"002_bad.sql": &fstest.MapFile{
+			Data: []byte(`-- +goose Up
 				CREATE TABLE partial_table (id TEXT PRIMARY KEY) STRICT;
 				INSERT INTO partial_table (id) VALUES ('one');
 				INSERT INTO missing_table (id) VALUES ('boom');
@@ -192,7 +193,337 @@ func TestApplyMigrationsRollsBackFailedFile(t *testing.T) {
 	if okCount != 1 {
 		t.Fatalf("ok_table count = %d, want 1 from prior committed migration", okCount)
 	}
+
+	requireGooseVersions(t, db, 0, 1)
 }
+
+func TestOpenUpgradesDeployedDatabaseAndIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "deployed.db")
+
+	rawDB, err := sql.Open("sqlite", sqliteDSN(dbPath, true))
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+
+	if _, err := rawDB.ExecContext(ctx, deployedSchemaSQL); err != nil {
+		_ = rawDB.Close()
+		t.Fatalf("exec deployed schema: %v", err)
+	}
+
+	if _, err := rawDB.ExecContext(ctx, `
+		INSERT INTO folder (id, name) VALUES ('folder-1', 'Tech');
+		INSERT INTO feed (id, url, title, folder_id) VALUES ('feed-1', 'https://example.com/feed.xml', 'Example Feed', 'folder-1');
+		INSERT INTO feed_item (id, feed_id, url, title) VALUES ('item-1', 'feed-1', 'https://example.com/post-1', 'Post 1');
+		INSERT INTO saved_page (id, url, title, content) VALUES ('page-1', 'https://example.com/saved-1', 'Saved 1', '<p>hello</p>');
+	`); err != nil {
+		_ = rawDB.Close()
+		t.Fatalf("seed deployed rows: %v", err)
+	}
+
+	if err := rawDB.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	store, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open deployed store: %v", err)
+	}
+
+	requireFeedIconURLColumn(t, store.ReadDB())
+	requireGooseVersions(t, store.ReadDB(), 0, 1, 2)
+
+	folders, err := store.Folders().List(ctx)
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("list folders: %v", err)
+	}
+	if len(folders) != 1 || folders[0].ID != "folder-1" || folders[0].Name != "Tech" {
+		_ = store.Close()
+		t.Fatalf("folders = %+v, want folder-1/Tech", folders)
+	}
+
+	feeds, err := store.Feeds().List(ctx)
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("list feeds: %v", err)
+	}
+	if len(feeds) != 1 || feeds[0].ID != "feed-1" || feeds[0].IconURL != nil {
+		_ = store.Close()
+		t.Fatalf("feeds = %+v, want feed-1 with nil IconURL", feeds)
+	}
+
+	item, err := store.FeedItems().GetByID(ctx, "item-1")
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("get feed item: %v", err)
+	}
+	if item.Title != "Post 1" {
+		_ = store.Close()
+		t.Fatalf("feed item title = %q, want Post 1", item.Title)
+	}
+
+	page, err := store.SavedPages().GetByID(ctx, "page-1")
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("get saved page: %v", err)
+	}
+	if page.Title != "Saved 1" || page.Content != "<p>hello</p>" {
+		_ = store.Close()
+		t.Fatalf("saved page = %+v, want Saved 1", page)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("close upgraded store: %v", err)
+	}
+
+	reopened, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("reopen upgraded store: %v", err)
+	}
+	defer reopened.Close()
+
+	requireFeedIconURLColumn(t, reopened.ReadDB())
+	requireGooseVersions(t, reopened.ReadDB(), 0, 1, 2)
+}
+
+func TestOpenHandlesBranchCreatedDatabaseWithIconURL(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "branch.db")
+
+	rawDB, err := sql.Open("sqlite", sqliteDSN(dbPath, true))
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+
+	branchSchema := strings.Replace(
+		deployedSchemaSQL,
+		"  last_error TEXT,\n",
+		"  last_error TEXT,\n  icon_url TEXT,\n",
+		1,
+	)
+	if branchSchema == deployedSchemaSQL {
+		_ = rawDB.Close()
+		t.Fatal("failed to construct branch schema")
+	}
+
+	if _, err := rawDB.ExecContext(ctx, branchSchema); err != nil {
+		_ = rawDB.Close()
+		t.Fatalf("exec branch schema: %v", err)
+	}
+
+	if err := rawDB.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	store, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open branch store: %v", err)
+	}
+	defer store.Close()
+
+	requireFeedIconURLColumn(t, store.ReadDB())
+	requireGooseVersions(t, store.ReadDB(), 0, 1, 2)
+}
+
+func TestOpenFailsAndRollsBackWhenInitMigrationFails(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "broken.db")
+
+	rawDB, err := sql.Open("sqlite", sqliteDSN(dbPath, true))
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+
+	if _, err := rawDB.ExecContext(ctx, `CREATE TABLE feed (id TEXT PRIMARY KEY) STRICT`); err != nil {
+		_ = rawDB.Close()
+		t.Fatalf("create conflicting feed table: %v", err)
+	}
+
+	if err := rawDB.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	store, err := Open(ctx, dbPath)
+	if err == nil {
+		_ = store.Close()
+		t.Fatal("expected Open to fail when migration 1 fails")
+	}
+	if store != nil {
+		t.Fatalf("store = %v, want nil on migration failure", store)
+	}
+	if !strings.Contains(err.Error(), "apply migrations") {
+		t.Fatalf("error = %v, want migration error", err)
+	}
+
+	checkDB, err := sql.Open("sqlite", sqliteDSN(dbPath, true))
+	if err != nil {
+		t.Fatalf("reopen raw db: %v", err)
+	}
+	defer func() { _ = checkDB.Close() }()
+
+	var folderCount int
+	if err := checkDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'folder'`).Scan(&folderCount); err != nil {
+		t.Fatalf("check folder table: %v", err)
+	}
+	if folderCount != 0 {
+		t.Fatalf("folder table count = %d, want 0 after rollback", folderCount)
+	}
+
+	requireGooseVersions(t, checkDB, 0)
+}
+
+func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "fresh.db"))
+	if err != nil {
+		t.Fatalf("open fresh store: %v", err)
+	}
+	defer store.Close()
+
+	requireFeedIconURLColumn(t, store.ReadDB())
+	requireGooseVersions(t, store.ReadDB(), 0, 1, 2)
+}
+
+func requireFeedIconURLColumn(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	var count int
+	if err := db.QueryRowContext(
+		context.Background(),
+		`SELECT COUNT(*) FROM pragma_table_info('feed') WHERE name = 'icon_url'`,
+	).Scan(&count); err != nil {
+		t.Fatalf("query pragma_table_info(feed): %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("feed.icon_url column count = %d, want 1", count)
+	}
+}
+
+func requireGooseVersions(t *testing.T, db *sql.DB, want ...int64) {
+	t.Helper()
+
+	rows, err := db.QueryContext(
+		context.Background(),
+		`SELECT version_id, is_applied FROM goose_db_version ORDER BY id`,
+	)
+	if err != nil {
+		t.Fatalf("query goose_db_version: %v", err)
+	}
+	defer rows.Close()
+
+	var got []int64
+	for rows.Next() {
+		var version int64
+		var applied bool
+		if err := rows.Scan(&version, &applied); err != nil {
+			t.Fatalf("scan goose_db_version: %v", err)
+		}
+		if !applied {
+			t.Fatalf("goose version %d has is_applied = false", version)
+		}
+		got = append(got, version)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate goose_db_version: %v", err)
+	}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("goose versions = %v, want %v", got, want)
+	}
+}
+
+const deployedSchemaSQL = `
+CREATE TABLE IF NOT EXISTS folder (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS folder_name_id ON folder (name, id);
+
+CREATE TABLE IF NOT EXISTS feed (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  folder_id TEXT REFERENCES folder(id) ON DELETE SET NULL,
+  updated_at INTEGER,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  reader_mode TEXT NOT NULL DEFAULT 'default' CHECK (reader_mode IN ('default', 'extracted', 'embedded')),
+  sort_order TEXT NOT NULL DEFAULT 'newest' CHECK (sort_order IN ('newest', 'oldest'))
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS feed_folder ON feed (folder_id);
+CREATE INDEX IF NOT EXISTS feed_title ON feed (title, id);
+
+CREATE TABLE IF NOT EXISTS feed_item (
+  id TEXT PRIMARY KEY,
+  feed_id TEXT NOT NULL REFERENCES feed(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  content TEXT,
+  extracted_content TEXT,
+  published_at INTEGER,
+  read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1)),
+  UNIQUE (feed_id, url)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS feed_item_read_id ON feed_item (read, id);
+CREATE INDEX IF NOT EXISTS feed_item_read_feed_id ON feed_item (read, feed_id);
+CREATE INDEX IF NOT EXISTS feed_item_feed_id ON feed_item (feed_id, id);
+CREATE INDEX IF NOT EXISTS feed_item_feed_id_url ON feed_item (feed_id, id, url);
+CREATE INDEX IF NOT EXISTS feed_item_feed_read_id ON feed_item (feed_id, read, id);
+
+CREATE TABLE IF NOT EXISTS saved_page (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT,
+  content TEXT NOT NULL,
+  published_at INTEGER,
+  read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1))
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS saved_page_read_id ON saved_page (read, id);
+
+CREATE TABLE IF NOT EXISTS setting (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  retention INTEGER NOT NULL DEFAULT 100 CHECK (retention >= 1),
+  provider TEXT NOT NULL DEFAULT 'direct' CHECK (provider IN ('direct', 'jina', 'browser')),
+  jina_key TEXT,
+  browser_endpoint TEXT,
+  kindle_email TEXT,
+  sender_email TEXT,
+  smtp_host TEXT,
+  smtp_port INTEGER,
+  smtp_security TEXT CHECK (smtp_security IS NULL OR smtp_security IN ('tls', 'starttls')),
+  smtp_user TEXT,
+  smtp_password TEXT,
+  send_time TEXT,
+  next_send_at INTEGER
+) STRICT;
+
+INSERT INTO setting (id, retention, provider) VALUES (1, 100, 'direct') ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS kindle_send (
+  id TEXT PRIMARY KEY,
+  trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+  status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+  article_count INTEGER NOT NULL DEFAULT 0,
+  book_count INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS kindle_send_book (
+  send_id TEXT NOT NULL REFERENCES kindle_send(id) ON DELETE CASCADE,
+  book_index INTEGER NOT NULL,
+  PRIMARY KEY (send_id, book_index)
+) STRICT;
+`
 
 func TestOpenResolvesRelativePaths(t *testing.T) {
 	cases := []struct {
@@ -427,7 +758,8 @@ func TestPragmasApplyToEveryPooledConnection(t *testing.T) {
 
 func TestQueryPlansUseIndexes(t *testing.T) {
 	store := newTestStore(t)
-	cursor := domain.NewID()
+	cursor := fixedTestID(10)
+	boundary := fixedTestID(20)
 
 	tests := []struct {
 		name           string
@@ -438,73 +770,73 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 	}{
 		{
 			name:  "list all newest",
-			query: listAllQuery(domain.PageParams{Limit: 30}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Boundary: boundary}).args,
 		},
 		{
 			name:  "list all with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).args,
 		},
 		{
 			name:  "list all unread",
-			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).args,
 			index: "feed_item_read_id",
 		},
 		{
 			name:  "list all oldest with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).args,
 		},
 		{
 			name:  "list all unread with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).args,
+			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
 			index: "feed_item_read_id",
 		},
 		{
 			name:  "list feed newest",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30}).args,
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Boundary: boundary}).args,
 			index: "feed_item_feed_id",
 		},
 		{
 			name:  "list feed oldest",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).args,
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).args,
 			index: "feed_item_feed_id",
 		},
 		{
 			name:  "list feed unread",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true}).args,
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).args,
 			index: "feed_item_feed_read_id",
 		},
 		{
 			name:  "list feed unread with cursor",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).args,
-			index: "feed_item_feed_read_id",
+			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
+			index: "feed_item_read_id",
 		},
 		{
 			name:           "list folder",
-			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30}).query,
-			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30}).args,
+			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Boundary: boundary}).query,
+			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Boundary: boundary}).args,
 			index:          "feed_item_feed_id",
 			allowTempBTree: true,
 		},
 		{
 			name:           "list folder oldest",
-			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).query,
-			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest}).args,
+			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).query,
+			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).args,
 			index:          "feed_item_feed_id",
 			allowTempBTree: true,
 		},
 		{
 			name:  "list folder unread with cursor",
-			query: listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).query,
-			args:  listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor}).args,
+			query: listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
+			args:  listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
 			index: "feed_item_read_id",
 		},
 	}
@@ -514,10 +846,25 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		requireIndexedPlan(t, test.name, details, test.index, test.allowTempBTree)
 	}
 
-	unreadDetails := queryPlan(t, store, unreadCountsQuery)
-	requireIndexedPlan(t, "unread counts", unreadDetails, "feed_item_read_feed_id", false)
+	statementPlans := []struct {
+		name           string
+		query          string
+		args           []any
+		index          string
+		allowTempBTree bool
+	}{
+		{name: "unread counts", query: unreadCountsQuery, args: []any{boundary}, index: "feed_item_read_id", allowTempBTree: true},
+		{name: "saved page unread count", query: savedPageUnreadCountQuery, args: []any{boundary}, index: "saved_page_read_id"},
+		{name: "mark all feed items read", query: markAllItemsReadQuery, args: []any{boundary}, index: "feed_item_read_id"},
+		{name: "mark feed read", query: markFeedReadQuery, args: []any{"feed", boundary}, index: "feed_item_feed_read_id"},
+		{name: "mark folder read", query: markFolderReadQuery, args: []any{boundary, "folder"}, index: "feed_item_feed_read_id"},
+		{name: "mark all saved pages read", query: markAllSavedPagesReadQuery, args: []any{boundary}, index: "saved_page_read_id"},
+	}
+	for _, test := range statementPlans {
+		requireIndexedPlan(t, test.name, queryPlan(t, store, test.query, test.args...), test.index, test.allowTempBTree)
+	}
 
-	for _, params := range []domain.PageParams{{Limit: 30}, {Limit: 30, Unread: true}, {Limit: 30, Unread: true, Cursor: &cursor}, {Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor}, {Limit: 30, Unread: true, Order: domain.SortOrderOldest}} {
+	for _, params := range []domain.PageParams{{Limit: 30, Boundary: boundary}, {Limit: 30, Unread: true, Boundary: boundary}, {Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Unread: true, Order: domain.SortOrderOldest, Boundary: boundary}} {
 		query, args := listSavedPagesQuery(params)
 		requireIndexedPlan(t, "list saved pages", queryPlan(t, store, query, args...), "", false)
 	}

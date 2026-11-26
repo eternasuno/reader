@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	feedColumns              = `id, url, title, folder_id, updated_at, failure_count, last_error, reader_mode, sort_order`
+	feedColumns              = `id, url, title, folder_id, updated_at, failure_count, last_error, icon_url, reader_mode, sort_order`
 	loadFolderIDsByNameQuery = `SELECT id, name FROM folder WHERE name IN (SELECT value FROM json_each(?))`
 )
 
@@ -201,9 +201,9 @@ func (r *FeedRepo) RecordRefreshFailure(ctx context.Context, id string, errSumma
 	return nil
 }
 
-func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, newTitle string, updatedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
+func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, newTitle string, iconURL *string, updatedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		if err := updateFeedSyncMeta(ctx, tx, feedID, newTitle, updatedAt); err != nil {
+		if err := updateFeedSyncMeta(ctx, tx, feedID, newTitle, iconURL, updatedAt); err != nil {
 			return err
 		}
 
@@ -220,11 +220,12 @@ func (r *FeedRepo) ApplySync(ctx context.Context, feedID string, newTitle string
 	return nil
 }
 
-func updateFeedSyncMeta(ctx context.Context, tx *sql.Tx, feedID string, newTitle string, updatedAt time.Time) error {
+func updateFeedSyncMeta(ctx context.Context, tx *sql.Tx, feedID string, newTitle string, iconURL *string, updatedAt time.Time) error {
 	_, err := tx.ExecContext(
 		ctx,
-		`UPDATE feed SET title = ?, updated_at = ?, failure_count = 0, last_error = NULL WHERE id = ?`,
+		`UPDATE feed SET title = ?, icon_url = ?, updated_at = ?, failure_count = 0, last_error = NULL WHERE id = ?`,
 		newTitle,
+		iconURL,
 		timeToMillis(updatedAt),
 		feedID,
 	)
@@ -291,11 +292,12 @@ func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
 		updatedAt    sql.NullInt64
 		failureCount int64
 		lastError    sql.NullString
+		iconURL      sql.NullString
 		readerMode   string
 		sortOrder    string
 	)
 
-	err := row.Scan(&id, &rawURL, &title, &folderID, &updatedAt, &failureCount, &lastError, &readerMode, &sortOrder)
+	err := row.Scan(&id, &rawURL, &title, &folderID, &updatedAt, &failureCount, &lastError, &iconURL, &readerMode, &sortOrder)
 	if err != nil {
 		return domain.Feed{}, err
 	}
@@ -313,6 +315,7 @@ func scanFeed(row interface{ Scan(...any) error }) (domain.Feed, error) {
 		UpdatedAt:    optionalMillis(updatedAt),
 		FailureCount: int(failureCount),
 		LastError:    optionalText(lastError),
+		IconURL:      optionalText(iconURL),
 		ReaderMode:   domain.ReaderMode(readerMode),
 		Order:        domain.SortOrder(sortOrder),
 	}, nil

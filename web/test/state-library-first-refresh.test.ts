@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Feed, FeedItem, SavedPage } from '../src/api';
+import {
+  jsonResponse as json,
+  makeFeed,
+  makeItem,
+} from './support/state-fixture';
 
 type StateModule = typeof import('../src/state');
 
@@ -29,12 +34,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-
 const queue = (body: unknown, status = 200): void => {
   fetchMock.mockResolvedValueOnce(json(body, status));
 };
@@ -58,42 +57,27 @@ const feedListCalls = (since = 0): number =>
     .slice(since)
     .filter(([url]) => String(url) === '/api/feeds').length;
 
-const makeFeed = (overrides: Partial<Feed> & { id: string }): Feed => ({
-  url: `https://example.com/${overrides.id}/feed.xml`,
-  title: `Feed ${overrides.id}`,
-  folderId: null,
-  failureCount: 0,
-  readerMode: 'default',
-  order: 'newest',
-  ...overrides,
-});
-
 const refreshedFeed = (id: string): Feed =>
   makeFeed({ id, updatedAt: '2026-11-19T00:00:00Z' });
 
-const makeItem = (
-  overrides: Partial<FeedItem> & { id: string; feedId: string }
-): FeedItem => ({
-  url: `https://example.com/${overrides.id}`,
-  title: `Item ${overrides.id}`,
-  description: '<p>summary</p>',
-  content: '<p>content</p>',
-  read: false,
-  ...overrides,
-});
-
+const B = '019363b8-0000-7000-8000-000000000001';
+const queuePage = (items: Array<SavedPage | FeedItem> = []): void =>
+  queue({ items, cursor: null, boundary: B });
+const queueCounts = (): void => {
+  queue({ items: [], boundary: B });
+  queue({ count: 0, boundary: B });
+};
 const queueSidebar = (feeds: Array<Feed> = []): void => {
   queue({ items: feeds });
   queue({ items: [] });
-  queue({ items: [] });
-  queue({ count: 0 });
+  queueCounts();
 };
 
 const openEmptyScope = async (
   scope: Parameters<StateModule['loadScopeFirstPage']>[0],
   unread = false
 ): Promise<number> => {
-  queue({ items: [] as Array<SavedPage | FeedItem>, cursor: null });
+  queuePage();
   await state.loadScopeFirstPage(scope, unread);
   solid.flush();
   return fetchCount();
@@ -108,7 +92,7 @@ const queueEmptyFeed = async (feedId: string): Promise<number> => {
 
 const queueReloadResponses = (feed: Feed, items: Array<FeedItem>): void => {
   queueSidebar([feed]);
-  queue({ items, cursor: null });
+  queuePage(items);
 };
 
 const queueRefreshedReload = (feedId: string, itemId: string): Feed => {
@@ -228,9 +212,8 @@ it('stops without reloading when aborted while refreshSidebar is in flight', asy
   queue({ items: [refreshed] });
   const sidebarRequest = pending();
   queue({ items: [] });
-  queue({ items: [] });
-  queue({ count: 0 });
-  queue({ items: [makeItem({ id: 'i5', feedId: 'f1' })], cursor: null });
+  queueCounts();
+  queuePage([makeItem({ id: 'i5', feedId: 'f1' })]);
 
   const { controller, poll } = startWait('f1');
   await vi.advanceTimersByTimeAsync(2000);

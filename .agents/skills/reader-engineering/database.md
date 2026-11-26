@@ -13,15 +13,16 @@ Single SQLite database file (`<DATA_DIR>/reader.db`) using `modernc.org/sqlite`.
 - **Per-connection pragmas**: SQLite `foreign_keys`, `busy_timeout`, and `synchronous` are connection-scoped. Configure them on **every** pooled connection via repeated modernc DSN `_pragma` parameters (`?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)`) or a driver connection init hook — never by executing `PRAGMA` once on `*sql.DB`.
 - **WAL & pools**: open the write pool (`SetMaxOpenConns(1)` with `_txlock=immediate` for `BEGIN IMMEDIATE`) first, execute `PRAGMA journal_mode = WAL`, then open the read pool (`MaxOpenConns > 1`). Note `SetMaxOpenConns(1)` serializes writes **within this Go process** only; concurrent external processes or multiple containers against the same file will still hit `SQLITE_BUSY` and are unsupported.
 - **Single-instance lock**: on Unix, `cmd/reader` acquires a non-blocking exclusive `flock` on `<DATA_DIR>/lantern.lock` (`0600`) before opening SQLite or cleaning the EPUB spool directory, holding it until after workers stop and the store closes.
-- **Startup migration**: SQL migrations live in `internal/sqlite/migrations/*.sql` embedded via `//go:embed` and execute idempotently on startup before HTTP servers or workers start. During active development, backward-compatible data migrations are not maintained — delete `reader.db` and restart to rebuild from scratch when schema changes.
+- **Startup migration**: embedded SQL migrations (`internal/sqlite/migrations/*.sql` with `-- +goose Up`) and Go migrations (`internal/sqlite/migrations.go`) run through a `goose.Provider` on the write pool, tracked in `goose_db_version`, one transaction per migration, before HTTP servers or workers start; never edit an applied migration and preserve existing data. SQL files and Go migrations share one version sequence: check the versions registered in `migrations.go` before numbering a new migration (version 2 is the Go `feed.icon_url` migration, so the SQL directory skipping from `001` does not mean `002` is free).
 
 ## Schema & Indexes
 
 Single-user schema removes `owner` columns and composite `(owner, id)` constraints:
 
 - **`folder`**: `(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE) STRICT`.
-- **`feed`**: `(id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL, folder_id TEXT REFERENCES folder(id) ON DELETE SET NULL, updated_at INTEGER, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, reader_mode TEXT NOT NULL DEFAULT 'default', sort_order TEXT NOT NULL DEFAULT 'newest') STRICT`.
+- **`feed`**: `(id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL, folder_id TEXT REFERENCES folder(id) ON DELETE SET NULL, updated_at INTEGER, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, icon_url TEXT, reader_mode TEXT NOT NULL DEFAULT 'default', sort_order TEXT NOT NULL DEFAULT 'newest') STRICT`.
   - Note `ON DELETE SET NULL` ensures deleting a folder moves feeds to the top level (`FD-FOLDER-4`) atomically at the DB layer.
+  - `icon_url` is the feed's own image URL (`FD-PARSE-6`), replaced on each successful refresh.
   - `failure_count` and `last_error` track consecutive refresh failures (`FD-SCHED-3`), reset on any successful refresh.
   - Indexes: `feed_folder (folder_id)`, `feed_title (title, id)`.
 - **`feed_item`**: `(id TEXT PRIMARY KEY, feed_id TEXT NOT NULL REFERENCES feed(id) ON DELETE CASCADE, url TEXT NOT NULL, title TEXT NOT NULL, description TEXT, content TEXT, extracted_content TEXT, published_at INTEGER, read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1)), UNIQUE (feed_id, url)) STRICT`.
@@ -43,5 +44,6 @@ Single-user schema removes `owner` columns and composite `(owner, id)` constrain
 
 - **Dates & booleans**: store timestamps as `INTEGER` epoch milliseconds; booleans as `0`/`1`.
 - **Keyset paging**: `WHERE id < ?` (`DESC`) or `WHERE id > ?` (`ASC` for `oldest`), `ORDER BY id DESC|ASC LIMIT ?` (fetching `limit + 1` rows to compute `cursor`). `published_at` is never in `ORDER BY` or indexes.
+- **Boundary snapshots**: list, unread-count, and read-all queries bind `id <= boundary` (the request's or minted `boundary`) alongside any keyset cursor predicate. `TestQueryPlansUseIndexes` (`internal/sqlite/db_test.go`) covers these queries with `EXPLAIN QUERY PLAN`; new paged or bulk queries must follow the same binding.
 - **Unbounded ID lists**: pass ID slices via `json_each(?)` rather than building dynamic `IN (?, ?, ...)` placeholders to avoid SQLite parameter limits.
 - **Atomic writes**: use `INSERT ... ON CONFLICT DO NOTHING RETURNING id` and `UPDATE ... RETURNING id` instead of check-then-write sequences.

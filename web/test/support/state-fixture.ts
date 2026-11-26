@@ -141,38 +141,34 @@ const createInspectorHelpers = (getMock: () => ReturnType<typeof vi.fn>) => {
   return { requestUrl, requestInit, requestBody, fetchCount };
 };
 
+const DEFAULT_BOUNDARY = '019363b8-0000-7000-8000-000000000000';
+
+const sidebarResponses = (options: SidebarSnapshotOptions = {}) => [
+  { items: options.feeds ?? [] },
+  { items: options.folders ?? [] },
+  { items: options.counts ?? [], boundary: DEFAULT_BOUNDARY },
+  { count: options.saved ?? 0, boundary: DEFAULT_BOUNDARY },
+];
+
 const createSidebarHelpers = (
   mock: ReturnType<typeof createMockHelpers>,
   getModules: () => { state: StateModule; solid: SolidModule }
 ) => {
   const queueSidebar = (options: SidebarSnapshotOptions = {}): void => {
-    mock.queue({ items: options.feeds ?? [] });
-    mock.queue({ items: options.folders ?? [] });
-    mock.queue({ items: options.counts ?? [] });
-    mock.queue({ count: options.saved ?? 0 });
+    for (const body of sidebarResponses(options)) {
+      mock.queue(body);
+    }
   };
 
   const queueDeferredSidebar = (
     options: SidebarSnapshotOptions = {}
   ): { resolve: () => void } => {
-    const resolveFeeds = mock.queueDeferredResponse({
-      items: options.feeds ?? [],
-    });
-    const resolveFolders = mock.queueDeferredResponse({
-      items: options.folders ?? [],
-    });
-    const resolveCounts = mock.queueDeferredResponse({
-      items: options.counts ?? [],
-    });
-    const resolveSaved = mock.queueDeferredResponse({
-      count: options.saved ?? 0,
-    });
+    const resolvers = sidebarResponses(options).map((body) =>
+      mock.queueDeferredResponse(body)
+    );
     return {
       resolve: () => {
-        resolveFeeds();
-        resolveFolders();
-        resolveCounts();
-        resolveSaved();
+        for (const resolve of resolvers) resolve();
       },
     };
   };
@@ -190,7 +186,11 @@ const createSidebarHelpers = (
       await state.refreshSidebar();
       solid.flush();
     }
-    mock.queue({ items: options.items, cursor: options.cursor ?? null });
+    mock.queue({
+      items: options.items,
+      cursor: options.cursor ?? null,
+      boundary: DEFAULT_BOUNDARY,
+    });
     await state.loadScopeFirstPage(options.scope, options.unreadOnly ?? false);
     solid.flush();
   };

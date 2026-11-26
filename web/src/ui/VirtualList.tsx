@@ -1,11 +1,12 @@
 import type { JSX } from '@solidjs/web';
 import type { VirtualItem } from '@tanstack/virtual-core';
-import { createEffect, For, Show } from 'solid-js';
+import { createEffect, For, Show, untrack } from 'solid-js';
 import type { ScrollVirtualizer } from './virtual-list-core';
 import { useVirtualList } from './virtual-list-core';
 
-export interface VirtualListProps<T> {
-  items: ReadonlyArray<T>;
+export interface VirtualListProps {
+  /** Stable row keys in list order; each key's row is rendered once and kept while it stays visible. */
+  keys: ReadonlyArray<string>;
   /** Estimated row height in pixels before real measurement. */
   estimateSize?: number;
   /** Extra rows rendered above and below the viewport. */
@@ -14,7 +15,7 @@ export interface VirtualListProps<T> {
   onEndReached?: () => void;
   /** Distance from the bottom (px) that triggers `onEndReached`. */
   endReachedThreshold?: number;
-  renderItem: (item: T, index: () => number) => JSX.Element;
+  renderItem: (key: string) => JSX.Element;
   header?: JSX.Element;
   footer?: JSX.Element;
   /** Extra classes for the scroll container. */
@@ -25,21 +26,21 @@ export interface VirtualListProps<T> {
   activeKey?: string | null;
 }
 
-interface RowsProps<T> {
+interface RowsProps {
   virtualizer: ScrollVirtualizer;
   rows: Array<VirtualItem>;
   totalSize: number;
-  items: ReadonlyArray<T>;
-  render: (item: T, index: () => number) => JSX.Element;
+  count: number;
+  render: (key: string) => JSX.Element;
 }
 
 /** Positioned window of virtual rows; only these nodes exist in the DOM. */
-const VirtualRows = <T,>(props: RowsProps<T>): JSX.Element => (
+const VirtualRows = (props: RowsProps): JSX.Element => (
   <div class="relative w-full" style={{ height: `${props.totalSize}px` }}>
     <For each={props.rows} keyed={(item) => item.key}>
       {(item) => (
-        // Virtual rows trail `items` by one update; a row past the end of a shrunk list renders nothing.
-        <Show when={item().index < props.items.length}>
+        // Virtual rows trail `keys` by one update; a row past the end of a shrunk list renders nothing.
+        <Show when={item().index < props.count}>
           <div
             data-index={item().index}
             ref={(el) => {
@@ -50,7 +51,7 @@ const VirtualRows = <T,>(props: RowsProps<T>): JSX.Element => (
             class="absolute inset-x-0 top-0"
             style={{ transform: `translateY(${item().start}px)` }}
           >
-            {props.render(props.items[item().index] as T, () => item().index)}
+            {untrack(() => props.render(String(item().key)))}
           </div>
         </Show>
       )}
@@ -85,7 +86,7 @@ class ActiveScrollTracker {
   }
 }
 
-export function VirtualList<T>(props: VirtualListProps<T>): JSX.Element {
+export function VirtualList(props: VirtualListProps): JSX.Element {
   const list = useVirtualList(props);
   const tracker = new ActiveScrollTracker();
 
@@ -93,7 +94,7 @@ export function VirtualList<T>(props: VirtualListProps<T>): JSX.Element {
     () => ({
       key: props.activeKey,
       index: props.activeIndex,
-      length: props.items.length,
+      length: props.keys.length,
     }),
     ({ key, index, length }) => {
       if (tracker.shouldScroll(key, index, length)) {
@@ -113,7 +114,7 @@ export function VirtualList<T>(props: VirtualListProps<T>): JSX.Element {
         virtualizer={list.virtualizer}
         rows={list.rows()}
         totalSize={list.totalSize()}
-        items={props.items}
+        count={props.keys.length}
         render={props.renderItem}
       />
       <Show when={props.footer}>{props.footer}</Show>

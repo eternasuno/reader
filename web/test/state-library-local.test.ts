@@ -66,6 +66,7 @@ describe('local saved pages: oldest order', () => {
     ctx.queue({
       items: [makePage({ id: 'p2' }), makePage({ id: 'p3', title: 'Newest' })],
       cursor: null,
+      boundary: '019363b8-0000-7000-8000-000000000001',
     });
     await state.loadNextPage();
     solid.flush();

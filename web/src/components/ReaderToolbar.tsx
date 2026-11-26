@@ -10,7 +10,7 @@ import {
 import { Button, Icon } from '../ui';
 import { ReaderMoreMenu } from './ReaderMoreMenu';
 import { toggleRead } from './readerActions';
-import { extractLabel } from './readerBody';
+import { extractIconClass, extractLabel } from './readerBody';
 import type { ReaderNav } from './readerNav';
 
 export interface ReaderToolbarProps {
@@ -122,7 +122,7 @@ function ReaderActionButtons(props: {
           label={extractLabel()}
           onClick={() => void toggleExtractedMode()}
         >
-          <Icon name="extract" size={18} />
+          <Icon name="extract" size={18} class={extractIconClass()} />
         </ToolbarButton>
         <ToolbarButton label={t('reader.saveToLater')} onClick={props.onSave}>
           <Icon name="bookmark" size={18} />

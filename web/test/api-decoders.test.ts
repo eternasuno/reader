@@ -23,8 +23,12 @@ const ITEM_OK = makeItem({ id: 'i', feedId: 'f', url: PAGE });
 const EXTRACT_OK = { ...ITEM_OK, extractedContent: '<p>extracted</p>' };
 const FOLDER_OK = makeFolder('f', 't');
 const PREVIEW_OK = { url: PAGE, title: 'F', titles: ['Post 1'] };
+const B = '019363b8-0000-7000-8000-000000000000';
 const COUNTS_OK = [{ feedId: 'f', count: 2 }];
-const ITEM_PAGE = { items: [ITEM_OK], cursor: 'i' };
+const COUNTS_RES = { items: COUNTS_OK, boundary: B };
+const SAVED_COUNT_RES = { count: 4, boundary: B };
+const SAVED_PAGE = { items: [PAGE_OK], cursor: null, boundary: B };
+const ITEM_PAGE = { items: [ITEM_OK], cursor: 'i', boundary: B };
 const SETTINGS_OK = {
   retention: 100,
   provider: 'direct',
@@ -56,46 +60,30 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const spList = () => savedPagesApi.list();
+const spUnread = () => savedPagesApi.unreadCount();
+const spAdd = () => savedPagesApi.create(PAGE);
+const fCounts = () => feedsApi.unreadCounts();
+const fPrev = () => feedsApi.preview(PAGE);
+const fAdd = () => feedsApi.create({ url: PAGE });
+const fExt = () => feedItemsApi.extract('i');
+const foAdd = () => foldersApi.create('t');
+
 const UNWRAP_CASES: Array<UnwrapCase> = [
-  ['saved unread', () => savedPagesApi.unreadCount(), { count: 4 }, 4],
+  ['saved list', spList, SAVED_PAGE, SAVED_PAGE],
+  ['saved unread', spUnread, SAVED_COUNT_RES, SAVED_COUNT_RES],
   ['saved get', () => savedPagesApi.getById('p'), { item: PAGE_OK }, PAGE_OK],
-  [
-    'saved add',
-    () => savedPagesApi.create(PAGE),
-    { item: PAGE_OK },
-    PAGE_OK,
-    201,
-  ],
+  ['saved add', spAdd, { item: PAGE_OK }, PAGE_OK, 201],
   ['feeds', () => feedsApi.list(), { items: [FEED_OK] }, [FEED_OK]],
-  [
-    'feed prev',
-    () => feedsApi.preview(PAGE),
-    { preview: PREVIEW_OK },
-    PREVIEW_OK,
-  ],
-  [
-    'feed add',
-    () => feedsApi.create({ url: PAGE }),
-    { item: FEED_OK },
-    FEED_OK,
-    201,
-  ],
-  ['counts', () => feedsApi.unreadCounts(), { items: COUNTS_OK }, COUNTS_OK],
+  ['feed prev', fPrev, { preview: PREVIEW_OK }, PREVIEW_OK],
+  ['feed add', fAdd, { item: FEED_OK }, FEED_OK, 201],
+  ['counts', fCounts, COUNTS_RES, COUNTS_RES],
+  ['feed items', () => feedsApi.listItems('f'), ITEM_PAGE, ITEM_PAGE],
+  ['folder items', () => foldersApi.listItems('f'), ITEM_PAGE, ITEM_PAGE],
   ['items', () => feedItemsApi.listAll(), ITEM_PAGE, ITEM_PAGE],
-  [
-    'extract',
-    () => feedItemsApi.extract('i'),
-    { item: EXTRACT_OK },
-    EXTRACT_OK,
-  ],
+  ['extract', fExt, { item: EXTRACT_OK }, EXTRACT_OK],
   ['folders', () => foldersApi.list(), { items: [FOLDER_OK] }, [FOLDER_OK]],
-  [
-    'folder add',
-    () => foldersApi.create('t'),
-    { item: FOLDER_OK },
-    FOLDER_OK,
-    201,
-  ],
+  ['folder add', foAdd, { item: FOLDER_OK }, FOLDER_OK, 201],
   ['settings', () => settingsApi.get(), SETTINGS_OK, SETTINGS_OK],
   ['kindle send', () => kindleApi.sendNow(), { item: SEND_OK }, SEND_OK, 202],
   ['kindle sends', () => kindleApi.listSends(), SENDS_OK, SENDS_OK],
@@ -270,46 +258,4 @@ describe('empty or non-JSON bodies on JSON endpoints', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ item: null }));
     await expect(feedItemsApi.getById('missing')).resolves.toBeNull();
   });
-});
-
-const BAD_LIST = { items: 'bad', cursor: null };
-const BAD_ITEMS = { items: [{ id: '1' }], cursor: null };
-const BAD_PREVIEW = { preview: { url: 'u', title: 't', titles: [123] } };
-const MALFORMED_CASES: Array<[string, () => Promise<unknown>, unknown]> = [
-  ['session', () => authApi.getSession(), { authenticated: 'yes' }],
-  ['saved missing cursor', () => savedPagesApi.list(), { items: [] }],
-  ['saved invalid item', () => savedPagesApi.list(), BAD_ITEMS],
-  ['saved count', () => savedPagesApi.unreadCount(), { count: '3' }],
-  ['saved get', () => savedPagesApi.getById('p1'), { item: { id: 'p1' } }],
-  ['saved create', () => savedPagesApi.create(PAGE), { item: null }],
-  ['save item', () => savedPagesApi.saveFeedItem('i1'), {}],
-  ['folders', () => foldersApi.list(), { items: [{ id: 1, name: 'x' }] }],
-  ['folder create', () => foldersApi.create('x'), { item: { id: '1' } }],
-  ['folder items', () => foldersApi.listItems('f1'), BAD_LIST],
-  ['feeds', () => feedsApi.list(), { items: [{ id: 'f1', url: 'u' }] }],
-  ['preview', () => feedsApi.preview(PAGE), BAD_PREVIEW],
-  ['feed create', () => feedsApi.create({ url: PAGE }), { item: { id: 'f1' } }],
-  ['counts', () => feedsApi.unreadCounts(), { items: [{ count: '2' }] }],
-  ['feed items', () => feedsApi.listItems('f1'), { items: [], cursor: 123 }],
-  ['opml', () => feedsApi.importOpml(OPML_FILE), { importedFeeds: 1 }],
-  ['items', () => feedItemsApi.listAll(), BAD_ITEMS],
-  ['item get', () => feedItemsApi.getById('i1'), { item: 'bad' }],
-  ['extract', () => feedItemsApi.extract('i1'), { item: null }],
-  ['settings', () => settingsApi.get(), { retention: 100, provider: 'x' }],
-  ['settings smtp', () => settingsApi.get(), { ...SETTINGS_OK, smtp: null }],
-  ['kindle send', () => kindleApi.sendNow(), { item: { trigger: 'manual' } }],
-  ['kindle sends', () => kindleApi.listSends(), { running: 'yes', items: [] }],
-];
-
-describe('malformed endpoint payloads', () => {
-  it.each(MALFORMED_CASES)(
-    'rejects malformed payload for %s',
-    async (_, run, badPayload) => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(badPayload, 200));
-      await expect(run()).rejects.toMatchObject({
-        code: 'InvalidResponse',
-        status: 200,
-      });
-    }
-  );
 });

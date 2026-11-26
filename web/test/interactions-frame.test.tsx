@@ -79,23 +79,3 @@ describe('ArticleFrame lightbox', () => {
     expect(lightbox()).toBeNull();
   });
 });
-
-describe('ArticleFrame key forwarding', () => {
-  it('forwards valid article-frame-key as window keydown when lightbox is closed', () => {
-    const { iframe, token } = mountFrame();
-    const seen: Array<string> = [];
-    const onKeyDown = (e: KeyboardEvent) => seen.push(e.key);
-    window.addEventListener('keydown', onKeyDown);
-    sendFrameMessage(iframe, { type: 'article-frame-key', token, key: 'j' });
-    expect(seen).toEqual(['j']);
-
-    sendFrameMessage(iframe, {
-      type: 'article-frame-image',
-      token,
-      src: 'https://example.com/photo.jpg',
-    });
-    sendFrameMessage(iframe, { type: 'article-frame-key', token, key: 'k' });
-    window.removeEventListener('keydown', onKeyDown);
-    expect(seen).toEqual(['j']);
-  });
-});

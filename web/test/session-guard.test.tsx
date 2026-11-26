@@ -40,7 +40,15 @@ describe('SessionGuard offline navigation', () => {
           ? Promise.reject(new TypeError('offline'))
           : Promise.resolve(json({ authenticated: true }));
       }
-      return Promise.resolve(json({ items: [], cursor: null, item: null }));
+      return Promise.resolve(
+        json({
+          items: [],
+          count: 0,
+          cursor: null,
+          boundary: '019363b8-0000-7000-8000-000000000000',
+          item: null,
+        })
+      );
     });
 
     const { container, history } = mountApp('/later');

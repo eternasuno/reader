@@ -156,10 +156,11 @@ const (
 )
 
 type PageParams struct {
-	Limit  int
-	Unread bool
-	Order  SortOrder
-	Cursor *string
+	Limit    int
+	Unread   bool
+	Order    SortOrder
+	Cursor   *string
+	Boundary string
 }
 
 type PageResult[T any] struct {
@@ -182,6 +183,7 @@ type Feed struct {
 	LastError    *string
 	ReaderMode   ReaderMode
 	Order        SortOrder
+	IconURL      *string
 }
 
 type FeedUnreadCount struct {
@@ -234,6 +236,7 @@ type ParsedFeedEntry struct {
 type ParsedFeed struct {
 	Title       string
 	Description *string
+	IconURL     *string
 	Entries     []ParsedFeedEntry
 }
 
@@ -348,7 +351,7 @@ type FeedRepository interface {
 	UpdateOrder(ctx context.Context, id string, order SortOrder) error
 	MoveToFolder(ctx context.Context, id string, folderID *string) error
 	RecordRefreshFailure(ctx context.Context, id string, errSummary string) error
-	ApplySync(ctx context.Context, feedID string, newTitle string, updatedAt time.Time, newItems []FeedItem, deleteIDs []string) error
+	ApplySync(ctx context.Context, feedID string, newTitle string, iconURL *string, updatedAt time.Time, newItems []FeedItem, deleteIDs []string) error
 	ImportOPML(ctx context.Context, doc OPMLDocument) (OPMLImportResult, []string, error)
 	ExportOPML(ctx context.Context) ([]OPMLExportFolder, []Feed, error)
 }
@@ -359,24 +362,24 @@ type FeedItemRepository interface {
 	ListByFolder(ctx context.Context, folderID string, params PageParams) (PageResult[FeedItem], error)
 	ListStoredRefsByFeed(ctx context.Context, feedID string) ([]StoredRef, error)
 	GetByID(ctx context.Context, id string) (*FeedItem, error)
-	UnreadCounts(ctx context.Context) ([]FeedUnreadCount, error)
+	UnreadCounts(ctx context.Context, boundary string) ([]FeedUnreadCount, error)
 	SetRead(ctx context.Context, id string, read bool) error
 	MarkIDsRead(ctx context.Context, ids []string) error
-	MarkAllRead(ctx context.Context) error
-	MarkFeedRead(ctx context.Context, feedID string) error
-	MarkFolderRead(ctx context.Context, folderID string) error
+	MarkAllRead(ctx context.Context, boundary string) error
+	MarkFeedRead(ctx context.Context, feedID string, boundary string) error
+	MarkFolderRead(ctx context.Context, folderID string, boundary string) error
 	SaveExtractedContentIfEmpty(ctx context.Context, id string, content string) (*FeedItem, bool, error)
 }
 
 type SavedPageRepository interface {
 	List(ctx context.Context, params PageParams) (PageResult[SavedPage], error)
-	UnreadCount(ctx context.Context) (int, error)
+	UnreadCount(ctx context.Context, boundary string) (int, error)
 	GetByID(ctx context.Context, id string) (*SavedPage, error)
 	GetIDByURL(ctx context.Context, url NormalizedURL) (string, bool, error)
 	Create(ctx context.Context, page SavedPage) (SavedPage, error)
 	SetRead(ctx context.Context, id string, read bool) error
 	MarkIDsRead(ctx context.Context, ids []string) error
-	MarkAllRead(ctx context.Context) error
+	MarkAllRead(ctx context.Context, boundary string) error
 	Delete(ctx context.Context, id string) error
 }
 

@@ -23,14 +23,14 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 
 | Method | Path | Request | Success | Errors |
 | --- | --- | --- | --- | --- |
-| GET | `/api/saved-pages` | `limit`, `unread`, `order?`, `cursor?` | `200 { items, cursor }` | `SavedPageRepositoryError` 500 |
-| GET | `/api/saved-pages/unread-count` | — | `200 { count }` | `SavedPageRepositoryError` 500 |
+| GET | `/api/saved-pages` | `limit`, `unread`, `order?`, `cursor?`, `boundary?` | `200 { items, cursor, boundary }` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
+| GET | `/api/saved-pages/unread-count` | — | `200 { count, boundary }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/:id` | `id` | `200 { item \| null }` | `SavedPageRepositoryError` 500 |
 | POST | `/api/saved-pages` | `{ url }` | `201 { item }` | `InvalidPageUrl` 400, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
 | POST | `/api/feed-items/:id/save` | `id` | `201 { item }` | `FeedItemNotFound` 404, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
 | PATCH | `/api/saved-pages/:id` | `{ read }` | `204` | `SavedPageRepositoryError` 500 |
 | POST | `/api/saved-pages/read` | `{ ids }` | `204` | `SavedPageRepositoryError` 500 |
-| POST | `/api/saved-pages/read-all` | — | `204` | `SavedPageRepositoryError` 500 |
+| POST | `/api/saved-pages/read-all` | `{ before }` | `204` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
 | DELETE | `/api/saved-pages/:id` | `id` | `204` | `SavedPageRepositoryError` 500 |
 
 `SavedPage`: `{ id, url, title, description?, content, publishedAt?, read }`.

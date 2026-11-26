@@ -8,7 +8,11 @@ import (
 	"reader/internal/domain"
 )
 
-const savedPageColumns = `id, url, title, description, content, published_at, read`
+const (
+	savedPageColumns           = `id, url, title, description, content, published_at, read`
+	savedPageUnreadCountQuery  = `SELECT COUNT(*) FROM saved_page WHERE read = 0 AND id <= ?`
+	markAllSavedPagesReadQuery = `UPDATE saved_page SET read = 1 WHERE read = 0 AND id <= ?`
+)
 
 type SavedPageRepo struct {
 	read  *sql.DB
@@ -42,9 +46,9 @@ func (r *SavedPageRepo) List(ctx context.Context, params domain.PageParams) (dom
 	return finalizeKeysetPage(pages, params.Limit, func(page domain.SavedPage) string { return page.ID }), nil
 }
 
-func (r *SavedPageRepo) UnreadCount(ctx context.Context) (int, error) {
+func (r *SavedPageRepo) UnreadCount(ctx context.Context, boundary string) (int, error) {
 	var unread int64
-	if err := r.read.QueryRowContext(ctx, `SELECT COUNT(*) FROM saved_page WHERE read = 0`).Scan(&unread); err != nil {
+	if err := r.read.QueryRowContext(ctx, savedPageUnreadCountQuery, boundary).Scan(&unread); err != nil {
 		return 0, domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 
@@ -133,8 +137,8 @@ func (r *SavedPageRepo) MarkIDsRead(ctx context.Context, ids []string) error {
 	return nil
 }
 
-func (r *SavedPageRepo) MarkAllRead(ctx context.Context) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE saved_page SET read = 1 WHERE read = 0`); err != nil {
+func (r *SavedPageRepo) MarkAllRead(ctx context.Context, boundary string) error {
+	if _, err := r.write.ExecContext(ctx, markAllSavedPagesReadQuery, boundary); err != nil {
 		return domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 

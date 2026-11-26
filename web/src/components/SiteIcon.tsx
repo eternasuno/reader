@@ -1,55 +1,61 @@
 import type { JSX } from '@solidjs/web';
 import { createSignal, Show } from 'solid-js';
-import { siteIconUrl } from '../state';
 import { Icon, type IconName } from '../ui';
 
 /**
- * `LIB-ROW-1`: site favicon for a feed, row, or reader source line. Falls back to
- * `fallback` when the URL is unusable or the image fails; keyed so a reused row
- * retries with a new site instead of keeping the previous failure.
+ * `LIB-ROW-1`: ordered candidate icon URLs (`srcs`) for a feed, row, or reader source line.
+ * Advances through candidates on image error and falls back to `fallback` when none remain;
+ * keyed by candidate list so a reused row resets to the first candidate.
  */
 export function SiteIcon(props: {
-  url: string;
+  srcs: ReadonlyArray<string>;
   fallback: IconName;
   size: number;
 }): JSX.Element {
   return (
     <Show
-      when={siteIconUrl(props.url)}
+      when={props.srcs.join('\n')}
       keyed
       fallback={<FallbackIcon name={props.fallback} size={props.size} />}
     >
-      {(src) => (
-        <SiteIconImage src={src} fallback={props.fallback} size={props.size} />
+      {(_key) => (
+        <SiteIconImage
+          srcs={props.srcs}
+          fallback={props.fallback}
+          size={props.size}
+        />
       )}
     </Show>
   );
 }
 
 function SiteIconImage(props: {
-  src: string;
+  srcs: ReadonlyArray<string>;
   fallback: IconName;
   size: number;
 }): JSX.Element {
-  const [failed, setFailed] = createSignal(false);
+  const [index, setIndex] = createSignal(0);
+  const current = () => props.srcs[index()];
 
   return (
     <Show
-      when={!failed()}
+      when={current()}
       fallback={<FallbackIcon name={props.fallback} size={props.size} />}
     >
-      <img
-        src={props.src}
-        alt=""
-        width={props.size}
-        height={props.size}
-        loading="lazy"
-        decoding="async"
-        referrerpolicy="no-referrer"
-        class="shrink-0 rounded-sm object-contain"
-        style={{ width: `${props.size}px`, height: `${props.size}px` }}
-        onError={() => setFailed(true)}
-      />
+      {(src) => (
+        <img
+          src={src()}
+          alt=""
+          width={props.size}
+          height={props.size}
+          loading="lazy"
+          decoding="async"
+          referrerpolicy="no-referrer"
+          class="shrink-0 rounded-sm object-contain"
+          style={{ width: `${props.size}px`, height: `${props.size}px` }}
+          onError={() => setIndex((i) => i + 1)}
+        />
+      )}
     </Show>
   );
 }

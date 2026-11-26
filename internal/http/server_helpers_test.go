@@ -63,12 +63,12 @@ func (r *failingSavedPageRepo) List(ctx context.Context, params domain.PageParam
 	return r.SavedPageRepository.List(ctx, params)
 }
 
-func (r *failingSavedPageRepo) UnreadCount(ctx context.Context) (int, error) {
+func (r *failingSavedPageRepo) UnreadCount(ctx context.Context, boundary string) (int, error) {
 	if r.unreadErr != nil {
 		return 0, r.unreadErr
 	}
 
-	return r.SavedPageRepository.UnreadCount(ctx)
+	return r.SavedPageRepository.UnreadCount(ctx, boundary)
 }
 
 func (r *failingSavedPageRepo) GetIDByURL(ctx context.Context, target domain.NormalizedURL) (string, bool, error) {
@@ -520,7 +520,7 @@ func (h *harness) seedItem(feedID string, rawURL string, configure func(*domain.
 		h.t.Fatalf("seed item: unknown feed %s", feedID)
 	}
 
-	if err := h.db.Feeds().ApplySync(ctx, feedID, feed.Title, h.clock.Now(), []domain.FeedItem{item}, nil); err != nil {
+	if err := h.db.Feeds().ApplySync(ctx, feedID, feed.Title, nil, h.clock.Now(), []domain.FeedItem{item}, nil); err != nil {
 		h.t.Fatalf("seed item %q: %v", rawURL, err)
 	}
 
@@ -609,7 +609,7 @@ func (h *harness) savedByID(id string) *domain.SavedPage {
 func (h *harness) allSavedPages() []domain.SavedPage {
 	h.t.Helper()
 
-	res, err := h.db.SavedPages().List(context.Background(), domain.PageParams{Limit: 200})
+	res, err := h.db.SavedPages().List(context.Background(), domain.PageParams{Limit: 200, Boundary: domain.NewID()})
 	if err != nil {
 		h.t.Fatalf("list saved pages: %v", err)
 	}

@@ -6,6 +6,9 @@ import {
   makePage,
 } from './support/state-fixture';
 
+const B1 = '019363b8-0000-7000-8000-000000000001';
+const B2 = '019363b8-0000-7000-8000-000000000002';
+
 const ctx = createStateTestContext();
 
 beforeEach(async () => {
@@ -18,13 +21,21 @@ describe('stale page responses', () => {
     const first = ctx.pending();
     const slow = state.loadScopeFirstPage({ kind: 'later' }, false);
 
-    ctx.queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: null });
+    ctx.queue({
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      cursor: null,
+      boundary: B2,
+    });
     const fast = state.loadScopeFirstPage({ kind: 'all' }, false);
     await fast;
     solid.flush();
 
     first.resolve(
-      jsonResponse({ items: [makePage({ id: 'p1' })], cursor: 'p1' })
+      jsonResponse({
+        items: [makePage({ id: 'p1' })],
+        cursor: 'p1',
+        boundary: B1,
+      })
     );
     await slow;
     solid.flush();
@@ -32,6 +43,7 @@ describe('stale page responses', () => {
     expect(state.activeScope()).toEqual({ kind: 'all' });
     expect(state.rows().map((row) => row.id)).toEqual(['i1']);
     expect(state.cursor()).toBeNull();
+    expect(state.listBoundary()).toBe(B2);
     expect(state.loadingInitial()).toBe(false);
   });
 });
@@ -51,6 +63,7 @@ describe('next page guard', () => {
         makePage({ id: 'p2' }),
       ],
       cursor: null,
+      boundary: B2,
     });
     const first = state.loadNextPage();
     const second = state.loadNextPage();
@@ -59,7 +72,7 @@ describe('next page guard', () => {
 
     expect(ctx.fetchCount()).toBe(2);
     expect(ctx.requestUrl(1)).toBe(
-      '/api/saved-pages?limit=30&unread=false&cursor=p1'
+      `/api/saved-pages?limit=30&unread=false&cursor=p1&boundary=${state.listBoundary()}`
     );
     expect(state.rows().map((row) => row.id)).toEqual(['p1', 'p2']);
     expect(state.cursor()).toBeNull();
@@ -88,7 +101,7 @@ describe('next page failure', () => {
     expect(state.loadError()).toBe('SavedPageRepositoryError');
     expect(state.loadingMore()).toBe(false);
 
-    ctx.queue({ items: [makePage({ id: 'p2' })], cursor: null });
+    ctx.queue({ items: [makePage({ id: 'p2' })], cursor: null, boundary: B1 });
     await state.retryLoad();
     solid.flush();
 
@@ -107,7 +120,11 @@ describe('first page retry', () => {
     expect(state.rows()).toHaveLength(0);
     expect(state.loadError()).toBe('FeedItemRepositoryError');
 
-    ctx.queue({ items: [makeItem({ id: 'i1', feedId: 'f1' })], cursor: null });
+    ctx.queue({
+      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      cursor: null,
+      boundary: B1,
+    });
     await state.retryLoad();
     solid.flush();
 

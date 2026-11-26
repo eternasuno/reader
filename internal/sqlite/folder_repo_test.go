@@ -136,7 +136,7 @@ func TestFolderRepoDeleteKeepsFeedsAtTopLevel(t *testing.T) {
 		t.Fatalf("feed folder = %v, want nil", *moved.FolderID)
 	}
 
-	stored, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10})
+	stored, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list feed items after folder delete: %v", err)
 	}

@@ -6,6 +6,8 @@ import {
   makeItem,
 } from './support/state-fixture';
 
+const B = '019363b8-0000-7000-8000-000000000001';
+
 const context = createStateTestContext();
 const {
   queue,
@@ -57,6 +59,7 @@ describe('unsubscribeFeed reload', () => {
         makeItem({ id: 'iB2', feedId: 'fB' }),
       ],
       cursor: null,
+      boundary: B,
     });
 
     await expect(state.unsubscribeFeed(feedA)).resolves.toBe(true);
@@ -98,6 +101,7 @@ describe('unsubscribeFeed unmounted', () => {
     queue({
       items: [makeItem({ id: 'iB1', feedId: 'fB' })],
       cursor: null,
+      boundary: B,
     });
 
     await expect(state.unsubscribeFeed(feedA)).resolves.toBe(true);
@@ -133,6 +137,7 @@ describe('unsubscribeFeed stale page discard', () => {
     queue({
       items: [makeItem({ id: 'iB1', feedId: 'fB' })],
       cursor: null,
+      boundary: B,
     });
 
     await expect(state.unsubscribeFeed(feedA)).resolves.toBe(true);
@@ -142,6 +147,7 @@ describe('unsubscribeFeed stale page discard', () => {
       json({
         items: [makeItem({ id: 'iA2', feedId: 'fA' })],
         cursor: 'iA2',
+        boundary: B,
       })
     );
     await pendingNext;

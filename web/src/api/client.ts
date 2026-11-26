@@ -1,17 +1,16 @@
 import { FETCH_TIMEOUT_MS } from './deadline';
 import {
   decodeField,
-  decodePage,
+  decodeSavedPageUnreadCount,
   decodeWith,
   isArrayOf,
   isFeedItem,
-  isFiniteNumber,
   isFolder,
   isNullable,
   isSavedPage,
   isSession,
 } from './decoders';
-import { item, request, requestNoContent } from './request';
+import { item, listPage, request, requestNoContent } from './request';
 import type {
   FeedItem,
   Folder,
@@ -19,6 +18,7 @@ import type {
   Page,
   RequestCallOptions,
   SavedPage,
+  SavedPageUnreadCount,
   Session,
 } from './types';
 
@@ -43,14 +43,11 @@ export const savedPagesApi = {
     params: ListParams = {},
     options?: RequestCallOptions
   ): Promise<Page<SavedPage>> =>
-    request('/api/saved-pages', decodePage(isSavedPage), {
-      ...options,
-      params,
-    }),
-  unreadCount: (options?: RequestCallOptions): Promise<number> =>
+    listPage('/api/saved-pages', isSavedPage, params, options),
+  unreadCount: (options?: RequestCallOptions): Promise<SavedPageUnreadCount> =>
     request(
       '/api/saved-pages/unread-count',
-      decodeField('count', isFiniteNumber),
+      decodeSavedPageUnreadCount,
       options
     ),
   getById: (
@@ -97,10 +94,11 @@ export const savedPagesApi = {
       method: 'POST',
       body: { ids },
     }),
-  markAllRead: (options?: RequestCallOptions): Promise<void> =>
+  markAllRead: (before: string, options?: RequestCallOptions): Promise<void> =>
     requestNoContent('/api/saved-pages/read-all', {
       ...options,
       method: 'POST',
+      body: { before },
     }),
   remove: (id: string, options?: RequestCallOptions): Promise<void> =>
     requestNoContent(`/api/saved-pages/${encodeURIComponent(id)}`, {
@@ -133,22 +131,25 @@ export const foldersApi = {
       ...options,
       method: 'DELETE',
     }),
-  markAllRead: (id: string, options?: RequestCallOptions): Promise<void> =>
+  markAllRead: (
+    id: string,
+    before: string,
+    options?: RequestCallOptions
+  ): Promise<void> =>
     requestNoContent(`/api/folders/${encodeURIComponent(id)}/read-all`, {
       ...options,
       method: 'POST',
+      body: { before },
     }),
   listItems: (
     id: string,
     params: ListParams = {},
     options?: RequestCallOptions
   ): Promise<Page<FeedItem>> =>
-    request(
+    listPage(
       `/api/folders/${encodeURIComponent(id)}/items`,
-      decodePage(isFeedItem),
-      {
-        ...options,
-        params,
-      }
+      isFeedItem,
+      params,
+      options
     ),
 };

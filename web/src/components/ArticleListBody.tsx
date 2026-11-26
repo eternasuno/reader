@@ -1,8 +1,8 @@
 import type { JSX } from '@solidjs/web';
-import { Show } from 'solid-js';
+import { createProjection, Show } from 'solid-js';
 import { t } from '../i18n';
 import {
-  type LibraryArticle,
+  articleById,
   type LibraryScope,
   loadingMore,
   loadNextPage,
@@ -11,36 +11,49 @@ import { VirtualList } from '../ui';
 import { ArticleRow } from './ArticleRow';
 
 export interface ArticleListBodyProps {
-  rows: ReadonlyArray<LibraryArticle>;
+  /** Ordered article IDs of the loaded list. */
+  ids: ReadonlyArray<string>;
   scope: LibraryScope;
   unreadOnly: boolean;
   openArticleId: string | null;
   onNavigate: (url: string) => void;
 }
 
-/** `LIB-VIEW-1`: the virtualized rows plus the infinite-scroll footer. */
+/**
+ * `LIB-VIEW-1`: the virtualized rows plus the infinite-scroll footer. Rows are keyed by article ID
+ * and read their record fields directly, so a field change never rebuilds a row.
+ */
 export function ArticleListBody(props: ArticleListBodyProps): JSX.Element {
   const activeIndex = (): number =>
-    props.openArticleId === null
-      ? -1
-      : props.rows.findIndex((row) => row.id === props.openArticleId);
+    props.openArticleId === null ? -1 : props.ids.indexOf(props.openArticleId);
+  const active = createProjection<Record<string, boolean>>((draft) => {
+    const openId = props.openArticleId;
+    for (const id of Object.keys(draft)) {
+      if (id !== openId) delete draft[id];
+    }
+    if (openId !== null) draft[openId] = true;
+  }, {});
 
   return (
     <VirtualList
-      items={props.rows}
+      keys={props.ids}
       estimateSize={136}
       activeKey={props.openArticleId}
       activeIndex={activeIndex()}
       onEndReached={() => void loadNextPage()}
       class="min-h-0 flex-1"
-      renderItem={(row) => (
-        <ArticleRow
-          row={row}
-          scope={props.scope}
-          unreadOnly={props.unreadOnly}
-          active={row.id === props.openArticleId}
-          onNavigate={props.onNavigate}
-        />
+      renderItem={(id) => (
+        <Show when={articleById(id)}>
+          {(row) => (
+            <ArticleRow
+              row={row()}
+              scope={props.scope}
+              unreadOnly={props.unreadOnly}
+              active={active[id] === true}
+              onNavigate={props.onNavigate}
+            />
+          )}
+        </Show>
       )}
       footer={
         <Show when={loadingMore()}>

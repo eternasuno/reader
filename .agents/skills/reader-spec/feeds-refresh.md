@@ -11,6 +11,7 @@ Feed fetching, parsing (`FD-PARSE`), item selection/retention (`FD-SEL`), sync (
 - `FD-PARSE-3`: Plain text summaries/contents in Atom (`text`, `text/plain`, untyped) and JSON Feed (`summary`, `content_text`) are HTML-escaped before sanitization. RSS/RDF use `content:encoded` for content (never `description` as content); Atom ignores `content[src]`; JSON Feed prefers non-blank `content_html` over `content_text`.
 - `FD-PARSE-4`: Publish time uses RSS `pubDate`, Atom `published` (ignoring `updated`), RDF `dc:date`, or JSON Feed `date_published` (ignoring `date_modified`). Unparseable or missing dates remain absent.
 - `FD-PARSE-5`: Feed title falls back to `baseUrl` host when empty.
+- `FD-PARSE-6`: Feed icon is RSS/RDF `<image><url>`, Atom `icon` then `logo`, or JSON Feed `favicon` then `icon`; relative values resolve against `baseUrl`, only credential-free `http`/`https` URLs up to 2048 bytes are kept, otherwise the icon is absent. Each successful refresh replaces the stored `iconUrl`.
 
 ### FD-SEL & FD-SYNC — Selection, Retention & Sync
 - `FD-SEL-1`: Let `N` be the global retention setting (`SET-VAL-1`, default `100`). Take the first `N` distinct entries from the source in source order (collapsing duplicate URLs to the first occurrence).

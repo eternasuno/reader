@@ -32,8 +32,8 @@ Single-level folders for grouping feeds in the sidebar, reading combined lists, 
 | POST | `/api/folders` | `{ name }` | `201 { item }` | `InvalidFolderName` 400, `FolderAlreadyExists` 409, 500 |
 | PATCH | `/api/folders/:id` | `{ name }` | `204` | `InvalidFolderName` 400, `FolderNotFound` 404, `FolderAlreadyExists` 409, 500 |
 | DELETE | `/api/folders/:id` | `id` | `204` | `FolderRepositoryError` 500 |
-| POST | `/api/folders/:id/read-all` | `id` | `204` | `FeedItemRepositoryError` 500 |
-| GET | `/api/folders/:id/items` | `limit`, `unread`, `order?`, `cursor?` | `200 { items, cursor }` | `FeedItemRepositoryError` 500 |
+| POST | `/api/folders/:id/read-all` | `id`, `{ before }` | `204` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
+| GET | `/api/folders/:id/items` | `limit`, `unread`, `order?`, `cursor?`, `boundary?` | `200 { items, cursor, boundary }` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
 | PATCH | `/api/feeds/:id` | `{ folderId: FolderId \| null }` | `204` | `FolderNotFound` 404, 500 |
 
 ## Acceptance

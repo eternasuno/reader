@@ -15,11 +15,12 @@
     "@solid-primitives/i18n": "3.0.0",
     "@solidjs/router": "^2.0.1",
     "@solidjs/web": "^2.0.3",
-    "@tanstack/virtual-core": "^3.19.11",
+    "@tanstack/virtual-core": "^3.19.13",
     "solid-js": "^2.0.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.8",
+    "@solidjs/diagnostics": "^2.0.3",
     "@solidjs/vite-plugin": "^3.0.1",
     "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^26.6.6",

@@ -16,7 +16,7 @@ const (
 
 var sendTimePattern = regexp.MustCompile(`^([01][0-9]|2[0-3]):(00|30)$`)
 
-func ValidatePageParams(limit int, hasLimit bool, unread bool, order SortOrder, cursor *string) (PageParams, error) {
+func ValidatePageParams(limit int, hasLimit bool, unread bool, order SortOrder, cursor *string, boundary *string) (PageParams, error) {
 	if !hasLimit {
 		limit = defaultPageLimit
 	}
@@ -33,17 +33,34 @@ func ValidatePageParams(limit int, hasLimit bool, unread bool, order SortOrder, 
 		return PageParams{}, NewError(ErrRequestFailed, nil)
 	}
 
-	pageCursor := cursor
-	if cursor != nil && !IsValidUUIDv7(*cursor) {
-		return PageParams{}, NewError(ErrRequestFailed, nil)
+	resolvedBoundary, err := resolvePageBoundary(cursor, boundary)
+	if err != nil {
+		return PageParams{}, err
 	}
 
 	return PageParams{
-		Limit:  limit,
-		Unread: unread,
-		Order:  order,
-		Cursor: pageCursor,
+		Limit:    limit,
+		Unread:   unread,
+		Order:    order,
+		Cursor:   cursor,
+		Boundary: resolvedBoundary,
 	}, nil
+}
+
+func resolvePageBoundary(cursor *string, boundary *string) (string, error) {
+	if cursor == nil {
+		if boundary != nil {
+			return "", NewError(ErrRequestFailed, nil)
+		}
+
+		return NewID(), nil
+	}
+
+	if !IsValidUUIDv7(*cursor) || boundary == nil || !IsValidUUIDv7(*boundary) {
+		return "", NewError(ErrRequestFailed, nil)
+	}
+
+	return *boundary, nil
 }
 
 func NormalizeArticleValues(title string, description, content *string) (string, *string, *string) {

@@ -4,9 +4,14 @@
  */
 
 import { createSignal, flush } from 'solid-js';
-import type { Feed, FeedUnreadCount, Folder } from '../api';
-import { feedsApi, foldersApi, savedPagesApi } from '../api';
+import type { Feed, Folder, SavedPageUnreadCount, UnreadCounts } from '../api';
+import type { LibraryScope } from './scope';
 import { onSessionCleared } from './session';
+import {
+  createSidebarRefresh,
+  type SidebarSnapshotResults,
+  type SnapshotField,
+} from './sidebar-refresh';
 import { getItem, setItem } from './storage';
 
 /** `FD-FOLDER-2`: folder collapse state persists in `localStorage`. */
@@ -16,17 +21,21 @@ export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'reader.sidebarCollapsed';
 const [feeds, setFeeds] = createSignal<ReadonlyArray<Feed>>([]);
 const [folders, setFolders] = createSignal<ReadonlyArray<Folder>>([]);
 const [savedUnreadCount, setSavedUnreadSignal] = createSignal(0);
+const [savedCountBoundary, setSavedCountBoundary] = createSignal<string | null>(
+  null
+);
 const [feedUnreadMap, setFeedUnreadMap] = createSignal<
   Readonly<Record<string, number>>
 >({});
+const [feedCountsBoundary, setFeedCountsBoundary] = createSignal<string | null>(
+  null
+);
 const [collapsedFolders, setCollapsedFolders] = createSignal<
   ReadonlySet<string>
 >(loadCollapsed());
 const [sidebarCollapsed, setSidebarCollapsed] = createSignal<boolean>(
   loadSidebarCollapsed()
 );
-
-type SnapshotField = 'feeds' | 'folders' | 'feedCounts' | 'savedCount';
 
 const fieldEpochs: Record<SnapshotField, number> = {
   feeds: 0,
@@ -37,19 +46,13 @@ const fieldEpochs: Record<SnapshotField, number> = {
 
 let feedsLoaded = false;
 
-interface ActiveRefresh {
-  promise: Promise<void>;
-  startEpochs: Record<SnapshotField, number>;
-  rerunNeeded: boolean;
-}
-
-let activeRefresh: ActiveRefresh | null = null;
-
 export {
   collapsedFolders,
+  feedCountsBoundary,
   feeds,
   feedUnreadMap,
   folders,
+  savedCountBoundary,
   savedUnreadCount,
   sidebarCollapsed,
 };
@@ -112,12 +115,8 @@ export const folderUnreadCount = (folderId: string): number =>
 export const allFeedsUnreadCount = (): number =>
   feeds().reduce((sum, feed) => sum + feedUnreadCount(feed.id), 0);
 
-type SidebarSnapshotResults = [
-  PromiseSettledResult<Array<Feed>>,
-  PromiseSettledResult<Array<Folder>>,
-  PromiseSettledResult<Array<FeedUnreadCount>>,
-  PromiseSettledResult<number>,
-];
+export const scopeCountBoundary = (scope: LibraryScope): string | null =>
+  scope.kind === 'later' ? savedCountBoundary() : feedCountsBoundary();
 
 const captureEpochs = (): Record<SnapshotField, number> => ({ ...fieldEpochs });
 
@@ -129,6 +128,33 @@ const hasEpochChanged = (
   start.feedCounts !== fieldEpochs.feedCounts ||
   start.savedCount !== fieldEpochs.savedCount;
 
+const applyCountsSnapshot = (
+  countsResult: PromiseSettledResult<UnreadCounts>,
+  savedResult: PromiseSettledResult<SavedPageUnreadCount>,
+  startEpochs: Readonly<Record<SnapshotField, number>>
+): boolean => {
+  const applyFeedCounts =
+    countsResult.status === 'fulfilled' &&
+    startEpochs.feedCounts === fieldEpochs.feedCounts;
+  if (applyFeedCounts) {
+    setFeedUnreadMap(
+      Object.fromEntries(
+        countsResult.value.items.map((entry) => [entry.feedId, entry.count])
+      )
+    );
+    setFeedCountsBoundary(countsResult.value.boundary);
+  }
+  const applySavedCount =
+    savedResult.status === 'fulfilled' &&
+    startEpochs.savedCount === fieldEpochs.savedCount;
+  if (applySavedCount) {
+    setSavedUnreadSignal(Math.max(0, savedResult.value.count));
+    setSavedCountBoundary(savedResult.value.boundary);
+  }
+
+  return applyFeedCounts || applySavedCount;
+};
+
 const applySidebarSnapshot = (
   [
     feedsResult,
@@ -136,8 +162,9 @@ const applySidebarSnapshot = (
     countsResult,
     savedResult,
   ]: SidebarSnapshotResults,
-  startEpochs: Readonly<Record<SnapshotField, number>>
-): void => {
+  startEpochs: Readonly<Record<SnapshotField, number>>,
+  countsAllowed: boolean
+): boolean => {
   if (
     feedsResult.status === 'fulfilled' &&
     startEpochs.feeds === fieldEpochs.feeds
@@ -151,82 +178,36 @@ const applySidebarSnapshot = (
   ) {
     setFolders(foldersResult.value);
   }
-  if (
-    countsResult.status === 'fulfilled' &&
-    startEpochs.feedCounts === fieldEpochs.feedCounts
-  ) {
-    setFeedUnreadMap(
-      Object.fromEntries(
-        countsResult.value.map((entry) => [entry.feedId, entry.count])
-      )
-    );
-  }
-  if (
-    savedResult.status === 'fulfilled' &&
-    startEpochs.savedCount === fieldEpochs.savedCount
-  ) {
-    setSavedUnreadSignal(Math.max(0, savedResult.value));
-  }
+  const countsApplied =
+    countsAllowed &&
+    applyCountsSnapshot(countsResult, savedResult, startEpochs);
 
   flush();
+  return countsApplied;
 };
 
-const runRefreshRound = async (owner: ActiveRefresh): Promise<void> => {
-  while (activeRefresh === owner) {
-    const current = activeRefresh;
-    current.rerunNeeded = false;
-    current.startEpochs = captureEpochs();
-    const results = await Promise.allSettled([
-      feedsApi.list(),
-      foldersApi.list(),
-      feedsApi.unreadCounts(),
-      savedPagesApi.unreadCount(),
-    ]);
-
-    if (activeRefresh !== owner) return;
-
-    applySidebarSnapshot(results, current.startEpochs);
-    if (!current.rerunNeeded) return;
-  }
-};
-
-const startOrJoinRefresh = (invalidate: boolean): Promise<void> => {
-  if (activeRefresh !== null) {
-    if (invalidate || hasEpochChanged(activeRefresh.startEpochs)) {
-      activeRefresh.rerunNeeded = true;
-    }
-
-    return activeRefresh.promise;
-  }
-
-  const state: ActiveRefresh = {
-    promise: Promise.resolve(),
-    startEpochs: captureEpochs(),
-    rerunNeeded: false,
-  };
-  activeRefresh = state;
-  state.promise = runRefreshRound(state).finally(() => {
-    if (activeRefresh === state) activeRefresh = null;
-  });
-
-  return state.promise;
-};
+const refreshOwner = createSidebarRefresh({
+  captureEpochs,
+  hasEpochChanged,
+  applySnapshot: applySidebarSnapshot,
+});
 
 /** `LIB-RELOAD-1`: entering/switching a scope refreshes feeds, folders and unread counts.
  * Coalesces concurrent read requests under one owner, skips fields invalidated by local mutations
  * during flight, and preserves partial-success behavior.
  */
-export const refreshSidebar = (): Promise<void> => startOrJoinRefresh(false);
+export const refreshSidebar = (): Promise<void> => refreshOwner.refresh();
 
 /** Requests a fresh sidebar snapshot after a server-side write, scheduling at most one trailing
  * round if a pre-mutation refresh is already in flight.
  */
-export const invalidateSidebar = (): Promise<void> => startOrJoinRefresh(true);
+export const invalidateSidebar = (): Promise<void> => refreshOwner.invalidate();
 
 /** Resolves once the feed list has been fetched (or joins any in-flight sidebar refresh). */
 export const ensureFeeds = async (): Promise<void> => {
-  if (activeRefresh !== null) {
-    await activeRefresh.promise;
+  const pending = refreshOwner.joinIfActive();
+  if (pending !== null) {
+    await pending;
 
     return;
   }
@@ -260,11 +241,6 @@ export const adjustSavedUnread = (delta: number): void => {
   setSavedUnreadSignal((count) => Math.max(0, count + delta));
 };
 
-export const setSavedUnread = (count: number): void => {
-  fieldEpochs.savedCount += 1;
-  setSavedUnreadSignal(Math.max(0, count));
-};
-
 const updateUnreadMap = (
   update: (map: Readonly<Record<string, number>>) => Record<string, number>
 ) => {
@@ -293,19 +269,6 @@ export const clearFeedUnread = (feedId: string): void => {
   });
 };
 
-export const clearFolderUnread = (folderId: string): void => {
-  const feedIds = new Set(folderFeeds(folderId).map((feed) => feed.id));
-  updateUnreadMap((map) =>
-    Object.fromEntries(
-      Object.entries(map).filter(([feedId]) => !feedIds.has(feedId))
-    )
-  );
-};
-
-export const clearAllFeedsUnread = (): void => {
-  updateUnreadMap(() => ({}));
-};
-
 export const updateFeedLocal = (feedId: string, patch: Partial<Feed>): void => {
   fieldEpochs.feeds += 1;
   setFeeds((current) =>
@@ -315,7 +278,7 @@ export const updateFeedLocal = (feedId: string, patch: Partial<Feed>): void => {
 
 export const removeFeedLocal = (feedId: string): void => {
   fieldEpochs.feeds += 1;
-  if (activeRefresh !== null) activeRefresh.rerunNeeded = true;
+  refreshOwner.markRerunNeeded();
 
   setFeeds((current) => current.filter((feed) => feed.id !== feedId));
   clearFeedUnread(feedId);
@@ -325,7 +288,7 @@ export const removeFeedLocal = (feedId: string): void => {
 export const removeFolderLocal = (folderId: string): void => {
   fieldEpochs.folders += 1;
   fieldEpochs.feeds += 1;
-  if (activeRefresh !== null) activeRefresh.rerunNeeded = true;
+  refreshOwner.markRerunNeeded();
 
   setFolders((current) => current.filter((folder) => folder.id !== folderId));
   setFeeds((current) =>
@@ -346,11 +309,13 @@ export const clearSidebarState = (): void => {
   fieldEpochs.feedCounts += 1;
   fieldEpochs.savedCount += 1;
   feedsLoaded = false;
-  activeRefresh = null;
+  refreshOwner.clear();
   setFeeds([]);
   setFolders([]);
   setSavedUnreadSignal(0);
+  setSavedCountBoundary(null);
   setFeedUnreadMap({});
+  setFeedCountsBoundary(null);
   flush();
 };
 

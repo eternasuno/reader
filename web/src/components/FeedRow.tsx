@@ -2,7 +2,13 @@ import type { JSX } from '@solidjs/web';
 import { createSignal, Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
-import { feedUnreadCount, isSameScope } from '../state';
+import {
+  feedUnreadCount,
+  iconCandidates,
+  isMarkingScope,
+  isSameScope,
+  siteIconUrl,
+} from '../state';
 import { Menu, MenuDivider, MenuItem } from '../ui';
 import { deleteFeed } from './articleListActions';
 import { FeedFailureMenu } from './FeedFailureMenu';
@@ -56,7 +62,10 @@ export function FeedRow(props: {
           }
         />
       </Show>
-      <SidebarRowEnd count={feedUnreadCount(props.feed.id)}>
+      <SidebarRowEnd
+        count={feedUnreadCount(props.feed.id)}
+        marking={isMarkingScope({ kind: 'feed', feedId: props.feed.id })}
+      >
         <FeedRowMenu feed={props.feed} state={props.state} />
       </SidebarRowEnd>
     </div>
@@ -77,7 +86,11 @@ function FeedRowButton(props: {
       aria-current={active() ? 'page' : undefined}
       onClick={() => selectFeed(props.state, props.feed)}
     >
-      <SiteIcon url={props.feed.url} fallback="rss" size={16} />
+      <SiteIcon
+        srcs={iconCandidates([props.feed.iconUrl, siteIconUrl(props.feed.url)])}
+        fallback="rss"
+        size={16}
+      />
       <span class="flex-1 truncate">{props.feed.title}</span>
     </button>
   );

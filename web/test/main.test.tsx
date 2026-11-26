@@ -62,6 +62,28 @@ describe('app entry', () => {
     expect((await mountApp('/')).history.get()).toBe('/later');
     expect((await mountApp('/does-not-exist')).history.get()).toBe('/later');
   });
+
+  it('shows only a spinner on /login until the session check resolves', async () => {
+    let release: (response: Response) => void = () => undefined;
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    harness.fetchMock.mockImplementation((input: unknown) =>
+      String(input).includes('/api/auth/session')
+        ? pending
+        : Promise.resolve(json({ items: [], cursor: null, item: null }))
+    );
+
+    const { container } = mount('/login');
+    await settle(2);
+    expect(container.querySelector('input[type="password"]')).toBeNull();
+    expect(container.querySelector('.loading')).not.toBeNull();
+    expect(container.textContent).not.toContain('正在确认登录状态');
+
+    release(json({ authenticated: false }));
+    await settle(4);
+    expect(container.querySelector('input[type="password"]')).not.toBeNull();
+  });
 });
 
 describe('service worker registration', () => {
@@ -225,6 +247,16 @@ describe('library reload', () => {
     history.set({ value: '/all/item-1' });
     await settle(4);
     expect(listPages()).toHaveLength(before);
+  });
+
+  it('keeps the library shell mounted when switching scope', async () => {
+    const { container, history } = await mountApp('/all');
+    const shell = must<HTMLElement>(container, 'aside');
+    for (const path of ['/later', '/feed/feed-1', '/folder/folder-1', '/all']) {
+      history.set({ value: path });
+      await settle(4);
+      expect(shell.isConnected).toBe(true);
+    }
   });
 
   it('does not auto-paginate when the list has no measurable layout', async () => {

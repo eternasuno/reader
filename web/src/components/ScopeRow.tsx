@@ -2,6 +2,7 @@ import type { JSX } from '@solidjs/web';
 import type { Feed } from '../api';
 import { t } from '../i18n';
 import {
+  isMarkingScope,
   type LibraryScope,
   markScopeAllRead,
   triggerKindleSend,
@@ -25,6 +26,7 @@ import {
 
 export interface ScopeRowProps {
   active: boolean;
+  scope: LibraryScope;
   icon: IconName;
   label: string;
   count: number;
@@ -45,7 +47,7 @@ export function ScopeRow(props: ScopeRowProps): JSX.Element {
         <Icon name={props.icon} size={16} class="opacity-70" />
         <span class="flex-1 truncate">{props.label}</span>
       </button>
-      <SidebarRowEnd count={props.count}>
+      <SidebarRowEnd count={props.count} marking={isMarkingScope(props.scope)}>
         <Menu label={t('library.moreActions')} triggerClass="btn-xs">
           {props.children}
         </Menu>
