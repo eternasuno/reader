@@ -7,12 +7,10 @@ import { retryRefresh } from './feedFailure';
 /** `FD-SCHED-3`: warning menu exposing the stored refresh error, retry, and unsubscribe. */
 export function FeedFailureMenu(props: {
   feed: Feed;
-  align: 'start' | 'end';
   onDelete: (feed: Feed) => void;
 }): JSX.Element {
   return (
     <Menu
-      align={props.align}
       label={t('feeds.retryRefresh')}
       triggerClass="btn-xs btn-square"
       trigger={

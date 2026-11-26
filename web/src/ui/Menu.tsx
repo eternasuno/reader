@@ -14,14 +14,12 @@ import {
 const ITEM_CLASSES =
   'flex min-h-10 w-[calc(100%-1rem)] mx-2 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm leading-5 text-base-content transition-colors hover:bg-base-300/70 focus-visible:bg-base-300/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40';
 
-/** `top: anchor(bottom)` + `flip-block, flip-inline` keeps menus inside the viewport without JS coordinates. */
+/**
+ * Menus open below the trigger extending right; `flip-inline`, `flip-block`, then both
+ * keep them inside the viewport without JS coordinates.
+ */
 const PANEL_CLASSES =
-  'inset-auto m-0 my-1 min-w-60 rounded-lg border border-base-300/80 bg-base-200 px-0 py-2 text-base-content shadow-2xl focus:outline-none [position-try-fallbacks:flip-block,flip-inline]';
-
-const PANEL_AREA = {
-  start: '[position-area:bottom_span-right]',
-  end: '[position-area:bottom_span-left]',
-} as const;
+  'inset-auto m-0 my-1 min-w-60 rounded-lg border border-base-300/80 bg-base-200 px-0 py-2 text-base-content shadow-2xl focus:outline-none [position-area:bottom_span-right] [position-try-fallbacks:flip-inline,flip-block,flip-block_flip-inline]';
 
 const TRIGGER_CLASSES = 'btn btn-ghost btn-sm btn-square';
 
@@ -31,7 +29,6 @@ export interface MenuProps {
   trigger?: JSX.Element;
   icon?: IconName;
   label: string;
-  align?: 'start' | 'end';
   triggerClass?: string;
   onOpenChange?: (open: boolean) => void;
 }
@@ -104,7 +101,7 @@ export function Menu(props: MenuProps): JSX.Element {
           popover="manual"
           tabindex="-1"
           aria-label={props.label}
-          class={[PANEL_CLASSES, PANEL_AREA[props.align ?? 'end']]}
+          class={PANEL_CLASSES}
           style={{ 'position-anchor': anchor }}
           onKeyDown={(event) => handleMenuKeyDown(event, refs, menu.dismiss)}
           onClick={(event) => handleMenuClick(event, menu.dismiss)}
