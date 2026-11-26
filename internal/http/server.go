@@ -31,10 +31,10 @@ const (
 	indexCSP              = "frame-ancestors 'none'"
 )
 
-// FeedRefresher schedules background refreshes without exposing the worker
-// implementation to the HTTP layer.
+// FeedRefresher wakes the background refresh workers after the HTTP layer has
+// made feeds due, without exposing the worker implementation.
 type FeedRefresher interface {
-	Enqueue(feedIDs ...string)
+	Wake()
 }
 
 // KindleDispatcher starts manual Send-to-Kindle jobs and reports whether a job

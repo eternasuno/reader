@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"reader/internal/domain"
 )
@@ -103,64 +102,24 @@ func (s *server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if settings.Kindle != nil {
-		kindle, err := s.toKindleSettingsJSON(r.Context(), *settings.Kindle)
-		if err != nil {
-			writeError(w, err)
-
-			return
-		}
-
+		kindle := toKindleSettingsJSON(*settings.Kindle)
 		response.Kindle = &kindle
 	}
 
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *server) toKindleSettingsJSON(ctx context.Context, kindle domain.KindleSettings) (kindleSettingsJSON, error) {
-	response := kindleSettingsJSON{KindleEmail: kindle.KindleEmail}
-	if kindle.Schedule == nil {
-		return response, nil
+func toKindleSettingsJSON(kindle domain.KindleSettings) kindleSettingsJSON {
+	response := kindleSettingsJSON{
+		KindleEmail: kindle.KindleEmail,
+		NextSendAt:  formatTimestampPtr(kindle.NextSendAt),
 	}
 
-	nextSendAt, err := s.kindleNextSendAt(ctx, kindle, *kindle.Schedule)
-	if err != nil {
-		return kindleSettingsJSON{}, err
+	if kindle.Schedule != nil {
+		response.Schedule = &kindleScheduleJSON{Hour: kindle.Schedule.Hour, Minute: kindle.Schedule.Minute, Timezone: kindle.Schedule.Timezone}
 	}
 
-	response.Schedule = &kindleScheduleJSON{Hour: kindle.Schedule.Hour, Minute: kindle.Schedule.Minute, Timezone: kindle.Schedule.Timezone}
-	response.NextSendAt = formatTimestampPtr(&nextSendAt)
-
-	return response, nil
-}
-
-func (s *server) kindleNextSendAt(ctx context.Context, kindle domain.KindleSettings, schedule domain.KindleSchedule) (time.Time, error) {
-	loc, err := domain.LoadKindleLocation(schedule.Timezone)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	lastScheduledStartedAt, err := s.cfg.KindleSends.LastScheduledStartedAt(ctx)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	anchor := scheduleAnchor(kindle.ScheduleUpdatedAt, lastScheduledStartedAt)
-
-	return domain.KindleNextSendAt(schedule, loc, s.cfg.Now().UTC(), anchor), nil
-}
-
-// scheduleAnchor is the later of the schedule's last change and the start of the
-// newest scheduled send; occurrences at or before it are no longer due.
-func scheduleAnchor(scheduleUpdatedAt, lastScheduledStartedAt *time.Time) time.Time {
-	var anchor time.Time
-
-	for _, candidate := range []*time.Time{scheduleUpdatedAt, lastScheduledStartedAt} {
-		if candidate != nil && candidate.After(anchor) {
-			anchor = *candidate
-		}
-	}
-
-	return anchor
+	return response
 }
 
 func secretConfigured(value *string) bool {

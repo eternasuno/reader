@@ -3,7 +3,6 @@ package domain
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestPageParamsValidation(t *testing.T) {
@@ -414,14 +413,12 @@ func TestValueKindleSettings(t *testing.T) {
 		}
 	}
 
-	t.Run("normalizes and clears repository-owned timestamp", func(t *testing.T) {
+	t.Run("normalizes", func(t *testing.T) {
 		t.Parallel()
 
-		updatedAt := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 		input := base()
 		input.KindleEmail = "  kindle@example.com "
 		input.Schedule.Timezone = " America/New_York "
-		input.ScheduleUpdatedAt = &updatedAt
 
 		settings, err := ValidateKindleSettings(input)
 		if err != nil {
@@ -435,27 +432,21 @@ func TestValueKindleSettings(t *testing.T) {
 		if settings.Schedule == nil || *settings.Schedule != (KindleSchedule{Hour: 8, Minute: 0, Timezone: "America/New_York"}) {
 			t.Fatalf("schedule = %v", settings.Schedule)
 		}
-
-		if settings.ScheduleUpdatedAt != nil {
-			t.Fatalf("schedule updated at = %v, want nil", settings.ScheduleUpdatedAt)
-		}
 	})
 
-	t.Run("schedule off clears the schedule and its timestamp", func(t *testing.T) {
+	t.Run("schedule off clears the schedule", func(t *testing.T) {
 		t.Parallel()
 
-		updatedAt := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 		input := base()
 		input.Schedule = nil
-		input.ScheduleUpdatedAt = &updatedAt
 
 		settings, err := ValidateKindleSettings(input)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if settings.Schedule != nil || settings.ScheduleUpdatedAt != nil {
-			t.Fatalf("settings = %+v, want no schedule and no timestamp", settings)
+		if settings.Schedule != nil {
+			t.Fatalf("settings = %+v, want no schedule", settings)
 		}
 	})
 

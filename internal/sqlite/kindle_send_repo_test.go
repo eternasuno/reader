@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 		requireCode(t, err, domain.ErrKindleNotConfigured)
 	}
 
-	// The schedule was set a day ago, so the 09:00 occurrence since then is due.
+	// The schedule was set a day ago, so its stored next send (04-30 09:00 UTC) is overdue.
 	configureKindleDeliveryForTest(t, store, domain.KindleSettings{
 		KindleEmail: "reader@kindle.com",
 		Schedule:    &domain.KindleSchedule{Hour: 9, Minute: 0, Timezone: "UTC"},
@@ -63,7 +64,8 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 		t.Fatalf("expected due send to skip while manual send is running: %+v", skipped)
 	}
 
-	requireLastScheduledStartedAt(t, repo, nil)
+	// Neither the manual claim nor the skipped scheduled claim touched the stored schedule.
+	requireNextSendAt(t, store, ptrTime(time.Date(2024, 4, 30, 9, 0, 0, 0, time.UTC)))
 
 	recent, err := repo.ListRecent(ctx)
 	if err != nil {
@@ -104,7 +106,12 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 	}
 
 	crashed := dueClaim.Record
-	requireLastScheduledStartedAt(t, repo, &dueClaimAt)
+
+	if want := time.Date(2024, 5, 1, 9, 0, 0, 0, time.UTC); !dueClaim.ScheduledFor.Equal(want) {
+		t.Fatalf("due claim scheduled for = %v, want %v", dueClaim.ScheduledFor, want)
+	}
+
+	requireNextSendAt(t, store, ptrTime(time.Date(2024, 5, 2, 9, 0, 0, 0, time.UTC)))
 
 	recoveredAt := startedAt.Add(time.Hour)
 	if err := repo.RecoverRunningOnStartup(ctx, recoveredAt); err != nil {
@@ -193,7 +200,7 @@ func TestKindleSendRepoPrunesHistory(t *testing.T) {
 	}
 }
 
-func TestKindleSendRepoPruneKeepsNewestScheduledSend(t *testing.T) {
+func TestKindleSendRepoPruneKeepsOnlyNewestTwentyCompleted(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	repo := store.KindleSends()
@@ -229,16 +236,86 @@ func TestKindleSendRepoPruneKeepsNewestScheduledSend(t *testing.T) {
 		t.Fatalf("manual sends kept = %d, want the newest 20", got)
 	}
 
-	if got := countRows(t, store, `SELECT COUNT(*) FROM kindle_send WHERE trigger = 'scheduled'`); got != 1 {
-		t.Fatalf("scheduled sends kept = %d, want only the newest one", got)
+	if got := countRows(t, store, `SELECT COUNT(*) FROM kindle_send WHERE trigger = 'scheduled'`); got != 0 {
+		t.Fatalf("scheduled sends kept = %d, want none: no scheduled row is exempt from pruning", got)
 	}
 
-	requireLastScheduledStartedAt(t, repo, ptrTime(day(2)))
+	// The next send time lives in kindle_schedule, so pruned history cannot make a fired occurrence due again.
+	requireNextSendAt(t, store, ptrTime(day(3)))
 
-	// The surviving anchor keeps the already-fired occurrence from firing again.
 	again, err := repo.ClaimDueSend(ctx, domain.NewID(), day(2).Add(time.Hour), false)
 	if err != nil || again.Claimed {
 		t.Fatalf("ClaimDueSend() after pruning = (%+v, %v), want no claim", again, err)
+	}
+}
+
+func TestKindleSendRepoRecoverRunningOnStartupPrunesAndIsIdempotent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.KindleSends()
+	configureManualKindleForTest(t, store)
+
+	base := time.Date(2024, 5, 1, 8, 0, 0, 0, time.UTC)
+	completed := make([]string, kindleSendLimit)
+	for i := range completed {
+		startedAt := base.Add(time.Duration(i) * time.Minute)
+		claimed, err := repo.ClaimManualSend(ctx, domain.NewID(), startedAt)
+		if err != nil {
+			t.Fatalf("claim manual send %d: %v", i, err)
+		}
+
+		completed[i] = claimed.Record.ID
+
+		if err := repo.CompleteSend(ctx, claimed.Record.ID, domain.KindleStatusSucceeded, nil, startedAt.Add(30*time.Second)); err != nil {
+			t.Fatalf("complete send %d: %v", i, err)
+		}
+	}
+
+	// Twenty completed rows plus one running row: recovery turns the running row
+	// into a twenty-first completed one.
+	crashed, err := repo.ClaimManualSend(ctx, domain.NewID(), base.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("claim crashed send: %v", err)
+	}
+
+	recoveredAt := base.Add(2 * time.Hour)
+	if err := repo.RecoverRunningOnStartup(ctx, recoveredAt); err != nil {
+		t.Fatalf("recover running sends: %v", err)
+	}
+
+	recent, err := repo.ListRecent(ctx)
+	if err != nil {
+		t.Fatalf("list recent sends after recovery: %v", err)
+	}
+
+	if len(recent) != kindleSendLimit || recent[0].ID != crashed.Record.ID || recent[0].Status != domain.KindleStatusFailed {
+		t.Fatalf("recent sends after recovery = %+v, want the recovered send first among %d rows", recent, kindleSendLimit)
+	}
+
+	// ListRecent is capped at the same limit, so check the stored rows.
+	if got := countRows(t, store, `SELECT COUNT(*) FROM kindle_send`); got != kindleSendLimit {
+		t.Fatalf("stored sends after recovery = %d, want %d: recovery should prune in the same transaction", got, kindleSendLimit)
+	}
+
+	if got := countRows(t, store, `SELECT COUNT(*) FROM kindle_send WHERE id = ?`, completed[0]); got != 0 {
+		t.Fatalf("oldest completed send still stored after recovery")
+	}
+
+	if err := repo.RecoverRunningOnStartup(ctx, recoveredAt.Add(time.Hour)); err != nil {
+		t.Fatalf("recover running sends again: %v", err)
+	}
+
+	again, err := repo.ListRecent(ctx)
+	if err != nil {
+		t.Fatalf("list recent sends after second recovery: %v", err)
+	}
+
+	if !reflect.DeepEqual(again, recent) {
+		t.Fatalf("recent sends after second recovery = %+v, want unchanged %+v", again, recent)
+	}
+
+	if got := countRows(t, store, `SELECT COUNT(*) FROM kindle_send`); got != kindleSendLimit {
+		t.Fatalf("stored sends after second recovery = %d, want %d", got, kindleSendLimit)
 	}
 }
 
@@ -283,6 +360,10 @@ func TestKindleSendRepoPruneKeepsRunningSendWithNewerHistory(t *testing.T) {
 
 	if status != string(domain.KindleStatusRunning) {
 		t.Fatalf("running send status = %q, want running", status)
+	}
+
+	if got := countRows(t, store, `SELECT COUNT(*) FROM kindle_send WHERE status != 'running'`); got != kindleSendLimit {
+		t.Fatalf("completed sends beside the running one = %d, want %d", got, kindleSendLimit)
 	}
 
 	if err := repo.RecordBookAccepted(ctx, claimed.Record.ID, 0, []string{page.ID}, nil, 1); err != nil {

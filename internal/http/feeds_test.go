@@ -103,8 +103,12 @@ func TestFeedSubscribe(t *testing.T) {
 		t.Fatalf("folderId = %v", created.Item.FolderID)
 	}
 
-	if enqueued := h.refresher.enqueued(); len(enqueued) != 1 || enqueued[0] != created.Item.ID {
-		t.Fatalf("refresh enqueue = %+v", h.refresher.batches)
+	if wakes := h.refresher.wakeCount(); wakes != 1 {
+		t.Fatalf("refresher wakes after subscribe = %d, want 1", wakes)
+	}
+
+	if claimed := h.claimDueFeed(); claimed == nil || claimed.ID != created.Item.ID {
+		t.Fatalf("claimed feed = %+v, want the new subscription %s due immediately", claimed, created.Item.ID)
 	}
 
 	recorder = h.authed(http.MethodPost, "/api/feeds", map[string]any{"url": "https://second.example.com/rss", "title": "  Go Blog  "})
@@ -204,16 +208,34 @@ func TestFeedPreferencesAndDelete(t *testing.T) {
 		})
 	}
 
-	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+feed.ID+"/refresh", nil), http.StatusAccepted)
-	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+domain.NewID()+"/refresh", nil), http.StatusAccepted)
-	if batches := h.refresher.batches; len(batches) != 1 || len(batches[0]) != 1 || batches[0][0] != feed.ID {
-		t.Fatalf("refresh enqueue = %+v", batches)
-	}
-
 	requireStatus(t, h.authed(http.MethodDelete, "/api/feeds/"+feed.ID, nil), http.StatusNoContent)
 	if h.feedByID(feed.ID) != nil {
 		t.Fatal("feed was not deleted")
 	}
+}
+
+func TestFeedManualRefreshMakesFeedDueAndWakesWorkers(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
+	h.succeedRefresh(feed.ID, domain.FeedSyncMeta{Title: feed.Title}, nil, h.clock.Now())
+
+	if claimed := h.claimDueFeed(); claimed != nil {
+		t.Fatalf("feed refreshed a moment ago must not be due, claimed %+v", claimed)
+	}
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+feed.ID+"/refresh", nil), http.StatusAccepted)
+
+	if wakes := h.refresher.wakeCount(); wakes != 1 {
+		t.Fatalf("refresher wakes after manual refresh = %d, want 1", wakes)
+	}
+
+	if claimed := h.claimDueFeed(); claimed == nil || claimed.ID != feed.ID {
+		t.Fatalf("claimed feed = %+v, want %s due after the manual refresh", claimed, feed.ID)
+	}
+
+	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+domain.NewID()+"/refresh", nil), http.StatusAccepted)
 }
 
 func TestFeedItemReadStateAndCounts(t *testing.T) {
@@ -392,17 +414,14 @@ func TestFeedListExposesSiteURLAndDerivedRefreshState(t *testing.T) {
 	synced := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
 	untouched := h.seedFeed("Untouched", "https://feeds.example.com/other", nil)
 
-	startedAt := h.clock.Now()
-	finishedAt := startedAt.Add(2 * time.Second)
+	finishedAt := h.clock.Now().Add(2 * time.Second)
 	meta := domain.FeedSyncMeta{
 		Title:   "Go Blog",
 		SiteURL: strPtr("https://go.dev/blog/"),
 		IconURL: strPtr("https://go.dev/favicon.ico"),
 	}
 
-	if err := h.db.Feeds().ApplySync(context.Background(), synced.ID, meta, startedAt, finishedAt, nil, nil); err != nil {
-		t.Fatalf("apply sync: %v", err)
-	}
+	h.succeedRefresh(synced.ID, meta, nil, finishedAt)
 
 	recorder := h.authed(http.MethodGet, "/api/feeds", nil)
 	requireStatus(t, recorder, http.StatusOK)

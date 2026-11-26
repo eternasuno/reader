@@ -518,7 +518,7 @@ func TestLoadConfigValidationErrors(t *testing.T) {
 	}
 }
 
-func TestRecoverStartupStateCleansSpoolAndRecoversRunningSends(t *testing.T) {
+func TestRecoverStartupStateCleansSpoolAndRecoversRunningWork(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -546,6 +546,26 @@ func TestRecoverStartupStateCleansSpoolAndRecoversRunningSends(t *testing.T) {
 		t.Fatalf("ClaimManualSend() error = %v", err)
 	}
 
+	feedURL, err := domain.ParseNormalizedURL("https://feeds.example.com/rss", domain.ErrFeedUrlInvalid)
+	if err != nil {
+		t.Fatalf("ParseNormalizedURL() error = %v", err)
+	}
+
+	feed, err := store.Feeds().Create(ctx, domain.Feed{
+		ID:         domain.NewID(),
+		URL:        feedURL,
+		Title:      "Example",
+		ReaderMode: domain.ReaderModeDefault,
+		Order:      domain.SortOrderNewest,
+	}, startedAt)
+	if err != nil {
+		t.Fatalf("Feeds().Create() error = %v", err)
+	}
+
+	if claimed, err := store.Feeds().ClaimDueRefresh(ctx, domain.NewID(), startedAt); err != nil || claimed == nil || claimed.ID != feed.ID {
+		t.Fatalf("ClaimDueRefresh() = %+v, %v; want the new feed claimed as running", claimed, err)
+	}
+
 	spoolDir := filepath.Join(dataDir, epubSpoolDirName)
 	if err := os.MkdirAll(spoolDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -565,6 +585,11 @@ func TestRecoverStartupStateCleansSpoolAndRecoversRunningSends(t *testing.T) {
 	}
 	if len(recent) != 1 || recent[0].Status != domain.KindleStatusFailed {
 		t.Fatalf("recent sends after recovery = %+v, want 1 failed row", recent)
+	}
+
+	// The interrupted attempt no longer blocks the feed, which is still due.
+	if claimed, err := store.Feeds().ClaimDueRefresh(ctx, domain.NewID(), startedAt.Add(time.Minute)); err != nil || claimed == nil || claimed.ID != feed.ID {
+		t.Fatalf("ClaimDueRefresh() after recovery = %+v, %v; want the interrupted feed claimable again", claimed, err)
 	}
 
 	info, err := os.Stat(spoolDir)

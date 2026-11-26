@@ -58,13 +58,23 @@ CREATE TABLE saved_page (
 
 CREATE INDEX saved_page_read_id ON saved_page (read, id);
 
+CREATE TABLE feed_schedule (
+  feed_id TEXT PRIMARY KEY REFERENCES feed(id) ON DELETE CASCADE,
+  next_refresh_at INTEGER NOT NULL,
+  last_success_at INTEGER,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT
+) STRICT;
+
+CREATE INDEX feed_schedule_next ON feed_schedule (next_refresh_at, feed_id);
+
 CREATE TABLE feed_refresh (
   id TEXT PRIMARY KEY,
   feed_id TEXT NOT NULL REFERENCES feed(id) ON DELETE CASCADE,
   status TEXT NOT NULL,
   error TEXT,
   started_at INTEGER NOT NULL,
-  finished_at INTEGER NOT NULL
+  finished_at INTEGER
 ) STRICT;
 
 CREATE INDEX feed_refresh_feed_id_id ON feed_refresh (feed_id, id);
@@ -84,11 +94,18 @@ CREATE TABLE setting (
   kindle_email TEXT,
   timezone TEXT,
   send_hour INTEGER,
-  send_minute INTEGER,
-  schedule_updated_at INTEGER
+  send_minute INTEGER
 ) STRICT;
 
 INSERT INTO setting (id) VALUES (1);
+
+CREATE TABLE kindle_schedule (
+  id TEXT PRIMARY KEY,
+  setting_id INTEGER NOT NULL REFERENCES setting(id) ON DELETE CASCADE,
+  next_send_at INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX kindle_schedule_setting ON kindle_schedule (setting_id);
 
 CREATE TABLE kindle_send (
   id TEXT PRIMARY KEY,
@@ -99,12 +116,6 @@ CREATE TABLE kindle_send (
   error TEXT,
   started_at INTEGER NOT NULL,
   finished_at INTEGER
-) STRICT;
-
-CREATE TABLE kindle_send_book (
-  send_id TEXT NOT NULL REFERENCES kindle_send(id) ON DELETE CASCADE,
-  book_index INTEGER NOT NULL,
-  PRIMARY KEY (send_id, book_index)
 ) STRICT;
 `
 

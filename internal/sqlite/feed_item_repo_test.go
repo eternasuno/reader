@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"reader/internal/domain"
 )
@@ -344,9 +343,7 @@ func TestFeedItemSaveExtractedContentIfEmpty(t *testing.T) {
 				ExtractedContent: tc.existing,
 			}
 
-			if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: feed.Title}, time.Now().UTC(), time.Now().UTC(), []domain.FeedItem{item}, nil); err != nil {
-				t.Fatalf("seed item: %v", err)
-			}
+			syncFeed(t, store, feed, []domain.FeedItem{item}, nil)
 
 			if err := store.FeedItems().SetRead(ctx, item.ID, true); err != nil {
 				t.Fatalf("mark item read: %v", err)
@@ -447,9 +444,7 @@ func TestFeedItemStoredRefsAndRetention(t *testing.T) {
 		{ID: domain.NewID(), URL: mustURL(t, "https://example.com/first"), Title: "First"},
 		{ID: domain.NewID(), URL: mustURL(t, "https://user:secret@example.com/second"), Title: "Second"},
 	}
-	if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: "Example"}, time.Now().UTC(), time.Now().UTC(), items, nil); err != nil {
-		t.Fatalf("apply sync: %v", err)
-	}
+	syncFeed(t, store, feed, items, nil)
 
 	refs, err := store.FeedItems().ListStoredRefsByFeed(ctx, feed.ID)
 	if err != nil {
@@ -576,9 +571,7 @@ func TestFeedItemBoundaryIsolationAndContinuation(t *testing.T) {
 				Title:  fmt.Sprintf("%s %d", feed.Title, seq),
 			}
 		}
-		if err := store.Feeds().ApplySync(ctx, feed.ID, domain.FeedSyncMeta{Title: feed.Title}, time.Now().UTC(), time.Now().UTC(), items, nil); err != nil {
-			t.Fatalf("sync %s: %v", feed.Title, err)
-		}
+		syncFeed(t, store, feed, items, nil)
 	}
 
 	syncFixed(feedA, 1, 2, 5)

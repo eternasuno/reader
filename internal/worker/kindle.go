@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultKindleTickInterval  = 5 * time.Minute
+	defaultKindleTickInterval  = time.Minute
 	kindleDateLayout           = "2006-01-02"
 	detachedWriteTimeout       = 5 * time.Second
 	recordAcceptedTimeout      = 15 * time.Second
@@ -121,9 +121,9 @@ func (s *KindleSender) EnqueueManual(ctx context.Context) (domain.KindleSendReco
 	return claimed.Record, nil
 }
 
-// CheckSchedule atomically claims a scheduled send when the latest schedule
-// occurrence is due and no other send is active; a busy slot defers the claim
-// to a later tick.
+// CheckSchedule atomically claims a scheduled send when the stored next send
+// time has passed and no other send is active; a busy slot leaves the schedule
+// due for a later tick.
 func (s *KindleSender) CheckSchedule(ctx context.Context) error {
 	s.mu.Lock()
 	claimed, err := s.kindleSends.ClaimDueSend(ctx, domain.NewID(), s.now().UTC(), s.running)
@@ -211,7 +211,7 @@ func (s *KindleSender) executeJob(ctx context.Context, claimed domain.ClaimedKin
 func (s *KindleSender) deliverBooks(ctx context.Context, claimed domain.ClaimedKindleSend, refs []domain.KindleArticleRef) error {
 	sendID := claimed.Record.ID
 
-	packer, err := s.epubBuilder.NewPacker(ctx, s.bookDate(claimed))
+	packer, err := s.epubBuilder.NewPacker(ctx, bookDate(claimed))
 	if err != nil {
 		return err
 	}
@@ -230,14 +230,14 @@ func (s *KindleSender) deliverBooks(ctx context.Context, claimed domain.ClaimedK
 	return s.sendPackedBooks(ctx, sendID, claimed.Delivery, packer, bookCount)
 }
 
-// bookDate is the schedule-local date of a scheduled send; manual sends carry
-// no date.
-func (s *KindleSender) bookDate(claimed domain.ClaimedKindleSend) string {
+// bookDate is the schedule-local date of the occurrence a scheduled send was
+// claimed for, independent of when the job runs; manual sends carry no date.
+func bookDate(claimed domain.ClaimedKindleSend) string {
 	if claimed.ScheduleLocation == nil {
 		return ""
 	}
 
-	return s.now().In(claimed.ScheduleLocation).Format(kindleDateLayout)
+	return claimed.ScheduledFor.In(claimed.ScheduleLocation).Format(kindleDateLayout)
 }
 
 func (s *KindleSender) packArticles(ctx context.Context, packer domain.EPUBPacker, refs []domain.KindleArticleRef) (int, error) {

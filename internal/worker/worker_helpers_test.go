@@ -108,91 +108,94 @@ func newTestRefreshQueue(t *testing.T, cfg RefreshConfig) *RefreshQueue {
 	return NewRefreshQueue(cfg)
 }
 
-type recordedFailure struct {
-	feedID     string
-	summary    string
-	startedAt  time.Time
-	finishedAt time.Time
+// errorScript yields the scripted error for each successive call and then
+// repeats after; a nil entry means that call succeeds.
+type errorScript struct {
+	steps []error
+	after error
+	calls int
 }
 
-type appliedSync struct {
-	feedID     string
-	meta       domain.FeedSyncMeta
-	startedAt  time.Time
-	finishedAt time.Time
-	newItems   []domain.FeedItem
-	deleteIDs  []string
-}
+func (s *errorScript) next() error {
+	s.calls++
 
-type fakeFeedRepository struct {
-	mu        sync.Mutex
-	feeds     map[string]domain.Feed
-	list      []domain.Feed
-	listErr   error
-	getErr    error
-	onGet     func(string)
-	onSync    func(string)
-	applyErr  error
-	recordErr error
-
-	listCalls    int
-	getByIDCalls int
-	failures     []recordedFailure
-	syncs        []appliedSync
-}
-
-func newTestFeedRepository(feeds ...domain.Feed) *fakeFeedRepository {
-	byID := make(map[string]domain.Feed, len(feeds))
-	for _, feed := range feeds {
-		byID[feed.ID] = feed
+	if len(s.steps) == 0 {
+		return s.after
 	}
 
-	return &fakeFeedRepository{feeds: byID, list: feeds}
+	err := s.steps[0]
+	s.steps = s.steps[1:]
+
+	return err
+}
+
+type claimedRefresh struct {
+	attemptID string
+	feedID    string
+	now       time.Time
+}
+
+type succeededRefresh struct {
+	attemptID     string
+	feedID        string
+	meta          domain.FeedSyncMeta
+	newItems      []domain.FeedItem
+	deleteIDs     []string
+	finishedAt    time.Time
+	nextRefreshAt time.Time
+}
+
+type failedRefresh struct {
+	attemptID     string
+	feedID        string
+	summary       string
+	finishedAt    time.Time
+	nextRefreshAt time.Time
+}
+
+type releasedRefresh struct {
+	attemptID string
+	feedID    string
+}
+
+// fakeFeedRepository models the refresh queue: due feeds are claimed one at a
+// time, a claimed feed is running until it is succeeded, failed, or released,
+// and a released feed is due again. A failed write leaves the attempt running.
+type fakeFeedRepository struct {
+	mu      sync.Mutex
+	due     []domain.Feed
+	running map[string]domain.Feed
+
+	claimScript   errorScript
+	succeedScript errorScript
+	failScript    errorScript
+	releaseScript errorScript
+
+	claimCalls int
+	claims     []claimedRefresh
+	succeeded  []succeededRefresh
+	failed     []failedRefresh
+	released   []releasedRefresh
+}
+
+// newTestFeedRepository returns a repository where the given feeds are due.
+func newTestFeedRepository(due ...domain.Feed) *fakeFeedRepository {
+	return &fakeFeedRepository{due: append([]domain.Feed(nil), due...), running: make(map[string]domain.Feed)}
 }
 
 func (r *fakeFeedRepository) List(ctx context.Context) ([]domain.Feed, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.listCalls++
-	if r.listErr != nil {
-		return nil, r.listErr
-	}
-
-	return append([]domain.Feed(nil), r.list...), nil
+	return nil, nil
 }
 
 func (r *fakeFeedRepository) GetByID(ctx context.Context, id string) (*domain.Feed, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.getByIDCalls++
-	if r.onGet != nil {
-		r.onGet(id)
-	}
-
-	if r.getErr != nil {
-		return nil, r.getErr
-	}
-
-	feed, ok := r.feeds[id]
-	if !ok {
-		return nil, nil
-	}
-
-	return &feed, nil
+	return nil, nil
 }
 
-func (r *fakeFeedRepository) Create(ctx context.Context, feed domain.Feed) (domain.Feed, error) {
+func (r *fakeFeedRepository) Create(ctx context.Context, feed domain.Feed, now time.Time) (domain.Feed, error) {
 	return feed, nil
 }
 
 func (r *fakeFeedRepository) Delete(ctx context.Context, id string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	delete(r.feeds, id)
-
 	return nil
 }
 
@@ -208,63 +211,148 @@ func (r *fakeFeedRepository) MoveToFolder(ctx context.Context, id string, folder
 	return nil
 }
 
-func (r *fakeFeedRepository) RecordRefreshFailure(ctx context.Context, id string, errSummary string, startedAt, finishedAt time.Time) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.recordErr != nil {
-		return r.recordErr
-	}
-
-	r.failures = append(r.failures, recordedFailure{feedID: id, summary: errSummary, startedAt: startedAt, finishedAt: finishedAt})
-
+func (r *fakeFeedRepository) RequestRefresh(ctx context.Context, feedID string, now time.Time) error {
 	return nil
 }
 
-func (r *fakeFeedRepository) ApplySync(ctx context.Context, feedID string, meta domain.FeedSyncMeta, startedAt, finishedAt time.Time, newItems []domain.FeedItem, deleteIDs []string) error {
+func (r *fakeFeedRepository) RecoverRunningRefreshes(ctx context.Context, now time.Time) error {
+	return nil
+}
+
+func (r *fakeFeedRepository) ClaimDueRefresh(ctx context.Context, attemptID string, now time.Time) (*domain.Feed, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.applyErr != nil {
-		return r.applyErr
+	r.claimCalls++
+
+	if err := r.claimScript.next(); err != nil {
+		return nil, err
 	}
 
-	if r.onSync != nil {
-		r.onSync(feedID)
+	if len(r.due) == 0 {
+		return nil, nil
 	}
 
-	r.syncs = append(r.syncs, appliedSync{
-		feedID:     feedID,
-		meta:       meta,
-		startedAt:  startedAt,
-		finishedAt: finishedAt,
-		newItems:   append([]domain.FeedItem(nil), newItems...),
-		deleteIDs:  append([]string(nil), deleteIDs...),
+	feed := r.due[0]
+	r.due = r.due[1:]
+	r.running[attemptID] = feed
+	r.claims = append(r.claims, claimedRefresh{attemptID: attemptID, feedID: feed.ID, now: now})
+
+	return &feed, nil
+}
+
+func (r *fakeFeedRepository) SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta domain.FeedSyncMeta, newItems []domain.FeedItem, deleteIDs []string, finishedAt, nextRefreshAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := r.succeedScript.next(); err != nil {
+		return err
+	}
+
+	delete(r.running, attemptID)
+
+	r.succeeded = append(r.succeeded, succeededRefresh{
+		attemptID:     attemptID,
+		feedID:        feedID,
+		meta:          meta,
+		newItems:      append([]domain.FeedItem(nil), newItems...),
+		deleteIDs:     append([]string(nil), deleteIDs...),
+		finishedAt:    finishedAt,
+		nextRefreshAt: nextRefreshAt,
 	})
 
 	return nil
 }
 
-func (r *fakeFeedRepository) ImportOPML(ctx context.Context, doc domain.OPMLDocument) (domain.OPMLImportResult, []string, error) {
-	return domain.OPMLImportResult{}, nil, nil
+func (r *fakeFeedRepository) FailRefresh(ctx context.Context, attemptID string, feedID string, errSummary string, finishedAt, nextRefreshAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := r.failScript.next(); err != nil {
+		return err
+	}
+
+	delete(r.running, attemptID)
+
+	r.failed = append(r.failed, failedRefresh{
+		attemptID:     attemptID,
+		feedID:        feedID,
+		summary:       errSummary,
+		finishedAt:    finishedAt,
+		nextRefreshAt: nextRefreshAt,
+	})
+
+	return nil
+}
+
+func (r *fakeFeedRepository) ReleaseRefresh(ctx context.Context, attemptID string, feedID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := r.releaseScript.next(); err != nil {
+		return err
+	}
+
+	feed, ok := r.running[attemptID]
+	if ok {
+		delete(r.running, attemptID)
+		r.due = append([]domain.Feed{feed}, r.due...)
+	}
+
+	r.released = append(r.released, releasedRefresh{attemptID: attemptID, feedID: feedID})
+
+	return nil
+}
+
+func (r *fakeFeedRepository) ImportOPML(ctx context.Context, doc domain.OPMLDocument, now time.Time) (domain.OPMLImportResult, error) {
+	return domain.OPMLImportResult{}, nil
 }
 
 func (r *fakeFeedRepository) ExportOPML(ctx context.Context) ([]domain.OPMLExportFolder, []domain.Feed, error) {
 	return nil, nil, nil
 }
 
-func (r *fakeFeedRepository) failureList() []recordedFailure {
+// makeDue marks a feed due, as RequestRefresh or an elapsed schedule would.
+func (r *fakeFeedRepository) makeDue(feed domain.Feed) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return append([]recordedFailure(nil), r.failures...)
+	r.due = append(r.due, feed)
 }
 
-func (r *fakeFeedRepository) syncList() []appliedSync {
+func (r *fakeFeedRepository) claimCallCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return append([]appliedSync(nil), r.syncs...)
+	return r.claimCalls
+}
+
+func (r *fakeFeedRepository) claimList() []claimedRefresh {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]claimedRefresh(nil), r.claims...)
+}
+
+func (r *fakeFeedRepository) succeededList() []succeededRefresh {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]succeededRefresh(nil), r.succeeded...)
+}
+
+func (r *fakeFeedRepository) failedList() []failedRefresh {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]failedRefresh(nil), r.failed...)
+}
+
+func (r *fakeFeedRepository) releasedList() []releasedRefresh {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]releasedRefresh(nil), r.released...)
 }
 
 type savedExtraction struct {
@@ -433,7 +521,26 @@ func (r *fakeSettingRepository) UpdateKindle(ctx context.Context, kindle domain.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Mirrors the sqlite repository: NextSendAt is repository-owned, recomputed
+	// when the schedule is enabled or changed, kept when unchanged, cleared when off.
 	copied := kindle
+	copied.NextSendAt = nil
+
+	if copied.Schedule != nil {
+		previous := r.settings.Kindle
+		if previous != nil && previous.Schedule != nil && *previous.Schedule == *copied.Schedule {
+			copied.NextSendAt = previous.NextSendAt
+		} else {
+			loc, err := domain.LoadKindleLocation(copied.Schedule.Timezone)
+			if err != nil {
+				return err
+			}
+
+			next := domain.NextKindleOccurrence(*copied.Schedule, loc, now)
+			copied.NextSendAt = &next
+		}
+	}
+
 	r.settings.Kindle = &copied
 
 	return nil

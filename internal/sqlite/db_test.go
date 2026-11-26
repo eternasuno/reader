@@ -60,7 +60,7 @@ func TestOpenMigratesDatabase(t *testing.T) {
 		}
 	}
 
-	for _, table := range []string{"folder", "feed", "feed_item", "saved_page", "feed_refresh", "setting", "kindle_send", "kindle_send_book"} {
+	for _, table := range []string{"folder", "feed", "feed_item", "saved_page", "feed_schedule", "feed_refresh", "setting", "kindle_schedule", "kindle_send"} {
 		var name string
 		err := store.ReadDB().
 			QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).
@@ -68,6 +68,10 @@ func TestOpenMigratesDatabase(t *testing.T) {
 		if err != nil {
 			t.Fatalf("table %q is missing: %v", table, err)
 		}
+	}
+
+	if got := tableCount(t, store.ReadDB(), "kindle_send_book"); got != 0 {
+		t.Fatalf("kindle_send_book tables = %d, want none", got)
 	}
 
 	settings, err := store.Settings().Get(ctx)
@@ -265,7 +269,7 @@ func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 
 	requireGooseVersions(t, store.ReadDB(), 0, 1)
 
-	wantTables := []string{"feed", "feed_item", "feed_refresh", "folder", "kindle_send", "kindle_send_book", "saved_page", "setting"}
+	wantTables := []string{"feed", "feed_item", "feed_refresh", "feed_schedule", "folder", "kindle_schedule", "kindle_send", "saved_page", "setting"}
 	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_list WHERE schema = 'main' AND strict = 1 AND name NOT LIKE 'sqlite_%' ORDER BY name`); !slices.Equal(got, wantTables) {
 		t.Fatalf("strict tables = %v, want %v", got, wantTables)
 	}
@@ -276,6 +280,18 @@ func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 
 	if got := queryStrings(t, store.ReadDB(), `SELECT id || ':' || COALESCE(timezone, 'none') FROM setting`); !slices.Equal(got, []string{"1:none"}) {
 		t.Fatalf("seeded setting rows = %v, want the single row without a timezone", got)
+	}
+
+	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_info('setting') WHERE name = 'schedule_updated_at'`); len(got) != 0 {
+		t.Fatalf("setting columns = %v, want no schedule_updated_at", got)
+	}
+
+	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_info('feed_refresh') WHERE name = 'finished_at' AND "notnull" = 0`); !slices.Equal(got, []string{"finished_at"}) {
+		t.Fatalf("nullable feed_refresh columns = %v, want finished_at", got)
+	}
+
+	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('feed_schedule_next', 'kindle_schedule_setting') ORDER BY name`); !slices.Equal(got, []string{"feed_schedule_next", "kindle_schedule_setting"}) {
+		t.Fatalf("schedule indexes = %v, want feed_schedule_next and kindle_schedule_setting", got)
 	}
 }
 
@@ -672,11 +688,12 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 	}
 
 	statementPlans := []struct {
-		name           string
-		query          string
-		args           []any
-		index          string
-		allowTempBTree bool
+		name                string
+		query               string
+		args                []any
+		index               string
+		allowTempBTree      bool
+		keyedRefreshLookups bool
 	}{
 		{name: "unread counts", query: unreadCountsQuery, args: []any{boundary}, index: "feed_item_read_id", allowTempBTree: true},
 		{name: "saved page unread count", query: savedPageUnreadCountQuery, args: []any{boundary}, index: "saved_page_read_id"},
@@ -684,10 +701,16 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		{name: "mark feed read", query: markFeedReadQuery, args: []any{"feed", boundary}, index: "feed_item_feed_read_id"},
 		{name: "mark folder read", query: markFolderReadQuery, args: []any{boundary, "folder"}, index: "feed_item_feed_read_id"},
 		{name: "mark all saved pages read", query: markAllSavedPagesReadQuery, args: []any{boundary}, index: "saved_page_read_id"},
-		{name: "prune feed refresh history", query: pruneFeedRefreshQuery, args: []any{"feed", "feed", feedRefreshLimit, "feed", string(domain.FeedRefreshSucceeded)}, index: "feed_refresh_feed_id_id"},
+		{name: "prune feed refresh history", query: pruneFeedRefreshQuery, args: []any{"feed", string(domain.FeedRefreshRunning), "feed", string(domain.FeedRefreshRunning), feedRefreshLimit}, index: "feed_refresh_feed_id_id", keyedRefreshLookups: true},
+		{name: "claim due feed refresh", query: claimDueRefreshQuery, args: []any{"attempt", string(domain.FeedRefreshRunning), 1, 1, string(domain.FeedRefreshRunning)}, index: "feed_schedule_next", keyedRefreshLookups: true},
 	}
 	for _, test := range statementPlans {
-		requireIndexedPlan(t, test.name, queryPlan(t, store, test.query, test.args...), test.index, test.allowTempBTree)
+		plan := queryPlan(t, store, test.query, test.args...)
+		requireIndexedPlan(t, test.name, plan, test.index, test.allowTempBTree)
+
+		if test.keyedRefreshLookups {
+			requireRefreshLookupsIndexed(t, test.name, plan)
+		}
 	}
 
 	for _, test := range []struct {
@@ -699,8 +722,9 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		{name: "get feed with refresh state", query: getFeedQuery, args: []any{"feed"}},
 	} {
 		plan := queryPlan(t, store, test.query, test.args...)
-		requireIndexedPlan(t, test.name, plan, "feed_refresh_feed_id_id", false)
-		requireRefreshLookupsIndexed(t, test.name, plan)
+		requireIndexedPlan(t, test.name, plan, "", false)
+		requireFeedScheduleJoinedByKey(t, test.name, plan)
+		requireNoRefreshHistoryAccess(t, test.name, plan)
 	}
 
 	for _, params := range []domain.PageParams{{Limit: 30, Boundary: boundary}, {Limit: 30, Unread: true, Boundary: boundary}, {Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Unread: true, Order: domain.SortOrderOldest, Boundary: boundary}} {

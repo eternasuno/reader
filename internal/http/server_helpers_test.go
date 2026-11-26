@@ -21,6 +21,8 @@ const (
 	testAppURL        = "https://reader.example.com"
 	testPassword      = "correct horse battery staple"
 	testSessionSecret = "0123456789abcdef0123456789abcdef"
+
+	testRefreshInterval = 30 * time.Minute
 )
 
 func strPtr(value string) *string {
@@ -178,29 +180,22 @@ func (f *fakeArticleExtractor) ExtractArticle(htmlBody string, pageURL string) (
 }
 
 type fakeRefresher struct {
-	mu      sync.Mutex
-	batches [][]string
+	mu    sync.Mutex
+	wakes int
 }
 
-func (f *fakeRefresher) Enqueue(feedIDs ...string) {
+func (f *fakeRefresher) Wake() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	batch := make([]string, len(feedIDs))
-	copy(batch, feedIDs)
-	f.batches = append(f.batches, batch)
+	f.wakes++
 }
 
-func (f *fakeRefresher) enqueued() []string {
+func (f *fakeRefresher) wakeCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	flattened := make([]string, 0, len(f.batches))
-	for _, batch := range f.batches {
-		flattened = append(flattened, batch...)
-	}
-
-	return flattened
+	return f.wakes
 }
 
 type fakeKindleDispatcher struct {
@@ -492,12 +487,50 @@ func (h *harness) seedFeed(title string, rawURL string, folderID *string) domain
 		FolderID:   folderID,
 		ReaderMode: domain.ReaderModeDefault,
 		Order:      domain.SortOrderNewest,
-	})
+	}, h.clock.Now())
 	if err != nil {
 		h.t.Fatalf("seed feed %q: %v", rawURL, err)
 	}
 
 	return created
+}
+
+// claimDueFeed claims the next feed due at the harness clock the way a refresh
+// worker does, and returns nil when no feed is due.
+func (h *harness) claimDueFeed() *domain.Feed {
+	h.t.Helper()
+
+	claimed, err := h.db.Feeds().ClaimDueRefresh(context.Background(), domain.NewID(), h.clock.Now())
+	if err != nil {
+		h.t.Fatalf("claim due refresh: %v", err)
+	}
+
+	return claimed
+}
+
+// succeedRefresh runs one successful refresh attempt for the feed that finishes
+// at finishedAt and makes the feed due again testRefreshInterval later.
+func (h *harness) succeedRefresh(feedID string, meta domain.FeedSyncMeta, items []domain.FeedItem, finishedAt time.Time) {
+	h.t.Helper()
+
+	ctx := context.Background()
+	attemptID := domain.NewID()
+
+	_, err := h.db.WriteDB().ExecContext(
+		ctx,
+		`INSERT INTO feed_refresh (id, feed_id, status, started_at) VALUES (?, ?, 'running', ?)`,
+		attemptID,
+		feedID,
+		finishedAt.Add(-time.Second).UnixMilli(),
+	)
+	if err != nil {
+		h.t.Fatalf("start refresh of feed %s: %v", feedID, err)
+	}
+
+	err = h.db.Feeds().SucceedRefresh(ctx, attemptID, feedID, meta, items, nil, finishedAt, finishedAt.Add(testRefreshInterval))
+	if err != nil {
+		h.t.Fatalf("succeed refresh of feed %s: %v", feedID, err)
+	}
 }
 
 func (h *harness) seedItem(feedID string, rawURL string, configure func(*domain.FeedItem)) domain.FeedItem {
@@ -519,9 +552,7 @@ func (h *harness) seedItem(feedID string, rawURL string, configure func(*domain.
 		h.t.Fatalf("seed item: unknown feed %s", feedID)
 	}
 
-	if err := h.db.Feeds().ApplySync(ctx, feedID, domain.FeedSyncMeta{Title: feed.Title}, h.clock.Now(), h.clock.Now(), []domain.FeedItem{item}, nil); err != nil {
-		h.t.Fatalf("seed item %q: %v", rawURL, err)
-	}
+	h.succeedRefresh(feedID, domain.FeedSyncMeta{Title: feed.Title}, []domain.FeedItem{item}, h.clock.Now())
 
 	if item.Read {
 		if err := h.db.FeedItems().SetRead(ctx, item.ID, true); err != nil {
