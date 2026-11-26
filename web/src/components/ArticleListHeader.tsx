@@ -75,11 +75,7 @@ function ArticleListHeading(props: {
       </h2>
       <Show when={failingFeed(props.scope)}>
         {(feed) => (
-          <FeedFailureMenu
-            feed={feed()}
-            align="start"
-            onDelete={props.onDeleteFeed}
-          />
+          <FeedFailureMenu feed={feed()} onDelete={props.onDeleteFeed} />
         )}
       </Show>
       <Show when={isMarkingScope(props.scope)}>
