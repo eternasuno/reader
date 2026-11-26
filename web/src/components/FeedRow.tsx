@@ -50,7 +50,6 @@ export function FeedRow(props: {
       <Show when={hasRefreshFailures(props.feed)}>
         <FeedFailureMenu
           feed={props.feed}
-          align="end"
           onDelete={(feed) =>
             void deleteFeed(
               {
