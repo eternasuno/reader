@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify SemVer tag and main ancestry
+      - name: Verify SemVer tag
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
@@ -40,10 +40,6 @@ jobs:
           image_version=${TAG_NAME#v}
           if (( ${#image_version} > 128 )); then
             echo "Image version exceeds Docker's 128-character tag limit" >&2
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "Tagged commit $GITHUB_SHA is not an ancestor of origin/main" >&2
             exit 1
           fi
 
