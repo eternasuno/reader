@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -683,8 +684,32 @@ func (h *harness) loadSettings() domain.Settings {
 func requireSPASecurityHeaders(t *testing.T, recorder *httptest.ResponseRecorder) {
 	t.Helper()
 
-	if got := recorder.Header().Get("Content-Security-Policy"); got != indexCSP {
-		t.Fatalf("Content-Security-Policy = %q, want %q", got, indexCSP)
+	want := map[string]string{
+		"default-src":     "'self'",
+		"script-src":      "'self'",
+		"style-src":       "'self' 'unsafe-inline'",
+		"img-src":         "'self' https: http: data:",
+		"media-src":       "https: http:",
+		"frame-src":       "https: http:",
+		"connect-src":     "'self'",
+		"object-src":      "'none'",
+		"base-uri":        "'none'",
+		"form-action":     "'self'",
+		"frame-ancestors": "'none'",
+	}
+
+	got := map[string]string{}
+	for _, directive := range strings.Split(recorder.Header().Get("Content-Security-Policy"), ";") {
+		name, sources, _ := strings.Cut(strings.TrimSpace(directive), " ")
+		got[name] = sources
+	}
+
+	if !maps.Equal(got, want) {
+		t.Fatalf("Content-Security-Policy directives = %v, want %v", got, want)
+	}
+
+	if got := recorder.Header().Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("Referrer-Policy = %q, want same-origin", got)
 	}
 
 	if got := recorder.Header().Get("X-Content-Type-Options"); got != "nosniff" {

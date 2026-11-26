@@ -65,7 +65,7 @@ Every scope and open article has its own URL so reloads and browser history rest
 
 ### CM-ART & CM-HTML — Article Values & Sanitization
 - `CM-ART-1`: `title` is trimmed; empty becomes `"Untitled"`. `description` and `content` are trimmed; blank becomes absent.
-- `CM-ART-2`: Stored `description` and `content` (and `extractedContent`) are always sanitized HTML produced either at feed import or webpage extraction. Readers render stored HTML inside a sandboxed iframe without re-sanitizing.
+- `CM-ART-2`: Stored `description` and `content` (and `extractedContent`) are always sanitized HTML produced either at feed import or webpage extraction. Readers render stored HTML directly without re-sanitizing (`RD-BODY-1`).
 - `CM-HTML-1`: HTML sanitization resolves relative `href`/`src` against the item/page URL, forces `target="_blank" rel="noopener noreferrer"` on links, and strips scripts, event handlers, forms, and unsafe tags/attributes.
 
 ### CM-FETCH — Webpage Fetching & Extraction

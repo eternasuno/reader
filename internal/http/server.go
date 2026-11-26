@@ -28,7 +28,18 @@ const (
 	apiCacheControl       = "no-store"
 	immutableCacheControl = "public, max-age=31536000, immutable"
 	indexCacheControl     = "no-cache"
-	indexCSP              = "frame-ancestors 'none'"
+	indexReferrerPolicy   = "same-origin"
+	indexCSP              = "default-src 'self'; " +
+		"script-src 'self'; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' https: http: data:; " +
+		"media-src https: http:; " +
+		"frame-src https: http:; " +
+		"connect-src 'self'; " +
+		"object-src 'none'; " +
+		"base-uri 'none'; " +
+		"form-action 'self'; " +
+		"frame-ancestors 'none'"
 )
 
 // FeedRefresher wakes the background refresh workers after the HTTP layer has
@@ -309,6 +320,7 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 func (s *server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", indexCacheControl)
 	w.Header().Set("Content-Security-Policy", indexCSP)
+	w.Header().Set("Referrer-Policy", indexReferrerPolicy)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeFileFS(w, r, s.cfg.StaticFS, "index.html")
 }

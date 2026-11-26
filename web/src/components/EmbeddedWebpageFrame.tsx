@@ -26,7 +26,7 @@ const embedNoticeFor = (url: string): EmbedNoticeKey | undefined => {
 
 /**
  * `RD-WEBPAGE-1`: the embedded external-page view. Deliberately a separate
- * component from `ArticleFrame` and never merged with it.
+ * component from `ArticleBody` and never merged with it.
  */
 export function EmbeddedWebpageFrame(
   props: EmbeddedWebpageFrameProps

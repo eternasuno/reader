@@ -9,7 +9,7 @@ Product behavior lives in `reader-spec`; this skill defines the target Go + SQLi
 
 Conditional files:
 - Read [database.md](database.md) when modifying SQLite connections, migrations, schema, indexes, or repositories.
-- Read [ui.md](ui.md) when modifying styling, layout, shared UI controls, focus handling, or the article iframe.
+- Read [ui.md](ui.md) when modifying styling, layout, shared UI controls, focus handling, or article body rendering.
 - Read [upstream-issues.md](upstream-issues.md) before upgrading dependencies or adopting Solid `action` / optimistic APIs.
 - Read [deployment.md](deployment.md) when modifying `Dockerfile`, `go:embed` static serving, SPA fallback, or container build stages.
 
@@ -78,4 +78,4 @@ internal/domain   ──> Go stdlib + github.com/google/uuid only
 - **`internal/sqlite`**: repository contract tests against temporary-file SQLite (`t.TempDir()`, never `:memory:` for WAL/multi-pool tests) verifying keyset paging, `ON DELETE SET NULL` folder deletion, startup migration, foreign keys across pooled connections, and `EXPLAIN QUERY PLAN`.
 - **`internal/content` & `internal/fetcher`**: parser rules (`FD-PARSE-*`), `bluemonday` sanitization, `go-readability/v2` extraction fixtures, and SSRF dialer blocking private IPs / redirects.
 - **`internal/http`**: `httptest` coverage for SHA-256 constant-time auth cookie, login rate limit, parsed `Origin`/`Referer` CSRF check, async `202` Kindle enqueue + `409` recovery, and secret redaction.
-- **`web/`**: Vitest in a client/DOM posture (`environment: 'jsdom'` or `'happy-dom'`, since `@solidjs/vite-plugin` 3.0 emits SSR/server code under explicit `environment: 'node'`) for reactive Solid 2 stores/effects (note: `useBeforeLeave` does not fire on `history.back()` under `memoryHistory()`; verify popstate guards in a browser after in-app navigation, since `navigate_page` entries exercise `beforeunload` instead) + manual browser checks for responsive 3-column layout, focus recovery, and sandboxed iframe sizing.
+- **`web/`**: Vitest in a client/DOM posture (`environment: 'jsdom'` or `'happy-dom'`, since `@solidjs/vite-plugin` 3.0 emits SSR/server code under explicit `environment: 'node'`) for reactive Solid 2 stores/effects (note: `useBeforeLeave` does not fire on `history.back()` under `memoryHistory()`; verify popstate guards in a browser after in-app navigation, since `navigate_page` entries exercise `beforeunload` instead) + manual browser checks for responsive 3-column layout, focus recovery, and article body typography.
