@@ -8,7 +8,11 @@ import {
   savedPagesApi,
   settingsApi,
 } from '../src/api';
-import type { KindleSettings, SmtpSettingsInput } from '../src/api/types';
+import type {
+  BrowserlessSettingsInput,
+  KindleSettings,
+  SmtpSettingsInput,
+} from '../src/api/types';
 import { jsonResponse } from './support/state-fixture';
 
 const SAVED = '/api/saved-pages';
@@ -31,6 +35,11 @@ const fa = feedsApi;
 const fi = feedItemsApi;
 const fo = foldersApi;
 const st = settingsApi;
+const BL_IN: BrowserlessSettingsInput = {
+  url: 'https://browserless.example.com',
+  token: 'tok',
+  residentialProxy: true,
+};
 const SMTP_IN: SmtpSettingsInput = {
   senderEmail: 'a@b.c',
   host: 'h',
@@ -93,12 +102,7 @@ const SHAPE_RESPONSES: Record<string, unknown> = {
   [`POST ${FOLDERS}`]: { item: { id: 'f', name: 't' } },
   [`GET ${FOLDERS}/f/items?unread=true`]: EMPTY_PAGE,
   [`GET ${FOLDERS}/f/items?${CQ}`]: EMPTY_PAGE,
-  [`GET ${S}`]: {
-    retention: 100,
-    provider: 'direct',
-    jinaKeyConfigured: false,
-    browserEndpointConfigured: false,
-  },
+  [`GET ${S}`]: { retention: 100 },
   'POST /api/kindle/send': { item: VALID_SEND },
   'GET /api/kindle/sends': { running: false, items: [] },
 };
@@ -250,22 +254,24 @@ const SHAPES: Array<Shape> = [
     { retention: 5 },
   ],
   [
-    'prov',
-    () => st.updateProvider('jina'),
-    `${S}/provider`,
+    'save browserless',
+    () => st.saveBrowserless(BL_IN),
+    `${P}/browserless`,
     'PUT',
-    { provider: 'jina' },
+    BL_IN,
   ],
-  ['save jina', () => st.saveJinaKey('k'), `${P}/jina`, 'PUT', { key: 'k' }],
-  ['del jina', () => st.deleteJinaKey(), `${P}/jina`, 'DELETE'],
   [
-    'cdp',
-    () => st.saveBrowserEndpoint('http://browser:9222'),
-    `${P}/browser`,
-    'PUT',
-    { endpoint: 'http://browser:9222' },
+    'del browserless',
+    () => st.deleteBrowserless(),
+    `${P}/browserless`,
+    'DELETE',
   ],
-  ['del cdp', () => st.deleteBrowserEndpoint(), `${P}/browser`, 'DELETE'],
+  [
+    'del browserless token',
+    () => st.deleteBrowserlessToken(),
+    `${P}/browserless/token`,
+    'DELETE',
+  ],
   ['save smtp', () => st.saveSmtp(SMTP_IN), `${P}/smtp`, 'PUT', SMTP_IN],
   ['del smtp', () => st.deleteSmtp(), `${P}/smtp`, 'DELETE'],
   ['del pw', () => st.deleteSmtpPassword(), `${P}/smtp/password`, 'DELETE'],

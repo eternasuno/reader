@@ -538,7 +538,7 @@ func (s *server) extractFeedItem(ctx context.Context, itemID string) (*domain.Fe
 		return latest, nil
 	}
 
-	article, err := s.extractWebpageWithSlot(ctx, latest.URL)
+	article, err := s.cfg.WebpageExtractor.ExtractWebpage(ctx, latest.URL)
 	if err != nil {
 		return nil, err
 	}

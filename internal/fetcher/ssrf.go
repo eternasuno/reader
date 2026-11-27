@@ -1,13 +1,16 @@
 package fetcher
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,7 +27,6 @@ const (
 )
 
 var (
-	errBlockedAddress   = errors.New("blocked non-public address")
 	errInvalidDialAddr  = errors.New("invalid dial address")
 	errResponseTooLarge = errors.New("response body too large")
 	errTooManyRedirects = errors.New("stopped after 10 redirects")
@@ -79,7 +81,7 @@ func checkDialAddress(address string) error {
 	}
 
 	if IsBlockedIP(addrPort.Addr()) {
-		return errBlockedAddress
+		return domain.ErrBlockedAddress
 	}
 
 	return nil
@@ -95,43 +97,62 @@ func newHTTPClient(allowPrivateNetwork bool) *http.Client {
 	})
 }
 
-func newBrowserDiscoveryClient() *http.Client {
+func newBrowserlessClient() *http.Client {
 	client := newHTTPClient(true)
-	client.CheckRedirect = browserDiscoveryRedirectPolicy
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 
 	return client
 }
 
-func browserDiscoveryRedirectPolicy(req *http.Request, via []*http.Request) error {
-	if err := redirectPolicy(req, via); err != nil {
+type blockedDialKey struct{}
+
+type checkedDialer struct {
+	check  func(address string) error
+	dialer *net.Dialer
+}
+
+func newCheckedDialer(check func(address string) error) *checkedDialer {
+	checked := &checkedDialer{check: check}
+	checked.dialer = &net.Dialer{
+		Timeout:        dialTimeout,
+		KeepAlive:      idleConnTimeout,
+		ControlContext: checked.control,
+	}
+
+	return checked
+}
+
+func (d *checkedDialer) control(ctx context.Context, _ string, address string, _ syscall.RawConn) error {
+	err := d.check(address)
+	if !errors.Is(err, domain.ErrBlockedAddress) {
 		return err
 	}
 
-	if len(via) == 0 || via[0] == nil {
-		return errBadRedirectURL
+	if blocked, ok := ctx.Value(blockedDialKey{}).(*atomic.Bool); ok {
+		blocked.Store(true)
 	}
 
-	origin, ok := domain.OriginFromURL(via[0].URL)
-	if !ok || breaksAuthScope(req, origin) {
-		return errBadRedirectURL
+	return err
+}
+
+// DialContext reports domain.ErrBlockedAddress when any resolved address was
+// refused, because net.Dialer returns only the first attempt's error.
+func (d *checkedDialer) DialContext(ctx context.Context, network string, address string) (net.Conn, error) {
+	blocked := &atomic.Bool{}
+
+	conn, err := d.dialer.DialContext(context.WithValue(ctx, blockedDialKey{}, blocked), network, address)
+	if err != nil && blocked.Load() && !errors.Is(err, domain.ErrBlockedAddress) {
+		return nil, fmt.Errorf("%w: %w", domain.ErrBlockedAddress, err)
 	}
 
-	req.Header.Del("Referer")
-
-	return nil
+	return conn, err
 }
 
 func newHTTPClientWithDialCheck(check func(address string) error) *http.Client {
-	dialer := &net.Dialer{
-		Timeout:   dialTimeout,
-		KeepAlive: idleConnTimeout,
-	}
-	dialer.Control = func(network string, address string, conn syscall.RawConn) error {
-		return check(address)
-	}
-
 	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
+		DialContext:           newCheckedDialer(check).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          maxIdleConns,
 		MaxIdleConnsPerHost:   maxIdleConnsPerHost,

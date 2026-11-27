@@ -25,7 +25,7 @@ description: Conditional file of reader-engineering. Read when modifying styling
   - `--color-error / -content`: `#f28b82 / #2b1110`
   - `--color-neutral / -content`: `#5e4774 / #f2eafa`
 - Keep `index.css` strictly to `@import "tailwindcss"`, `@theme`, and daisyUI config (no `@apply` or component CSS). Shared primitives (`Button`, `Input`, `Dialog`, `MenuCheckbox`, `MenuRadio`, `Icon`, `VirtualList`, `SettingsGroup` / `SettingsRow` / `StatusBadge`) live in `web/src/ui/` and carry no domain imports.
-- Disabled controls must stay legible: daisyUI's default disabled radio/checkbox `opacity: 0.2` is near-invisible on this theme, so use `disabled:opacity-100 disabled:border-base-content/30` on the input and `has-[:disabled]:` utilities on the label. Gated options (e.g. `browser` provider without an endpoint) show a hint plus a link to the section that unlocks them.
+- Disabled controls must stay legible: daisyUI's default disabled radio/checkbox `opacity: 0.2` is near-invisible on this theme, so use `disabled:opacity-100 disabled:border-base-content/30` on the input and `has-[:disabled]:` utilities on the label. Gated forms (e.g. the Kindle form without SMTP) show a hint plus a link to the section that unlocks them.
 
 ## Article Body (`ArticleBody`)
 

@@ -7,8 +7,8 @@ Lantern is a single-user self-hosted RSS reader, read-later app, and Kindle EPUB
 - `cmd/reader/` — application entrypoint: config, SQLite startup migration, background workers, HTTP server.
 - `internal/domain/` — core entities, value normalization/validation, selection/retention logic, and repository/adapter interfaces.
 - `internal/sqlite/` — SQLite connection (`modernc.org/sqlite`), goose Go migrations (`migrations/`), and repository implementations.
-- `internal/content/` — feed parsing (`gofeed`), Readability extraction (`codeberg.org/readeck/go-readability/v2`), HTML sanitization (`bluemonday`).
-- `internal/fetcher/` — SSRF-safe HTTP client, optional Jina client, optional external CDP client (`chromedp.NewRemoteAllocator`).
+- `internal/content/` — feed parsing (`gofeed`), Readability extraction (`codeberg.org/readeck/go-readability/v2`), HTML sanitization (`bluemonday`), and the webpage extractor (direct fetch, then Browserless fallback).
+- `internal/fetcher/` — SSRF-safe HTTP client and the Browserless `/unblock` REST client.
 - `internal/epub/` — EPUB 3 builder (`archive/zip`) with bounded-concurrency image embedding and 20 MiB splitting.
 - `internal/mail/` — SMTP mail sender (`github.com/wneessen/go-mail`).
 - `internal/http/` — HTTP handlers (`net/http.ServeMux`), password auth + HMAC session cookie, CSRF Origin/Referer check, OPML import/export, `/healthz`.
@@ -30,7 +30,7 @@ Read the relevant skill before making changes:
 
 - **Handoff**: a cross-session or cross-machine handoff lives at the repository root as `HANDOFF.md`, is committed with the branch, and is deleted before the branch merges into `main`.
 - **Spec & code in sync**: update the matching `reader-spec` file in the same change when product behavior changes.
-- **Security**: never log or return secrets (`APP_PASSWORD`, `SESSION_SECRET`, Jina key, browser endpoint, SMTP password, or URL `user:pass@` credentials). Keep Go SSRF IP filtering enabled unless `ALLOW_PRIVATE_NETWORK=true`. Enforce parsed `Origin` (or fallback `Referer` origin when `Origin` is absent) matching `APP_URL` on every state-changing `/api/*` endpoint. The SPA page CSP forbids inline scripts (`script-src 'self'`) and article HTML renders in the page itself, so keep sanitization strict; never set page-wide `Referrer-Policy: no-referrer` (browsers then send `Origin: null` on same-origin POSTs and the CSRF check rejects them).
+- **Security**: never log or return secrets (`APP_PASSWORD`, `SESSION_SECRET`, Browserless token, SMTP password, or URL `user:pass@` credentials). Keep Go SSRF IP filtering enabled unless `ALLOW_PRIVATE_NETWORK=true`. Enforce parsed `Origin` (or fallback `Referer` origin when `Origin` is absent) matching `APP_URL` on every state-changing `/api/*` endpoint. The SPA page CSP forbids inline scripts (`script-src 'self'`) and article HTML renders in the page itself, so keep sanitization strict; never set page-wide `Referrer-Policy: no-referrer` (browsers then send `Origin: null` on same-origin POSTs and the CSRF check rejects them).
 - **UI decisions**: no thumbnails, no per-list summary-line setting (summary is fixed at 3 lines), no keyboard shortcuts at all (no global hotkeys, shortcuts dialog, or user-menu item), no end-of-article next card, no manual refresh menu item, no "open in new page" list option; `+` beside `订阅源` opens the add-feed dialog directly and folders are created only from `移动到`. Details live in `reader-spec`.
-- **Resource bounds**: every outbound HTTP/CDP request, feed parse, image download, list `limit`, and refresh worker pool must have explicit bounds/timeouts.
+- **Resource bounds**: every outbound HTTP request, feed parse, image download, list `limit`, and refresh worker pool must have explicit bounds/timeouts.
 - **Verification**: run `go test ./...`, `go vet ./...`, `go tool golangci-lint run ./...`, and frontend typecheck/lint/test/build under `web/` (`pnpm --dir web check`, `pnpm --dir web test`, `pnpm --dir web build`), and verify UI changes in a browser when touching layout or article rendering.

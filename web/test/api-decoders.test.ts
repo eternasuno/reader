@@ -31,9 +31,6 @@ const SAVED_PAGE = { items: [PAGE_OK], cursor: null, boundary: B };
 const ITEM_PAGE = { items: [ITEM_OK], cursor: 'i', boundary: B };
 const SETTINGS_OK = {
   retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
 };
 const SEND_OK = {
   id: 's',
@@ -235,6 +232,29 @@ describe('Kindle record validation', () => {
     await expect(kindleApi.listSends()).resolves.toMatchObject({
       items: [item],
     });
+  });
+});
+
+describe('Browserless settings validation', () => {
+  it.each([false, true])(
+    'accepts Browserless settings with tokenConfigured %s',
+    async (tokenConfigured) => {
+      const body = {
+        ...SETTINGS_OK,
+        browserless: {
+          url: 'https://browserless.example.com',
+          tokenConfigured,
+          residentialProxy: true,
+        },
+      };
+      fetchMock.mockResolvedValueOnce(jsonResponse(body));
+      await expect(settingsApi.get()).resolves.toEqual(body);
+    }
+  );
+
+  it('accepts settings without Browserless configured', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(SETTINGS_OK));
+    await expect(settingsApi.get()).resolves.toEqual(SETTINGS_OK);
   });
 });
 

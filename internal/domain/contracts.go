@@ -11,40 +11,37 @@ import (
 type ErrorCode string
 
 const (
-	ErrUnauthorized             ErrorCode = "Unauthorized"
-	ErrForbidden                ErrorCode = "Forbidden"
-	ErrInvalidCredentials       ErrorCode = "InvalidCredentials"
-	ErrTooManyRequests          ErrorCode = "TooManyRequests"
-	ErrRequestFailed            ErrorCode = "RequestFailed"
-	ErrArticleEmptyContent      ErrorCode = "ArticleEmptyContent"
-	ErrWebpageFetcherError      ErrorCode = "WebpageFetcherError"
-	ErrArticleExtractorError    ErrorCode = "ArticleExtractorError"
-	ErrInvalidPageUrl           ErrorCode = "InvalidPageUrl"
-	ErrSavedPageAlreadyExists   ErrorCode = "SavedPageAlreadyExists"
-	ErrSavedPageRepositoryError ErrorCode = "SavedPageRepositoryError"
-	ErrFeedUrlInvalid           ErrorCode = "FeedUrlInvalid"
-	ErrFetchFeedError           ErrorCode = "FetchFeedError"
-	ErrFeedParserError          ErrorCode = "FeedParserError"
-	ErrFeedAlreadyExists        ErrorCode = "FeedAlreadyExists"
-	ErrFeedItemNotFound         ErrorCode = "FeedItemNotFound"
-	ErrFeedRepositoryError      ErrorCode = "FeedRepositoryError"
-	ErrFeedItemRepositoryError  ErrorCode = "FeedItemRepositoryError"
-	ErrInvalidOpml              ErrorCode = "InvalidOpml"
-	ErrInvalidFolderName        ErrorCode = "InvalidFolderName"
-	ErrFolderAlreadyExists      ErrorCode = "FolderAlreadyExists"
-	ErrFolderNotFound           ErrorCode = "FolderNotFound"
-	ErrFolderRepositoryError    ErrorCode = "FolderRepositoryError"
-	ErrInvalidRetention         ErrorCode = "InvalidRetention"
-	ErrInvalidProvider          ErrorCode = "InvalidProvider"
-	ErrInvalidJinaKey           ErrorCode = "InvalidJinaKey"
-	ErrInvalidEndpoint          ErrorCode = "InvalidEndpoint"
-	ErrBrowserEndpointRequired  ErrorCode = "BrowserEndpointRequired"
-	ErrInvalidSMTPSetting       ErrorCode = "InvalidSMTPSetting"
-	ErrSMTPNotConfigured        ErrorCode = "SMTPNotConfigured"
-	ErrInvalidKindleSetting     ErrorCode = "InvalidKindleSetting"
-	ErrSettingRepositoryError   ErrorCode = "SettingRepositoryError"
-	ErrKindleNotConfigured      ErrorCode = "KindleNotConfigured"
-	ErrKindleSendInProgress     ErrorCode = "KindleSendInProgress"
+	ErrUnauthorized              ErrorCode = "Unauthorized"
+	ErrForbidden                 ErrorCode = "Forbidden"
+	ErrInvalidCredentials        ErrorCode = "InvalidCredentials"
+	ErrTooManyRequests           ErrorCode = "TooManyRequests"
+	ErrRequestFailed             ErrorCode = "RequestFailed"
+	ErrArticleEmptyContent       ErrorCode = "ArticleEmptyContent"
+	ErrWebpageFetcherError       ErrorCode = "WebpageFetcherError"
+	ErrArticleExtractorError     ErrorCode = "ArticleExtractorError"
+	ErrInvalidPageUrl            ErrorCode = "InvalidPageUrl"
+	ErrSavedPageAlreadyExists    ErrorCode = "SavedPageAlreadyExists"
+	ErrSavedPageRepositoryError  ErrorCode = "SavedPageRepositoryError"
+	ErrFeedUrlInvalid            ErrorCode = "FeedUrlInvalid"
+	ErrFetchFeedError            ErrorCode = "FetchFeedError"
+	ErrFeedParserError           ErrorCode = "FeedParserError"
+	ErrFeedAlreadyExists         ErrorCode = "FeedAlreadyExists"
+	ErrFeedItemNotFound          ErrorCode = "FeedItemNotFound"
+	ErrFeedRepositoryError       ErrorCode = "FeedRepositoryError"
+	ErrFeedItemRepositoryError   ErrorCode = "FeedItemRepositoryError"
+	ErrInvalidOpml               ErrorCode = "InvalidOpml"
+	ErrInvalidFolderName         ErrorCode = "InvalidFolderName"
+	ErrFolderAlreadyExists       ErrorCode = "FolderAlreadyExists"
+	ErrFolderNotFound            ErrorCode = "FolderNotFound"
+	ErrFolderRepositoryError     ErrorCode = "FolderRepositoryError"
+	ErrInvalidRetention          ErrorCode = "InvalidRetention"
+	ErrInvalidBrowserlessSetting ErrorCode = "InvalidBrowserlessSetting"
+	ErrInvalidSMTPSetting        ErrorCode = "InvalidSMTPSetting"
+	ErrSMTPNotConfigured         ErrorCode = "SMTPNotConfigured"
+	ErrInvalidKindleSetting      ErrorCode = "InvalidKindleSetting"
+	ErrSettingRepositoryError    ErrorCode = "SettingRepositoryError"
+	ErrKindleNotConfigured       ErrorCode = "KindleNotConfigured"
+	ErrKindleSendInProgress      ErrorCode = "KindleSendInProgress"
 )
 
 type DomainError struct {
@@ -122,14 +119,6 @@ type SortOrder string
 const (
 	SortOrderNewest SortOrder = "newest"
 	SortOrderOldest SortOrder = "oldest"
-)
-
-type ExtractorProvider string
-
-const (
-	ProviderDirect  ExtractorProvider = "direct"
-	ProviderJina    ExtractorProvider = "jina"
-	ProviderBrowser ExtractorProvider = "browser"
 )
 
 type SMTPSecurity string
@@ -278,6 +267,14 @@ type OPMLImportResult struct {
 	CreatedFolders int
 }
 
+// BrowserlessSettings configures the Browserless /unblock fallback used when a
+// direct webpage fetch fails. URL is the service base URL without query.
+type BrowserlessSettings struct {
+	URL              string
+	Token            *string // nil/blank on update = keep stored token
+	ResidentialProxy bool
+}
+
 type SMTPSettings struct {
 	SenderEmail string
 	Host        string
@@ -311,12 +308,10 @@ type KindleSettings struct {
 }
 
 type Settings struct {
-	Retention       int
-	Provider        ExtractorProvider
-	JinaKey         *string
-	BrowserEndpoint *string
-	SMTP            *SMTPSettings   // nil unless sender_email, smtp_host, smtp_port, smtp_security all non-NULL
-	Kindle          *KindleSettings // nil unless kindle_email non-NULL (independent of SMTP)
+	Retention   int
+	Browserless *BrowserlessSettings // nil unless browserless_url non-NULL
+	SMTP        *SMTPSettings        // nil unless sender_email, smtp_host, smtp_port, smtp_security all non-NULL
+	Kindle      *KindleSettings      // nil unless kindle_email non-NULL (independent of SMTP)
 }
 
 // KindleDelivery is the snapshot used by the Kindle worker and mail sender.
@@ -430,11 +425,9 @@ type SavedPageRepository interface {
 type SettingRepository interface {
 	Get(ctx context.Context) (Settings, error)
 	UpdateRetention(ctx context.Context, retention int) error
-	UpdateProvider(ctx context.Context, provider ExtractorProvider) error
-	UpdateJinaKey(ctx context.Context, key string) error
-	DeleteJinaKey(ctx context.Context) error
-	UpdateBrowserEndpoint(ctx context.Context, endpoint string) error
-	DeleteBrowserEndpoint(ctx context.Context) error
+	UpdateBrowserless(ctx context.Context, browserless BrowserlessSettings) error
+	DeleteBrowserlessToken(ctx context.Context) error
+	DeleteBrowserless(ctx context.Context) error
 	UpdateSMTP(ctx context.Context, smtp SMTPSettings) error
 	DeleteSMTPPassword(ctx context.Context) error
 	DeleteSMTP(ctx context.Context) error
@@ -458,8 +451,19 @@ type FeedFetcher interface {
 	FetchFeed(ctx context.Context, url NormalizedURL) (body []byte, finalURL string, err error)
 }
 
+// ErrBlockedAddress marks a direct fetch refused by SSRF filtering; such
+// failures never fall back to Browserless.
+var ErrBlockedAddress = errors.New("blocked non-public address")
+
 type WebpageFetcher interface {
-	FetchWebpage(ctx context.Context, url NormalizedURL) (htmlBody string, finalURL string, err error)
+	FetchDirect(ctx context.Context, url NormalizedURL) (htmlBody string, finalURL string, err error)
+	FetchBrowserless(ctx context.Context, url NormalizedURL, service BrowserlessSettings) (htmlBody string, finalURL string, err error)
+}
+
+// WebpageExtractor fetches and extracts an article, falling back from the
+// direct fetch to Browserless when configured.
+type WebpageExtractor interface {
+	ExtractWebpage(ctx context.Context, url NormalizedURL) (ExtractedArticle, error)
 }
 
 type ImageFetcher interface {

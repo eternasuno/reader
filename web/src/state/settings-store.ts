@@ -6,7 +6,6 @@
 
 import { createSignal, flush, type StoreSetter } from 'solid-js';
 import type {
-  ExtractorProvider,
   KindleLanguage,
   KindleSendRecord,
   Settings,
@@ -17,13 +16,13 @@ import { browserTimezone } from './browserTimezone';
 import { errorText } from './errorText';
 import { onSessionCleared } from './session';
 
-export type SettingsSection = 'articles' | 'extraction' | 'kindle' | 'services';
+export type SettingsSection = 'articles' | 'kindle' | 'services';
 
 export interface SettingsDrafts {
   retention: number;
-  provider: ExtractorProvider;
-  jinaKey: string;
-  browserEndpoint: string;
+  browserlessUrl: string;
+  browserlessToken: string;
+  browserlessResidentialProxy: boolean;
   smtpSenderEmail: string;
   smtpHost: string;
   smtpPort: number;
@@ -72,9 +71,9 @@ export const draftsFromSettings = (
   loaded: Settings | null
 ): SettingsDrafts => ({
   retention: loaded?.retention ?? DEFAULT_RETENTION,
-  provider: loaded?.provider ?? 'direct',
-  jinaKey: '',
-  browserEndpoint: '',
+  browserlessUrl: loaded?.browserless?.url ?? '',
+  browserlessToken: '',
+  browserlessResidentialProxy: loaded?.browserless?.residentialProxy ?? false,
   smtpSenderEmail: loaded?.smtp?.senderEmail ?? '',
   smtpHost: loaded?.smtp?.host ?? '',
   smtpPort: loaded?.smtp?.port ?? 0,
@@ -89,8 +88,7 @@ export const clearSecretDrafts = (
 ): void => {
   setDrafts((draft) => ({
     ...draft,
-    jinaKey: '',
-    browserEndpoint: '',
+    browserlessToken: '',
     smtpPassword: '',
   }));
 };

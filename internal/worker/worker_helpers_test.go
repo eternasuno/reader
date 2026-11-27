@@ -485,23 +485,15 @@ func (r *fakeSettingRepository) UpdateRetention(ctx context.Context, retention i
 	return nil
 }
 
-func (r *fakeSettingRepository) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
+func (r *fakeSettingRepository) UpdateBrowserless(ctx context.Context, browserless domain.BrowserlessSettings) error {
 	return nil
 }
 
-func (r *fakeSettingRepository) UpdateJinaKey(ctx context.Context, key string) error {
+func (r *fakeSettingRepository) DeleteBrowserlessToken(ctx context.Context) error {
 	return nil
 }
 
-func (r *fakeSettingRepository) DeleteJinaKey(ctx context.Context) error {
-	return nil
-}
-
-func (r *fakeSettingRepository) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
-	return nil
-}
-
-func (r *fakeSettingRepository) DeleteBrowserEndpoint(ctx context.Context) error {
+func (r *fakeSettingRepository) DeleteBrowserless(ctx context.Context) error {
 	return nil
 }
 

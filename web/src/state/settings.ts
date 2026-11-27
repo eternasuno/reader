@@ -1,6 +1,6 @@
 /**
  * Settings state (`SET-VAL-1`, `SET-VAL-2`, `SET-VAL-3`): loaded settings, dirty tracking,
- * derived service availability, and the retention/provider saves. External services live in
+ * derived service availability, and the retention save. External services live in
  * `settings-services.ts`; Kindle delivery lives in `settings-kindle.ts`.
  */
 
@@ -37,6 +37,18 @@ export {
   settings,
 } from './settings-store';
 
+const browserlessDraftsOf = (
+  browserless: Settings['browserless'] | undefined
+): Pick<
+  SettingsDrafts,
+  'browserlessUrl' | 'browserlessToken' | 'browserlessResidentialProxy'
+> => ({
+  browserlessUrl: browserless?.url ?? '',
+  // `SET-VAL-3`: secrets are never returned, so drafts start blank and blank saves preserve them.
+  browserlessToken: '',
+  browserlessResidentialProxy: browserless?.residentialProxy ?? false,
+});
+
 const smtpDraftsOf = (
   smtp: Settings['smtp'] | undefined
 ): Pick<
@@ -64,14 +76,11 @@ const sectionDraftPatch = (
   switch (section) {
     case 'articles':
       return { retention: loaded.retention };
-    case 'extraction':
-      return { provider: loaded.provider };
     case 'kindle':
       return kindleDraftsOf(loaded.kindle);
     case 'services':
       return {
-        jinaKey: '',
-        browserEndpoint: '',
+        ...browserlessDraftsOf(loaded.browserless),
         ...smtpDraftsOf(loaded.smtp),
       };
   }
@@ -93,6 +102,15 @@ export const resetSectionDraft = (
   flush();
 };
 
+const browserlessDirty = (
+  drafts: SettingsDrafts,
+  browserless: Settings['browserless'] | undefined
+): boolean =>
+  drafts.browserlessUrl !== (browserless?.url ?? '') ||
+  drafts.browserlessResidentialProxy !==
+    (browserless?.residentialProxy ?? false) ||
+  drafts.browserlessToken.trim().length > 0;
+
 const smtpDirty = (
   drafts: SettingsDrafts,
   smtp: Settings['smtp'] | undefined
@@ -105,8 +123,7 @@ const smtpDirty = (
   drafts.smtpPassword.trim().length > 0;
 
 const servicesDirty = (drafts: SettingsDrafts, loaded: Settings): boolean =>
-  drafts.jinaKey.trim().length > 0 ||
-  drafts.browserEndpoint.trim().length > 0 ||
+  browserlessDirty(drafts, loaded.browserless) ||
   smtpDirty(drafts, loaded.smtp);
 
 /** The schedule time and timezone only count while scheduled sending is enabled. */
@@ -142,8 +159,6 @@ export const isSectionDirty = (
   switch (section) {
     case 'articles':
       return drafts.retention !== loaded.retention;
-    case 'extraction':
-      return drafts.provider !== loaded.provider;
     case 'kindle':
       return kindleDirty(drafts, loaded.kindle);
     case 'services':
@@ -156,7 +171,6 @@ export const hasAnyUnsavedChanges = (
   loaded: Settings | null = settings()
 ): boolean =>
   isSectionDirty('articles', drafts, loaded) ||
-  isSectionDirty('extraction', drafts, loaded) ||
   isSectionDirty('kindle', drafts, loaded) ||
   isSectionDirty('services', drafts, loaded);
 
@@ -164,9 +178,6 @@ export const isSaving = (): boolean => savingAction() !== null;
 
 export const isSettingsReady = (): boolean =>
   settings() !== null && !loadingSettings();
-
-export const isBrowserAvailable = (): boolean =>
-  settings()?.browserEndpointConfigured === true;
 
 export const isSmtpConfigured = (): boolean => settings()?.smtp !== undefined;
 
@@ -176,7 +187,7 @@ export const canSendToKindle = (): boolean =>
 const commitSettingSave = async (
   save: () => Promise<void>,
   patch: (current: Settings) => Settings,
-  toastKey: 'settings.extractionSavedToast' | 'settings.retentionSavedToast'
+  toastKey: 'settings.retentionSavedToast'
 ): Promise<boolean> => {
   const startSession = sessionGeneration();
   try {
@@ -192,17 +203,6 @@ const commitSettingSave = async (
     return toastSettingsError(error);
   }
 };
-
-export const saveProvider = (drafts: SettingsDrafts): Promise<boolean> =>
-  runSave('provider', async () => {
-    if (settings() === null) return false;
-    const provider = drafts.provider;
-    return commitSettingSave(
-      () => settingsApi.updateProvider(provider),
-      (current) => ({ ...current, provider }),
-      'settings.extractionSavedToast'
-    );
-  });
 
 export const saveRetention = (drafts: SettingsDrafts): Promise<boolean> =>
   runSave('retention', async () => {

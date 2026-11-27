@@ -74,9 +74,6 @@ const requestBody = (call = 0): unknown => {
 
 const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
   ...overrides,
 });
 
@@ -129,49 +126,23 @@ describe('retention failure', () => {
   });
 });
 
-describe('provider save', () => {
-  it('saves each extraction provider via /api/settings/provider', async () => {
-    await load(makeSettings({ browserEndpointConfigured: true }));
-
-    queueEmpty();
-    await expect(state.saveProvider(drafts)).resolves.toBe(true);
-    expect(requestUrl(2)).toBe('/api/settings/provider');
-    expect(requestInit(2).method).toBe('PUT');
-    expect(requestBody(2)).toEqual({ provider: 'direct' });
-
-    setDrafts((d) => ({ ...d, provider: 'jina' }));
-    solid.flush();
-    queueEmpty();
-    await expect(state.saveProvider(drafts)).resolves.toBe(true);
-    expect(requestUrl(3)).toBe('/api/settings/provider');
-    expect(requestBody(3)).toEqual({ provider: 'jina' });
-    expect(state.settings()?.provider).toBe('jina');
-    expect(state.isSectionDirty('extraction', drafts)).toBe(false);
-
-    setDrafts((d) => ({ ...d, provider: 'browser' }));
-    solid.flush();
-    queueEmpty();
-    await expect(state.saveProvider(drafts)).resolves.toBe(true);
-    expect(requestUrl(4)).toBe('/api/settings/provider');
-    expect(requestBody(4)).toEqual({ provider: 'browser' });
-    expect(state.settings()?.provider).toBe('browser');
-    expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.extractionSavedToast'))
-    );
-  });
-
-  it('reports missing browser endpoint when saving browser provider', async () => {
+describe('Browserless save failure', () => {
+  it('reports an invalid Browserless URL and keeps the saved settings', async () => {
     await load();
-    setDrafts((d) => ({ ...d, provider: 'browser' }));
+    setDrafts((d) => ({ ...d, browserlessUrl: 'ftp://invalid.example.com' }));
     solid.flush();
 
-    queue({ error: 'BrowserEndpointRequired' }, 422);
-    await expect(state.saveProvider(drafts)).resolves.toBe(false);
+    queue({ error: 'InvalidBrowserlessSetting' }, 400);
+    await expect(state.saveBrowserless(drafts, setDrafts)).resolves.toBe(false);
     solid.flush();
 
-    expect(state.settings()?.provider).toBe('direct');
+    expect(requestUrl(2)).toBe('/api/settings/services/browserless');
+    expect(requestInit(2).method).toBe('PUT');
+    expect(state.settings()?.browserless).toBeUndefined();
+    expect(drafts.browserlessUrl).toBe('ftp://invalid.example.com');
+    expect(state.isSaving()).toBe(false);
     expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('BrowserEndpointRequired')
+      i18n.translateErrorCode('InvalidBrowserlessSetting')
     );
   });
 });
@@ -194,22 +165,25 @@ describe('save lock ownership across sessions', () => {
     state.markUnauthenticated();
     state.markAuthenticated();
     await load();
-    setDrafts((d) => ({ ...d, provider: 'jina' }));
+    setDrafts((d) => ({
+      ...d,
+      browserlessUrl: 'https://browserless.example.com',
+    }));
     solid.flush();
 
     let resolveNew: (res: Response) => void = () => {};
     fetchMock.mockImplementationOnce(
       () => new Promise<Response>((resolve) => (resolveNew = resolve))
     );
-    const newSave = state.saveProvider(drafts);
+    const newSave = state.saveBrowserless(drafts, setDrafts);
     solid.flush();
-    expect(state.savingAction()).toBe('provider');
+    expect(state.savingAction()).toBe('browserless');
 
     resolveOld(noContent());
     await expect(oldSave).resolves.toBe(false);
     solid.flush();
     expect(state.isSaving()).toBe(true);
-    expect(state.savingAction()).toBe('provider');
+    expect(state.savingAction()).toBe('browserless');
     expect(state.settings()?.retention).toBe(100);
 
     resolveNew(noContent());

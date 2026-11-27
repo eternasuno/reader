@@ -2,28 +2,44 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"reader/internal/domain"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+const browserlessTestURL = "https://browserless.example.com"
+
+type recordingSettingRepo struct {
+	domain.SettingRepository
+	browserless []domain.BrowserlessSettings
+}
+
+func (r *recordingSettingRepo) UpdateBrowserless(ctx context.Context, browserless domain.BrowserlessSettings) error {
+	r.browserless = append(r.browserless, browserless)
+
+	return r.SettingRepository.UpdateBrowserless(ctx, browserless)
+}
 
 func TestSettingsRedaction(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
 	ctx := context.Background()
-	jinaKey := "jina-super-secret"
-	browserEndpoint := "http://browser.internal:9222"
+	browserlessToken := "browserless-super-secret"
 	smtpPassword := "smtp-super-secret"
 	smtpUser := "smtp-user"
 
 	for _, err := range []error{
 		h.db.Settings().UpdateRetention(ctx, 42),
-		h.db.Settings().UpdateJinaKey(ctx, jinaKey),
-		h.db.Settings().UpdateBrowserEndpoint(ctx, browserEndpoint),
-		h.db.Settings().UpdateProvider(ctx, domain.ProviderBrowser),
+		h.db.Settings().UpdateBrowserless(ctx, domain.BrowserlessSettings{
+			URL:              browserlessTestURL,
+			Token:            &browserlessToken,
+			ResidentialProxy: true,
+		}),
 		h.db.Settings().UpdateSMTP(ctx, domain.SMTPSettings{
 			SenderEmail: "reader@example.com",
 			Host:        "smtp.example.com",
@@ -48,18 +64,20 @@ func TestSettingsRedaction(t *testing.T) {
 	requireJSONContentType(t, recorder)
 
 	body := recorder.Body.String()
-	for _, secret := range []string{jinaKey, browserEndpoint, smtpPassword} {
+	for _, secret := range []string{browserlessToken, smtpPassword} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("settings response leaked %q: %s", secret, body)
 		}
 	}
 
 	var payload struct {
-		Retention                 int    `json:"retention"`
-		Provider                  string `json:"provider"`
-		JinaKeyConfigured         bool   `json:"jinaKeyConfigured"`
-		BrowserEndpointConfigured bool   `json:"browserEndpointConfigured"`
-		SMTP                      struct {
+		Retention   int `json:"retention"`
+		Browserless struct {
+			URL              string `json:"url"`
+			TokenConfigured  bool   `json:"tokenConfigured"`
+			ResidentialProxy bool   `json:"residentialProxy"`
+		} `json:"browserless"`
+		SMTP struct {
 			SenderEmail        string `json:"senderEmail"`
 			Host               string `json:"host"`
 			Port               int    `json:"port"`
@@ -80,12 +98,12 @@ func TestSettingsRedaction(t *testing.T) {
 	}
 	decodeBody(t, recorder, &payload)
 
-	if payload.Retention != 42 || payload.Provider != "browser" {
+	if payload.Retention != 42 {
 		t.Fatalf("settings = %+v", payload)
 	}
 
-	if !payload.JinaKeyConfigured || !payload.BrowserEndpointConfigured {
-		t.Fatalf("secret flags = %+v", payload)
+	if payload.Browserless.URL != browserlessTestURL || !payload.Browserless.TokenConfigured || !payload.Browserless.ResidentialProxy {
+		t.Fatalf("browserless = %+v", payload.Browserless)
 	}
 
 	if payload.SMTP.SenderEmail != "reader@example.com" || payload.SMTP.Host != "smtp.example.com" || payload.SMTP.Port != 465 || payload.SMTP.Security != "tls" {
@@ -111,6 +129,8 @@ func TestSettingsRedaction(t *testing.T) {
 			Security:    domain.SMTPSecuritySTARTTLS,
 		}),
 		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "reader@kindle.com"}, h.clock.Now()),
+		h.db.Settings().DeleteBrowserlessToken(ctx),
+		h.db.Settings().UpdateBrowserless(ctx, domain.BrowserlessSettings{URL: browserlessTestURL}),
 	} {
 		if err != nil {
 			t.Fatalf("update partial settings: %v", err)
@@ -122,6 +142,11 @@ func TestSettingsRedaction(t *testing.T) {
 
 	var partial map[string]any
 	decodeBody(t, recorder, &partial)
+	browserlessObj := partial["browserless"].(map[string]any)
+	if browserlessObj["url"] != browserlessTestURL || browserlessObj["tokenConfigured"] != false || browserlessObj["residentialProxy"] != false {
+		t.Fatalf("browserless without token = %v", browserlessObj)
+	}
+
 	smtpObj := partial["smtp"].(map[string]any)
 	if _, hasUser := smtpObj["user"]; hasUser {
 		t.Fatalf("smtp.user must be omitted when nil: %s", recorder.Body.String())
@@ -146,8 +171,7 @@ func TestSettingsRedaction(t *testing.T) {
 
 	for _, err := range []error{
 		h.db.Settings().DeleteSMTP(ctx),
-		h.db.Settings().DeleteJinaKey(ctx),
-		h.db.Settings().DeleteBrowserEndpoint(ctx),
+		h.db.Settings().DeleteBrowserless(ctx),
 	} {
 		if err != nil {
 			t.Fatalf("clear settings: %v", err)
@@ -175,8 +199,14 @@ func TestSettingsRedaction(t *testing.T) {
 		t.Fatalf("kindle must be omitted when unconfigured: %s", recorder.Body.String())
 	}
 
-	if generic["jinaKeyConfigured"] != false || generic["browserEndpointConfigured"] != false {
-		t.Fatalf("unconfigured secret flags = %+v", generic)
+	if _, present := generic["browserless"]; present {
+		t.Fatalf("browserless must be omitted when unconfigured: %s", recorder.Body.String())
+	}
+
+	for _, removed := range []string{"provider", "jinaKeyConfigured", "browserEndpointConfigured"} {
+		if _, present := generic[removed]; present {
+			t.Fatalf("%s was removed from the settings response: %s", removed, recorder.Body.String())
+		}
 	}
 }
 
@@ -192,51 +222,94 @@ func TestSettingsUpdates(t *testing.T) {
 	}
 
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/retention", map[string]any{"retention": 0}), http.StatusBadRequest, "InvalidRetention")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "browser"}), http.StatusUnprocessableEntity, "BrowserEndpointRequired")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "rss"}), http.StatusBadRequest, "InvalidProvider")
+}
 
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "jina"}), http.StatusNoContent)
-	if got := h.loadSettings().Provider; got != domain.ProviderJina {
-		t.Fatalf("provider = %q", got)
+func TestBrowserlessSettingsUpdate(t *testing.T) {
+	t.Parallel()
+
+	var repo *recordingSettingRepo
+	h := newHarnessWith(t, func(cfg *Config) {
+		repo = &recordingSettingRepo{SettingRepository: cfg.Settings}
+		cfg.Settings = repo
+	})
+	target := "/api/settings/services/browserless"
+	secret := "browserless-secret"
+
+	requireStatus(t, h.authed(http.MethodPut, target, map[string]any{
+		"url":              "  " + browserlessTestURL + "/  ",
+		"token":            secret,
+		"residentialProxy": true,
+	}), http.StatusNoContent)
+
+	saved := domain.BrowserlessSettings{URL: browserlessTestURL, Token: &secret, ResidentialProxy: true}
+	requireBrowserlessSaves(t, repo.browserless, saved)
+	requireStoredBrowserless(t, h, saved)
+
+	requireStatus(t, h.authed(http.MethodPut, target, map[string]any{"url": browserlessTestURL, "token": "   "}), http.StatusNoContent)
+	requireStatus(t, h.authed(http.MethodPut, target, map[string]any{"url": browserlessTestURL}), http.StatusNoContent)
+
+	withoutToken := domain.BrowserlessSettings{URL: browserlessTestURL}
+	requireBrowserlessSaves(t, repo.browserless, saved, withoutToken, withoutToken)
+	requireStoredBrowserless(t, h, domain.BrowserlessSettings{URL: browserlessTestURL, Token: &secret})
+
+	for name, body := range map[string]map[string]any{
+		"missing url":    {"token": secret},
+		"blank url":      {"url": "   "},
+		"unknown scheme": {"url": "ftp://browserless.example.com"},
+		"credentials":    {"url": "https://user:pass@browserless.example.com"},
+		"query":          {"url": browserlessTestURL + "?token=abc"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireAPIError(t, h.authed(http.MethodPut, target, body), http.StatusBadRequest, "InvalidBrowserlessSetting")
+		})
 	}
 
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "direct"}), http.StatusNoContent)
-	if got := h.loadSettings().Provider; got != domain.ProviderDirect {
-		t.Fatalf("provider = %q", got)
+	requireBrowserlessSaves(t, repo.browserless, saved, withoutToken, withoutToken)
+}
+
+func TestBrowserlessSettingsDelete(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	secret := "browserless-secret"
+	seeded := domain.BrowserlessSettings{URL: browserlessTestURL, Token: &secret, ResidentialProxy: true}
+
+	if err := h.db.Settings().UpdateBrowserless(context.Background(), seeded); err != nil {
+		t.Fatalf("seed browserless: %v", err)
 	}
 
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/jina", map[string]any{"key": "   "}), http.StatusBadRequest, "InvalidJinaKey")
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/jina", map[string]any{"key": "  jina-key  "}), http.StatusNoContent)
-	if s := h.loadSettings(); s.Provider != domain.ProviderDirect || s.JinaKey == nil || *s.JinaKey != "jina-key" {
-		t.Fatalf("jina settings = %+v", s)
+	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/browserless/token", nil), http.StatusNoContent)
+	requireStoredBrowserless(t, h, domain.BrowserlessSettings{URL: browserlessTestURL, ResidentialProxy: true})
+
+	if err := h.db.Settings().UpdateBrowserless(context.Background(), seeded); err != nil {
+		t.Fatalf("reseed browserless: %v", err)
 	}
 
-	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/jina", nil), http.StatusNoContent)
-	if got := h.loadSettings().JinaKey; got != nil {
-		t.Fatalf("jina key was not deleted: %q", *got)
+	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/browserless", nil), http.StatusNoContent)
+	if stored := h.loadSettings().Browserless; stored != nil {
+		t.Fatalf("browserless settings were not deleted: %+v", stored)
+	}
+}
+
+func requireBrowserlessSaves(t *testing.T, got []domain.BrowserlessSettings, want ...domain.BrowserlessSettings) {
+	t.Helper()
+
+	if !reflect.DeepEqual(got, want) {
+		gotJSON, _ := json.Marshal(got)
+		wantJSON, _ := json.Marshal(want)
+		t.Fatalf("browserless saves = %s, want %s", gotJSON, wantJSON)
+	}
+}
+
+func requireStoredBrowserless(t *testing.T, h *harness, want domain.BrowserlessSettings) {
+	t.Helper()
+
+	stored := h.loadSettings().Browserless
+	if stored == nil {
+		t.Fatalf("browserless settings were not stored, want %+v", want)
 	}
 
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "   "}), http.StatusBadRequest, "InvalidEndpoint")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "ftp://browser:9222"}), http.StatusBadRequest, "InvalidEndpoint")
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": " http://browser:9222 "}), http.StatusNoContent)
-	if s := h.loadSettings(); s.Provider != domain.ProviderDirect || s.BrowserEndpoint == nil || *s.BrowserEndpoint != "http://browser:9222" {
-		t.Fatalf("browser settings = %+v", s)
-	}
-
-	requireStatus(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "browser"}), http.StatusNoContent)
-	if got := h.loadSettings().Provider; got != domain.ProviderBrowser {
-		t.Fatalf("provider = %q", got)
-	}
-
-	requireStatus(t, h.authed(http.MethodDelete, "/api/settings/services/browser", nil), http.StatusNoContent)
-	if s := h.loadSettings(); s.BrowserEndpoint != nil || s.Provider != domain.ProviderDirect {
-		t.Fatalf("browser delete did not reset provider: %+v", s)
-	}
-
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": "unknown"}), http.StatusBadRequest, "InvalidProvider")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/provider", map[string]any{"provider": ""}), http.StatusBadRequest, "InvalidProvider")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "   "}), http.StatusBadRequest, "InvalidEndpoint")
-	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/services/browser", map[string]any{"endpoint": "http://"}), http.StatusBadRequest, "InvalidEndpoint")
+	requireBrowserlessSaves(t, []domain.BrowserlessSettings{*stored}, want)
 }
 
 func TestSMTPSettingsUpdate(t *testing.T) {

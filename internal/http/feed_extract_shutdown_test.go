@@ -84,11 +84,11 @@ func TestWaitExtractionsCancelsFetchWithoutSaving(t *testing.T) {
 	repo := &countingExtractionRepo{FeedItemRepository: s.cfg.FeedItems}
 	s.cfg.FeedItems = repo
 	started := make(chan struct{})
-	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+	h.extractor.beforeExtract = func(ctx context.Context, target domain.NormalizedURL) error {
 		close(started)
 		<-ctx.Done()
 
-		return "<html></html>", target.Raw(), nil
+		return nil
 	}
 	h.extractor.article = domain.ExtractedArticle{Content: "<p>content</p>"}
 	finished := make(chan struct{})

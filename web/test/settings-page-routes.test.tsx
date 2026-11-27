@@ -38,9 +38,11 @@ const click = (element: HTMLElement): void => {
 
 const cfg = {
   retention: 50,
-  provider: 'direct',
-  jinaKeyConfigured: true,
-  browserEndpointConfigured: false,
+  browserless: {
+    url: 'https://browserless.example.com',
+    tokenConfigured: true,
+    residentialProxy: false,
+  },
   smtp: { senderEmail: 'a@b', host: 'h', port: 465, security: 'tls' },
   kindle: { kindleEmail: 'k@b', language: 'zh' },
 };
@@ -90,22 +92,22 @@ const btn = (r: ParentNode, text: string) => {
   if (!b) throw new Error(`button ${text} missing`);
   return b;
 };
-const radio = (r: ParentNode, v: string) =>
-  must<HTMLInputElement>(r, `input[value="${v}"]`);
+const currentTab = (r: ParentNode) =>
+  must(r, 'nav button[aria-current="page"]').textContent;
 const confirmPair = () =>
   vi
     .spyOn(window, 'confirm')
     .mockReturnValueOnce(false)
     .mockReturnValueOnce(true);
 
-it('settings: mounts 4 sections, renders Kindle history, and guards edits', async () => {
+it('settings: mounts 3 sections, renders Kindle history, and guards edits', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const { container, history } = await mountSettings();
   expect(container.textContent).toContain('已发送 3 篇（1 封邮件）');
   expect(container.textContent).toContain('smtp: connection refused');
   expect(inputValue(container, 'input[type="number"]')).toBe('50');
   typeInto(container, 'input[type="number"]', '25');
-  tab(container, 1, '提取');
+  tab(container, 1, 'Kindle');
   expect(confirm.mock.calls[0]?.[0]).toContain('当前分区有未保存的修改');
   click(btn(container, '返回阅读器'));
   expect(confirm.mock.calls[1]?.[0]).toContain('有未保存的修改');
@@ -133,7 +135,7 @@ const MINUTE_STEPS = Array.from({ length: 12 }, (_, i) =>
 
 const mountKindle = async (ov?: FetchHandler, body?: unknown) => {
   const { container } = await mountSettings(ov, body);
-  const kindle = tab(container, 2, 'Kindle');
+  const kindle = tab(container, 1, 'Kindle');
 
   return {
     kindle,
@@ -256,26 +258,18 @@ it('settings kindle: shows the saved schedule and keeps an unlisted saved timezo
   expect(zone.selectedOptions[0]?.textContent).toBe('Legacy/Zone');
 });
 
-it('settings extraction: toggles browser radio by endpoint config and links to services', async () => {
+it('settings sections: a declined switch keeps the draft and a confirmed switch discards it', async () => {
   const confirm = confirmPair();
-  const hint = '需先在「外部服务」中配置浏览器服务地址';
   const { container } = await mountSettings();
-  const ext = tab(container, 1, '提取');
-  expect(radio(ext, 'browser').disabled).toBe(true);
-  expect(radio(ext, 'jina').disabled).toBe(false);
-  expect(ext.textContent).toContain(hint);
-  click(radio(ext, 'jina'));
-  click(btn(ext, '前往外部服务'));
+  typeInto(container, 'input[type="number"]', '25');
+  tab(container, 1, 'Kindle');
   expect(confirm).toHaveBeenCalledTimes(1);
-  expect(radio(ext, 'jina').checked).toBe(true);
-  click(btn(ext, '前往外部服务'));
-  expect(btn(sec(container, '外部服务'), '清除 SMTP 设置')).toBeDefined();
-  expect(radio(ext, 'direct').checked).toBe(true);
-  const ok = { ...cfg, browserEndpointConfigured: true };
-  const next = await mountSettings(undefined, ok);
-  const ext2 = tab(next.container, 1, '提取');
-  expect(radio(ext2, 'browser').disabled).toBe(false);
-  expect(ext2.textContent).not.toContain(hint);
+  expect(currentTab(container)).toContain('文章与订阅');
+  expect(inputValue(container, 'input[type="number"]')).toBe('25');
+  tab(container, 1, 'Kindle');
+  expect(confirm).toHaveBeenCalledTimes(2);
+  expect(currentTab(container)).toContain('Kindle');
+  expect(inputValue(container, 'input[type="number"]')).toBe('50');
 });
 
 it('settings kindle: guards on SMTP, disables send while running, and imports OPML', async () => {
@@ -284,12 +278,13 @@ it('settings kindle: guards on SMTP, disables send while running, and imports OP
   );
   expect(btn(run.container, '正在发送中…').disabled).toBe(true);
   const ns = await mountSettings(undefined, { ...cfg, smtp: undefined });
-  const k = tab(ns.container, 2, 'Kindle');
+  const k = tab(ns.container, 1, 'Kindle');
   expect(must<HTMLFieldSetElement>(k, 'fieldset').disabled).toBe(true);
   expect(k.textContent).toContain('需要先在「外部服务」中配置 SMTP');
   expect(btn(k, '立即发送').disabled).toBe(true);
   click(btn(k, '前往外部服务'));
-  expect(sec(ns.container, '外部服务').textContent).toContain('Jina Key');
+  expect(currentTab(ns.container)).toContain('外部服务');
+  expect(sec(ns.container, '外部服务').textContent).toContain('Browserless');
   const opml = await mountSettings((u, i) =>
     u === '/api/opml' && i.method === 'POST'
       ? json({ importedFeeds: 3, skippedFeeds: 1, createdFolders: 1 })
@@ -307,7 +302,7 @@ it('settings kindle: guards on SMTP, disables send while running, and imports OP
   );
 });
 
-it('settings services: renders 3 cards and deletes SMTP only after confirmation', async () => {
+it('settings services: renders 2 cards and deletes SMTP only after confirmation', async () => {
   const confirm = confirmPair();
   const url = '/api/settings/services/smtp';
   const { container } = await mountSettings((u, i) =>
@@ -315,10 +310,9 @@ it('settings services: renders 3 cards and deletes SMTP only after confirmation'
       ? new Response(null, { status: 204 })
       : undefined
   );
-  const svc = tab(container, 3, '外部服务');
-  expect(svc.querySelectorAll('form')).toHaveLength(3);
-  expect(svc.textContent).toContain('Jina Key：已保存');
-  expect(svc.textContent).toContain('浏览器服务地址：未保存');
+  const svc = tab(container, 2, '外部服务');
+  expect(svc.querySelectorAll('form')).toHaveLength(2);
+  expect(svc.textContent).toContain('Browserless：已保存');
   expect(svc.textContent).toContain('SMTP：已保存');
   click(btn(svc, '清除 SMTP 设置'));
   await settle(2);

@@ -68,9 +68,11 @@ const fetchCount = (): number => fetchMock.mock.calls.length;
 
 const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
+  browserless: {
+    url: 'https://browserless.example.com',
+    tokenConfigured: true,
+    residentialProxy: true,
+  },
   smtp: {
     senderEmail: 'sender@example.com',
     host: 'smtp.example.com',
@@ -99,7 +101,7 @@ const load = async (loaded: Settings = makeSettings()): Promise<void> => {
 
 describe('settings load and derived flags', () => {
   it('loads settings, drafts, derived flags and Kindle sends', async () => {
-    const loaded = makeSettings({ browserEndpointConfigured: true });
+    const loaded = makeSettings();
     queue(loaded);
     queue({ running: true, items: [] });
     await state.loadSettings((next) => {
@@ -109,9 +111,9 @@ describe('settings load and derived flags', () => {
 
     expect(state.settings()?.retention).toBe(100);
     expect(drafts.retention).toBe(100);
-    expect(drafts.provider).toBe('direct');
-    expect(drafts.jinaKey).toBe('');
-    expect(drafts.browserEndpoint).toBe('');
+    expect(drafts.browserlessUrl).toBe('https://browserless.example.com');
+    expect(drafts.browserlessToken).toBe('');
+    expect(drafts.browserlessResidentialProxy).toBe(true);
     expect(drafts.smtpSenderEmail).toBe('sender@example.com');
     expect(drafts.smtpHost).toBe('smtp.example.com');
     expect(drafts.smtpPort).toBe(587);
@@ -123,7 +125,7 @@ describe('settings load and derived flags', () => {
     expect(drafts.scheduleEnabled).toBe(true);
     expect(drafts.scheduleHour).toBe(8);
     expect(drafts.scheduleMinute).toBe(0);
-    expect(state.isBrowserAvailable()).toBe(true);
+    expect(state.settings()?.browserless?.tokenConfigured).toBe(true);
     expect(state.isSmtpConfigured()).toBe(true);
     expect(state.canSendToKindle()).toBe(true);
     expect(state.kindleRunning()).toBe(true);
@@ -133,7 +135,6 @@ describe('settings load and derived flags', () => {
 
   it('derives availability flags when services or kindle are missing', async () => {
     await load(makeSettings({ smtp: undefined, kindle: undefined }));
-    expect(state.isBrowserAvailable()).toBe(false);
     expect(state.isSmtpConfigured()).toBe(false);
     expect(state.canSendToKindle()).toBe(false);
 
@@ -143,8 +144,20 @@ describe('settings load and derived flags', () => {
   });
 });
 
+describe('Browserless drafts from settings', () => {
+  it('starts Browserless drafts blank when Browserless is not configured', async () => {
+    await load(makeSettings({ browserless: undefined }));
+
+    expect(state.settings()?.browserless).toBeUndefined();
+    expect(drafts.browserlessUrl).toBe('');
+    expect(drafts.browserlessToken).toBe('');
+    expect(drafts.browserlessResidentialProxy).toBe(false);
+    expect(state.hasAnyUnsavedChanges(drafts)).toBe(false);
+  });
+});
+
 describe('dirty tracking', () => {
-  it('tracks articles, extraction and kindle dirty state', async () => {
+  it('tracks articles and kindle dirty state', async () => {
     await load();
 
     setDrafts((d) => ({ ...d, retention: 50 }));
@@ -155,58 +168,65 @@ describe('dirty tracking', () => {
     solid.flush();
     expect(state.isSectionDirty('articles', drafts)).toBe(false);
 
-    setDrafts((d) => ({ ...d, provider: 'jina' }));
-    solid.flush();
-    expect(state.isSectionDirty('extraction', drafts)).toBe(true);
-    setDrafts((d) => ({ ...d, provider: 'direct' }));
-    solid.flush();
-    expect(state.isSectionDirty('extraction', drafts)).toBe(false);
-
     setDrafts((d) => ({ ...d, kindleEmail: 'other@kindle.com' }));
     solid.flush();
     expect(state.isSectionDirty('kindle', drafts)).toBe(true);
   });
 });
 
+/** Applies a draft patch and reports whether the services section is dirty. */
+const servicesDirtyAfter = (patch: Partial<SettingsDrafts>): boolean => {
+  setDrafts((d) => ({ ...d, ...patch }));
+  solid.flush();
+  return state.isSectionDirty('services', drafts);
+};
+
 describe('services dirty tracking', () => {
   it('tracks services dirty state', async () => {
     await load();
 
-    setDrafts((d) => ({
-      ...d,
-      jinaKey: '   ',
-      browserEndpoint: '   ',
-      smtpPassword: '   ',
-    }));
-    solid.flush();
+    expect(
+      servicesDirtyAfter({ browserlessToken: '   ', smtpPassword: '   ' })
+    ).toBe(false);
+    expect(servicesDirtyAfter({ browserlessToken: 'key' })).toBe(true);
+    expect(
+      servicesDirtyAfter({
+        browserlessToken: '',
+        browserlessUrl: 'https://other.example.com',
+      })
+    ).toBe(true);
+    expect(
+      servicesDirtyAfter({
+        browserlessUrl: 'https://browserless.example.com',
+        browserlessResidentialProxy: false,
+      })
+    ).toBe(true);
+    expect(
+      servicesDirtyAfter({
+        browserlessResidentialProxy: true,
+        smtpPassword: 'secret',
+      })
+    ).toBe(true);
+    expect(servicesDirtyAfter({ smtpPassword: '', smtpPort: 465 })).toBe(true);
+    expect(servicesDirtyAfter({ smtpPort: 587 })).toBe(false);
+  });
+});
+
+describe('Browserless dirty tracking', () => {
+  it('compares unconfigured Browserless drafts against blank defaults', async () => {
+    await load(makeSettings({ browserless: undefined }));
     expect(state.isSectionDirty('services', drafts)).toBe(false);
-    setDrafts((d) => ({ ...d, jinaKey: 'key' }));
-    solid.flush();
-    expect(state.isSectionDirty('services', drafts)).toBe(true);
-    setDrafts((d) => ({
-      ...d,
-      jinaKey: '',
-      browserEndpoint: 'http://browser:9222',
-    }));
-    solid.flush();
-    expect(state.isSectionDirty('services', drafts)).toBe(true);
-    setDrafts((d) => ({
-      ...d,
-      browserEndpoint: '',
-      smtpPassword: 'secret',
-    }));
-    solid.flush();
-    expect(state.isSectionDirty('services', drafts)).toBe(true);
-    setDrafts((d) => ({
-      ...d,
-      smtpPassword: '',
-      smtpPort: 465,
-    }));
-    solid.flush();
-    expect(state.isSectionDirty('services', drafts)).toBe(true);
-    setDrafts((d) => ({ ...d, smtpPort: 587 }));
-    solid.flush();
-    expect(state.isSectionDirty('services', drafts)).toBe(false);
+
+    expect(
+      servicesDirtyAfter({ browserlessUrl: 'https://browserless.example.com' })
+    ).toBe(true);
+    expect(servicesDirtyAfter({ browserlessUrl: '' })).toBe(false);
+    expect(servicesDirtyAfter({ browserlessResidentialProxy: true })).toBe(
+      true
+    );
+    expect(servicesDirtyAfter({ browserlessResidentialProxy: false })).toBe(
+      false
+    );
   });
 });
 
@@ -217,9 +237,9 @@ describe('draft reset', () => {
     setDrafts((d) => ({
       ...d,
       retention: 25,
-      provider: 'jina',
-      jinaKey: 'secret',
-      browserEndpoint: 'http://browser:9222',
+      browserlessUrl: 'https://other.example.com',
+      browserlessToken: 'secret',
+      browserlessResidentialProxy: false,
       smtpHost: 'other.smtp.com',
       smtpPassword: 'secret',
       kindleEmail: 'other@kindle.com',
@@ -232,15 +252,14 @@ describe('draft reset', () => {
     expect(state.hasAnyUnsavedChanges(drafts)).toBe(true);
 
     state.resetSectionDraft('articles', setDrafts);
-    state.resetSectionDraft('extraction', setDrafts);
     state.resetSectionDraft('services', setDrafts);
     state.resetSectionDraft('kindle', setDrafts);
     solid.flush();
 
     expect(drafts.retention).toBe(100);
-    expect(drafts.provider).toBe('direct');
-    expect(drafts.jinaKey).toBe('');
-    expect(drafts.browserEndpoint).toBe('');
+    expect(drafts.browserlessUrl).toBe('https://browserless.example.com');
+    expect(drafts.browserlessToken).toBe('');
+    expect(drafts.browserlessResidentialProxy).toBe(true);
     expect(drafts.smtpHost).toBe('smtp.example.com');
     expect(drafts.smtpPassword).toBe('');
     expect(drafts.kindleEmail).toBe('kindle@example.com');
@@ -264,7 +283,7 @@ describe('save guard', () => {
     expect(state.isSaving()).toBe(true);
     expect(state.savingAction()).toBe('retention');
 
-    await expect(state.saveProvider(drafts)).resolves.toBe(false);
+    await expect(state.saveBrowserless(drafts, setDrafts)).resolves.toBe(false);
     expect(fetchCount()).toBe(3);
 
     slow.resolve(noContent());
@@ -279,8 +298,7 @@ describe('secret draft disposal', () => {
     await load();
     setDrafts((d) => ({
       ...d,
-      jinaKey: 'jina-secret',
-      browserEndpoint: 'http://browser:9222',
+      browserlessToken: 'browserless-secret',
       smtpPassword: 'smtp-secret',
     }));
     solid.flush();
@@ -288,16 +306,18 @@ describe('secret draft disposal', () => {
 
     state.clearSecretDrafts(setDrafts);
     solid.flush();
-    expect(drafts.jinaKey).toBe('');
-    expect(drafts.browserEndpoint).toBe('');
+    expect(drafts.browserlessToken).toBe('');
+    expect(drafts.browserlessUrl).toBe('https://browserless.example.com');
     expect(drafts.smtpPassword).toBe('');
     expect(state.hasAnyUnsavedChanges(drafts)).toBe(false);
 
     const nextVisit = createDraftStore(state.settings());
     expect(nextVisit.store.retention).toBe(100);
     expect(nextVisit.store.smtpHost).toBe('smtp.example.com');
-    expect(nextVisit.store.jinaKey).toBe('');
-    expect(nextVisit.store.browserEndpoint).toBe('');
+    expect(nextVisit.store.browserlessUrl).toBe(
+      'https://browserless.example.com'
+    );
+    expect(nextVisit.store.browserlessToken).toBe('');
     expect(nextVisit.store.smtpPassword).toBe('');
     nextVisit.dispose();
   });

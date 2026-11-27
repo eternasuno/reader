@@ -116,12 +116,7 @@ describe('session probe error handling', () => {
 });
 
 const seedSettings = async (): Promise<void> => {
-  queue({
-    retention: 50,
-    provider: 'direct',
-    jinaKeyConfigured: false,
-    browserEndpointConfigured: false,
-  });
+  queue({ retention: 50 });
   queue({ running: true, items: [] });
   await state.loadSettings();
   solid.flush();

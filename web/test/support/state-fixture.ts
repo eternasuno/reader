@@ -43,9 +43,6 @@ export const makeKindleSettings = (
   overrides: Partial<Settings> = {}
 ): Settings => ({
   retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
   smtp: {
     senderEmail: 'sender@example.com',
     host: 'smtp.example.com',

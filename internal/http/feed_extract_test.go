@@ -24,7 +24,6 @@ func TestFeedItemExtract(t *testing.T) {
 		item.ExtractedContent = strPtr("<p>cached</p>")
 	})
 	bare := h.seedItem(feed.ID, "https://example.com/bare", nil)
-	h.webpageFetcher.html = "<html></html>"
 	h.extractor.article = domain.ExtractedArticle{Title: "Extracted", Content: "<p>extracted</p>"}
 
 	recorder := h.authed(http.MethodPost, "/api/feed-items/"+cached.ID+"/extract", nil)
@@ -36,7 +35,7 @@ func TestFeedItemExtract(t *testing.T) {
 		t.Fatalf("cached item = %+v", extracted.Item)
 	}
 
-	if h.webpageFetcher.calls != 0 {
+	if h.extractor.calls != 0 {
 		t.Fatal("cached extraction must not fetch the webpage")
 	}
 
@@ -47,8 +46,8 @@ func TestFeedItemExtract(t *testing.T) {
 		t.Fatalf("extracted item = %+v", extracted.Item)
 	}
 
-	if h.webpageFetcher.calls != 1 {
-		t.Fatalf("webpage fetch calls = %d", h.webpageFetcher.calls)
+	if h.extractor.calls != 1 {
+		t.Fatalf("webpage extract calls = %d", h.extractor.calls)
 	}
 
 	stored := h.feedItemByID(bare.ID)
@@ -72,13 +71,14 @@ func TestFeedItemExtractCoalescesAndFirstWriterWins(t *testing.T) {
 
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+	h.extractor.beforeExtract = func(ctx context.Context, target domain.NormalizedURL) error {
 		select {
 		case started <- struct{}{}:
 		default:
 		}
 		<-release
-		return "<html></html>", target.Raw(), nil
+
+		return nil
 	}
 	h.extractor.article = domain.ExtractedArticle{Title: "Second", Content: "<p>second</p>"}
 
@@ -114,11 +114,11 @@ func TestFeedItemExtractCoalescesAndFirstWriterWins(t *testing.T) {
 		}
 	}
 
-	h.webpageFetcher.mu.Lock()
-	calls := h.webpageFetcher.calls
-	h.webpageFetcher.mu.Unlock()
+	h.extractor.mu.Lock()
+	calls := h.extractor.calls
+	h.extractor.mu.Unlock()
 	if calls != 1 {
-		t.Fatalf("webpage fetch calls = %d, want 1 (coalesced)", calls)
+		t.Fatalf("webpage extract calls = %d, want 1 (coalesced)", calls)
 	}
 }
 
@@ -128,7 +128,6 @@ func TestFeedItemExtractRechecksCacheInGroup(t *testing.T) {
 	h := newHarness(t)
 	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
 	item := h.seedItem(feed.ID, "https://example.com/reread", nil)
-	h.webpageFetcher.html = "<html></html>"
 	h.extractor.article = domain.ExtractedArticle{Title: "Extracted", Content: "<p>extracted</p>"}
 
 	secondAtGate := make(chan struct{})
@@ -161,11 +160,11 @@ func TestFeedItemExtractRechecksCacheInGroup(t *testing.T) {
 		t.Fatalf("second response = %+v, want cached extracted content", resp.Item)
 	}
 
-	h.webpageFetcher.mu.Lock()
-	calls := h.webpageFetcher.calls
-	h.webpageFetcher.mu.Unlock()
+	h.extractor.mu.Lock()
+	calls := h.extractor.calls
+	h.extractor.mu.Unlock()
 	if calls != 1 {
-		t.Fatalf("webpage fetch calls = %d, want 1", calls)
+		t.Fatalf("webpage extract calls = %d, want 1", calls)
 	}
 }
 
@@ -176,13 +175,13 @@ func TestForegroundFetchSemaphoreBoundsConcurrency(t *testing.T) {
 	entered := make(chan struct{}, maxConcurrentForegroundFetches+2)
 	release := make(chan struct{})
 
-	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+	h.extractor.beforeExtract = func(ctx context.Context, target domain.NormalizedURL) error {
 		entered <- struct{}{}
 		select {
 		case <-release:
-			return "<html></html>", target.Raw(), nil
+			return nil
 		case <-ctx.Done():
-			return "", "", ctx.Err()
+			return ctx.Err()
 		}
 	}
 	h.extractor.article = domain.ExtractedArticle{Title: "Ok", Content: "<p>ok</p>"}
@@ -205,11 +204,11 @@ func TestForegroundFetchSemaphoreBoundsConcurrency(t *testing.T) {
 	requireAPIError(t, h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://example.com/sem/overflow"}), http.StatusTooManyRequests, "TooManyRequests")
 	requireAPIError(t, h.authed(http.MethodPost, "/api/feeds/preview", map[string]any{"url": "https://example.com/sem/feed"}), http.StatusTooManyRequests, "TooManyRequests")
 
-	h.webpageFetcher.mu.Lock()
-	calls := h.webpageFetcher.calls
-	h.webpageFetcher.mu.Unlock()
+	h.extractor.mu.Lock()
+	calls := h.extractor.calls
+	h.extractor.mu.Unlock()
 	if calls != maxConcurrentForegroundFetches {
-		t.Fatalf("fetch calls = %d, want %d", calls, maxConcurrentForegroundFetches)
+		t.Fatalf("extract calls = %d, want %d", calls, maxConcurrentForegroundFetches)
 	}
 
 	close(release)
@@ -229,17 +228,17 @@ func TestFeedItemExtractAdmissionAndDedupe(t *testing.T) {
 
 	entered := make(chan struct{}, maxConcurrentForegroundFetches+2)
 	release := make(chan struct{})
-	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+	h.extractor.beforeExtract = func(ctx context.Context, target domain.NormalizedURL) error {
 		if strings.HasSuffix(target.Raw(), "/admit/"+strconv.Itoa(maxConcurrentForegroundFetches)) {
-			return "<html></html>", target.Raw(), nil
+			return nil
 		}
 
 		entered <- struct{}{}
 		select {
 		case <-release:
-			return "<html></html>", target.Raw(), nil
+			return nil
 		case <-ctx.Done():
-			return "", "", ctx.Err()
+			return ctx.Err()
 		}
 	}
 	h.extractor.article = domain.ExtractedArticle{Title: "Ok", Content: "<p>ok</p>"}
@@ -279,11 +278,11 @@ func TestFeedItemExtractAdmissionAndDedupe(t *testing.T) {
 	joined := <-joinedDone
 	requireStatus(t, joined, http.StatusOK)
 
-	h.webpageFetcher.mu.Lock()
-	calls := h.webpageFetcher.calls
-	h.webpageFetcher.mu.Unlock()
+	h.extractor.mu.Lock()
+	calls := h.extractor.calls
+	h.extractor.mu.Unlock()
 	if want := maxConcurrentForegroundFetches + 1; calls != want {
-		t.Fatalf("fetch calls = %d, want %d (joined request must not fetch again)", calls, want)
+		t.Fatalf("extract calls = %d, want %d (joined request must not fetch again)", calls, want)
 	}
 }
 
@@ -298,14 +297,14 @@ func TestFeedItemExtractDeadline(t *testing.T) {
 	slow := h.seedItem(feed.ID, "https://example.com/slow", nil)
 	fast := h.seedItem(feed.ID, "https://example.com/fast", nil)
 
-	h.webpageFetcher.fetch = func(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+	h.extractor.beforeExtract = func(ctx context.Context, target domain.NormalizedURL) error {
 		if strings.HasSuffix(target.Raw(), "/slow") {
 			<-ctx.Done()
 
-			return "", "", domain.NewError(domain.ErrWebpageFetcherError, ctx.Err())
+			return domain.NewError(domain.ErrWebpageFetcherError, ctx.Err())
 		}
 
-		return "<html></html>", target.Raw(), nil
+		return nil
 	}
 	h.extractor.article = domain.ExtractedArticle{Title: "Fast", Content: "<p>fast</p>"}
 

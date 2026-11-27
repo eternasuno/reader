@@ -149,6 +149,11 @@ func TestStaticSPAFallback(t *testing.T) {
 		{http.MethodPut, "/api/settings/fetcher/browser"},
 		{http.MethodDelete, "/api/settings/fetcher/jina/key"},
 		{http.MethodDelete, "/api/settings/kindle/password"},
+		{http.MethodPut, "/api/settings/provider"},
+		{http.MethodPut, "/api/settings/services/jina"},
+		{http.MethodDelete, "/api/settings/services/jina"},
+		{http.MethodPut, "/api/settings/services/browser"},
+		{http.MethodDelete, "/api/settings/services/browser"},
 	} {
 		t.Run(route.method+" "+route.target, func(t *testing.T) {
 			recorder := h.authed(route.method, route.target, nil)

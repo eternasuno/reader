@@ -80,11 +80,11 @@ func TestOpenMigratesDatabase(t *testing.T) {
 		t.Fatalf("get settings: %v", err)
 	}
 
-	if settings.Retention != 100 || settings.Provider != domain.ProviderDirect {
-		t.Fatalf("default settings = %+v, want retention 100 and provider direct", settings)
+	if settings.Retention != 100 {
+		t.Fatalf("default settings = %+v, want retention 100", settings)
 	}
 
-	if settings.SMTP != nil || settings.Kindle != nil || settings.JinaKey != nil || settings.BrowserEndpoint != nil {
+	if settings.SMTP != nil || settings.Kindle != nil || settings.Browserless != nil {
 		t.Fatalf("default settings carry unexpected optional values: %+v", settings)
 	}
 
@@ -104,8 +104,8 @@ func TestOpenMigratesDatabase(t *testing.T) {
 		t.Fatalf("get settings after reopen: %v", err)
 	}
 
-	if reloaded.Retention != 100 || reloaded.Provider != domain.ProviderDirect {
-		t.Fatalf("settings after reopen = %+v, want retention 100 and provider direct", reloaded)
+	if reloaded.Retention != 100 {
+		t.Fatalf("settings after reopen = %+v, want retention 100", reloaded)
 	}
 }
 
@@ -299,6 +299,97 @@ func TestKindleLanguageMigrationDefaultsExistingSettingsToChinese(t *testing.T) 
 	}
 }
 
+func requireBrowserlessColumns(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	removed := queryStrings(t, db, `SELECT name FROM pragma_table_info('setting') WHERE name IN ('provider', 'jina_key', 'browser_endpoint')`)
+	if len(removed) != 0 {
+		t.Fatalf("setting columns %v still exist, want them dropped", removed)
+	}
+
+	want := []string{"browserless_residential_proxy:1:0", "browserless_token:0:", "browserless_url:0:"}
+	query := `SELECT name || ':' || "notnull" || ':' || COALESCE(dflt_value, '') FROM pragma_table_info('setting') WHERE name LIKE 'browserless_%' ORDER BY name`
+	if got := queryStrings(t, db, query); !slices.Equal(got, want) {
+		t.Fatalf("browserless columns = %v, want %v", got, want)
+	}
+}
+
+func TestBrowserlessMigrationDropsExtractorColumnsAndKeepsOtherSettings(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "v2.db")
+
+	v2, err := sql.Open("sqlite", sqliteDSN(dbPath, true))
+	if err != nil {
+		t.Fatalf("open v2 db: %v", err)
+	}
+
+	v2.SetMaxOpenConns(1)
+	if err := applyGoMigrations(ctx, v2, migrations.All()[:2]...); err != nil {
+		t.Fatalf("apply v1 and v2 migrations: %v", err)
+	}
+
+	seed := `UPDATE setting SET retention = 250, provider = 'browser', jina_key = 'jina-secret', browser_endpoint = 'wss://browser.internal:3000',
+		sender_email = 'sender@example.com', smtp_host = 'smtp.example.com', smtp_port = 465, smtp_security = 'tls', smtp_user = 'smtp-user', smtp_password = 'smtp-password',
+		kindle_email = 'reader@kindle.com', kindle_language = 'en', send_hour = 8, send_minute = 30, timezone = 'UTC' WHERE id = 1`
+	if _, err := v2.ExecContext(ctx, seed); err != nil {
+		t.Fatalf("seed v2 settings: %v", err)
+	}
+
+	if _, err := v2.ExecContext(ctx, `INSERT INTO kindle_schedule (id, setting_id, next_send_at) VALUES ('schedule-1', 1, 1717230600000)`); err != nil {
+		t.Fatalf("seed v2 kindle schedule: %v", err)
+	}
+
+	if err := v2.Close(); err != nil {
+		t.Fatalf("close v2 db: %v", err)
+	}
+
+	store, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	defer store.Close()
+
+	requireGooseVersions(t, store.ReadDB(), 0, 1, 2, 3)
+	requireBrowserlessColumns(t, store.ReadDB())
+
+	settings, err := store.Settings().Get(ctx)
+	if err != nil {
+		t.Fatalf("get migrated settings: %v", err)
+	}
+
+	requireMigratedV2Settings(t, settings)
+}
+
+func requireMigratedV2Settings(t *testing.T, settings domain.Settings) {
+	t.Helper()
+
+	if settings.Retention != 250 || settings.Browserless != nil {
+		t.Fatalf("migrated settings = %+v, want retention 250 and no browserless", settings)
+	}
+
+	wantSMTP := domain.SMTPSettings{SenderEmail: "sender@example.com", Host: "smtp.example.com", Port: 465, Security: domain.SMTPSecurityTLS, User: ptr("smtp-user"), Password: ptr("smtp-password")}
+	if settings.SMTP == nil {
+		t.Fatal("migrated smtp settings are missing")
+	}
+
+	assertSMTPSettings(t, *settings.SMTP, wantSMTP)
+
+	wantKindle := domain.KindleSettings{KindleEmail: "reader@kindle.com", Schedule: &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "UTC"}}
+	if settings.Kindle == nil {
+		t.Fatal("migrated kindle settings are missing")
+	}
+
+	assertKindleSettings(t, *settings.Kindle, wantKindle)
+
+	if settings.Kindle.Language != domain.KindleLanguageEnglish {
+		t.Fatalf("migrated kindle language = %q, want en", settings.Kindle.Language)
+	}
+
+	if settings.Kindle.NextSendAt == nil || settings.Kindle.NextSendAt.UnixMilli() != 1717230600000 {
+		t.Fatalf("migrated next send at = %v, want 1717230600000 ms preserved", settings.Kindle.NextSendAt)
+	}
+}
+
 func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "fresh.db"))
@@ -307,7 +398,7 @@ func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 	}
 	defer store.Close()
 
-	requireGooseVersions(t, store.ReadDB(), 0, 1, 2)
+	requireGooseVersions(t, store.ReadDB(), 0, 1, 2, 3)
 
 	wantTables := []string{"feed", "feed_item", "feed_refresh", "feed_schedule", "folder", "kindle_schedule", "kindle_send", "saved_page", "setting"}
 	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_list WHERE schema = 'main' AND strict = 1 AND name NOT LIKE 'sqlite_%' ORDER BY name`); !slices.Equal(got, wantTables) {
@@ -325,6 +416,8 @@ func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_info('setting') WHERE name = 'schedule_updated_at'`); len(got) != 0 {
 		t.Fatalf("setting columns = %v, want no schedule_updated_at", got)
 	}
+
+	requireBrowserlessColumns(t, store.ReadDB())
 
 	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_info('feed_refresh') WHERE name = 'finished_at' AND "notnull" = 0`); !slices.Equal(got, []string{"finished_at"}) {
 		t.Fatalf("nullable feed_refresh columns = %v, want finished_at", got)
@@ -496,7 +589,7 @@ func TestOpenEnforcesDataAtRestPermissions(t *testing.T) {
 			requireFileMode(t, dataDir, 0o700)
 			requireFileMode(t, dbPath, 0o600)
 
-			if err := store.Settings().UpdateJinaKey(ctx, "secret-key"); err != nil {
+			if err := store.Settings().UpdateBrowserless(ctx, domain.BrowserlessSettings{URL: "https://browserless.example.com", Token: ptr("secret-token")}); err != nil {
 				t.Fatalf("write setting in WAL mode: %v", err)
 			}
 

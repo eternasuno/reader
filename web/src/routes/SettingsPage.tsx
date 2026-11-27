@@ -26,26 +26,23 @@ import {
 import { Button, Icon, type IconName, showToast } from '../ui';
 import { KindleSection } from './KindleSections';
 import { ServicesSection } from './ServicesSection';
-import { ArticlesSection, ExtractionSection } from './SettingsSections';
+import { ArticlesSection } from './SettingsSections';
 import type { SettingsDraftProps } from './settingsHelpers';
 
 const SECTION_LABEL_KEYS = {
   articles: 'settings.sectionArticles',
-  extraction: 'settings.sectionExtraction',
   kindle: 'settings.sectionKindle',
   services: 'settings.sectionServices',
 } as const;
 
 const SECTION_ICONS = {
   articles: 'inbox',
-  extraction: 'extract',
   kindle: 'mail',
   services: 'globe',
 } as const satisfies Record<SettingsSection, IconName>;
 
 const SECTIONS: ReadonlyArray<SettingsSection> = [
   'articles',
-  'extraction',
   'kindle',
   'services',
 ];
@@ -79,7 +76,7 @@ interface SettingsNavProps {
 function SettingsNav(props: SettingsNavProps): JSX.Element {
   return (
     <nav
-      class="grid shrink-0 grid-cols-4 gap-1 md:sticky md:top-6 md:flex md:w-52 md:flex-col md:self-start"
+      class="grid shrink-0 grid-cols-3 gap-1 md:sticky md:top-6 md:flex md:w-52 md:flex-col md:self-start"
       aria-label={t('settings.title')}
     >
       <For each={SECTIONS}>
@@ -105,7 +102,7 @@ function SettingsNav(props: SettingsNavProps): JSX.Element {
   );
 }
 
-/** All four forms stay mounted so drafts survive section switches (`settings.md:25`). */
+/** All three forms stay mounted so drafts survive section switches (`settings.md:25`). */
 function SettingsPanels(
   props: SettingsDraftProps & {
     active: SettingsSection;
@@ -119,16 +116,6 @@ function SettingsPanels(
         aria-label={t('settings.sectionArticles')}
       >
         <ArticlesSection drafts={props.drafts} setDrafts={props.setDrafts} />
-      </section>
-      <section
-        class={sectionPanelClass(props.active === 'extraction')}
-        aria-label={t('settings.sectionExtraction')}
-      >
-        <ExtractionSection
-          drafts={props.drafts}
-          setDrafts={props.setDrafts}
-          onGoToServices={props.onGoToServices}
-        />
       </section>
       <section
         class={sectionPanelClass(props.active === 'kindle')}
@@ -177,9 +164,9 @@ const useLeaveGuards = (isDirty: () => boolean): void => {
 };
 
 /**
- * `settings.md:16-25`: one page with four sections in order (articles & subscriptions,
- * extraction, Kindle, external services), sidebar navigation on wide screens, and
- * unsaved-change guards for both section switches and leaving the page.
+ * `settings.md:16-25`: one page with three sections in order (articles & subscriptions,
+ * Kindle, external services), sidebar navigation on wide screens, and unsaved-change guards
+ * for both section switches and leaving the page.
  */
 export function SettingsPage(): JSX.Element {
   const navigate = useNavigate();

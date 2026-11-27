@@ -53,9 +53,6 @@ const pending = (): { resolve: (response: Response) => void } => {
 
 const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
   ...overrides,
 });
 
@@ -81,7 +78,7 @@ describe('stale settings GET after remount', () => {
     visit2.setStore((d) => ({
       ...d,
       retention: 42,
-      jinaKey: 'new-secret',
+      browserlessToken: 'new-secret',
       smtpPassword: 'smtp-secret',
     }));
     solid.flush();
@@ -93,7 +90,7 @@ describe('stale settings GET after remount', () => {
 
     expect(state.settings()?.retention).toBe(100);
     expect(visit2.store.retention).toBe(42);
-    expect(visit2.store.jinaKey).toBe('new-secret');
+    expect(visit2.store.browserlessToken).toBe('new-secret');
     expect(visit2.store.smtpPassword).toBe('smtp-secret');
     expect(fetchMock.mock.calls.length).toBe(callsBeforeStale);
   });

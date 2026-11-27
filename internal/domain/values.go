@@ -102,46 +102,32 @@ func ValidateRetention(n int) error {
 	return nil
 }
 
-func ValidateProvider(p ExtractorProvider) error {
-	switch p {
-	case ProviderDirect, ProviderJina, ProviderBrowser:
-		return nil
-	}
-
-	return NewError(ErrInvalidProvider, nil)
-}
-
-func ValidateJinaKey(raw string) (string, error) {
-	key := strings.TrimSpace(raw)
-	if key == "" {
-		return "", NewError(ErrInvalidJinaKey, nil)
-	}
-
-	return key, nil
-}
-
-func ValidateBrowserEndpoint(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", NewError(ErrInvalidEndpoint, nil)
-	}
+// ValidateBrowserlessSettings accepts an http/https base URL with a host and
+// no userinfo, query, or fragment, returned trimmed without trailing slashes.
+// The token is kept untrimmed; blank tokens are dropped (keep stored token).
+func ValidateBrowserlessSettings(s BrowserlessSettings) (BrowserlessSettings, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(s.URL), "/")
 
 	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return "", NewError(ErrInvalidEndpoint, nil)
+	if err != nil || !isBrowserlessBaseURL(parsed) {
+		return BrowserlessSettings{}, NewError(ErrInvalidBrowserlessSetting, nil)
 	}
 
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https", "ws", "wss":
-	default:
-		return "", NewError(ErrInvalidEndpoint, nil)
+	token := s.Token
+	if token != nil && strings.TrimSpace(*token) == "" {
+		token = nil
 	}
 
-	if parsed.Hostname() == "" {
-		return "", NewError(ErrInvalidEndpoint, nil)
+	return BrowserlessSettings{URL: trimmed, Token: token, ResidentialProxy: s.ResidentialProxy}, nil
+}
+
+func isBrowserlessBaseURL(parsed *url.URL) bool {
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
 	}
 
-	return trimmed, nil
+	return parsed.Hostname() != "" && parsed.User == nil && parsed.RawQuery == "" && !parsed.ForceQuery && parsed.Fragment == ""
 }
 
 func ValidateSMTPSettings(s SMTPSettings) (SMTPSettings, error) {

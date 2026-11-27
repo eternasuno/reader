@@ -1,10 +1,16 @@
 /**
- * External services settings state (`SET-SVC-1`, `SET-VAL-2`, `SET-VAL-3`): Jina key, browser
- * extraction endpoint, and SMTP mail service saves and removals.
+ * External services settings state (`SET-SVC-1`, `SET-VAL-2`, `SET-VAL-3`): Browserless fallback
+ * and SMTP mail service saves and removals.
  */
 
 import type { StoreSetter } from 'solid-js';
-import type { Settings, SmtpSettingsInput, SmtpSettingsView } from '../api';
+import type {
+  BrowserlessSettingsInput,
+  BrowserlessSettingsView,
+  Settings,
+  SmtpSettingsInput,
+  SmtpSettingsView,
+} from '../api';
 import { settingsApi } from '../api';
 import { t } from '../i18n';
 import { showToast } from '../ui';
@@ -19,10 +25,9 @@ import {
 } from './settings-store';
 
 type ServiceToastKey =
-  | 'settings.jinaKeySavedToast'
-  | 'settings.jinaKeyDeletedToast'
-  | 'settings.browserEndpointSavedToast'
-  | 'settings.browserEndpointDeletedToast'
+  | 'settings.browserlessSavedToast'
+  | 'settings.browserlessTokenDeletedToast'
+  | 'settings.browserlessDeletedToast'
   | 'settings.smtpSavedToast'
   | 'settings.smtpPasswordDeletedToast'
   | 'settings.smtpDeletedToast';
@@ -46,88 +51,96 @@ const commitServiceCall = async (
   }
 };
 
-export const saveJinaKey = (
+/** `SET-VAL-3`: a blank token is omitted so the stored one is preserved. */
+const browserlessInputOf = (
+  drafts: SettingsDrafts
+): BrowserlessSettingsInput => ({
+  url: drafts.browserlessUrl.trim(),
+  token:
+    drafts.browserlessToken.trim().length > 0
+      ? drafts.browserlessToken
+      : undefined,
+  residentialProxy: drafts.browserlessResidentialProxy,
+});
+
+const browserlessFromInput = (
+  input: BrowserlessSettingsInput,
+  previous: Settings['browserless']
+): BrowserlessSettingsView => ({
+  url: input.url,
+  tokenConfigured:
+    previous?.tokenConfigured === true || input.token !== undefined,
+  residentialProxy: input.residentialProxy,
+});
+
+const savedBrowserlessDrafts = (input: BrowserlessSettingsInput) => ({
+  browserlessUrl: input.url,
+  browserlessToken: '',
+  browserlessResidentialProxy: input.residentialProxy,
+});
+
+export const saveBrowserless = (
   drafts: SettingsDrafts,
   setDrafts: StoreSetter<SettingsDrafts>
 ): Promise<boolean> =>
-  runSave('jina-key', async () => {
+  runSave('browserless', async () => {
     if (settings() === null) return false;
-    const key = drafts.jinaKey.trim();
+    const input = browserlessInputOf(drafts);
     return commitServiceCall(
-      () => settingsApi.saveJinaKey(key),
-      () => {
-        const current = settings();
-        if (current !== null)
-          setSettings({ ...current, jinaKeyConfigured: true });
-        setDrafts((draft) => ({ ...draft, jinaKey: '' }));
-      },
-      'settings.jinaKeySavedToast'
-    );
-  });
-
-export const removeJinaKey = (
-  setDrafts: StoreSetter<SettingsDrafts>
-): Promise<boolean> =>
-  runSave('jina-key', () =>
-    commitServiceCall(
-      () => settingsApi.deleteJinaKey(),
-      () => {
-        const current = settings();
-        if (current !== null)
-          setSettings({ ...current, jinaKeyConfigured: false });
-        setDrafts((draft) => ({ ...draft, jinaKey: '' }));
-      },
-      'settings.jinaKeyDeletedToast'
-    )
-  );
-
-export const saveBrowserEndpoint = (
-  drafts: SettingsDrafts,
-  setDrafts: StoreSetter<SettingsDrafts>
-): Promise<boolean> =>
-  runSave('browser-endpoint', async () => {
-    if (settings() === null) return false;
-    const endpoint = drafts.browserEndpoint.trim();
-    return commitServiceCall(
-      () => settingsApi.saveBrowserEndpoint(endpoint),
+      () => settingsApi.saveBrowserless(input),
       () => {
         const current = settings();
         if (current !== null) {
-          setSettings({ ...current, browserEndpointConfigured: true });
+          setSettings({
+            ...current,
+            browserless: browserlessFromInput(input, current.browserless),
+          });
         }
-        setDrafts((draft) => ({ ...draft, browserEndpoint: '' }));
+        setDrafts((draft) => ({ ...draft, ...savedBrowserlessDrafts(input) }));
       },
-      'settings.browserEndpointSavedToast'
+      'settings.browserlessSavedToast'
     );
   });
 
-const applyBrowserRemoved = (setDrafts: StoreSetter<SettingsDrafts>): void => {
-  const current = settings();
-  const isBrowser = current?.provider === 'browser';
-  if (current !== null) {
-    setSettings({
-      ...current,
-      browserEndpointConfigured: false,
-      provider: isBrowser ? 'direct' : current.provider,
-    });
-  }
-  setDrafts((draft) => ({
-    ...draft,
-    browserEndpoint: '',
-    ...(isBrowser || draft.provider === 'browser'
-      ? { provider: 'direct' }
-      : {}),
-  }));
-};
-
-export const removeBrowserEndpoint = (
+export const removeBrowserlessToken = (
   setDrafts: StoreSetter<SettingsDrafts>
 ): Promise<boolean> =>
-  runSave('browser-endpoint', () =>
+  runSave('browserless-token', () =>
     commitServiceCall(
-      () => settingsApi.deleteBrowserEndpoint(),
-      () => applyBrowserRemoved(setDrafts),
-      'settings.browserEndpointDeletedToast'
+      () => settingsApi.deleteBrowserlessToken(),
+      () => {
+        const current = settings();
+        if (current?.browserless !== undefined) {
+          setSettings({
+            ...current,
+            browserless: { ...current.browserless, tokenConfigured: false },
+          });
+        }
+        setDrafts((draft) => ({ ...draft, browserlessToken: '' }));
+      },
+      'settings.browserlessTokenDeletedToast'
+    )
+  );
+
+export const removeBrowserless = (
+  setDrafts: StoreSetter<SettingsDrafts>
+): Promise<boolean> =>
+  runSave('browserless', () =>
+    commitServiceCall(
+      () => settingsApi.deleteBrowserless(),
+      () => {
+        const current = settings();
+        if (current !== null) {
+          setSettings({ ...current, browserless: undefined });
+        }
+        setDrafts((draft) => ({
+          ...draft,
+          browserlessUrl: '',
+          browserlessToken: '',
+          browserlessResidentialProxy: false,
+        }));
+      },
+      'settings.browserlessDeletedToast'
     )
   );
 

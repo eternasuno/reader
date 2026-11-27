@@ -32,16 +32,15 @@ var readLaterSections = map[domain.KindleLanguage]string{
 }
 
 type KindleConfig struct {
-	BaseCtx      context.Context
-	KindleSends  domain.KindleSendRepository
-	FeedItems    domain.FeedItemRepository
-	Fetcher      domain.WebpageFetcher
-	Extractor    domain.ArticleExtractor
-	EPUBBuilder  domain.EPUBBuilder
-	MailSender   domain.MailSender
-	TickInterval time.Duration
-	Now          func() time.Time
-	OnFatal      func(error)
+	BaseCtx          context.Context
+	KindleSends      domain.KindleSendRepository
+	FeedItems        domain.FeedItemRepository
+	WebpageExtractor domain.WebpageExtractor
+	EPUBBuilder      domain.EPUBBuilder
+	MailSender       domain.MailSender
+	TickInterval     time.Duration
+	Now              func() time.Time
+	OnFatal          func(error)
 }
 
 // KindleSender delivers unread articles as EPUB mail from a single background
@@ -50,8 +49,7 @@ type KindleSender struct {
 	baseCtx             context.Context
 	kindleSends         domain.KindleSendRepository
 	feedItems           domain.FeedItemRepository
-	fetcher             domain.WebpageFetcher
-	extractor           domain.ArticleExtractor
+	webpageExtractor    domain.WebpageExtractor
 	epubBuilder         domain.EPUBBuilder
 	mailSender          domain.MailSender
 	tickInterval        time.Duration
@@ -82,8 +80,7 @@ func NewKindleSender(cfg KindleConfig) *KindleSender {
 		baseCtx:             cfg.BaseCtx,
 		kindleSends:         cfg.KindleSends,
 		feedItems:           cfg.FeedItems,
-		fetcher:             cfg.Fetcher,
-		extractor:           cfg.Extractor,
+		webpageExtractor:    cfg.WebpageExtractor,
 		epubBuilder:         cfg.EPUBBuilder,
 		mailSender:          cfg.MailSender,
 		tickInterval:        tickInterval,
@@ -430,12 +427,7 @@ func defaultFeedItemBody(item domain.FeedItem) string {
 }
 
 func (s *KindleSender) extractFeedItem(ctx context.Context, item domain.FeedItem) string {
-	htmlBody, finalURL, err := s.fetcher.FetchWebpage(ctx, item.URL)
-	if err != nil {
-		return ""
-	}
-
-	extracted, err := s.extractor.ExtractArticle(htmlBody, finalURL)
+	extracted, err := s.webpageExtractor.ExtractWebpage(ctx, item.URL)
 	if err != nil || strings.TrimSpace(extracted.Content) == "" {
 		return ""
 	}
