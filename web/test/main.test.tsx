@@ -260,7 +260,7 @@ describe('library reload', () => {
     }
   });
 
-  it('does not auto-paginate when the list has no measurable layout', async () => {
+  it('does not fetch content when the list has no measurable layout', async () => {
     const item = {
       id: uuid(1),
       feedId: uuid(100),
@@ -280,14 +280,13 @@ describe('library reload', () => {
     respond((url) => {
       if (url.startsWith('/api/feed-items/order?'))
         return json(feedOrder(items));
-      if (url.startsWith('/api/feed-items?ids='))
-        return json({ items: items.slice(0, 30) });
+      if (url.startsWith('/api/feed-items?ids=')) return json({ items: items });
       return undefined;
     });
     await mountApp('/all');
     expect(listPages()).toHaveLength(1);
     expect(
       requestUrls().filter((url) => url.startsWith('/api/feed-items?ids='))
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 });

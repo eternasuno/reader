@@ -4,10 +4,11 @@ import type { Feed } from '../api';
 import {
   buildLibraryUrl,
   type LibraryScope,
-  loadError,
-  loadingInitial,
-  loadingMore,
+  listBoundary,
   rowIds,
+  snapshotError,
+  snapshotLoading,
+  windowError,
 } from '../state';
 import { ArticleListBody } from './ArticleListBody';
 import { ArticleListHeader } from './ArticleListHeader';
@@ -36,16 +37,15 @@ export interface ArticleListPaneProps {
 function ArticleListContent(props: ArticleListPaneProps): JSX.Element {
   const copy = () =>
     emptyCopy(props.scope, props.onRequestAddLink, props.onRequestAddFeed);
-  const isLoading = () => loadingInitial() || loadingMore();
   const isEmpty = () =>
-    !isLoading() && loadError() === null && rowIds().length === 0;
+    !snapshotLoading() && snapshotError() === null && rowIds().length === 0;
 
   return (
     <>
-      <Show when={loadError() !== null}>
+      <Show when={listBoundary() === null && snapshotError() !== null}>
         <ArticleListError />
       </Show>
-      <Show when={isLoading() && rowIds().length === 0}>
+      <Show when={snapshotLoading() && rowIds().length === 0}>
         <ArticleListLoading />
       </Show>
       <Show when={isEmpty()}>
@@ -57,6 +57,9 @@ function ArticleListContent(props: ArticleListPaneProps): JSX.Element {
         />
       </Show>
       <Show when={rowIds().length > 0}>
+        <Show when={windowError() !== null}>
+          <ArticleListError compact />
+        </Show>
         <ArticleListBody
           ids={rowIds()}
           scope={props.scope}

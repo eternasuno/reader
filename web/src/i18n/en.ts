@@ -49,7 +49,7 @@ export const enDict: Dict = {
     unreadEmptyTitle: 'No unread articles',
     unreadEmptyHint: 'You have read everything.',
     viewAllArticles: 'View all articles',
-    markLoadedRead: 'Mark loaded articles as read',
+    markReadAbove: 'Mark articles above as read',
     unreadOnly: 'Show unread only',
     readToggle: 'Read',
     markAllRead: 'Mark all as read',

@@ -29,7 +29,7 @@ describe('feed move', () => {
       ],
       feeds: [target, makeFeed({ id: uuid(1002), folderId: 'd1' })],
     });
-    expect(state.rows()).toHaveLength(2);
+    expect(state.rowIds()).toHaveLength(2);
 
     ctx.queueEmpty();
     const before = ctx.fetchCount();
@@ -42,7 +42,7 @@ describe('feed move', () => {
     expect(
       state.feeds().find((feed) => feed.id === uuid(1001))?.folderId
     ).toBeNull();
-    expect(state.rows().map((row) => row.id)).toEqual([uuid(1008)]);
+    expect(state.rowIds()).toEqual([uuid(1008)]);
     expect(ctx.fetchCount()).toBe(before + 1);
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('folders.movedToast'))
@@ -67,7 +67,7 @@ describe('feed move rollback', () => {
     expect(state.feeds().find((feed) => feed.id === uuid(1001))?.folderId).toBe(
       'd1'
     );
-    expect(state.rows()).toHaveLength(1);
+    expect(state.rowIds()).toHaveLength(1);
     expect(ui.currentToast()?.variant).toBe('error');
   });
 });
@@ -95,7 +95,7 @@ describe('feed move race: late failure', () => {
     expect(state.feeds().find((feed) => feed.id === uuid(1001))?.folderId).toBe(
       'd3'
     );
-    expect(state.rows().map((row) => row.id)).toEqual([uuid(1008)]);
+    expect(state.rowIds()).toEqual([uuid(1008)]);
 
     firstMove.resolve(jsonResponse({ error: 'FolderNotFound' }, 404));
     await expect(p1).resolves.toBe(false);
@@ -104,7 +104,7 @@ describe('feed move race: late failure', () => {
     expect(state.feeds().find((feed) => feed.id === uuid(1001))?.folderId).toBe(
       'd3'
     );
-    expect(state.rows().map((row) => row.id)).toEqual([uuid(1008)]);
+    expect(state.rowIds()).toEqual([uuid(1008)]);
 
     secondMove.resolve(noContentResponse());
     await expect(p2).resolves.toBe(true);
@@ -143,7 +143,7 @@ describe('feed move race: confirmed rollback', () => {
     expect(state.feeds().find((feed) => feed.id === uuid(1001))?.folderId).toBe(
       'd2'
     );
-    expect(state.rows()).toHaveLength(0);
+    expect(state.rowIds()).toHaveLength(0);
   });
 });
 
@@ -174,7 +174,7 @@ describe('feed move race: double failure', () => {
     expect(state.feeds().find((feed) => feed.id === uuid(1001))?.folderId).toBe(
       'd1'
     );
-    expect(state.rows().map((row) => row.id)).toEqual([uuid(1007)]);
+    expect(state.rowIds()).toEqual([uuid(1007)]);
   });
 });
 
@@ -202,7 +202,7 @@ describe('feed move race: newer failure settles first', () => {
     expect(state.feeds().find((feed) => feed.id === uuid(1001))?.folderId).toBe(
       'd2'
     );
-    expect(state.rows()).toHaveLength(0);
+    expect(state.rowIds()).toHaveLength(0);
     expect(ui.currentToast()?.variant).toBe('error');
 
     firstMove.resolve(noContentResponse());
@@ -212,7 +212,7 @@ describe('feed move race: newer failure settles first', () => {
     expect(state.feeds().find((feed) => feed.id === uuid(1001))?.folderId).toBe(
       'd2'
     );
-    expect(state.rows()).toHaveLength(0);
+    expect(state.rowIds()).toHaveLength(0);
     expect(ui.currentToast()?.message).toBe(
       String(i18n.t('folders.movedToast'))
     );
@@ -250,7 +250,7 @@ describe('feed move race: newer success settles first', () => {
     expect(state.feeds().find((feed) => feed.id === uuid(1001))?.folderId).toBe(
       'd3'
     );
-    expect(state.rows()).toHaveLength(0);
+    expect(state.rowIds()).toHaveLength(0);
   });
 });
 

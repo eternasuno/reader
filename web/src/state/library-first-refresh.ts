@@ -5,7 +5,7 @@
 
 import type { Feed } from '../api';
 import { feedsApi } from '../api';
-import { activeScope, isLibraryMounted, rows } from './library-store';
+import { activeScope, isLibraryMounted, rowIds } from './library-store';
 
 const INITIAL_REFRESH_POLL_MS = 2000;
 const INITIAL_REFRESH_POLL_ATTEMPTS = 15;
@@ -44,7 +44,7 @@ const isViewingFeed = (feedId: string): boolean => {
 };
 
 export const isShowingEmptyFeed = (feedId: string): boolean =>
-  isViewingFeed(feedId) && rows().length === 0;
+  isViewingFeed(feedId) && rowIds().length === 0;
 
 type TickAction = 'poll' | 'skip' | 'stop';
 
@@ -56,7 +56,7 @@ const tickAction = (feedId: string, reached: boolean): TickAction => {
   if (!isLibraryMounted()) return 'stop';
   if (!isViewingFeed(feedId)) return reached ? 'stop' : 'skip';
 
-  return rows().length === 0 ? 'poll' : 'stop';
+  return rowIds().length === 0 ? 'poll' : 'stop';
 };
 
 const pollOutcome = async (

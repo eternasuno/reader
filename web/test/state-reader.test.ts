@@ -4,6 +4,7 @@ import {
   jsonResponse,
   makeItem,
   makePage,
+  mountLibraryViewport,
   noContentResponse,
   savedOrder,
   uuid,
@@ -169,8 +170,9 @@ describe('read on open before slow list snapshot', () => {
     const page1 = ctx.pending();
     const detail = ctx.pending();
 
-    const loadingList = state.loadScopeFirstPage({ kind: 'later' }, false);
-    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(2));
+    await state.loadScopeFirstPage({ kind: 'later' }, false);
+    state.requestWindow({ start: 0, end: 0 });
+    expect(ctx.fetchCount()).toBe(2);
     const opening = state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
@@ -184,10 +186,12 @@ describe('read on open before slow list snapshot', () => {
     expect(state.openArticle()?.read).toBe(true);
 
     page1.resolve(jsonResponse({ items }));
-    await loadingList;
+    await vi.waitFor(() =>
+      expect(state.articleById(uuid(1019))).not.toBeNull()
+    );
     solid.flush();
 
-    expect(state.rows().find((row) => row.id === uuid(1018))?.read).toBe(true);
+    expect(state.articleById(uuid(1018))?.read).toBe(true);
     expect(state.openArticle()?.read).toBe(true);
   });
 });
@@ -200,16 +204,19 @@ describe('slow list snapshot before read on open', () => {
     const page1 = ctx.pending();
     const detail = ctx.pending();
 
-    const loadingList = state.loadScopeFirstPage({ kind: 'later' }, false);
-    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(2));
+    await state.loadScopeFirstPage({ kind: 'later' }, false);
+    state.requestWindow({ start: 0, end: 0 });
+    expect(ctx.fetchCount()).toBe(2);
     const opening = state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
     page1.resolve(jsonResponse({ items }));
-    await loadingList;
+    await vi.waitFor(() =>
+      expect(state.articleById(uuid(1018))).not.toBeNull()
+    );
     solid.flush();
 
-    expect(state.rows().find((row) => row.id === uuid(1018))?.read).toBe(false);
+    expect(state.articleById(uuid(1018))?.read).toBe(false);
 
     ctx.queueEmpty();
     detail.resolve(
@@ -218,7 +225,7 @@ describe('slow list snapshot before read on open', () => {
     await opening;
     solid.flush();
 
-    expect(state.rows().find((row) => row.id === uuid(1018))?.read).toBe(true);
+    expect(state.articleById(uuid(1018))?.read).toBe(true);
     expect(state.openArticle()?.read).toBe(true);
   });
 });
@@ -231,13 +238,16 @@ describe('local toggle during detail load', () => {
     const page1 = ctx.pending();
     const detail = ctx.pending();
 
-    const loadingList = state.loadScopeFirstPage({ kind: 'later' }, false);
-    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(2));
+    await state.loadScopeFirstPage({ kind: 'later' }, false);
+    state.requestWindow({ start: 0, end: 0 });
+    expect(ctx.fetchCount()).toBe(2);
     const opening = state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
     page1.resolve(jsonResponse({ items }));
-    await loadingList;
+    await vi.waitFor(() =>
+      expect(state.articleById(uuid(1018))).not.toBeNull()
+    );
 
     const patch = ctx.pending();
     const toggling = state.toggleArticleRead(uuid(1018), true);
@@ -253,7 +263,7 @@ describe('local toggle during detail load', () => {
     solid.flush();
 
     expect(ctx.fetchCount()).toBe(beforeDetail);
-    expect(state.rows()[0].read).toBe(true);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
     expect(state.openArticle()?.read).toBe(true);
   });
 });
@@ -261,7 +271,7 @@ describe('local toggle during detail load', () => {
 describe('refreshOpenArticle on mark-all', () => {
   it('refreshes open article in scope without resetting mode, selection, or auto-marking read', async () => {
     const { state, solid } = ctx;
-    state.trackLibraryMount();
+    const release = mountLibraryViewport(state);
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
       items: [makePage({ id: uuid(1018), read: false })],
@@ -302,6 +312,7 @@ describe('refreshOpenArticle on mark-all', () => {
     expect(state.openArticleId()).toBe(uuid(1018));
     expect(state.displayMode()).toBe('embedded');
     expect(state.openArticle()?.read).toBe(true);
+    release();
   });
 });
 

@@ -9,7 +9,7 @@ Single-level folders for grouping feeds in the sidebar, reading combined lists, 
 - `FD-FOLDER-3`: Renaming to the current name is a no-op (`204`). Missing folder fails `404 FolderNotFound`; name conflict fails `409 FolderAlreadyExists`.
 - `FD-FOLDER-4`: **Deleting a folder** (`DELETE /api/folders/:id`) removes only the folder and moves any feeds inside it to the top level (`folderId = null`); **no feeds or articles are deleted**.
 - `FD-FOLDER-5`: Folders list by `(name ASC, id ASC)` in UTF-8 byte order; empty folders are kept and listed.
-- `FD-MOVE-1`: Moving a feed (`PATCH /api/feeds/:id`) sets `folderId` (`FolderId | null`). Moving to a missing folder fails `404 FolderNotFound`. Moving updates sidebar feeds and folder unread counts without issuing a list reload; if moving a feed out of the currently viewed `/folder/:folderId` scope, the client removes that feed's loaded rows and queued IDs. If the move fails, both are restored in their original positions. If the open article belonged to that feed, the client navigates to `/folder/:folderId` keeping the unread filter.
+- `FD-MOVE-1`: Moving a feed (`PATCH /api/feeds/:id`) sets `folderId` (`FolderId | null`). Moving to a missing folder fails `404 FolderNotFound`. Moving updates sidebar feeds and folder unread counts without reloading the list. When a feed moves out of the active folder, hide its IDs from the active list immediately. If the move fails and membership rolls back, show those IDs again in their original positions. If the move succeeds and the open article belonged to that feed in the active folder, return to the folder list with the unread filter preserved.
 
 ## Interface & Messages
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createStateTestContext,
   jsonResponse,
@@ -48,7 +48,7 @@ const assertPopulatedPreconditions = (state: typeof ctx.state): void => {
   expect(state.folders().map((folder) => folder.id)).toEqual(['d1']);
   expect(state.savedUnreadCount()).toBe(2);
   expect(state.feedUnreadMap()).toEqual({ [uuid(1001)]: 4 });
-  expect(state.rows().map((row) => row.id)).toEqual([uuid(1007)]);
+  expect(state.rowIds()).toEqual([uuid(1007)]);
   expect(state.listBoundary()).toBe(BOUNDARY);
   expect(state.activeScope()).toEqual({ kind: 'folder', folderId: 'd1' });
   expect(state.activeUnreadOnly()).toBe(true);
@@ -75,11 +75,11 @@ describe('session clear: state reset', () => {
     expect(state.sidebarCollapsed()).toBe(true);
     expect(state.collapsedFolders().has('d1')).toBe(true);
 
-    expect(state.rows()).toEqual([]);
+    expect(state.rowIds()).toEqual([]);
     expect(state.listBoundary()).toBeNull();
-    expect(state.loadingInitial()).toBe(false);
-    expect(state.loadingMore()).toBe(false);
-    expect(state.loadError()).toBeNull();
+    expect(state.snapshotLoading()).toBe(false);
+    expect(state.windowError()).toBeNull();
+    expect(state.snapshotError()).toBeNull();
     expect(state.activeScope()).toEqual({ kind: 'later' });
     expect(state.activeUnreadOnly()).toBe(false);
     expect(state.articleById(uuid(1007))).toBeNull();
@@ -126,68 +126,42 @@ describe('session clear: in-flight first-page load', () => {
     const { state, solid } = ctx;
     const page1 = ctx.pending();
     const loading = state.loadScopeFirstPage({ kind: 'later' }, false);
-    expect(state.loadingInitial()).toBe(true);
+    expect(state.snapshotLoading()).toBe(true);
 
     state.markUnauthenticated();
     page1.resolve(jsonResponse({ ids: [uuid(1)], boundary: BOUNDARY }));
     await loading;
     solid.flush();
 
-    expect(state.rows()).toEqual([]);
+    expect(state.rowIds()).toEqual([]);
     expect(state.listBoundary()).toBeNull();
-    expect(state.loadingInitial()).toBe(false);
+    expect(state.snapshotLoading()).toBe(false);
     expect(state.articleById(uuid(1018))).toBeNull();
   });
 });
 
-const queueWithMore = async (
-  item: ReturnType<typeof makePage>,
-  nextId: string
-) => {
-  const ids = [
-    item.id,
-    ...Array.from({ length: 29 }, (_, i) => uuid(300 + i)),
-    nextId,
-  ];
-  ctx.queue({ ids, boundary: BOUNDARY });
-  ctx.queue({ items: [item] });
-  await ctx.state.loadScopeFirstPage({ kind: 'later' }, false);
-};
+it('discards stale window content after session clear while the new session loads', async () => {
+  const { state } = ctx;
+  const stale = makePage({ id: uuid(2) });
+  ctx.queue({ ids: [stale.id], boundary: BOUNDARY });
+  await state.loadScopeFirstPage({ kind: 'later' }, false);
+  const staleBatch = ctx.pending();
+  state.requestWindow({ start: 0, end: 0 });
 
-describe('session clear: in-flight next batch', () => {
-  it('ignores next-page load resolving after markUnauthenticated and protects new session', async () => {
-    const { state, solid } = ctx;
-    const staleNextId = uuid(2);
-    await queueWithMore(makePage({ id: uuid(1), read: true }), staleNextId);
+  state.markUnauthenticated();
+  state.markAuthenticated();
+  const fresh = makePage({ id: uuid(5), read: true });
+  ctx.queue({ ids: [fresh.id], boundary: BOUNDARY });
+  await state.loadScopeFirstPage({ kind: 'later' }, false);
+  const freshBatch = ctx.pending();
+  state.requestWindow({ start: 0, end: 0 });
 
-    const staleNext = ctx.pending();
-    const staleLoad = state.loadMore();
-    expect(state.loadingMore()).toBe(true);
-
-    state.markUnauthenticated();
-    expect(state.loadingMore()).toBe(false);
-
-    const freshLoaded = makePage({ id: uuid(4), read: true });
-    const freshNextId = uuid(5);
-    await queueWithMore(freshLoaded, freshNextId);
-    const freshNext = ctx.pending();
-    const freshLoad = state.loadMore();
-    expect(state.loadingMore()).toBe(true);
-
-    staleNext.resolve(jsonResponse({ items: [makePage({ id: staleNextId })] }));
-    await staleLoad;
-    solid.flush();
-    expect(state.rowIds()).toEqual([freshLoaded.id]);
-    expect(state.loadingMore()).toBe(true);
-
-    freshNext.resolve(
-      jsonResponse({ items: [makePage({ id: freshNextId, read: true })] })
-    );
-    await freshLoad;
-    solid.flush();
-    expect(state.rowIds()).toEqual([freshLoaded.id, freshNextId]);
-    expect(state.loadingMore()).toBe(false);
-  });
+  staleBatch.resolve(jsonResponse({ items: [stale] }));
+  freshBatch.resolve(jsonResponse({ items: [fresh] }));
+  await vi.waitFor(() => expect(state.articleById(fresh.id)?.read).toBe(true));
+  expect(state.rowIds()).toEqual([fresh.id]);
+  expect(state.articleById(stale.id)).toBeNull();
+  expect(state.windowError()).toBeNull();
 });
 
 describe('session clear: in-flight reader load', () => {
@@ -280,7 +254,7 @@ describe('session clear: in-flight feed mutations', () => {
     solid.flush();
 
     expect(state.feeds()).toEqual([]);
-    expect(state.rows()).toEqual([]);
+    expect(state.rowIds()).toEqual([]);
     expect(ui.currentToast()).toBeNull();
   });
 });

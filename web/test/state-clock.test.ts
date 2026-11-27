@@ -167,14 +167,14 @@ describe('library row publish time', () => {
     sizeScroller(scroller, 400);
     notifyResize(scroller, 400);
     harness.modules.solid.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    harness.modules.solid.flush();
     const time = scroller.querySelector('time');
-    if (time === null) throw new Error('Missing article publish time');
-
-    expect(time.textContent).toBe('3分钟前');
+    expect(time?.textContent).toBe('3分钟前');
 
     await vi.advanceTimersByTimeAsync(34_990);
     harness.modules.solid.flush();
     expect(scroller.querySelector('time')).toBe(time);
-    expect(time.textContent).toBe('4分钟前');
+    expect(time?.textContent).toBe('4分钟前');
   });
 });

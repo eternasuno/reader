@@ -1,3 +1,4 @@
+import { createEffect, createRoot, flush } from 'solid-js';
 import { vi } from 'vitest';
 import type {
   Feed,
@@ -23,7 +24,6 @@ export interface SidebarSnapshotOptions {
 export interface LoadedLibraryOptions {
   scope: Parameters<StateModule['loadScopeFirstPage']>[0];
   items: Array<SavedPage | FeedItem>;
-  queuedItems?: Array<SavedPage | FeedItem>;
   unreadOnly?: boolean;
   feeds?: Array<Feed>;
   counts?: Array<FeedUnreadCount>;
@@ -209,18 +209,82 @@ const createSidebarHelpers = (
       await state.refreshSidebar();
       solid.flush();
     }
-    const items = [...options.items, ...(options.queuedItems ?? [])];
+    const { items } = options;
     mock.queue(
       options.scope.kind === 'later'
         ? savedOrder(items as Array<SavedPage>)
         : feedOrder(items)
     );
-    if (items.length > 0) mock.queue({ items: options.items });
-    await state.loadScopeFirstPage(options.scope, options.unreadOnly ?? false);
+    if (items.length > 0) mock.queue({ items });
+    await loadWindowedScope(state, options.scope, options.unreadOnly ?? false);
     solid.flush();
   };
 
   return { queueSidebar, queueDeferredSidebar, queueLoadedLibrary };
+};
+
+export const requireArticle = (state: StateModule, id: string) => {
+  const article = state.articleById(id);
+  if (article === null) throw new Error(`Missing cached article ${id}`);
+
+  return article;
+};
+
+/** Simulates a mounted viewport requesting content after each snapshot is accepted. */
+export const mountTestWindow = (state: StateModule): (() => void) =>
+  createRoot((dispose) => {
+    let mounted = true;
+    createEffect(
+      () => state.rowIds().length,
+      (length) => {
+        if (length === 0) return;
+
+        queueMicrotask(() => {
+          if (!mounted) return;
+
+          state.setVisibleRange({ first: 0, last: length - 1 });
+          state.requestWindow({ start: 0, end: length - 1 });
+        });
+      }
+    );
+    flush();
+    return () => {
+      mounted = false;
+      dispose();
+    };
+  });
+
+export const mountLibraryViewport = (state: StateModule): (() => void) => {
+  const release = state.trackLibraryMount();
+  const unmount = mountTestWindow(state);
+  return () => {
+    unmount();
+    release();
+  };
+};
+
+export const waitForWindow = async (state: StateModule): Promise<void> => {
+  await vi.waitFor(() => {
+    flush();
+    const error = state.windowError();
+    if (error !== null) throw new Error(error);
+
+    for (const id of state.rowIds()) requireArticle(state, id);
+  });
+};
+
+export const loadWindowedScope = async (
+  state: StateModule,
+  scope: Parameters<StateModule['loadScopeFirstPage']>[0],
+  unreadOnly: boolean
+): Promise<void> => {
+  await state.loadScopeFirstPage(scope, unreadOnly);
+  const ids = state.rowIds();
+  if (ids.length === 0) return;
+
+  state.setVisibleRange({ first: 0, last: ids.length - 1 });
+  state.requestWindow({ start: 0, end: ids.length - 1 });
+  await waitForWindow(state);
 };
 
 export const createStateTestContext = () => {

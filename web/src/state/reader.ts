@@ -11,9 +11,9 @@ import { showToast } from '../ui';
 import { errorText } from './errorText';
 import type { LibraryArticle } from './library';
 import * as library from './library';
-import type { ScopeMatcher } from './library-mark-all';
 import { refreshArticleSnapshot } from './library-mark-all';
 import { articleKindOf } from './library-store';
+import type { ReadTarget } from './read-sync';
 import { beginRecordSnapshot, targetOf } from './read-sync';
 import { fetchArticle } from './read-sync-transport';
 import { clearReaderSaveState } from './reader-save';
@@ -315,28 +315,30 @@ export const extractCurrentFeedItem = async (): Promise<void> => {
   }
 };
 
-/** `RD-NAV-1`: prev/next step through the loaded list; both are disabled when the article is not
+/** `RD-NAV-1`: prev/next step through the snapshot IDs; both are disabled when the article is not
  * part of it. */
 export const adjacentArticleIds = (): {
   prevId: string | null;
   nextId: string | null;
 } => {
-  const currentRows = library.rows();
-  const index = currentRows.findIndex((row) => row.id === openArticleId());
+  const ids = library.rowIds();
+  const id = openArticleId();
+  const index = id === null ? -1 : ids.indexOf(id);
   if (index < 0) return { prevId: null, nextId: null };
 
   return {
-    prevId: index > 0 ? currentRows[index - 1].id : null,
-    nextId: index < currentRows.length - 1 ? currentRows[index + 1].id : null,
+    prevId: ids[index - 1] ?? null,
+    nextId: ids[index + 1] ?? null,
   };
 };
 
 /**
- * Re-fetches the open reader article after mark-all when `covers` matches it, without resetting
- * selection, display mode, or auto-marking read.
+ * Re-fetches the open reader article when `covers` matches it, without resetting selection,
+ * display mode, or auto-marking read.
  */
 export const refreshOpenArticle = async (
-  covers: ScopeMatcher
+  covers: (target: ReadTarget) => boolean,
+  canCommit?: (seq: number) => boolean
 ): Promise<void> => {
   const current = openArticle();
   if (current === null || !covers(targetOf(current))) return;
@@ -345,7 +347,8 @@ export const refreshOpenArticle = async (
   await refreshArticleSnapshot(current.kind, current.id, (loaded, seq) => {
     const stale =
       isStale(reqGen) || openArticleId() !== current.id || articleMissing();
-    if (stale) return;
+    if (stale || canCommit?.(seq) === false) return;
+
     if (loaded !== null) library.upsertArticle(loaded, seq);
     else {
       setArticleMissing(true);

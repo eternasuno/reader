@@ -20,11 +20,10 @@ import {
   waitForFirstRefresh,
 } from './library-first-refresh';
 import { feedMoveTracker, LatestTokenMap } from './library-mutations';
-import type { QueueEntry } from './library-queue';
-import * as queue from './library-queue';
 import type { LibraryArticle } from './library-store';
 import * as store from './library-store';
-import { beginRecordSnapshot } from './read-sync';
+import { resetWindow, retryWindow, startWindow } from './library-window';
+import { beginRecordSnapshot, onQueueDrained } from './read-sync';
 import type { LibraryScope } from './scope';
 import { feedIconCandidates, hostnameOf, siteIconUrl } from './scope';
 import { onSessionCleared } from './session';
@@ -42,20 +41,24 @@ export {
   activeScope,
   activeUnreadOnly,
   articleById,
+  feedIdOf,
   groupStartIds,
+  idsThroughVisibleEnd,
   isLibraryMounted,
   listBoundary,
-  loadError,
-  loadingInitial,
-  loadingMore,
+  listRevision,
   /** Patches an article record in place (used by the reader after extraction, `RD-EXTRACT-1`). */
   patchArticle as patchArticleLocal,
   retainReaderArticle,
   rowIds,
-  rows,
+  setVisibleRange,
+  snapshotError,
+  snapshotLoading,
   trackLibraryMount,
   upsertArticle,
+  windowError,
 } from './library-store';
+export { refreshWindow, requestWindow } from './library-window';
 
 const feedOrderTokens = new LatestTokenMap();
 
@@ -96,100 +99,26 @@ const fetchFeedOrder = (
   }
 };
 
-const fetchQueue = async (
+const fetchSnapshot = async (
   scope: LibraryScope,
   unread: boolean
-): Promise<{
-  boundary: string;
-  entries: Array<QueueEntry>;
-}> => {
+): Promise<Parameters<typeof store.acceptSnapshot>[0]> => {
   if (scope.kind === 'later') {
     const { boundary, ids } = await savedPagesApi.order({ unread });
-    return { boundary, entries: ids.map((id) => ({ id, groupStart: false })) };
+    return { boundary, ids, feedIds: new Map() };
   }
 
   const { boundary, groups } = await fetchFeedOrder(scope, unread);
-  return {
-    boundary,
-    entries: groups.flatMap(({ feedId, ids }) =>
-      ids.map((id, index) => ({ id, feedId, groupStart: index === 0 }))
-    ),
-  };
+  const feedIds = new Map<string, string>();
+  const ids = groups.flatMap((group) => {
+    for (const id of group.ids) feedIds.set(id, group.feedId);
+    return group.ids;
+  });
+  return { boundary, ids, feedIds };
 };
 
 const isCurrent = (generation: number): boolean =>
   store.requestState.generation === generation;
-
-const loadChunk = async (
-  scope: LibraryScope,
-  chunk: Array<QueueEntry>,
-  generation: number
-): Promise<boolean> => {
-  const ids = chunk.map(({ id }) => id);
-  const snapshot = beginRecordSnapshot();
-  try {
-    const { items } = await (scope.kind === 'later'
-      ? savedPagesApi.byIds(ids)
-      : feedItemsApi.byIds(ids));
-    if (!isCurrent(generation)) return false;
-
-    const byId = new Map(items.map((item) => [item.id, item]));
-    const visible: Array<LibraryArticle> = [];
-    for (const entry of chunk) {
-      if (!queue.isQueued(scope, entry)) continue;
-
-      queue.consumeQueuedId(entry.id);
-      const item = byId.get(entry.id);
-      if (item !== undefined) {
-        visible.push(store.toLibraryArticle(store.articleKindOf(scope), item));
-      }
-    }
-    if (visible.length === 0) return false;
-
-    store.appendRows(visible, snapshot.seq);
-    return true;
-  } finally {
-    snapshot.release();
-  }
-};
-const consumeChunks = async (
-  scope: LibraryScope,
-  generation: number,
-  first: Array<QueueEntry>
-): Promise<void> => {
-  let chunk = first;
-  while (isCurrent(generation) && chunk.length > 0) {
-    if ((await loadChunk(scope, chunk, generation)) || !isCurrent(generation))
-      return;
-
-    chunk = queue.nextChunk(scope);
-  }
-};
-const loadChunks = async (
-  scope: LibraryScope,
-  generation: number,
-  initial: boolean
-): Promise<void> => {
-  if (store.requestState.batchInFlight) return;
-
-  store.requestState.batchInFlight = true;
-  try {
-    const chunk = queue.nextChunk(scope);
-    if (chunk.length === 0) return;
-
-    if (!initial) store.setLoadingMore(true);
-    flush();
-    await consumeChunks(scope, generation, chunk);
-  } catch (error) {
-    if (isCurrent(generation)) store.setLoadError(errorCodeOf(error));
-  } finally {
-    if (isCurrent(generation)) {
-      store.requestState.batchInFlight = false;
-      (initial ? store.setLoadingInitial : store.setLoadingMore)(false);
-      flush();
-    }
-  }
-};
 
 /** `LIB-RELOAD-1`: loads a fresh snapshot and discards earlier in-flight responses. */
 export const loadScopeFirstPage = async (
@@ -197,15 +126,13 @@ export const loadScopeFirstPage = async (
   unreadOnly: boolean
 ): Promise<void> => {
   const generation = ++store.requestState.generation;
-  store.requestState.batchInFlight = false;
+  resetWindow();
   store.setActiveScope(scope);
   store.setActiveUnreadOnly(unreadOnly);
   store.clearRows();
-  queue.resetQueue();
-  store.setListBoundary(null);
-  store.setLoadError(null);
-  store.setLoadingMore(false);
-  store.setLoadingInitial(true);
+  store.setSnapshotError(null);
+  store.setWindowError(null);
+  store.setSnapshotLoading(true);
   flush();
 
   if (scope.kind === 'folder') {
@@ -215,18 +142,16 @@ export const loadScopeFirstPage = async (
   }
 
   try {
-    const { boundary, entries } = await fetchQueue(scope, unreadOnly);
-    if (!isCurrent(generation)) return;
-
-    queue.acceptQueue(entries);
-    store.setListBoundary(boundary);
-    await loadChunks(scope, generation, true);
+    const snapshot = await fetchSnapshot(scope, unreadOnly);
+    if (isCurrent(generation)) store.acceptSnapshot(snapshot);
   } catch (error) {
-    if (!isCurrent(generation)) return;
-
-    store.setLoadError(errorCodeOf(error));
-    store.setLoadingInitial(false);
-    flush();
+    if (isCurrent(generation)) store.setSnapshotError(errorCodeOf(error));
+  } finally {
+    if (isCurrent(generation)) {
+      store.setSnapshotLoading(false);
+      flush();
+      startWindow();
+    }
   }
 };
 
@@ -257,46 +182,40 @@ export const startFirstRefreshWait = (feedId: string): void => {
   void reloadAfterFirstRefresh(feedId, controller.signal);
 };
 
-export const loadMore = async (): Promise<void> => {
-  if (store.loadingInitial() || store.loadError() !== null) return;
-  await loadChunks(store.activeScope(), store.requestState.generation, false);
-};
-
-export const resumeEmptyList = async (): Promise<void> => {
-  if (store.rowIds().length === 0) await loadMore();
-};
-
 export const retryLoad = async (): Promise<void> => {
   if (store.listBoundary() === null) {
     await loadScopeFirstPage(store.activeScope(), store.activeUnreadOnly());
     return;
   }
 
-  store.setLoadError(null);
-  flush();
-  await loadMore();
+  await retryWindow();
 };
 
 /** `SP-ADD-1`: prepends a freshly created saved page into `/later`. */
 export const insertSavedPageLocal = (page: SavedPage): void => {
-  if (store.activeScope().kind !== 'later' || store.hasRow(page.id)) return;
+  if (store.activeScope().kind !== 'later') return;
 
-  queue.removeQueuedId(page.id);
-  store.prependRow(store.toLibraryArticle('later', page));
-  if (!page.read) sidebar.adjustSavedUnread(1);
+  const snapshot = beginRecordSnapshot();
+  const inserted = store.prependRow(
+    store.toLibraryArticle('later', page),
+    snapshot.seq
+  );
+  snapshot.release();
+  if (inserted && !page.read) sidebar.adjustSavedUnread(1);
   flush();
+  startWindow();
 };
 
-/** `SP-REMOVE-1`: drops a deleted saved page from the loaded and queued `/later` rows. */
+/** `SP-REMOVE-1`: removes a deleted saved page from `/later`. */
 export const removeSavedPageLocal = (pageId: string): void => {
   if (store.activeScope().kind !== 'later') return;
 
   const target = store.articleById(pageId);
-  queue.removeQueuedId(pageId);
-  store.removeRow(pageId);
-  if (target?.read === false) sidebar.adjustSavedUnread(-1);
+  const existed = store.snapshotIds().includes(pageId);
+  store.removeListIds([pageId]);
+  if (existed && target?.read === false) sidebar.adjustSavedUnread(-1);
   flush();
-  void resumeEmptyList();
+  startWindow();
 };
 
 /** `FD-PREF-1`: changing order on the active single-feed list reloads its snapshot. */
@@ -332,6 +251,8 @@ export const clearLibraryState = (): void => {
   firstRefreshWait?.abort();
   firstRefreshWait = null;
   feedOrderTokens.reset();
+  resetWindow();
 };
 
+onQueueDrained(store.trimRecordCache);
 onSessionCleared(clearLibraryState);

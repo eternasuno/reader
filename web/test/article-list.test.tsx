@@ -2,6 +2,7 @@ import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Feed } from '../src/api';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
+import { ArticleListPane } from '../src/components/ArticleListPane';
 import { ArticleRow } from '../src/components/ArticleRow';
 import * as state from '../src/state';
 import {
@@ -10,6 +11,8 @@ import {
   mount,
   setupInteractions,
 } from './support/list-helpers';
+import { jsonResponse, makePage, uuid } from './support/state-fixture';
+import { installResizeObserver, sizeScroller } from './support/virtual-helpers';
 
 setupInteractions();
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -56,6 +59,105 @@ beforeEach(() => {
 
 afterEach(() => {
   state.clearSidebarState();
+  state.clearLibraryState();
+  vi.unstubAllGlobals();
+});
+
+const scope = { kind: 'later' } as const;
+const boundary = uuid(2000);
+
+const mountPane = (): HTMLElement =>
+  mount(() => (
+    <ArticleListPane
+      scope={scope}
+      openArticleId={null}
+      unreadOnly={false}
+      drawerOpen={false}
+      onToggleNav={vi.fn()}
+      navToggleRef={vi.fn()}
+      onNavigate={vi.fn()}
+      onRequestAddLink={vi.fn()}
+      onRequestAddFeed={vi.fn()}
+      onMoveFeed={vi.fn()}
+      onRequestNewFolder={vi.fn()}
+    />
+  ));
+
+it('shows initial loading and offers a snapshot retry after failure', async () => {
+  const snapshot = Promise.withResolvers<Response>();
+  fetchMock.mockReturnValueOnce(snapshot.promise);
+  const load = state.loadScopeFirstPage(scope, false);
+  const container = mountPane();
+  expect(container.querySelector('[role="status"]')).not.toBeNull();
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+
+  snapshot.resolve(jsonResponse({ error: 'RequestFailed' }, 500));
+  await load;
+  const alert = container.querySelector('[role="alert"]');
+  if (alert === null) throw new Error('missing snapshot error');
+
+  expect(alert.textContent).toContain('暂时无法加载文章');
+  expect(alert.textContent).toContain('请点击上方重试。');
+  expect(container.querySelector('[role="status"]')).toBeNull();
+  fetchMock.mockResolvedValueOnce(jsonResponse({ ids: [], boundary }));
+  clickButton(alert, '重试');
+  await vi.waitFor(() => expect(state.listBoundary()).toBe(boundary));
+  expect(fetchMock.mock.calls[1]?.[0]).toBe(fetchMock.mock.calls[0]?.[0]);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+const mountSizedPane = (
+  notifyResize: ReturnType<typeof installResizeObserver>
+) => {
+  const container = mountPane();
+  const scroller = container.querySelector<HTMLDivElement>('.overflow-y-auto');
+  if (scroller === null) throw new Error('missing scroller');
+
+  sizeScroller(scroller, 600);
+  notifyResize(scroller, 600);
+  flush();
+
+  return { container, scroller };
+};
+
+it('shows a compact window retry above the list and keeps its rows mounted', async () => {
+  const notifyResize = installResizeObserver();
+  const cached = makePage({ id: uuid(1007), title: 'Cached page' });
+  const pending = makePage({ id: uuid(1008), title: 'Pending page' });
+  fetchMock.mockResolvedValueOnce(
+    jsonResponse({ ids: [pending.id], boundary })
+  );
+  await state.loadScopeFirstPage(scope, false);
+  state.insertSavedPageLocal(cached);
+  flush();
+  const batch = Promise.withResolvers<Response>();
+  fetchMock.mockReturnValueOnce(batch.promise);
+  const { container, scroller } = mountSizedPane(notifyResize);
+  const cachedLink = scroller.querySelector(`a[href*="${cached.id}"]`);
+  expect(cachedLink?.textContent).toContain(cached.title);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+
+  batch.resolve(jsonResponse({ error: 'RequestFailed' }, 500));
+  await vi.waitFor(() =>
+    expect(container.querySelector('[role="alert"]')).not.toBeNull()
+  );
+  const alert = container.querySelector('[role="alert"]');
+  if (alert === null) throw new Error('missing window error');
+
+  expect(alert.textContent).toContain('暂时无法加载文章');
+  expect(alert.textContent).not.toContain('请点击上方重试。');
+  expect(alert.nextElementSibling).toBe(scroller);
+  expect(scroller.querySelector(`a[href*="${cached.id}"]`)).toBe(cachedLink);
+  expect(scroller.querySelector('[data-index="1"] .skeleton')).not.toBeNull();
+
+  fetchMock.mockResolvedValueOnce(jsonResponse({ items: [pending] }));
+  clickButton(alert, '重试');
+  await vi.waitFor(() => expect(scroller.textContent).toContain(pending.title));
+  expect(fetchMock.mock.calls.slice(1).map(([url]) => url)).toEqual([
+    `/api/saved-pages?ids=${pending.id}`,
+    `/api/saved-pages?ids=${pending.id}`,
+  ]);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });
 
 describe('ArticleListHeader unread toggle', () => {
@@ -63,7 +165,7 @@ describe('ArticleListHeader unread toggle', () => {
     const onToggleUnread = vi.fn();
     const off = mountHeader(false, { onToggleUnread });
     const unreadBtn = ariaBtn(off, '只显示未读');
-    const markReadBtn = ariaBtn(off, '将已加载文章标为已读');
+    const markReadBtn = ariaBtn(off, '将以上文章标为已读');
     expect(unreadBtn?.getAttribute('aria-pressed')).toBe('false');
     expect(
       (unreadBtn?.compareDocumentPosition(markReadBtn as Node) ?? 0) &

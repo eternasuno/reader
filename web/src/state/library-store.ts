@@ -1,27 +1,51 @@
-/**
- * Shared reactive record store for library articles (`LIB-LIST-1`): articles are stored once by
- * ID in a fine-grained store, the list holds loaded IDs, and the reader derives from its
- * selected ID. Writes go through store drafts so a field change (for example `read`) only re-runs
- * the bindings that read that field; server data is reconciled so record identity is preserved.
- * Deep-linked records are retained independently of list membership and evicted when neither view
- * needs them. Rows dropped by a pending feed move stay pinned until the move settles.
- */
+import { createStore, flush, reconcile } from 'solid-js';
+import type { FeedItem, SavedPage } from '../api';
+import { feedMoveTracker } from './library-mutations';
+import {
+  clearList,
+  prependListId,
+  removeListIds as removeSnapshotIds,
+  requestState,
+  rowIds,
+  setActiveScope,
+  setActiveUnreadOnly,
+  setSnapshotError,
+  setSnapshotLoading,
+  setWindowError,
+  snapshotIds,
+} from './library-snapshot';
+
+export {
+  acceptSnapshot,
+  activeScope,
+  activeUnreadOnly,
+  feedIdOf,
+  groupStartIds,
+  idsThroughVisibleEnd,
+  isLibraryMounted,
+  listBoundary,
+  listRevision,
+  requestState,
+  rowIds,
+  setActiveScope,
+  setActiveUnreadOnly,
+  setSnapshotError,
+  setSnapshotLoading,
+  setVisibleRange,
+  setWindowError,
+  snapshotError,
+  snapshotIds,
+  snapshotLoading,
+  trackLibraryMount,
+  updateFolderMembership,
+  windowError,
+} from './library-snapshot';
 
 import {
-  createMemo,
-  createSignal,
-  createStore,
-  flush,
-  reconcile,
-} from 'solid-js';
-import type { FeedItem, SavedPage } from '../api';
-import {
-  hasQueuedFeed,
-  resetQueue,
-  setFolderMembership,
-  snapshotPosition,
-} from './library-queue';
-import { mergeSnapshotRead } from './read-sync';
+  dropIdleUnknownEntry,
+  hasActiveEntry,
+  mergeSnapshotRead,
+} from './read-sync-state';
 import type { LibraryScope } from './scope';
 import { onSessionCleared } from './session';
 
@@ -52,138 +76,73 @@ export interface ArticleReadFallback {
   read: boolean;
 }
 
-const [activeScope, setActiveScope] = createSignal<LibraryScope>({
-  kind: 'later',
-});
-const [activeUnreadOnly, setActiveUnreadOnly] = createSignal(false);
-interface LibraryRecords {
-  /** Article records by ID. */
+type LibraryRecords = {
   byId: Record<string, LibraryArticle>;
-  /** Ordered IDs of the loaded list. */
-  ids: Array<string>;
-  /** Deep-linked reader article kept even when it is not part of the list. */
   retainedId: string | null;
-}
+};
 
+type RecordFreshness = { seq?: number; stale: boolean };
+
+const CACHE_BUDGET = 1000;
 const [records, setRecords] = createStore<LibraryRecords>({
   byId: {},
-  ids: [],
   retainedId: null,
 });
-const [listBoundary, setListBoundary] = createSignal<string | null>(null);
-const [loadingInitial, setLoadingInitial] = createSignal(false);
-const [loadingMore, setLoadingMore] = createSignal(false);
-const [loadError, setLoadError] = createSignal<string | null>(null);
+const freshness = new Map<string, RecordFreshness>();
+let cacheWindow: { start: number; end: number } | null = null;
 
-export {
-  activeScope,
-  activeUnreadOnly,
-  listBoundary,
-  loadError,
-  loadingInitial,
-  loadingMore,
-  setActiveScope,
-  setActiveUnreadOnly,
-  setListBoundary,
-  setLoadError,
-  setLoadingInitial,
-  setLoadingMore,
-};
-
-/** A generation owns its snapshot and at most one in-flight batch. */
-export const requestState = { generation: 0, batchInFlight: false };
-
-/** Returns whether previously hidden queue entries became eligible. */
-export const updateFolderMembership = (
-  feedId: string,
-  folderId: string | null
-): boolean => {
-  const scope = activeScope();
-  if (scope.kind !== 'folder') return false;
-
-  const previous = setFolderMembership(feedId, folderId);
-  if (scope.folderId !== folderId) {
-    dropFeedRows(feedId);
-    return false;
-  }
-
-  restoreFeedRows(feedId);
-  return (
-    previous !== undefined && previous !== folderId && hasQueuedFeed(feedId)
-  );
-};
-
-export const groupStartIds = createMemo(() => {
-  const starts = new Set<string>();
-  const seen = new Set<string>();
-  for (const id of records.ids) {
-    const entry = snapshotPosition(id)?.entry;
-    if (entry?.feedId === undefined) continue;
-    if (entry.groupStart || !seen.has(entry.feedId)) starts.add(id);
-    seen.add(entry.feedId);
-  }
-  return starts;
-});
-
-/**
- * `activeScope()` outlives the library page, so background work checks whether a library page is
- * still mounted. Pages remount when the scope kind changes, so mounts are counted.
- */
-let libraryMounts = 0;
-
-/** Called by the library page on mount; the returned release runs on unmount. */
-export const trackLibraryMount = (): (() => void) => {
-  libraryMounts += 1;
-
-  return () => {
-    libraryMounts -= 1;
-  };
-};
-
-export const isLibraryMounted = (): boolean => libraryMounts > 0;
-
-/** Ordered IDs of the loaded list; a store array, so readers track only what they read. */
-export const rowIds = (): ReadonlyArray<string> => records.ids;
-
-/** The article record (a store proxy with stable identity), or `null`. */
 export const articleById = (articleId: string): LibraryArticle | null =>
   records.byId[articleId] ?? null;
 
-export const hasRow = (articleId: string): boolean =>
-  records.ids.includes(articleId);
-
-export const retainedArticle = (): LibraryArticle | null => {
-  const id = records.retainedId;
-  if (id === null || hasRow(id)) return null;
-  return articleById(id);
+export const needsWindowRecord = (id: string): boolean => {
+  const record = freshness.get(id);
+  return record === undefined || record.stale;
 };
 
-/** Loaded rows in list order. Allocates a new array: for one-off reads, not for rendering. */
-export const rows = (): ReadonlyArray<LibraryArticle> => {
-  const list: Array<LibraryArticle> = [];
-  for (const id of records.ids) {
-    const article = records.byId[id];
-    if (article !== undefined) list.push(article);
-  }
-  return list;
+export const markRecordsStale = (): void => {
+  for (const record of freshness.values()) record.stale = true;
 };
 
-/**
- * Canonical records of rows dropped by a feed move, keyed by feed ID. They stay in `byId` until
- * `releaseFeedRows`, so a rollback restores list membership and order and never overwrites a read
- * state or server field that changed while the move was pending.
- */
-const pinnedFeedRows = new Map<string, Array<string>>();
+const deleteRecord = (draft: LibraryRecords, id: string): void => {
+  delete draft.byId[id];
+  freshness.delete(id);
+  dropIdleUnknownEntry(id);
+};
 
-const evictUnused = (draft: LibraryRecords): void => {
-  const keep = new Set(draft.ids);
-  if (draft.retainedId !== null) keep.add(draft.retainedId);
-  for (const ids of pinnedFeedRows.values()) {
-    for (const id of ids) keep.add(id);
-  }
-  for (const id of Object.keys(draft.byId)) {
-    if (!keep.has(id)) delete draft.byId[id];
-  }
+const isPinned = (draft: LibraryRecords, id: string): boolean => {
+  if (draft.retainedId === id || hasActiveEntry(id)) return true;
+
+  const article = draft.byId[id];
+  return (
+    article.kind === 'feed' && feedMoveTracker.hasPendingMove(article.feedId)
+  );
+};
+
+const evictRecords = (draft: LibraryRecords): void => {
+  if (freshness.size <= CACHE_BUDGET) return;
+
+  const evictable = [...freshness.keys()].filter((id) => !isPinned(draft, id));
+  const excess = evictable.length - CACHE_BUDGET;
+  if (excess <= 0) return;
+
+  const positions = new Map(rowIds().map((id, index) => [id, index]));
+  const distance = (id: string): number => {
+    const index = positions.get(id);
+    if (index === undefined || cacheWindow === null)
+      return Number.MAX_SAFE_INTEGER;
+
+    return Math.max(cacheWindow.start - index, index - cacheWindow.end, 0);
+  };
+  evictable.sort((a, b) => distance(b) - distance(a));
+  for (const id of evictable.slice(0, excess)) deleteRecord(draft, id);
+};
+
+export const setCacheWindow = (range: typeof cacheWindow): void => {
+  cacheWindow = range;
+};
+
+export const trimRecordCache = (): void => {
+  setRecords(evictRecords);
 };
 
 /**
@@ -194,8 +153,13 @@ const evictUnused = (draft: LibraryRecords): void => {
 const mergeRecord = (
   draft: LibraryRecords,
   incoming: LibraryArticle,
-  snapshotSeq?: number
+  snapshotSeq?: number,
+  stale = false
 ): void => {
+  if (snapshotSeq !== undefined && hasNewerRecord(incoming.id, snapshotSeq))
+    return;
+
+  freshness.set(incoming.id, { seq: snapshotSeq, stale });
   const existing = draft.byId[incoming.id];
   const read = mergeSnapshotRead(incoming, snapshotSeq);
   const merged: LibraryArticle =
@@ -218,9 +182,20 @@ const mergeRecord = (
 
 export const retainReaderArticle = (articleId: string | null): void => {
   setRecords((draft) => {
-    if (draft.retainedId === articleId) return;
+    const previous = draft.retainedId;
+    if (previous === articleId) return;
+
     draft.retainedId = articleId;
-    evictUnused(draft);
+    if (
+      previous !== null &&
+      draft.byId[previous] !== undefined &&
+      !snapshotIds().includes(previous) &&
+      !isPinned(draft, previous)
+    ) {
+      deleteRecord(draft, previous);
+    }
+
+    evictRecords(draft);
   });
 };
 
@@ -230,94 +205,53 @@ export const upsertArticle = (
 ): void => {
   setRecords((draft) => {
     mergeRecord(draft, article, snapshotSeq);
+    evictRecords(draft);
+  });
+};
+
+export const mergeWindowRecords = (
+  items: ReadonlyArray<LibraryArticle>,
+  seq: number,
+  stale: boolean
+): void => {
+  setRecords((draft) => {
+    for (const item of items) mergeRecord(draft, item, seq, stale);
+    evictRecords(draft);
   });
 };
 
 export const clearRows = (): void => {
-  pinnedFeedRows.clear();
+  cacheWindow = null;
+  clearList();
   setRecords((draft) => {
-    draft.ids.length = 0;
-    evictUnused(draft);
-  });
-};
-const sortFolderRows = (draft: LibraryRecords): void => {
-  draft.ids.sort(
-    (a, b) =>
-      (snapshotPosition(a)?.index ?? 0) - (snapshotPosition(b)?.index ?? 0)
-  );
-};
-
-/** Appends records accepted from the deduplicated queue, which excludes local prepends. */
-export const appendRows = (
-  items: ReadonlyArray<LibraryArticle>,
-  snapshotSeq?: number
-): void => {
-  setRecords((draft) => {
-    for (const item of items) {
-      mergeRecord(draft, item, snapshotSeq);
-      draft.ids.push(item.id);
+    for (const [id, record] of freshness) {
+      if (id === draft.retainedId) record.stale = true;
+      else deleteRecord(draft, id);
     }
-    if (activeScope().kind === 'folder') sortFolderRows(draft);
   });
 };
 
-export const prependRow = (article: LibraryArticle): void => {
+export const prependRow = (article: LibraryArticle, seq: number): boolean => {
+  if (snapshotIds().includes(article.id) && articleById(article.id) !== null)
+    return false;
+
+  prependListId(article.id);
   setRecords((draft) => {
-    if (draft.ids.includes(article.id)) return;
-    mergeRecord(draft, article);
-    draft.ids.unshift(article.id);
+    mergeRecord(draft, article, seq);
+    evictRecords(draft);
   });
+  return true;
 };
 
-export const removeRow = (articleId: string): void => {
+export const hasNewerRecord = (id: string, seq: number): boolean =>
+  (freshness.get(id)?.seq ?? -1) > seq;
+
+export const removeListIds = (ids: ReadonlyArray<string>): void => {
+  removeSnapshotIds(ids);
   setRecords((draft) => {
-    const index = draft.ids.indexOf(articleId);
-    if (index < 0) return;
-    draft.ids.splice(index, 1);
-    evictUnused(draft);
-  });
-};
-
-/**
- * Removes a feed's rows from the list and returns their IDs with the previous order, for a later
- * restore. The records stay pinned until `releaseFeedRows` runs for the feed.
- */
-const dropFeedRows = (feedId: string): void => {
-  setRecords((draft) => {
-    const ids = draft.ids.filter(
-      (id) => snapshotPosition(id)?.entry.feedId === feedId
-    );
-    if (ids.length === 0) return;
-
-    pinnedFeedRows.set(feedId, [...(pinnedFeedRows.get(feedId) ?? []), ...ids]);
-    draft.ids = draft.ids.filter(
-      (id) => snapshotPosition(id)?.entry.feedId !== feedId
-    );
-  });
-};
-
-/**
- * Ends a feed move's hold on its dropped records; evicts them unless the list or reader still
- * needs them.
- */
-export const releaseFeedRows = (feedId: string): void => {
-  if (!pinnedFeedRows.delete(feedId)) return;
-  setRecords((draft) => {
-    evictUnused(draft);
-  });
-};
-
-/**
- * Re-adds a failed move's dropped rows at their previous positions. Only membership and order
- * return: the pinned records are still in the store, so they are never re-merged from a copy.
- */
-const restoreFeedRows = (feedId: string): void => {
-  const ids = pinnedFeedRows.get(feedId);
-  if (ids === undefined) return;
-
-  setRecords((draft) => {
-    draft.ids = [...new Set([...draft.ids, ...ids])];
-    sortFolderRows(draft);
+    for (const id of ids) {
+      if (id !== draft.retainedId) deleteRecord(draft, id);
+    }
   });
 };
 
@@ -335,22 +269,18 @@ export const patchArticle = (
   });
 };
 
-export const clearLibraryStoreState = (): void => {
+const clearLibraryStoreState = (): void => {
   requestState.generation += 1;
-  requestState.batchInFlight = false;
-  pinnedFeedRows.clear();
   setRecords((draft) => {
-    draft.ids.length = 0;
     draft.retainedId = null;
-    evictUnused(draft);
   });
+  flush();
+  clearRows();
   setActiveScope({ kind: 'later' });
   setActiveUnreadOnly(false);
-  resetQueue();
-  setListBoundary(null);
-  setLoadingInitial(false);
-  setLoadingMore(false);
-  setLoadError(null);
+  setSnapshotLoading(false);
+  setSnapshotError(null);
+  setWindowError(null);
   flush();
 };
 

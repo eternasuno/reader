@@ -1,7 +1,7 @@
 /**
  * Settlement of read write results for `read-sync.ts`: a success confirms the rows it covered; a
  * failure rolls rows back unless a later intent superseded it, and ambiguous or unknown-baseline
- * failures schedule a detail re-fetch after the queue drains.
+ * failures schedule a window refresh after the queue drains.
  */
 
 import { flush } from 'solid-js';
@@ -45,7 +45,7 @@ const settleFailedEntry = (
   if (ambiguous) ambiguousIds.add(id);
   let lost = false;
   if (entry.queuedCount === 0) {
-    if (entry.confirmedKnown) {
+    if (entry.confirmedKnown && entry.confirmed !== undefined) {
       lost = setDisplay(id, entry, entry.confirmed);
     } else {
       ambiguousIds.add(id);

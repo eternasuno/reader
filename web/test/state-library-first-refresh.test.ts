@@ -65,7 +65,6 @@ const refreshedFeed = (id: string): Feed =>
 const B = '019363b8-0000-7000-8000-000000000001';
 const queuePage = (items: Array<FeedItem> = []): void => {
   queue(feedOrder(items, B));
-  if (items.length > 0) queue({ items });
 };
 const queueCounts = (): void => {
   queue({ items: [], boundary: B });
@@ -126,12 +125,12 @@ const expectReloaded = (
   expect(requestUrl(listIndex)).toBe(
     `/api/feeds/${feedId}/items/order?unread=${unread}`
   );
-  expect(state.rows().map((row) => row.id)).toEqual([itemId]);
+  expect(state.rowIds()).toEqual([itemId]);
 };
 
 const expectStopped = (expectedFetches: number): void => {
   expect(fetchCount()).toBe(expectedFetches);
-  expect(state.rows()).toHaveLength(0);
+  expect(state.rowIds()).toHaveLength(0);
 };
 
 const startInFlightPoll = async (itemId: string) => {

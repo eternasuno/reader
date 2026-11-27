@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createStateTestContext,
   jsonResponse,
+  loadWindowedScope,
   makeFeed,
   makeItem,
   makePage,
@@ -210,7 +211,7 @@ describe('record store sync and eviction', () => {
     const items = [makePage({ id: uuid(1019), read: true })];
     ctx.queue(savedOrder(items, BOUNDARY));
     ctx.queue({ items });
-    await state.loadScopeFirstPage({ kind: 'later' }, false);
+    await loadWindowedScope(state, { kind: 'later' }, false);
     solid.flush();
     expect(state.articleById(uuid(1018))).toBeNull();
     expect(state.articleById(uuid(1021))?.id).toBe(uuid(1021));

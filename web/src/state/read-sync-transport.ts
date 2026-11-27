@@ -1,13 +1,20 @@
 /**
- * Network transport and post-ambiguous-failure detail re-fetch for `read-sync.ts`.
+ * Network transport and post-drain recovery for `read-sync.ts`.
  */
 
-import { flush } from 'solid-js';
 import type { FeedItem, SavedPage } from '../api';
 import { ApiError, feedItemsApi, savedPagesApi } from '../api';
 import type { LibraryArticle } from './library-store';
-import { articleById, toLibraryArticle, upsertArticle } from './library-store';
-import { beginRecordSnapshot, queueState } from './read-sync-state';
+import { articleById, hasNewerRecord, toLibraryArticle } from './library-store';
+import { refreshWindow, retryWindow } from './library-window';
+import {
+  ambiguousIds,
+  dropIdleUnknownEntry,
+  entries,
+  isEntryIdle,
+  queueState,
+} from './read-sync-state';
+import { openArticle, refreshOpenArticle } from './reader';
 
 export const isAmbiguousError = (error: unknown): boolean =>
   !(error instanceof ApiError && error.status > 0);
@@ -41,25 +48,51 @@ export const fetchArticle = async (
   return remote === null ? null : toLibraryArticle(kind, remote);
 };
 
-export const refetchArticleSnapshot = async (
-  article: LibraryArticle,
+const needsReaderRecovery = (
+  id: string,
+  settledAt: number,
+  sentEpoch: number
+): boolean => {
+  const entry = entries.get(id);
+  return (
+    sentEpoch === queueState.epoch &&
+    entry?.settledAt === settledAt &&
+    isEntryIdle(entry) &&
+    !entry.confirmedKnown
+  );
+};
+
+const recoverOpenArticle = async (
+  id: string,
+  settledAt: number,
   sentEpoch: number
 ): Promise<void> => {
-  const snapshot = beginRecordSnapshot();
-  try {
-    const loaded = await fetchArticle(article.kind, article.id);
-    if (
-      sentEpoch !== queueState.epoch ||
-      loaded === null ||
-      articleById(article.id) === null
-    ) {
-      return;
-    }
-    upsertArticle(loaded, snapshot.seq);
-    flush();
-  } catch {
-    // Re-fetch is best-effort after an ambiguous failure.
-  } finally {
-    snapshot.release();
+  // Join the window refresh before falling back to a detail GET for the reader.
+  await retryWindow();
+  await refreshOpenArticle(
+    (article) =>
+      article.id === id && needsReaderRecovery(id, settledAt, sentEpoch),
+    (seq) =>
+      needsReaderRecovery(id, settledAt, sentEpoch) && !hasNewerRecord(id, seq)
+  );
+};
+
+export const recoverReadSnapshots = (): void => {
+  if (ambiguousIds.size === 0) return;
+
+  let refresh = false;
+  for (const id of ambiguousIds) {
+    if (articleById(id) === null) dropIdleUnknownEntry(id);
+    else refresh = true;
   }
+
+  const article = openArticle();
+  const recoverReader = article !== null && ambiguousIds.has(article.id);
+  ambiguousIds.clear();
+  if (refresh) refreshWindow();
+  if (!recoverReader) return;
+
+  const entry = entries.get(article.id);
+  if (entry !== undefined && !entry.confirmedKnown)
+    void recoverOpenArticle(article.id, entry.settledAt, queueState.epoch);
 };
