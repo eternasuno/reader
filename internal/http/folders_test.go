@@ -98,14 +98,8 @@ func TestFolderItemsAndReadAll(t *testing.T) {
 	unread := h.seedItem(inFolder.ID, "https://example.com/unread", nil)
 	outsideItem := h.seedItem(outside.ID, "https://example.com/outside", nil)
 
-	recorder := h.authed(http.MethodGet, "/api/folders/"+folder.ID+"/items?unread", nil)
-	requireStatus(t, recorder, http.StatusOK)
-
-	var page pageResponse[feedItemJSON]
-	decodeBody(t, recorder, &page)
-	if len(page.Items) != 1 || page.Items[0].ID != unread.ID || !domain.IsValidUUIDv7(page.Boundary) {
-		t.Fatalf("folder unread items = %+v boundary = %q", page.Items, page.Boundary)
-	}
+	recorder := h.authed(http.MethodGet, "/api/folders/"+folder.ID+"/items/order?unread", nil)
+	boundary := requireFeedItemSnapshot(t, recorder, []snapshotGroup{{FeedID: inFolder.ID, IDs: []string{unread.ID}}})
 
 	invalidID := domain.NewID()
 	for _, body := range []string{
@@ -123,7 +117,6 @@ func TestFolderItemsAndReadAll(t *testing.T) {
 		t.Fatal("invalid folder read-all changed read state")
 	}
 
-	boundary := domain.NewID()
 	postBoundary := h.seedItem(inFolder.ID, "https://example.com/after", nil)
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/folders/"+folder.ID+"/read-all", map[string]any{"before": boundary}), http.StatusNoContent)
@@ -141,10 +134,6 @@ func TestFolderItemsAndReadAll(t *testing.T) {
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/folders/"+domain.NewID()+"/read-all", map[string]any{"before": domain.NewID()}), http.StatusNoContent)
 
-	recorder = h.authed(http.MethodGet, "/api/folders/"+domain.NewID()+"/items", nil)
-	requireStatus(t, recorder, http.StatusOK)
-	decodeBody(t, recorder, &page)
-	if len(page.Items) != 0 || !domain.IsValidUUIDv7(page.Boundary) {
-		t.Fatalf("unknown folder items = %+v boundary = %q", page.Items, page.Boundary)
-	}
+	recorder = h.authed(http.MethodGet, "/api/folders/"+domain.NewID()+"/items/order", nil)
+	requireFeedItemSnapshot(t, recorder, []snapshotGroup{})
 }

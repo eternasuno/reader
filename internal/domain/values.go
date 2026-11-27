@@ -6,56 +6,31 @@ import (
 	"strings"
 )
 
-const (
-	defaultPageLimit = 30
-	maxPageLimit     = 200
-)
-
-func ValidatePageParams(limit int, hasLimit bool, unread bool, order SortOrder, cursor *string, boundary *string) (PageParams, error) {
-	if !hasLimit {
-		limit = defaultPageLimit
-	}
-
-	if limit < 1 || limit > maxPageLimit {
-		return PageParams{}, NewError(ErrRequestFailed, nil)
-	}
-
-	if order == "" {
-		order = SortOrderNewest
-	}
-
-	if err := ValidateSortOrder(order); err != nil {
-		return PageParams{}, NewError(ErrRequestFailed, nil)
-	}
-
-	resolvedBoundary, err := resolvePageBoundary(cursor, boundary)
-	if err != nil {
-		return PageParams{}, err
-	}
-
-	return PageParams{
-		Limit:    limit,
-		Unread:   unread,
-		Order:    order,
-		Cursor:   cursor,
-		Boundary: resolvedBoundary,
-	}, nil
+// NewSnapshotParams mints the snapshot boundary before any read.
+func NewSnapshotParams(unread bool) SnapshotParams {
+	return SnapshotParams{Unread: unread, Boundary: NewID()}
 }
 
-func resolvePageBoundary(cursor *string, boundary *string) (string, error) {
-	if cursor == nil {
-		if boundary != nil {
-			return "", NewError(ErrRequestFailed, nil)
+// ValidateBatchIDs accepts 1..MaxBatchIDs distinct canonical UUIDv7 ids.
+func ValidateBatchIDs(ids []string) error {
+	if len(ids) < 1 || len(ids) > MaxBatchIDs {
+		return NewError(ErrRequestFailed, nil)
+	}
+
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if !IsValidUUIDv7(id) {
+			return NewError(ErrRequestFailed, nil)
 		}
 
-		return NewID(), nil
+		if _, dup := seen[id]; dup {
+			return NewError(ErrRequestFailed, nil)
+		}
+
+		seen[id] = struct{}{}
 	}
 
-	if !IsValidUUIDv7(*cursor) || boundary == nil || !IsValidUUIDv7(*boundary) {
-		return "", NewError(ErrRequestFailed, nil)
-	}
-
-	return *boundary, nil
+	return nil
 }
 
 func NormalizeArticleValues(title string, description, content *string) (string, *string, *string) {
@@ -95,11 +70,26 @@ func ValidateSortOrder(order SortOrder) error {
 }
 
 func ValidateRetention(n int) error {
-	if n < 1 {
+	if n < 1 || n > FeedItemBudget {
 		return NewError(ErrInvalidRetention, nil)
 	}
 
 	return nil
+}
+
+// ExceedsFeedItemBudget reports whether feeds holding storedCounts items could grow past
+// FeedItemBudget: each feed may hold max(its stored count, retention) items, because feeds
+// above retention only shrink on their next refresh while the others fill up to retention.
+func ExceedsFeedItemBudget(storedCounts []int, retention int) bool {
+	total := 0
+	for _, count := range storedCounts {
+		total += max(count, retention)
+		if total > FeedItemBudget {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ValidateBrowserlessSettings accepts an http/https base URL with a host and

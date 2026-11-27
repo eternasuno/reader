@@ -8,9 +8,10 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 - `SP-ADD-1`: Adding a URL checks duplicates by normalized URL before fetching (`CM-FETCH-1`). On duplicate (`409 SavedPageAlreadyExists`), adding a link via dialog or `/save` opens the existing page instead of showing an error; saving an already-saved feed item shows toast `该文章已在稍后阅读中` and stays on the item.
 - `SP-ADD-2`: Stored `url` is the submitted normalized URL (not a redirect target). Fetch/extract failure or empty content saves nothing.
 - `SP-SAVE-1`: Saving a feed item reuses `extractedContent`, else feed `content`, and fetches (`CM-FETCH-1`) only when the item has neither. Missing item fails `404 FeedItemNotFound`.
-- `SP-LIST-1`: Listed in `id DESC` order by default, or `id ASC` with `order=oldest` (`CM-PAGE-1`).
+- `SP-LIST-1`: The saved-page snapshot is a flat list of IDs in `id DESC` order (`CM-PAGE-1`). In an active `稍后阅读` list, a newly saved page is prepended and deduplicated by ID.
+- `SP-LIMIT-1`: At most `10000` saved pages. Creating a page beyond the cap fails with `400 SavedPageLimitExceeded` across all save entry points. A duplicate URL takes precedence (`SP-ADD-1`). Existing pages are never deleted automatically to make room.
 - `SP-READ-1`: Marking read/unread (`PATCH`, `POST /read`, `POST /read-all`) is idempotent; unknown IDs succeed with no change.
-- `SP-REMOVE-1`: Deleting removes the row immediately. Re-adding the same URL later creates a fresh unread page at the top.
+- `SP-REMOVE-1`: Deleting removes the row immediately from the loaded list and its ID from the queue. The client ignores late batch results for the deleted page. Re-adding the same URL later creates a fresh unread page at the top.
 
 ## Interface
 
@@ -23,11 +24,12 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 
 | Method | Path | Request | Success | Errors |
 | --- | --- | --- | --- | --- |
-| GET | `/api/saved-pages` | `limit`, `unread`, `order?`, `cursor?`, `boundary?` | `200 { items, cursor, boundary }` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
+| GET | `/api/saved-pages/order` | `unread?` | `200 { boundary, ids }` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
+| GET | `/api/saved-pages` | `ids` (required, comma-separated) | `200 { items }` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/unread-count` | — | `200 { count, boundary }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/:id` | `id` | `200 { item \| null }` | `SavedPageRepositoryError` 500 |
-| POST | `/api/saved-pages` | `{ url }` | `201 { item }` | `InvalidPageUrl` 400, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
-| POST | `/api/feed-items/:id/save` | `id` | `201 { item }` | `FeedItemNotFound` 404, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
+| POST | `/api/saved-pages` | `{ url }` | `201 { item }` | `InvalidPageUrl` 400, `SavedPageLimitExceeded` 400, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
+| POST | `/api/feed-items/:id/save` | `id` | `201 { item }` | `FeedItemNotFound` 404, `SavedPageLimitExceeded` 400, `SavedPageAlreadyExists` 409 `{ id, url }`, `CM-FETCH` 422, `TooManyRequests` 429, 500 |
 | PATCH | `/api/saved-pages/:id` | `{ read }` | `204` | `SavedPageRepositoryError` 500 |
 | POST | `/api/saved-pages/read` | `{ ids }` | `204` | `SavedPageRepositoryError` 500 |
 | POST | `/api/saved-pages/read-all` | `{ before }` | `204` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
@@ -41,6 +43,7 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 | --- | --- |
 | `InvalidPageUrl` | 请输入有效的 http 或 https 链接 |
 | `SavedPageAlreadyExists` | 该文章已在稍后阅读中 |
+| `SavedPageLimitExceeded` | 稍后阅读最多保存 10000 篇 |
 | `SavedPageRepositoryError` | 暂时无法访问稍后阅读，请稍后重试 |
 | added / saved toast | 文章已添加 / 已保存到稍后阅读 |
 | empty state | 留一篇，慢慢读 / 保存感兴趣的文章链接，在这里专注阅读。 / 新增文章链接 |

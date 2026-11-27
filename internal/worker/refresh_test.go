@@ -17,30 +17,24 @@ import (
 var refreshTestNow = time.Date(2026, 3, 14, 8, 0, 0, 0, time.UTC)
 
 type refreshFixture struct {
-	feeds    *fakeFeedRepository
-	items    *fakeFeedItemRepository
-	settings *fakeSettingRepository
-	fetcher  *fakeFeedFetcher
-	parser   *fakeFeedParser
-	fatals   fatalRecorder
-	cfg      RefreshConfig
+	feeds   *fakeFeedRepository
+	fetcher *fakeFeedFetcher
+	parser  *fakeFeedParser
+	fatals  fatalRecorder
+	cfg     RefreshConfig
 }
 
 // newRefreshFixture wires fakes where the given feeds are due. The poll
 // interval is an hour so wakes stay explicit; tests that need ticks shorten it.
 func newRefreshFixture(due ...domain.Feed) *refreshFixture {
 	fx := &refreshFixture{
-		feeds:    newTestFeedRepository(due...),
-		items:    &fakeFeedItemRepository{},
-		settings: &fakeSettingRepository{},
-		fetcher:  &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"},
-		parser:   &fakeFeedParser{},
+		feeds:   newTestFeedRepository(due...),
+		fetcher: &fakeFeedFetcher{body: []byte("x"), finalURL: "https://example.com/feed.xml"},
+		parser:  &fakeFeedParser{},
 	}
 
 	fx.cfg = RefreshConfig{
 		Feeds:        fx.feeds,
-		FeedItems:    fx.items,
-		Settings:     fx.settings,
 		Fetcher:      fx.fetcher,
 		Parser:       fx.parser,
 		PollInterval: time.Hour,
@@ -80,44 +74,6 @@ func (fx *refreshFixture) recordedCount() int {
 	return len(fx.feeds.succeededList()) + len(fx.feeds.failedList())
 }
 
-// failFirstSettings fails the first Get with err and then delegates.
-type failFirstSettings struct {
-	domain.SettingRepository
-	err  error
-	once sync.Once
-}
-
-func (s *failFirstSettings) Get(ctx context.Context) (domain.Settings, error) {
-	var err error
-
-	s.once.Do(func() { err = s.err })
-
-	if err != nil {
-		return domain.Settings{}, err
-	}
-
-	return s.SettingRepository.Get(ctx)
-}
-
-// failFirstItems fails the first ListStoredRefsByFeed with err and then delegates.
-type failFirstItems struct {
-	domain.FeedItemRepository
-	err  error
-	once sync.Once
-}
-
-func (r *failFirstItems) ListStoredRefsByFeed(ctx context.Context, feedID string) ([]domain.StoredRef, error) {
-	var err error
-
-	r.once.Do(func() { err = r.err })
-
-	if err != nil {
-		return nil, err
-	}
-
-	return r.FeedItemRepository.ListStoredRefsByFeed(ctx, feedID)
-}
-
 // captureLogs routes the default logger into a buffer for the test and returns
 // a reader of what was logged.
 func captureLogs(t *testing.T) func() string {
@@ -151,15 +107,15 @@ func TestRefreshSyncsDueFeed(t *testing.T) {
 
 	fx := newRefreshFixture(feed)
 	fx.cfg.Now = sequenceClock(refreshTestNow, finishedAt)
-	fx.settings.settings = domain.Settings{Retention: 1}
+	entries := []domain.ParsedFeedEntry{
+		parsedEntry(t, "https://example.com/one", "One"),
+		parsedEntry(t, "https://example.com/two", "Two"),
+	}
 	fx.parser.parsed = domain.ParsedFeed{
 		Title:   "Fresh Title",
 		SiteURL: ptrTo("https://example.com/"),
 		IconURL: ptrTo("https://example.com/icon.png"),
-		Entries: []domain.ParsedFeedEntry{
-			parsedEntry(t, "https://example.com/one", "One"),
-			parsedEntry(t, "https://example.com/two", "Two"),
-		},
+		Entries: slices.Clone(entries),
 	}
 
 	_, stop := fx.start(t)
@@ -181,14 +137,14 @@ func TestRefreshSyncsDueFeed(t *testing.T) {
 		t.Fatalf("SucceedRefresh calls = %d, want 1", len(succeeded))
 	}
 
-	assertSucceededRefresh(t, succeeded[0], claims[0].attemptID, finishedAt)
+	assertSucceededRefresh(t, succeeded[0], claims[0].attemptID, finishedAt, entries)
 
 	if failed, released := fx.feeds.failedList(), fx.feeds.releasedList(); len(failed) != 0 || len(released) != 0 {
 		t.Fatalf("failed = %v, released = %v, want none", failed, released)
 	}
 }
 
-func assertSucceededRefresh(t *testing.T, got succeededRefresh, attemptID string, finishedAt time.Time) {
+func assertSucceededRefresh(t *testing.T, got succeededRefresh, attemptID string, finishedAt time.Time, entries []domain.ParsedFeedEntry) {
 	t.Helper()
 
 	if got.attemptID != attemptID || got.feedID != "feed-1" {
@@ -204,12 +160,8 @@ func assertSucceededRefresh(t *testing.T, got succeededRefresh, attemptID string
 		t.Fatalf("meta = %+v, want %+v", got.meta, wantMeta)
 	}
 
-	if len(got.newItems) != 1 || got.newItems[0].URL.Raw() != "https://example.com/one" || got.newItems[0].ID == "" {
-		t.Fatalf("newItems = %+v, want the first entry only (retention honoured) with a generated id", got.newItems)
-	}
-
-	if len(got.deleteIDs) != 0 {
-		t.Fatalf("deleteIDs = %v, want none", got.deleteIDs)
+	if !reflect.DeepEqual(got.entries, entries) {
+		t.Fatalf("entries = %+v, want %+v in source order", got.entries, entries)
 	}
 
 	wantNext := finishedAt.Add(defaultRefreshInterval)
@@ -462,34 +414,17 @@ func TestSchedulerTickClaimsNewlyDueFeed(t *testing.T) {
 func TestRefreshReleasesClaimOnDatabaseErrorAndRetriesWithoutRestart(t *testing.T) {
 	cases := []struct {
 		name       string
-		code       domain.ErrorCode
 		inject     func(fx *refreshFixture, err error)
 		wantFailed bool
 	}{
 		{
-			name: "settings read",
-			code: domain.ErrSettingRepositoryError,
-			inject: func(fx *refreshFixture, err error) {
-				fx.cfg.Settings = &failFirstSettings{SettingRepository: fx.settings, err: err}
-			},
-		},
-		{
-			name: "stored refs read",
-			code: domain.ErrFeedItemRepositoryError,
-			inject: func(fx *refreshFixture, err error) {
-				fx.cfg.FeedItems = &failFirstItems{FeedItemRepository: fx.items, err: err}
-			},
-		},
-		{
 			name: "succeed write",
-			code: domain.ErrFeedRepositoryError,
 			inject: func(fx *refreshFixture, err error) {
 				fx.feeds.succeedScript.steps = []error{err}
 			},
 		},
 		{
 			name: "fail write",
-			code: domain.ErrFeedRepositoryError,
 			inject: func(fx *refreshFixture, err error) {
 				fx.fetcher.err = domain.NewError(domain.ErrFetchFeedError, errors.New("upstream 502"))
 				fx.feeds.failScript.steps = []error{err}
@@ -501,7 +436,7 @@ func TestRefreshReleasesClaimOnDatabaseErrorAndRetriesWithoutRestart(t *testing.
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureLogs(t)
-			dbErr := domain.NewError(tc.code, errors.New("db failed for https://alice:secret@example.com/db"))
+			dbErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("db failed for https://alice:secret@example.com/db"))
 
 			fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
 			fx.cfg.PollInterval = 5 * time.Millisecond
@@ -564,11 +499,11 @@ func TestRefreshReleaseRetriesUntilItSucceeds(t *testing.T) {
 	t.Parallel()
 
 	releaseErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("release failed"))
-	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("settings failed"))
+	dbErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("succeed refresh failed"))
 
 	fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
 	fx.cfg.PollInterval = 5 * time.Millisecond
-	fx.cfg.Settings = &failFirstSettings{SettingRepository: fx.settings, err: dbErr}
+	fx.feeds.succeedScript.steps = []error{dbErr}
 	fx.feeds.releaseScript.steps = []error{releaseErr, releaseErr}
 
 	_, stop := fx.start(t)
@@ -588,12 +523,12 @@ func TestRefreshReleaseRetriesUntilItSucceeds(t *testing.T) {
 func TestRefreshFatalWhenReleaseKeepsFailing(t *testing.T) {
 	t.Parallel()
 
-	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("settings failed"))
+	dbErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("succeed refresh failed"))
 	releaseErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("release failed for https://alice:secret@example.com/db"))
 
 	fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
 	fx.cfg.OnFatal = fx.fatals.Record
-	fx.settings.getErr = dbErr
+	fx.feeds.succeedScript.after = dbErr
 	fx.feeds.releaseScript.after = releaseErr
 
 	_, stop := fx.start(t)
@@ -707,12 +642,12 @@ func TestRefreshEmptyClaimResetsFailureStreak(t *testing.T) {
 func TestRefreshDatabaseFailuresDuringRefreshAreFatalAfterThreeConsecutive(t *testing.T) {
 	t.Parallel()
 
-	dbErr := domain.NewError(domain.ErrSettingRepositoryError, errors.New("settings failed for https://alice:secret@example.com/db"))
+	dbErr := domain.NewError(domain.ErrFeedRepositoryError, errors.New("succeed refresh failed for https://alice:secret@example.com/db"))
 
 	fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
 	fx.cfg.PollInterval = 2 * time.Millisecond
 	fx.cfg.OnFatal = fx.fatals.Record
-	fx.settings.getErr = dbErr
+	fx.feeds.succeedScript.after = dbErr
 
 	_, stop := fx.start(t)
 

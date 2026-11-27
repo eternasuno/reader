@@ -89,7 +89,7 @@ const load = async (loaded: Settings = makeSettings()): Promise<void> => {
 describe('retention save', () => {
   it('saves retention and clears the dirty state', async () => {
     await load();
-    setDrafts((d) => ({ ...d, retention: 50 }));
+    setDrafts((d) => ({ ...d, retention: '50' }));
     solid.flush();
 
     queueEmpty();
@@ -109,19 +109,31 @@ describe('retention save', () => {
 });
 
 describe('retention failure', () => {
-  it('reports retention save failures', async () => {
+  it('rejects an invalid draft before sending a request', async () => {
     await load();
-    setDrafts((d) => ({ ...d, retention: 0 }));
+    setDrafts((d) => ({ ...d, retention: '1e3' }));
     solid.flush();
 
-    queue({ error: 'InvalidRetention' }, 400);
+    const requestsBeforeSave = fetchMock.mock.calls.length;
+    await expect(state.saveRetention(drafts)).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(requestsBeforeSave);
+    expect(state.settings()?.retention).toBe(100);
+  });
+
+  it('reports retention save failures', async () => {
+    await load();
+    setDrafts((d) => ({ ...d, retention: '50' }));
+    solid.flush();
+
+    queue({ error: 'FeedItemBudgetExceeded' }, 400);
     await expect(state.saveRetention(drafts)).resolves.toBe(false);
     solid.flush();
 
     expect(state.settings()?.retention).toBe(100);
     expect(state.isSaving()).toBe(false);
+    expect(requestUrl(2)).toBe('/api/settings/retention');
     expect(ui.currentToast()?.message).toBe(
-      i18n.translateErrorCode('InvalidRetention')
+      i18n.translateErrorCode('FeedItemBudgetExceeded')
     );
   });
 });
@@ -151,7 +163,7 @@ describe('save lock ownership across sessions', () => {
   it('prevents an old in-flight save from releasing a newer session lock', async () => {
     state.markAuthenticated();
     await load();
-    setDrafts((d) => ({ ...d, retention: 50 }));
+    setDrafts((d) => ({ ...d, retention: '50' }));
     solid.flush();
 
     let resolveOld: (res: Response) => void = () => {};

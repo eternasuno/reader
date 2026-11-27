@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { Feed, FeedItem, SavedPage } from '../src/api';
+import type { Feed, FeedItem } from '../src/api';
 import {
+  feedOrder,
   jsonResponse as json,
   makeFeed,
   makeItem,
+  uuid,
 } from './support/state-fixture';
 
 type StateModule = typeof import('../src/state');
@@ -61,8 +63,10 @@ const refreshedFeed = (id: string): Feed =>
   makeFeed({ id, updatedAt: '2026-11-19T00:00:00Z' });
 
 const B = '019363b8-0000-7000-8000-000000000001';
-const queuePage = (items: Array<SavedPage | FeedItem> = []): void =>
-  queue({ items, cursor: null, boundary: B });
+const queuePage = (items: Array<FeedItem> = []): void => {
+  queue(feedOrder(items, B));
+  if (items.length > 0) queue({ items });
+};
 const queueCounts = (): void => {
   queue({ items: [], boundary: B });
   queue({ count: 0, boundary: B });
@@ -77,7 +81,8 @@ const openEmptyScope = async (
   scope: Parameters<StateModule['loadScopeFirstPage']>[0],
   unread = false
 ): Promise<number> => {
-  queuePage();
+  if (scope.kind === 'later') queue({ ids: [], boundary: B });
+  else queuePage();
   await state.loadScopeFirstPage(scope, unread);
   solid.flush();
   return fetchCount();
@@ -102,7 +107,7 @@ const queueRefreshedReload = (feedId: string, itemId: string): Feed => {
   return refreshed;
 };
 
-const startWait = (feedId = 'f1') => {
+const startWait = (feedId = uuid(1001)) => {
   const controller = new AbortController();
   const poll = state.reloadAfterFirstRefresh(feedId, controller.signal);
   let done = false;
@@ -119,7 +124,7 @@ const expectReloaded = (
   unread = false
 ): void => {
   expect(requestUrl(listIndex)).toBe(
-    `/api/feeds/${feedId}/items?limit=30&unread=${unread}`
+    `/api/feeds/${feedId}/items/order?unread=${unread}`
   );
   expect(state.rows().map((row) => row.id)).toEqual([itemId]);
 };
@@ -130,11 +135,13 @@ const expectStopped = (expectedFetches: number): void => {
 };
 
 const startInFlightPoll = async (itemId: string) => {
-  const before = await queueEmptyFeed('f1');
+  const before = await queueEmptyFeed(uuid(1001));
   const listRequest = pending();
-  const refreshed = refreshedFeed('f1');
-  queueReloadResponses(refreshed, [makeItem({ id: itemId, feedId: 'f1' })]);
-  const { controller, poll } = startWait('f1');
+  const refreshed = refreshedFeed(uuid(1001));
+  queueReloadResponses(refreshed, [
+    makeItem({ id: itemId, feedId: uuid(1001) }),
+  ]);
+  const { controller, poll } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(2000);
   expect(fetchCount()).toBe(before + 1);
   expect(requestUrl(before)).toBe('/api/feeds');
@@ -148,11 +155,11 @@ const startInFlightPoll = async (itemId: string) => {
 };
 
 it('reloads the feed list once the feed finishes refreshing on the 2nd poll', async () => {
-  const before = await queueEmptyFeed('f1');
-  queue({ items: [makeFeed({ id: 'f1' })] });
-  queueRefreshedReload('f1', 'i1');
+  const before = await queueEmptyFeed(uuid(1001));
+  queue({ items: [makeFeed({ id: uuid(1001) })] });
+  queueRefreshedReload(uuid(1001), uuid(1007));
 
-  const { poll } = startWait('f1');
+  const { poll } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(2000);
   expect(fetchCount()).toBe(before + 1);
 
@@ -162,15 +169,15 @@ it('reloads the feed list once the feed finishes refreshing on the 2nd poll', as
 
   expect(requestUrl(before)).toBe('/api/feeds');
   expect(requestUrl(before + 1)).toBe('/api/feeds');
-  expectReloaded(before + 6, 'f1', 'i1');
+  expectReloaded(before + 6, uuid(1001), uuid(1007));
 });
 
 it('retries after a failed feedsApi.list request and reloads when the next succeeds', async () => {
-  const before = await queueEmptyFeed('f1');
+  const before = await queueEmptyFeed(uuid(1001));
   fetchMock.mockRejectedValueOnce(new Error('network error'));
-  queueRefreshedReload('f1', 'i2');
+  queueRefreshedReload(uuid(1001), uuid(1008));
 
-  const { poll } = startWait('f1');
+  const { poll } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(2000);
   expect(fetchCount()).toBe(before + 1);
 
@@ -180,15 +187,15 @@ it('retries after a failed feedsApi.list request and reloads when the next succe
 
   expect(requestUrl(before)).toBe('/api/feeds');
   expect(requestUrl(before + 1)).toBe('/api/feeds');
-  expectReloaded(before + 6, 'f1', 'i2');
+  expectReloaded(before + 6, uuid(1001), uuid(1008));
 });
 
 it('stops without further polling or reloading when aborted before the next tick', async () => {
-  const before = await queueEmptyFeed('f1');
-  queue({ items: [makeFeed({ id: 'f1' })] });
-  queueRefreshedReload('f1', 'i3');
+  const before = await queueEmptyFeed(uuid(1001));
+  queue({ items: [makeFeed({ id: uuid(1001) })] });
+  queueRefreshedReload(uuid(1001), uuid(1009));
 
-  const { controller, poll } = startWait('f1');
+  const { controller, poll } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(2000);
   expect(fetchCount()).toBe(before + 1);
 
@@ -207,15 +214,15 @@ it('stops without reloading when aborted while feedsApi.list is in flight', asyn
 });
 
 it('stops without reloading when aborted while refreshSidebar is in flight', async () => {
-  const before = await queueEmptyFeed('f1');
-  const refreshed = refreshedFeed('f1');
+  const before = await queueEmptyFeed(uuid(1001));
+  const refreshed = refreshedFeed(uuid(1001));
   queue({ items: [refreshed] });
   const sidebarRequest = pending();
   queue({ items: [] });
   queueCounts();
-  queuePage([makeItem({ id: 'i5', feedId: 'f1' })]);
+  queuePage([makeItem({ id: uuid(1010), feedId: uuid(1001) })]);
 
-  const { controller, poll } = startWait('f1');
+  const { controller, poll } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(2000);
   expect(fetchCount()).toBe(before + 5);
 
@@ -227,11 +234,11 @@ it('stops without reloading when aborted while refreshSidebar is in flight', asy
 });
 
 it('stops without reloading when a successful list does not contain the feed', async () => {
-  const before = await queueEmptyFeed('f1');
-  queue({ items: [makeFeed({ id: 'other' })] });
-  queueRefreshedReload('f1', 'i6');
+  const before = await queueEmptyFeed(uuid(1001));
+  queue({ items: [makeFeed({ id: uuid(1016) })] });
+  queueRefreshedReload(uuid(1001), 'i6');
 
-  const { poll } = startWait('f1');
+  const { poll } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(2000);
   await poll;
   await vi.advanceTimersByTimeAsync(2000);
@@ -242,10 +249,10 @@ it('stops without reloading when a successful list does not contain the feed', a
 });
 
 it('stops without polling /api/feeds when the library unmounts before the tick', async () => {
-  const before = await queueEmptyFeed('f1');
-  queueRefreshedReload('f1', 'i7');
+  const before = await queueEmptyFeed(uuid(1001));
+  queueRefreshedReload(uuid(1001), 'i7');
 
-  const { isDone } = startWait('f1');
+  const { isDone } = startWait(uuid(1001));
   unmountLibrary();
 
   await vi.advanceTimersByTimeAsync(4000);
@@ -263,17 +270,17 @@ it('stops without refreshing sidebar or reloading when unmounted while /api/feed
 });
 
 it('skips ticks on another scope and polls once the empty feed opens', async () => {
-  queueSidebar([makeFeed({ id: 'f1' })]);
+  queueSidebar([makeFeed({ id: uuid(1001) })]);
   await state.refreshSidebar();
   const beforeLater = await openEmptyScope({ kind: 'later' });
 
-  const { poll, isDone } = startWait('f1');
+  const { poll, isDone } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(4000);
   expect(isDone()).toBe(false);
   expect(feedListCalls(beforeLater)).toBe(0);
 
-  const afterOpen = await openEmptyScope({ kind: 'feed', feedId: 'f1' });
-  queueRefreshedReload('f1', 'i8');
+  const afterOpen = await openEmptyScope({ kind: 'feed', feedId: uuid(1001) });
+  queueRefreshedReload(uuid(1001), uuid(1023));
 
   await vi.advanceTimersByTimeAsync(2000);
   await poll;
@@ -281,19 +288,19 @@ it('skips ticks on another scope and polls once the empty feed opens', async () 
 
   expect(feedListCalls(afterOpen)).toBe(2);
   expect(requestUrl(afterOpen)).toBe('/api/feeds');
-  expectReloaded(afterOpen + 5, 'f1', 'i8');
+  expectReloaded(afterOpen + 5, uuid(1001), uuid(1023));
 });
 
 it('stops polling once another scope opens after the feed was viewed', async () => {
-  const before = await queueEmptyFeed('f1');
-  queue({ items: [makeFeed({ id: 'f1' })] });
+  const before = await queueEmptyFeed(uuid(1001));
+  queue({ items: [makeFeed({ id: uuid(1001) })] });
 
-  const { isDone } = startWait('f1');
+  const { isDone } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(2000);
   expect(feedListCalls(before)).toBe(1);
 
   const afterLeave = await openEmptyScope({ kind: 'later' });
-  queueRefreshedReload('f1', 'i9');
+  queueRefreshedReload(uuid(1001), 'i9');
 
   await vi.advanceTimersByTimeAsync(4000);
   solid.flush();
@@ -304,18 +311,18 @@ it('stops polling once another scope opens after the feed was viewed', async () 
 });
 
 it('keeps polling after toggling unread on the same feed and reloads when refreshed', async () => {
-  const before = await queueEmptyFeed('f1');
-  queue({ items: [makeFeed({ id: 'f1' })] });
+  const before = await queueEmptyFeed(uuid(1001));
+  queue({ items: [makeFeed({ id: uuid(1001) })] });
 
-  const { poll } = startWait('f1');
+  const { poll } = startWait(uuid(1001));
   await vi.advanceTimersByTimeAsync(2000);
   expect(feedListCalls(before)).toBe(1);
 
   const afterToggle = await openEmptyScope(
-    { kind: 'feed', feedId: 'f1' },
+    { kind: 'feed', feedId: uuid(1001) },
     true
   );
-  queueRefreshedReload('f1', 'i10');
+  queueRefreshedReload(uuid(1001), uuid(1024));
 
   await vi.advanceTimersByTimeAsync(2000);
   await poll;
@@ -323,20 +330,20 @@ it('keeps polling after toggling unread on the same feed and reloads when refres
 
   expect(feedListCalls(afterToggle)).toBe(2);
   expect(requestUrl(afterToggle)).toBe('/api/feeds');
-  expectReloaded(afterToggle + 5, 'f1', 'i10', true);
+  expectReloaded(afterToggle + 5, uuid(1001), uuid(1024), true);
 });
 
 it('aborts the earlier wait so only one poll stream runs', async () => {
-  const beforeA = await queueEmptyFeed('fA');
-  state.startFirstRefreshWait('fA');
-  state.startFirstRefreshWait('fB');
+  const beforeA = await queueEmptyFeed(uuid(1005));
+  state.startFirstRefreshWait(uuid(1005));
+  state.startFirstRefreshWait(uuid(1006));
 
   await vi.advanceTimersByTimeAsync(2000);
   expect(feedListCalls(beforeA)).toBe(0);
 
-  const afterOpenB = await openEmptyScope({ kind: 'feed', feedId: 'fB' });
-  queue({ items: [makeFeed({ id: 'fB' })] });
-  queueRefreshedReload('fB', 'iB');
+  const afterOpenB = await openEmptyScope({ kind: 'feed', feedId: uuid(1006) });
+  queue({ items: [makeFeed({ id: uuid(1006) })] });
+  queueRefreshedReload(uuid(1006), uuid(1025));
 
   await vi.advanceTimersByTimeAsync(2000);
   expect(feedListCalls(afterOpenB)).toBe(1);
@@ -346,5 +353,5 @@ it('aborts the earlier wait so only one poll stream runs', async () => {
   solid.flush();
 
   expect(feedListCalls(afterOpenB)).toBe(3);
-  expectReloaded(afterOpenB + 6, 'fB', 'iB');
+  expectReloaded(afterOpenB + 6, uuid(1006), uuid(1025));
 });

@@ -157,7 +157,7 @@ describe('external AbortSignal', () => {
     fetchMock.mockImplementation(() => new Promise(() => {}));
 
     const settled = captureError(
-      savedPagesApi.list({}, { signal: controller.signal, timeoutMs: 1_000 })
+      savedPagesApi.order({}, { signal: controller.signal, timeoutMs: 1_000 })
     );
 
     controller.abort();

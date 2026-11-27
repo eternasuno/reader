@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -91,6 +92,84 @@ func TestSettingRepoRetention(t *testing.T) {
 
 	if settings.Retention != 250 {
 		t.Fatalf("retention = %d, want 250", settings.Retention)
+	}
+}
+
+func TestSettingRepoRetentionOverBudgetLeavesSettingsAndItems(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	feed := createFeed(t, store, "First", nil)
+	createFeed(t, store, "Second", nil)
+	items := addItems(t, store, feed, 1)
+
+	err := store.Settings().UpdateRetention(ctx, domain.FeedItemBudget/2+1)
+	requireCode(t, err, domain.ErrFeedItemBudgetExceeded)
+
+	settings, err := store.Settings().Get(ctx)
+	if err != nil || settings.Retention != 100 {
+		t.Fatalf("settings after budget rejection = (%+v, %v), want retention 100", settings, err)
+	}
+
+	if got := itemIDs(loadTestFeedItems(t, store, feed.ID)); !slices.Equal(got, []string{items[0].ID}) {
+		t.Fatalf("items after budget rejection = %v, want original item", got)
+	}
+}
+
+func TestSettingRepoLowerRetentionPrunesNewestByIDPerFeed(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	first := createFeed(t, store, "First", nil)
+	second := createFeed(t, store, "Second", nil)
+	addSnapshotItems(t, store, first, 1, 4, 6)
+	addSnapshotItems(t, store, second, 2, 3, 5)
+
+	for _, id := range snapshotTestIDs(6, 5) {
+		if err := store.FeedItems().SetRead(ctx, id, true); err != nil {
+			t.Fatalf("mark newest item read: %v", err)
+		}
+	}
+
+	if err := store.Settings().UpdateRetention(ctx, 2); err != nil {
+		t.Fatalf("lower retention: %v", err)
+	}
+
+	settings, err := store.Settings().Get(ctx)
+	if err != nil || settings.Retention != 2 {
+		t.Fatalf("settings after pruning = (%+v, %v), want retention 2", settings, err)
+	}
+
+	for _, test := range []struct {
+		feed domain.Feed
+		want []string
+	}{
+		{feed: first, want: snapshotTestIDs(6, 4)},
+		{feed: second, want: snapshotTestIDs(5, 3)},
+	} {
+		got := loadTestFeedItems(t, store, test.feed.ID)
+		if !slices.Equal(itemIDs(got), test.want) || !got[0].Read || got[1].Read {
+			t.Fatalf("items after pruning %q = %+v, want %v with only newest read", test.feed.Title, got, test.want)
+		}
+	}
+}
+
+func TestSettingRepoEqualOrHigherRetentionDoesNotPrune(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	feed := createFeed(t, store, "Feed", nil)
+	if err := store.Settings().UpdateRetention(ctx, 1); err != nil {
+		t.Fatalf("set initial retention: %v", err)
+	}
+
+	// An upgraded database can still contain rows above its configured retention.
+	items := addItems(t, store, feed, 3)
+	for _, retention := range []int{1, 2} {
+		if err := store.Settings().UpdateRetention(ctx, retention); err != nil {
+			t.Fatalf("set retention to %d: %v", retention, err)
+		}
+
+		if got, want := itemIDs(loadTestFeedItems(t, store, feed.ID)), []string{items[2].ID, items[1].ID, items[0].ID}; !slices.Equal(got, want) {
+			t.Fatalf("items after setting retention to %d = %v, want %v", retention, got, want)
+		}
 	}
 }
 

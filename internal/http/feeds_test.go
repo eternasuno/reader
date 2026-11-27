@@ -156,6 +156,27 @@ func TestFeedSubscribe(t *testing.T) {
 	requireAPIError(t, invalidURL, http.StatusBadRequest, "FeedUrlInvalid")
 }
 
+func TestFeedSubscribeAtCapacity(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.seedFeed("Existing", "https://existing.example.com/rss", nil)
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/retention", map[string]any{"retention": 10000}), http.StatusNoContent)
+
+	duplicate := h.authed(http.MethodPost, "/api/feeds", map[string]any{"url": "https://existing.example.com/rss"})
+	requireAPIError(t, duplicate, http.StatusConflict, "FeedAlreadyExists")
+
+	missingFolder := h.authed(http.MethodPost, "/api/feeds", map[string]any{"url": "https://new.example.com/rss", "folderId": domain.NewID()})
+	requireAPIError(t, missingFolder, http.StatusNotFound, "FolderNotFound")
+
+	response := h.authed(http.MethodPost, "/api/feeds", map[string]any{"url": "https://new.example.com/rss"})
+	requireAPIError(t, response, http.StatusBadRequest, "FeedItemBudgetExceeded")
+
+	if feeds := h.allFeeds(); len(feeds) != 1 {
+		t.Fatalf("feeds after rejected subscribe = %d, want 1", len(feeds))
+	}
+}
+
 func TestFeedPreferencesAndDelete(t *testing.T) {
 	t.Parallel()
 
@@ -219,7 +240,7 @@ func TestFeedManualRefreshMakesFeedDueAndWakesWorkers(t *testing.T) {
 
 	h := newHarness(t)
 	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
-	h.succeedRefresh(feed.ID, domain.FeedSyncMeta{Title: feed.Title}, nil, h.clock.Now())
+	h.succeedRefresh(feed.ID, domain.FeedSyncMeta{Title: feed.Title}, h.clock.Now())
 
 	if claimed := h.claimDueFeed(); claimed != nil {
 		t.Fatalf("feed refreshed a moment ago must not be due, claimed %+v", claimed)
@@ -236,6 +257,59 @@ func TestFeedManualRefreshMakesFeedDueAndWakesWorkers(t *testing.T) {
 	}
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/feeds/"+domain.NewID()+"/refresh", nil), http.StatusAccepted)
+}
+
+func TestFeedItemBatchRequestOrderAndMissingIDs(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
+	first := h.seedItem(feed.ID, "https://user:secret@example.com/first", func(item *domain.FeedItem) { item.Read = true })
+	second := h.seedItem(feed.ID, "https://example.com/second", nil)
+
+	recorder := h.authed(http.MethodGet, "/api/feed-items?ids="+first.ID+","+domain.NewID()+","+second.ID, nil)
+	requireStatus(t, recorder, http.StatusOK)
+	var batch listResponse[feedItemJSON]
+	decodeBody(t, recorder, &batch)
+	if len(batch.Items) != 2 || batch.Items[0].ID != first.ID || batch.Items[1].ID != second.ID {
+		t.Fatalf("batch = %s, want first and second in request order", recorder.Body.String())
+	}
+
+	if batch.Items[0].URL != "https://example.com/first" || batch.Items[0].FeedID != feed.ID || !batch.Items[0].Read {
+		t.Fatalf("first item fields = %+v", batch.Items[0])
+	}
+}
+
+type failingFeedItemRepo struct {
+	domain.FeedItemRepository
+	err error
+}
+
+func (r *failingFeedItemRepo) SnapshotAll(context.Context, domain.SnapshotParams) ([]domain.FeedItemGroup, error) {
+	return nil, r.err
+}
+
+func (r *failingFeedItemRepo) GetByIDs(context.Context, []string) ([]domain.FeedItem, error) {
+	return nil, r.err
+}
+
+func TestFeedItemRepositoryErrorsAreSanitized(t *testing.T) {
+	t.Parallel()
+
+	h := newHarnessWith(t, func(cfg *Config) {
+		cfg.FeedItems = &failingFeedItemRepo{
+			FeedItemRepository: cfg.FeedItems,
+			err:                domain.NewError(domain.ErrFeedItemRepositoryError, errors.New("sqlite: disk I/O error at /data/reader.db")),
+		}
+	})
+
+	for _, target := range []string{"/api/feed-items/order", "/api/feed-items?ids=" + domain.NewID()} {
+		recorder := h.authed(http.MethodGet, target, nil)
+		requireAPIError(t, recorder, http.StatusInternalServerError, "FeedItemRepositoryError")
+		if strings.TrimSpace(recorder.Body.String()) != `{"error":"FeedItemRepositoryError"}` {
+			t.Fatalf("unexpected error payload: %s", recorder.Body.String())
+		}
+	}
 }
 
 func TestFeedItemReadStateAndCounts(t *testing.T) {
@@ -421,7 +495,7 @@ func TestFeedListExposesSiteURLAndDerivedRefreshState(t *testing.T) {
 		IconURL: strPtr("https://go.dev/favicon.ico"),
 	}
 
-	h.succeedRefresh(synced.ID, meta, nil, finishedAt)
+	h.succeedRefresh(synced.ID, meta, finishedAt)
 
 	recorder := h.authed(http.MethodGet, "/api/feeds", nil)
 	requireStatus(t, recorder, http.StatusOK)

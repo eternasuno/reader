@@ -5,6 +5,8 @@ import {
   makeFeed,
   makeItem,
   makePage,
+  savedOrder,
+  uuid,
 } from './support/state-fixture';
 
 const BOUNDARY = '019363b8-0000-7000-8000-000000000000';
@@ -19,12 +21,17 @@ describe('extraction failure', () => {
   it('reverts to default and toasts when extraction fails', async () => {
     const { state, solid, ui, i18n } = ctx;
     await ctx.queueLoadedLibrary({
-      scope: { kind: 'feed', feedId: 'f1' },
-      items: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
-      feeds: [makeFeed({ id: 'f1' })],
+      scope: { kind: 'feed', feedId: uuid(1001) },
+      items: [makeItem({ id: uuid(1007), feedId: uuid(1001), read: true })],
+      feeds: [makeFeed({ id: uuid(1001) })],
     });
-    ctx.queue({ item: makeItem({ id: 'i1', feedId: 'f1', read: true }) });
-    await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i1');
+    ctx.queue({
+      item: makeItem({ id: uuid(1007), feedId: uuid(1001), read: true }),
+    });
+    await state.openArticleByRoute(
+      { kind: 'feed', feedId: uuid(1001) },
+      uuid(1007)
+    );
     solid.flush();
 
     ctx.queue({ error: 'ArticleEmptyContent' }, 422);
@@ -43,12 +50,17 @@ describe('extraction deduplication', () => {
   it('does not start a second POST when toggling back to original and back', async () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
-      scope: { kind: 'feed', feedId: 'f1' },
-      items: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
-      feeds: [makeFeed({ id: 'f1' })],
+      scope: { kind: 'feed', feedId: uuid(1001) },
+      items: [makeItem({ id: uuid(1007), feedId: uuid(1001), read: true })],
+      feeds: [makeFeed({ id: uuid(1001) })],
     });
-    ctx.queue({ item: makeItem({ id: 'i1', feedId: 'f1', read: true }) });
-    await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i1');
+    ctx.queue({
+      item: makeItem({ id: uuid(1007), feedId: uuid(1001), read: true }),
+    });
+    await state.openArticleByRoute(
+      { kind: 'feed', feedId: uuid(1001) },
+      uuid(1007)
+    );
     solid.flush();
 
     const extractPending = ctx.pending();
@@ -63,8 +75,8 @@ describe('extraction deduplication', () => {
     expect(ctx.fetchCount()).toBe(callsAfterStart);
 
     const extractedItem = makeItem({
-      id: 'i1',
-      feedId: 'f1',
+      id: uuid(1007),
+      feedId: uuid(1001),
       read: true,
       extractedContent: '<p>extracted</p>',
     });
@@ -81,48 +93,57 @@ describe('extraction deduplication', () => {
 });
 
 const makeExtractedItem = (id: string, extractedContent: string) =>
-  makeItem({ id, feedId: 'f1', read: true, extractedContent });
+  makeItem({ id, feedId: uuid(1001), read: true, extractedContent });
 
 describe('extraction stale request guard', () => {
   it('does not let a stale extraction finally clear a newer extraction flag', async () => {
     const { state, solid } = ctx;
+    const scope = { kind: 'feed', feedId: uuid(1001) } as const;
     await ctx.queueLoadedLibrary({
-      scope: { kind: 'feed', feedId: 'f1' },
+      scope,
       items: [
-        makeItem({ id: 'i1', feedId: 'f1', read: true }),
-        makeItem({ id: 'i2', feedId: 'f1', read: true }),
+        makeItem({ id: uuid(1007), feedId: uuid(1001), read: true }),
+        makeItem({ id: uuid(1008), feedId: uuid(1001), read: true }),
       ],
-      feeds: [makeFeed({ id: 'f1' })],
+      feeds: [makeFeed({ id: uuid(1001) })],
     });
 
-    ctx.queue({ item: makeItem({ id: 'i1', feedId: 'f1', read: true }) });
-    await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i1');
+    ctx.queue({
+      item: makeItem({ id: uuid(1007), feedId: uuid(1001), read: true }),
+    });
+    await state.openArticleByRoute(scope, uuid(1007));
     const extractA = ctx.pending();
     const runningA = state.toggleExtractedMode();
     expect(state.extracting()).toBe(true);
 
-    ctx.queue({ item: makeItem({ id: 'i2', feedId: 'f1', read: true }) });
-    await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i2');
+    ctx.queue({
+      item: makeItem({ id: uuid(1008), feedId: uuid(1001), read: true }),
+    });
+    await state.openArticleByRoute(scope, uuid(1008));
     const extractB = ctx.pending();
     const runningB = state.toggleExtractedMode();
     expect(state.extracting()).toBe(true);
 
     extractA.resolve(
-      jsonResponse({ item: makeExtractedItem('i1', '<p>extracted A</p>') })
+      jsonResponse({
+        item: makeExtractedItem(uuid(1007), '<p>extracted A</p>'),
+      })
     );
     await runningA;
     solid.flush();
     expect(state.extracting()).toBe(true);
-    expect(state.openArticleId()).toBe('i2');
+    expect(state.openArticleId()).toBe(uuid(1008));
     expect(state.displayMode()).toBe('extracted');
 
     extractB.resolve(
-      jsonResponse({ item: makeExtractedItem('i2', '<p>extracted B</p>') })
+      jsonResponse({
+        item: makeExtractedItem(uuid(1008), '<p>extracted B</p>'),
+      })
     );
     await runningB;
     solid.flush();
     expect(state.extracting()).toBe(false);
-    expect(state.openArticleId()).toBe('i2');
+    expect(state.openArticleId()).toBe(uuid(1008));
     expect(state.displayMode()).toBe('extracted');
   });
 });
@@ -133,19 +154,22 @@ describe('adjacent articles', () => {
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
       items: [
-        makePage({ id: 'p1', read: true }),
-        makePage({ id: 'p2', read: true }),
-        makePage({ id: 'p3', read: true }),
+        makePage({ id: uuid(1018), read: true }),
+        makePage({ id: uuid(1019), read: true }),
+        makePage({ id: uuid(1020), read: true }),
       ],
     });
 
-    ctx.queue({ item: makePage({ id: 'p2', read: true }) });
-    await state.openArticleByRoute({ kind: 'later' }, 'p2');
+    ctx.queue({ item: makePage({ id: uuid(1019), read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1019));
     solid.flush();
-    expect(state.adjacentArticleIds()).toEqual({ prevId: 'p1', nextId: 'p3' });
+    expect(state.adjacentArticleIds()).toEqual({
+      prevId: uuid(1018),
+      nextId: uuid(1020),
+    });
 
-    ctx.queue({ item: makePage({ id: 'p9', read: true }) });
-    await state.openArticleByRoute({ kind: 'later' }, 'p9');
+    ctx.queue({ item: makePage({ id: uuid(1021), read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1021));
     solid.flush();
     expect(state.adjacentArticleIds()).toEqual({ prevId: null, nextId: null });
   });
@@ -154,13 +178,16 @@ describe('adjacent articles', () => {
 describe('record store sync and eviction', () => {
   it('keeps the open article in sync when toggling read state', async () => {
     const { state, solid } = ctx;
-    ctx.queue({ item: makePage({ id: 'p9', read: true }) });
-    await state.openArticleByRoute({ kind: 'later' }, 'p9');
+    ctx.queue({ item: makePage({ id: uuid(1021), read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1021));
     solid.flush();
     expect(state.openArticle()?.read).toBe(true);
 
     ctx.queueEmpty();
-    await state.toggleArticleRead('p9', false, { kind: 'later', read: true });
+    await state.toggleArticleRead(uuid(1021), false, {
+      kind: 'later',
+      read: true,
+    });
     solid.flush();
 
     expect(state.openArticle()?.read).toBe(false);
@@ -171,30 +198,28 @@ describe('record store sync and eviction', () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1', read: true })],
+      items: [makePage({ id: uuid(1018), read: true })],
     });
 
-    ctx.queue({ item: makePage({ id: 'p9', read: true }) });
-    await state.openArticleByRoute({ kind: 'later' }, 'p9');
+    ctx.queue({ item: makePage({ id: uuid(1021), read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1021));
     solid.flush();
-    expect(state.articleById('p9')?.id).toBe('p9');
+    expect(state.articleById(uuid(1021))?.id).toBe(uuid(1021));
 
     // Reloading list evicts p1 (old list row) while retaining deep-linked p9 for the reader.
-    ctx.queue({
-      items: [makePage({ id: 'p2', read: true })],
-      cursor: null,
-      boundary: BOUNDARY,
-    });
+    const items = [makePage({ id: uuid(1019), read: true })];
+    ctx.queue(savedOrder(items, BOUNDARY));
+    ctx.queue({ items });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     solid.flush();
-    expect(state.articleById('p1')).toBeNull();
-    expect(state.articleById('p9')?.id).toBe('p9');
-    expect(state.openArticle()?.id).toBe('p9');
+    expect(state.articleById(uuid(1018))).toBeNull();
+    expect(state.articleById(uuid(1021))?.id).toBe(uuid(1021));
+    expect(state.openArticle()?.id).toBe(uuid(1021));
 
     // Closing the reader evicts p9 since neither view needs it.
     await state.openArticleByRoute({ kind: 'later' }, null);
     solid.flush();
-    expect(state.articleById('p9')).toBeNull();
-    expect(state.articleById('p2')?.id).toBe('p2');
+    expect(state.articleById(uuid(1021))).toBeNull();
+    expect(state.articleById(uuid(1019))?.id).toBe(uuid(1019));
   });
 });

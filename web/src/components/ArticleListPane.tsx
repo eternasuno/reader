@@ -6,6 +6,7 @@ import {
   type LibraryScope,
   loadError,
   loadingInitial,
+  loadingMore,
   rowIds,
 } from '../state';
 import { ArticleListBody } from './ArticleListBody';
@@ -35,15 +36,16 @@ export interface ArticleListPaneProps {
 function ArticleListContent(props: ArticleListPaneProps): JSX.Element {
   const copy = () =>
     emptyCopy(props.scope, props.onRequestAddLink, props.onRequestAddFeed);
+  const isLoading = () => loadingInitial() || loadingMore();
   const isEmpty = () =>
-    !loadingInitial() && loadError() === null && rowIds().length === 0;
+    !isLoading() && loadError() === null && rowIds().length === 0;
 
   return (
     <>
       <Show when={loadError() !== null}>
         <ArticleListError />
       </Show>
-      <Show when={loadingInitial() && rowIds().length === 0}>
+      <Show when={isLoading() && rowIds().length === 0}>
         <ArticleListLoading />
       </Show>
       <Show when={isEmpty()}>

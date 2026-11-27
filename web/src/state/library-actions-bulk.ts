@@ -3,7 +3,6 @@
  * scope-wide mark-all.
  */
 
-import type { SortOrder } from '../api';
 import { feedItemsApi, feedsApi, foldersApi, savedPagesApi } from '../api';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
@@ -11,7 +10,6 @@ import { loadScopeFirstPage } from './library';
 import type { ScopeMatcher } from './library-mark-all';
 import { beginScopeMark, scopeMatcher } from './library-mark-all';
 import {
-  activeOrder,
   activeScope,
   activeUnreadOnly,
   isLibraryMounted,
@@ -114,17 +112,6 @@ const executeMarkAllBarrier = async (
   }
 };
 
-const reloadOrderForFeed = (scope: LibraryScope): SortOrder | undefined => {
-  if (scope.kind !== 'feed') return undefined;
-
-  const stored = sidebar
-    .feeds()
-    .find((feed) => feed.id === scope.feedId)?.order;
-  const current = activeOrder();
-  if (stored !== undefined) return current !== stored ? current : undefined;
-  return current !== 'newest' ? current : undefined;
-};
-
 /**
  * On `ok` or `ambiguous`: reloads the active list from page 1 when a library page is mounted,
  * whichever scope was marked. Counts refresh once: a mounted library's sidebar subscriber already
@@ -137,11 +124,7 @@ const applyMarkAllSuccess = async (
   const mounted = isLibraryMounted();
   const currentScope = activeScope();
   const reload = mounted
-    ? loadScopeFirstPage(
-        currentScope,
-        activeUnreadOnly(),
-        reloadOrderForFeed(currentScope)
-      )
+    ? loadScopeFirstPage(currentScope, activeUnreadOnly())
     : Promise.resolve();
   await Promise.all([reload, refreshOpenArticle(covers)]);
   if (mounted || sessionGeneration() !== startSession) return;

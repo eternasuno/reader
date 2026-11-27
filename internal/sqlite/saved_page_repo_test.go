@@ -89,16 +89,16 @@ func TestSavedPageRepoCreateAndLookup(t *testing.T) {
 	}
 }
 
-func TestSavedPageRepoListPaging(t *testing.T) {
+func TestSavedPageReadMarking(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
-	empty, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Boundary: maxTestBoundary})
+	empty, err := store.SavedPages().Snapshot(ctx, domain.SnapshotParams{Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list empty saved pages: %v", err)
 	}
 
-	if empty.Items == nil || len(empty.Items) != 0 || empty.Cursor != nil {
+	if empty == nil || len(empty) != 0 {
 		t.Fatalf("empty saved page list = %+v", empty)
 	}
 
@@ -117,77 +117,8 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 		pages[i] = created
 	}
 
-	first, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Boundary: maxTestBoundary})
-	if err != nil {
-		t.Fatalf("list first saved page page: %v", err)
-	}
-
-	if got := savedPageIDs(first.Items); !slices.Equal(got, []string{pages[4].ID, pages[3].ID}) {
-		t.Fatalf("first saved page ids = %v", got)
-	}
-
-	if first.Cursor == nil || *first.Cursor != pages[3].ID {
-		t.Fatalf("first saved page cursor = %v, want %s", first.Cursor, pages[3].ID)
-	}
-
-	second, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: first.Cursor, Boundary: maxTestBoundary})
-	if err != nil {
-		t.Fatalf("list second saved page page: %v", err)
-	}
-
-	if got := savedPageIDs(second.Items); !slices.Equal(got, []string{pages[2].ID, pages[1].ID}) {
-		t.Fatalf("second saved page ids = %v", got)
-	}
-
-	third, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: second.Cursor, Boundary: maxTestBoundary})
-	if err != nil {
-		t.Fatalf("list third saved page page: %v", err)
-	}
-
-	if got := savedPageIDs(third.Items); !slices.Equal(got, []string{pages[0].ID}) {
-		t.Fatalf("third saved page ids = %v", got)
-	}
-
-	if third.Cursor != nil {
-		t.Fatalf("third saved page cursor = %v, want nil", *third.Cursor)
-	}
-
 	if err := store.SavedPages().SetRead(ctx, pages[1].ID, true); err != nil {
-		t.Fatalf("mark read: %v", err)
-	}
-
-	for _, tc := range []struct {
-		name   string
-		order  domain.SortOrder
-		unread bool
-		want   []string
-	}{
-		{"oldest all", domain.SortOrderOldest, false, []string{pages[0].ID, pages[1].ID, pages[2].ID, pages[3].ID, pages[4].ID}},
-		{"oldest unread", domain.SortOrderOldest, true, []string{pages[0].ID, pages[2].ID, pages[3].ID, pages[4].ID}},
-		{"newest all", domain.SortOrderNewest, false, []string{pages[4].ID, pages[3].ID, pages[2].ID, pages[1].ID, pages[0].ID}},
-		{"newest unread", domain.SortOrderNewest, true, []string{pages[4].ID, pages[3].ID, pages[2].ID, pages[0].ID}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var cursor *string
-			for start := 0; start < len(tc.want); start += 2 {
-				end := min(start+2, len(tc.want))
-				page, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Unread: tc.unread, Order: tc.order, Cursor: cursor, Boundary: maxTestBoundary})
-				if err != nil {
-					t.Fatalf("list: %v", err)
-				}
-				if got := savedPageIDs(page.Items); !slices.Equal(got, tc.want[start:end]) {
-					t.Fatalf("ids = %v, want %v", got, tc.want[start:end])
-				}
-				if end == len(tc.want) {
-					if page.Cursor != nil {
-						t.Fatalf("final cursor = %v, want nil", *page.Cursor)
-					}
-				} else if page.Cursor == nil || *page.Cursor != tc.want[end-1] {
-					t.Fatalf("cursor = %v, want %s", page.Cursor, tc.want[end-1])
-				}
-				cursor = page.Cursor
-			}
-		})
+		t.Fatalf("mark read before resetting: %v", err)
 	}
 
 	if err := store.SavedPages().SetRead(ctx, pages[1].ID, false); err != nil {
@@ -202,13 +133,13 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 		t.Fatalf("mark saved page ids read: %v", err)
 	}
 
-	unread, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 10, Unread: true, Boundary: maxTestBoundary})
+	unread, err := store.SavedPages().Snapshot(ctx, domain.SnapshotParams{Unread: true, Boundary: maxTestBoundary})
 	if err != nil {
 		t.Fatalf("list unread saved pages: %v", err)
 	}
 
-	if got := savedPageIDs(unread.Items); !slices.Equal(got, []string{pages[1].ID, pages[0].ID}) {
-		t.Fatalf("unread saved page ids = %v", got)
+	if !slices.Equal(unread, []string{pages[1].ID, pages[0].ID}) {
+		t.Fatalf("unread saved page ids = %v", unread)
 	}
 
 	unreadCount, err := store.SavedPages().UnreadCount(ctx, maxTestBoundary)
@@ -251,7 +182,62 @@ func TestSavedPageRepoListPaging(t *testing.T) {
 	}
 }
 
-func TestSavedPageBoundaryIsolationAndContinuation(t *testing.T) {
+func TestSavedPageCreateAtLimit(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.SavedPages()
+	seedSavedPageRows(t, store.WriteDB(), domain.SavedPageLimit-1)
+
+	page := domain.SavedPage{
+		ID: domain.NewID(), URL: mustURL(t, "https://example.com/last"), Title: "Last", Content: "Body",
+	}
+	created, err := repo.Create(ctx, page)
+	if err != nil || created.ID != page.ID {
+		t.Fatalf("create at limit returned %q, err %v", created.ID, err)
+	}
+
+	duplicate := page
+	duplicate.ID = domain.NewID()
+	_, err = repo.Create(ctx, duplicate)
+	conflict := requireCode(t, err, domain.ErrSavedPageAlreadyExists)
+	if conflict.ID != page.ID {
+		t.Fatalf("conflict id = %q, want %q", conflict.ID, page.ID)
+	}
+
+	overflow := duplicate
+	overflow.URL = mustURL(t, "https://example.com/overflow")
+	_, err = repo.Create(ctx, overflow)
+	requireCode(t, err, domain.ErrSavedPageLimitExceeded)
+
+	stored, err := repo.GetByID(ctx, overflow.ID)
+	if err != nil || stored != nil {
+		t.Fatalf("rejected page lookup returned %+v, err %v", stored, err)
+	}
+
+	ids, err := repo.Snapshot(ctx, domain.SnapshotParams{Boundary: maxTestBoundary})
+	if err != nil || len(ids) != domain.SavedPageLimit {
+		t.Fatalf("snapshot at limit returned %d ids, err %v", len(ids), err)
+	}
+}
+
+func TestSavedPageSnapshotOverflow(t *testing.T) {
+	store := newTestStore(t)
+	seedSavedPageRows(t, store.WriteDB(), domain.ListSnapshotLimit+1)
+
+	_, err := store.SavedPages().Snapshot(context.Background(), domain.SnapshotParams{Boundary: maxTestBoundary})
+	requireCode(t, err, domain.ErrSavedPageRepositoryError)
+}
+
+func assertSavedPageSnapshot(t *testing.T, repo *SavedPageRepo, params domain.SnapshotParams, want []string) {
+	t.Helper()
+
+	ids, err := repo.Snapshot(context.Background(), params)
+	if err != nil || !slices.Equal(ids, want) {
+		t.Fatalf("snapshot returned %v, err %v, want %v", ids, err, want)
+	}
+}
+
+func TestSavedPageSnapshotAndReadBoundary(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
@@ -275,66 +261,21 @@ func TestSavedPageBoundaryIsolationAndContinuation(t *testing.T) {
 	}
 
 	boundary := fixedTestID(5)
-
-	page1, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Boundary: boundary})
-	if err != nil {
-		t.Fatalf("list page 1: %v", err)
-	}
-	if got := savedPageIDs(page1.Items); !slices.Equal(got, []string{fixedTestID(5), fixedTestID(4)}) {
-		t.Fatalf("page 1 ids = %v", got)
-	}
-
 	createFixed(6)
 	createFixed(7)
 
-	page2, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: page1.Cursor, Boundary: boundary})
-	if err != nil {
-		t.Fatalf("list page 2: %v", err)
-	}
-	if got := savedPageIDs(page2.Items); !slices.Equal(got, []string{fixedTestID(3), fixedTestID(2)}) {
-		t.Fatalf("page 2 ids = %v", got)
-	}
+	assertSavedPageSnapshot(t, store.SavedPages(), domain.SnapshotParams{Boundary: boundary}, snapshotTestIDs(5, 4, 3, 2, 1))
+	assertSavedPageSnapshot(t, store.SavedPages(), domain.SnapshotParams{Boundary: boundary, Unread: true}, snapshotTestIDs(5, 4, 3, 1))
 
-	page3, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Cursor: page2.Cursor, Boundary: boundary})
-	if err != nil {
-		t.Fatalf("list page 3: %v", err)
-	}
-	if got := savedPageIDs(page3.Items); !slices.Equal(got, []string{fixedTestID(1)}) || page3.Cursor != nil {
-		t.Fatalf("page 3 = %v cursor=%v", savedPageIDs(page3.Items), page3.Cursor)
+	pages, err := store.SavedPages().GetByIDs(ctx, snapshotTestIDs(3, 8, 1, 5))
+	if err != nil || !slices.Equal(savedPageIDs(pages), snapshotTestIDs(3, 1, 5)) {
+		t.Fatalf("batch returned %v, err %v", savedPageIDs(pages), err)
 	}
 
-	allAsc := []string{fixedTestID(1), fixedTestID(2), fixedTestID(3), fixedTestID(4), fixedTestID(5)}
-	unreadAsc := []string{fixedTestID(1), fixedTestID(3), fixedTestID(4), fixedTestID(5)}
-
-	for _, order := range []domain.SortOrder{domain.SortOrderNewest, domain.SortOrderOldest} {
-		for _, unreadOnly := range []bool{false, true} {
-			want := slices.Clone(allAsc)
-			if unreadOnly {
-				want = slices.Clone(unreadAsc)
-			}
-			if order == domain.SortOrderNewest {
-				slices.Reverse(want)
-			}
-
-			var collected []string
-			var cursor *string
-			for {
-				page, err := store.SavedPages().List(ctx, domain.PageParams{Limit: 2, Unread: unreadOnly, Order: order, Cursor: cursor, Boundary: boundary})
-				if err != nil {
-					t.Fatalf("order=%s unread=%v: %v", order, unreadOnly, err)
-				}
-				collected = append(collected, savedPageIDs(page.Items)...)
-				if page.Cursor == nil {
-					break
-				}
-				cursor = page.Cursor
-			}
-			if !slices.Equal(collected, want) {
-				t.Fatalf("order=%s unread=%v got %v, want %v", order, unreadOnly, collected, want)
-			}
-		}
+	empty, err := store.SavedPages().GetByIDs(ctx, snapshotTestIDs(8))
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("missing batch returned %v, err %v", empty, err)
 	}
-
 	count, err := store.SavedPages().UnreadCount(ctx, boundary)
 	if err != nil {
 		t.Fatalf("bounded unread count: %v", err)

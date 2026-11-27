@@ -5,6 +5,7 @@ import {
   makeFolder,
   makePage,
   noContentResponse,
+  uuid,
 } from './support/state-fixture';
 
 type ReadSyncMod = typeof import('../src/state/read-sync');
@@ -15,14 +16,14 @@ let readSync: ReadSyncMod;
 const queueFoldersOfFeeds = async (): Promise<void> => {
   ctx.queueSidebar({
     feeds: [
-      makeFeed({ id: 'f1', folderId: 'd1' }),
-      makeFeed({ id: 'f2', folderId: 'd1' }),
-      makeFeed({ id: 'f3' }),
+      makeFeed({ id: uuid(1001), folderId: 'd1' }),
+      makeFeed({ id: uuid(1002), folderId: 'd1' }),
+      makeFeed({ id: uuid(1003) }),
     ],
     counts: [
-      { feedId: 'f1', count: 2 },
-      { feedId: 'f2', count: 3 },
-      { feedId: 'f3', count: 1 },
+      { feedId: uuid(1001), count: 2 },
+      { feedId: uuid(1002), count: 3 },
+      { feedId: uuid(1003), count: 1 },
     ],
     saved: 2,
   });
@@ -51,23 +52,23 @@ describe('unread count adjustments', () => {
     await queueFoldersOfFeeds();
 
     state.adjustSavedUnread(1);
-    state.adjustFeedUnread('f1', -1);
+    state.adjustFeedUnread(uuid(1001), -1);
     solid.flush();
     expect(state.savedUnreadCount()).toBe(3);
-    expect(state.feedUnreadCount('f1')).toBe(1);
+    expect(state.feedUnreadCount(uuid(1001))).toBe(1);
 
     state.adjustSavedUnread(-10);
-    state.adjustFeedUnread('f1', -10);
+    state.adjustFeedUnread(uuid(1001), -10);
     solid.flush();
     expect(state.savedUnreadCount()).toBe(0);
-    expect(state.feedUnreadCount('f1')).toBe(0);
+    expect(state.feedUnreadCount(uuid(1001))).toBe(0);
 
     state.adjustSavedUnread(5);
-    state.adjustFeedUnread('f2', 2);
-    state.adjustFeedUnread('f2', -1);
+    state.adjustFeedUnread(uuid(1002), 2);
+    state.adjustFeedUnread(uuid(1002), -1);
     solid.flush();
     expect(state.savedUnreadCount()).toBe(5);
-    expect(state.feedUnreadCount('f2')).toBe(4);
+    expect(state.feedUnreadCount(uuid(1002))).toBe(4);
   });
 });
 
@@ -76,11 +77,11 @@ describe('unread count resets', () => {
     const { state, solid } = ctx;
     await queueFoldersOfFeeds();
 
-    state.clearFeedUnread('f1');
+    state.clearFeedUnread(uuid(1001));
     solid.flush();
-    expect(state.feedUnreadCount('f1')).toBe(0);
-    expect(state.feedUnreadCount('f2')).toBe(3);
-    expect(state.feedUnreadCount('f3')).toBe(1);
+    expect(state.feedUnreadCount(uuid(1001))).toBe(0);
+    expect(state.feedUnreadCount(uuid(1002))).toBe(3);
+    expect(state.feedUnreadCount(uuid(1003))).toBe(1);
   });
 });
 
@@ -89,19 +90,22 @@ describe('local feed and folder edits', () => {
     const { state, solid } = ctx;
     ctx.queueSidebar({
       feeds: [
-        makeFeed({ id: 'f1', folderId: 'd1' }),
-        makeFeed({ id: 'f2', folderId: 'd1' }),
+        makeFeed({ id: uuid(1001), folderId: 'd1' }),
+        makeFeed({ id: uuid(1002), folderId: 'd1' }),
       ],
       folders: [makeFolder('d1')],
       counts: [
-        { feedId: 'f1', count: 1 },
-        { feedId: 'f2', count: 2 },
+        { feedId: uuid(1001), count: 1 },
+        { feedId: uuid(1002), count: 2 },
       ],
     });
     await state.refreshSidebar();
     solid.flush();
 
-    state.updateFeedLocal('f1', { title: 'Renamed', readerMode: 'extracted' });
+    state.updateFeedLocal(uuid(1001), {
+      title: 'Renamed',
+      readerMode: 'extracted',
+    });
     solid.flush();
     expect(state.feeds()[0].title).toBe('Renamed');
     expect(state.feeds()[0].readerMode).toBe('extracted');
@@ -111,10 +115,10 @@ describe('local feed and folder edits', () => {
     expect(state.folders()).toHaveLength(0);
     expect(state.feeds().every((feed) => feed.folderId === null)).toBe(true);
 
-    state.removeFeedLocal('f2');
+    state.removeFeedLocal(uuid(1002));
     solid.flush();
-    expect(state.feeds().map((feed) => feed.id)).toEqual(['f1']);
-    expect(state.feedUnreadMap()).toEqual({ f1: 1 });
+    expect(state.feeds().map((feed) => feed.id)).toEqual([uuid(1001)]);
+    expect(state.feedUnreadMap()).toEqual({ [uuid(1001)]: 1 });
   });
 });
 
@@ -123,17 +127,17 @@ describe('queue-busy count drop and drain refresh', () => {
     const { state, solid } = ctx;
     await queueFoldersOfFeeds();
     const write = ctx.pending();
-    void readSync.requestRead(pageTarget('p1', false), true);
+    void readSync.requestRead(pageTarget(uuid(1018), false), true);
     expect(state.savedUnreadCount()).toBe(1);
 
     const stale = ctx.queueDeferredSidebar({
-      feeds: [makeFeed({ id: 'f1' }), makeFeed({ id: 'f4' })],
-      counts: [{ feedId: 'f1', count: 9 }],
+      feeds: [makeFeed({ id: uuid(1001) }), makeFeed({ id: uuid(1004) })],
+      counts: [{ feedId: uuid(1001), count: 9 }],
       saved: 9,
     });
     const fresh = ctx.queueDeferredSidebar({
-      feeds: [makeFeed({ id: 'f1' }), makeFeed({ id: 'f4' })],
-      counts: [{ feedId: 'f1', count: 2 }],
+      feeds: [makeFeed({ id: uuid(1001) }), makeFeed({ id: uuid(1004) })],
+      counts: [{ feedId: uuid(1001), count: 2 }],
       saved: 1,
     });
     const refreshing = state.refreshSidebar();
@@ -141,9 +145,9 @@ describe('queue-busy count drop and drain refresh', () => {
     await refreshing;
     solid.flush();
 
-    expect(state.feeds().map((f) => f.id)).toEqual(['f1', 'f4']);
+    expect(state.feeds().map((f) => f.id)).toEqual([uuid(1001), uuid(1004)]);
     expect(state.savedUnreadCount()).toBe(1);
-    expect(state.feedUnreadCount('f1')).toBe(2);
+    expect(state.feedUnreadCount(uuid(1001))).toBe(2);
     expect(feedsListCallCount()).toBe(2);
 
     write.resolve(noContentResponse());
@@ -164,7 +168,7 @@ describe('coalesced intent epoch drop', () => {
     const refreshing = state.refreshSidebar();
     const hold = ctx.pending();
     const fresh = ctx.queueDeferredSidebar({
-      counts: [{ feedId: 'f1', count: 2 }],
+      counts: [{ feedId: uuid(1001), count: 2 }],
       saved: 2,
     });
     const pHold = readSync.requestRead(pageTarget('p-hold', false), true);
@@ -188,7 +192,7 @@ describe('barrier epoch drop', () => {
     await queueFoldersOfFeeds();
 
     const stale = ctx.queueDeferredSidebar({
-      counts: [{ feedId: 'f1', count: 88 }],
+      counts: [{ feedId: uuid(1001), count: 88 }],
       saved: 88,
     });
     const refreshing = state.refreshSidebar();
@@ -203,13 +207,13 @@ describe('barrier epoch drop', () => {
     stale.resolve();
     await refreshing;
     solid.flush();
-    expect(state.feedUnreadCount('f1')).toBe(2);
+    expect(state.feedUnreadCount(uuid(1001))).toBe(2);
     expect(state.savedUnreadCount()).toBe(2);
 
-    ctx.queueSidebar({ counts: [{ feedId: 'f1', count: 4 }], saved: 2 });
+    ctx.queueSidebar({ counts: [{ feedId: uuid(1001), count: 4 }], saved: 2 });
     releaseBarrier('ok');
     await barrier;
-    await vi.waitFor(() => expect(state.feedUnreadCount('f1')).toBe(4));
+    await vi.waitFor(() => expect(state.feedUnreadCount(uuid(1001))).toBe(4));
   });
 });
 
@@ -221,10 +225,10 @@ describe('late GET no double count', () => {
     const late = ctx.queueDeferredSidebar({ saved: 2 });
     const pRefresh = state.refreshSidebar();
     const patch = ctx.pending();
-    const toggle = readSync.requestRead(pageTarget('p1', false), true);
+    const toggle = readSync.requestRead(pageTarget(uuid(1018), false), true);
     expect(state.savedUnreadCount()).toBe(1);
 
-    ctx.queueSidebar({ counts: [{ feedId: 'f1', count: 2 }], saved: 1 });
+    ctx.queueSidebar({ counts: [{ feedId: uuid(1001), count: 2 }], saved: 1 });
     patch.resolve(noContentResponse());
     await toggle;
     late.resolve();
@@ -239,7 +243,7 @@ describe('ok barrier settlement and unread badges', () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1', read: true })],
+      items: [makePage({ id: uuid(1018), read: true })],
       feeds: [],
       saved: 0,
     });
@@ -248,7 +252,7 @@ describe('ok barrier settlement and unread badges', () => {
     );
     const older = readSync.beginRecordSnapshot();
 
-    await state.toggleArticleRead('p1', false);
+    await state.toggleArticleRead(uuid(1018), false);
     solid.flush();
     expect(state.savedUnreadCount()).toBe(1);
 

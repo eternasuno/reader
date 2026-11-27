@@ -16,6 +16,7 @@ export const enErrors: typeof zhErrors = {
     'Failed to extract the article. Please try again later.',
   InvalidPageUrl: 'Enter a valid http or https link.',
   SavedPageAlreadyExists: 'This article is already in Read Later.',
+  SavedPageLimitExceeded: 'Read Later can hold at most 10,000 pages',
   SavedPageRepositoryError:
     'Read Later is temporarily unavailable. Please try again later.',
   FeedUrlInvalid: 'Enter a valid feed URL.',
@@ -23,6 +24,8 @@ export const enErrors: typeof zhErrors = {
   FeedParserError:
     'Could not parse the feed. Check that the address is correct.',
   FeedAlreadyExists: 'This feed is already subscribed.',
+  FeedItemBudgetExceeded:
+    'Feed count × articles kept per feed cannot exceed 10,000',
   FeedItemNotFound: 'This article no longer exists or was deleted.',
   FeedRepositoryError:
     'Feeds are temporarily unavailable. Please try again later.',

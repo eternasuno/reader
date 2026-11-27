@@ -139,8 +139,7 @@ type succeededRefresh struct {
 	attemptID     string
 	feedID        string
 	meta          domain.FeedSyncMeta
-	newItems      []domain.FeedItem
-	deleteIDs     []string
+	entries       []domain.ParsedFeedEntry
 	finishedAt    time.Time
 	nextRefreshAt time.Time
 }
@@ -241,7 +240,7 @@ func (r *fakeFeedRepository) ClaimDueRefresh(ctx context.Context, attemptID stri
 	return &feed, nil
 }
 
-func (r *fakeFeedRepository) SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta domain.FeedSyncMeta, newItems []domain.FeedItem, deleteIDs []string, finishedAt, nextRefreshAt time.Time) error {
+func (r *fakeFeedRepository) SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta domain.FeedSyncMeta, entries []domain.ParsedFeedEntry, finishedAt, nextRefreshAt time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -255,8 +254,7 @@ func (r *fakeFeedRepository) SucceedRefresh(ctx context.Context, attemptID strin
 		attemptID:     attemptID,
 		feedID:        feedID,
 		meta:          meta,
-		newItems:      append([]domain.FeedItem(nil), newItems...),
-		deleteIDs:     append([]string(nil), deleteIDs...),
+		entries:       append([]domain.ParsedFeedEntry(nil), entries...),
 		finishedAt:    finishedAt,
 		nextRefreshAt: nextRefreshAt,
 	})
@@ -362,8 +360,6 @@ type savedExtraction struct {
 
 type fakeFeedItemRepository struct {
 	mu      sync.Mutex
-	stored  []domain.StoredRef
-	listErr error
 	saveErr error
 	// extracted holds the content already persisted per item ID; a non-blank
 	// entry is a winner that SaveExtractedContentIfEmpty must preserve.
@@ -371,27 +367,20 @@ type fakeFeedItemRepository struct {
 	saved     []savedExtraction
 }
 
-func (r *fakeFeedItemRepository) ListAll(ctx context.Context, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	return domain.PageResult[domain.FeedItem]{}, nil
+func (r *fakeFeedItemRepository) SnapshotAll(ctx context.Context, params domain.SnapshotParams) ([]domain.FeedItemGroup, error) {
+	return nil, nil
 }
 
-func (r *fakeFeedItemRepository) ListByFeed(ctx context.Context, feedID string, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	return domain.PageResult[domain.FeedItem]{}, nil
+func (r *fakeFeedItemRepository) SnapshotByFolder(ctx context.Context, folderID string, params domain.SnapshotParams) ([]domain.FeedItemGroup, error) {
+	return nil, nil
 }
 
-func (r *fakeFeedItemRepository) ListByFolder(ctx context.Context, folderID string, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	return domain.PageResult[domain.FeedItem]{}, nil
+func (r *fakeFeedItemRepository) SnapshotByFeed(ctx context.Context, feedID string, order domain.SortOrder, params domain.SnapshotParams) ([]domain.FeedItemGroup, error) {
+	return nil, nil
 }
 
-func (r *fakeFeedItemRepository) ListStoredRefsByFeed(ctx context.Context, feedID string) ([]domain.StoredRef, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.listErr != nil {
-		return nil, r.listErr
-	}
-
-	return append([]domain.StoredRef(nil), r.stored...), nil
+func (r *fakeFeedItemRepository) GetByIDs(ctx context.Context, ids []string) ([]domain.FeedItem, error) {
+	return nil, nil
 }
 
 func (r *fakeFeedItemRepository) GetByID(ctx context.Context, id string) (*domain.FeedItem, error) {

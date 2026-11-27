@@ -2,6 +2,8 @@ import type {
   BrowserlessSettingsView,
   Feed,
   FeedItem,
+  FeedItemGroup,
+  FeedItemOrder,
   FeedPreview,
   FeedUnreadCount,
   Folder,
@@ -11,9 +13,9 @@ import type {
   KindleSends,
   KindleSettingsView,
   OPMLImportResult,
-  Page,
   ReaderMode,
   SavedPage,
+  SavedPageOrder,
   SavedPageUnreadCount,
   Session,
   Settings,
@@ -50,7 +52,7 @@ const UUID_V7 =
 
 /**
  * Mirrors `domain.IsValidUUIDv7`: canonical lowercase RFC 4122 UUID, version 7, variant 8/9/a/b.
- * Pagination and count boundaries are server-minted UUIDv7 values.
+ * List snapshot and count boundaries are server-minted UUIDv7 values.
  */
 export const isUuidV7 = (value: unknown): value is string =>
   isString(value) && UUID_V7.test(value);
@@ -102,25 +104,37 @@ export const decodeField =
     return value;
   };
 
-export const decodePage =
-  <T>(guard: TypeGuard<T>): Decoder<Page<T>> =>
-  (payload, status) => {
-    if (!isRecord(payload) || !isArrayOf(guard)(payload.items)) {
-      throw invalidResponse(status);
-    }
+const isFeedItemGroup: TypeGuard<FeedItemGroup> = (
+  value
+): value is FeedItemGroup =>
+  isRecord(value) && isUuidV7(value.feedId) && isArrayOf(isUuidV7)(value.ids);
 
-    const cursor = payload.cursor;
-    if (cursor !== null && !isString(cursor)) {
-      throw invalidResponse(status);
-    }
+const isFeedItemOrder: TypeGuard<FeedItemOrder> = (
+  value
+): value is FeedItemOrder =>
+  isRecord(value) &&
+  isUuidV7(value.boundary) &&
+  isArrayOf(isFeedItemGroup)(value.groups);
 
-    const boundary = payload.boundary;
-    if (!isUuidV7(boundary)) {
-      throw invalidResponse(status);
-    }
+export const decodeFeedItemOrder = decodeWith(isFeedItemOrder);
 
-    return { items: payload.items, cursor, boundary };
-  };
+export const decodeSingleFeedOrder = decodeWith(
+  (value): value is FeedItemOrder =>
+    isFeedItemOrder(value) && value.groups.length <= 1
+);
+
+export const decodeSavedPageOrder = decodeWith(
+  (value): value is SavedPageOrder =>
+    isRecord(value) &&
+    isUuidV7(value.boundary) &&
+    isArrayOf(isUuidV7)(value.ids)
+);
+
+export const decodeItems =
+  <T>(guard: TypeGuard<T>): Decoder<{ items: Array<T> }> =>
+  (payload, status) => ({
+    items: decodeField('items', isArrayOf(guard))(payload, status),
+  });
 
 export const isNullable =
   <T>(guard: TypeGuard<T>): TypeGuard<T | null> =>
@@ -211,6 +225,15 @@ export const isSavedPage: TypeGuard<SavedPage> = (value): value is SavedPage =>
   isString(value.content) &&
   isOptionalString(value.publishedAt) &&
   isBoolean(value.read);
+
+export const decodeFeedItems = decodeItems(
+  (value): value is FeedItem =>
+    isFeedItem(value) && isUuidV7(value.id) && isUuidV7(value.feedId)
+);
+
+export const decodeSavedPages = decodeItems(
+  (value): value is SavedPage => isSavedPage(value) && isUuidV7(value.id)
+);
 
 export const isOPMLImportResult: TypeGuard<OPMLImportResult> = (
   value

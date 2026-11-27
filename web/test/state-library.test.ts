@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createStateTestContext,
+  feedOrder,
   makeFeed,
   makeItem,
   makePage,
+  uuid,
 } from './support/state-fixture';
 
 const B = '019363b8-0000-7000-8000-000000000001';
@@ -15,22 +17,23 @@ beforeEach(async () => {
 });
 
 describe('first page load', () => {
-  it('loads the first saved-page page with limit 30', async () => {
+  it('loads the saved-page snapshot and initial batch', async () => {
     const { state } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1' }), makePage({ id: 'p2', read: true })],
-      cursor: 'p2',
+      items: [
+        makePage({ id: uuid(1018) }),
+        makePage({ id: uuid(1019), read: true }),
+      ],
     });
 
-    expect(ctx.requestUrl()).toContain('/api/saved-pages?limit=30');
+    expect(ctx.requestUrl()).toBe('/api/saved-pages/order?unread=false');
     expect(state.rows()).toHaveLength(2);
     expect(state.rows()[0].kind).toBe('later');
     expect(state.articleSource(state.rows()[0])).toEqual({
       title: 'example.com',
       iconSrcs: ['https://example.com/favicon.ico'],
     });
-    expect(state.cursor()).toBe('p2');
     expect(state.activeScope()).toEqual({ kind: 'later' });
     expect(state.loadingInitial()).toBe(false);
     expect(state.loadError()).toBeNull();
@@ -38,45 +41,33 @@ describe('first page load', () => {
 });
 
 describe('first page params', () => {
-  it('passes unread and order for single-feed lists', async () => {
+  it('passes unread on single-feed snapshots', async () => {
     const { state, solid } = ctx;
-    ctx.queue({ items: [], cursor: null, boundary: B });
-    await state.loadScopeFirstPage(
-      { kind: 'feed', feedId: 'f1' },
-      true,
-      'oldest'
-    );
+    ctx.queue(feedOrder([], B));
+    await state.loadScopeFirstPage({ kind: 'feed', feedId: uuid(1001) }, true);
     solid.flush();
-
     expect(ctx.requestUrl()).toBe(
-      '/api/feeds/f1/items?limit=30&unread=true&order=oldest'
+      `/api/feeds/${uuid(1001)}/items/order?unread=true`
     );
     expect(state.listBoundary()).toBe(B);
     expect(state.activeUnreadOnly()).toBe(true);
-    expect(state.activeOrder()).toBe('oldest');
   });
 });
 
 describe('scope endpoints', () => {
   it('uses the folder and all-feeds endpoints', async () => {
     const { state, solid } = ctx;
-    ctx.queue({
-      items: [makeItem({ id: 'i1', feedId: 'f1' })],
-      cursor: null,
-      boundary: B,
-    });
+    const items = [makeItem({ id: uuid(1007), feedId: uuid(1001) })];
+    ctx.queue(feedOrder(items, B));
+    ctx.queue({ items });
     await state.loadScopeFirstPage({ kind: 'folder', folderId: 'd1' }, false);
     solid.flush();
-    expect(ctx.requestUrl()).toBe(
-      '/api/folders/d1/items?limit=30&unread=false'
-    );
+    expect(ctx.requestUrl()).toBe('/api/folders/d1/items/order?unread=false');
     expect(state.rows()[0].kind).toBe('feed');
 
-    ctx.queue({ items: [], cursor: null, boundary: B });
-    await state.loadScopeFirstPage({ kind: 'all' }, false, 'oldest');
-    solid.flush();
-    expect(ctx.requestUrl(1)).toBe('/api/feed-items?limit=30&unread=false');
-    expect(state.activeOrder()).toBe('newest');
+    ctx.queue(feedOrder([], B));
+    await state.loadScopeFirstPage({ kind: 'all' }, false);
+    expect(ctx.requestUrl(2)).toBe('/api/feed-items/order?unread=false');
     expect(state.rows()).toHaveLength(0);
   });
 });
@@ -87,19 +78,19 @@ describe('row labels', () => {
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
       items: [
-        makeItem({ id: 'i1', feedId: 'f1' }),
-        makeItem({ id: 'i2', feedId: 'f2' }),
+        makeItem({ id: uuid(1007), feedId: uuid(1001) }),
+        makeItem({ id: uuid(1008), feedId: uuid(1002) }),
       ],
       feeds: [
         makeFeed({
-          id: 'f1',
+          id: uuid(1001),
           title: 'Go Blog',
           url: 'https://go.dev/blog/feed.atom',
           siteUrl: 'https://go.dev/blog/',
           iconUrl: 'https://go.dev/images/go-logo.png',
         }),
         makeFeed({
-          id: 'f2',
+          id: uuid(1002),
           title: 'Plain',
           url: 'https://plain.example/rss',
           siteUrl: 'https://plain.example/',
@@ -128,24 +119,24 @@ describe('feed icon source', () => {
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
       items: [
-        makeItem({ id: 'i1', feedId: 'f1' }),
-        makeItem({ id: 'i2', feedId: 'f2' }),
-        makeItem({ id: 'i3', feedId: 'f3' }),
+        makeItem({ id: uuid(1007), feedId: uuid(1001) }),
+        makeItem({ id: uuid(1008), feedId: uuid(1002) }),
+        makeItem({ id: uuid(1009), feedId: uuid(1003) }),
       ],
       feeds: [
         makeFeed({
-          id: 'f1',
+          id: uuid(1001),
           title: 'Generated',
           url: 'https://rsshub.example/twitter/user/alice',
           siteUrl: 'https://twitter.example/alice',
         }),
         makeFeed({
-          id: 'f2',
+          id: uuid(1002),
           title: 'No site',
           url: 'https://rsshub.example/blog/bob',
         }),
         makeFeed({
-          id: 'f3',
+          id: uuid(1003),
           title: 'Declared icon only',
           url: 'https://rsshub.example/blog/carol',
           iconUrl: 'https://carol.example/icon.png',
@@ -169,12 +160,12 @@ describe('feed icon candidates', () => {
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
       items: [
-        makeItem({ id: 'i1', feedId: 'f1' }),
-        makeItem({ id: 'i2', feedId: 'missing' }),
+        makeItem({ id: uuid(1007), feedId: uuid(1001) }),
+        makeItem({ id: uuid(1008), feedId: uuid(1015) }),
       ],
       feeds: [
         makeFeed({
-          id: 'f1',
+          id: uuid(1001),
           title: 'Favicon Feed',
           url: 'https://fav.example/rss.xml',
           siteUrl: 'https://fav.example/',
@@ -191,32 +182,5 @@ describe('feed icon candidates', () => {
       title: '',
       iconSrcs: [],
     });
-  });
-});
-
-describe('shared list order', () => {
-  it('reloads the active aggregate list oldest first and persists the choice', async () => {
-    const { state, solid } = ctx;
-    ctx.queue({ items: [], cursor: null, boundary: B });
-    await state.loadScopeFirstPage({ kind: 'all' }, false);
-    solid.flush();
-
-    ctx.queue({ items: [], cursor: null, boundary: B });
-    await state.toggleAggregateOrder();
-    solid.flush();
-
-    expect(ctx.requestUrl(1)).toBe(
-      '/api/feed-items?limit=30&unread=false&order=oldest'
-    );
-    expect(state.activeOrder()).toBe('oldest');
-    expect(state.aggregateOrder()).toBe('oldest');
-    expect(localStorage.getItem('reader.listOrder')).toBe('oldest');
-
-    ctx.queue({ items: [], cursor: null, boundary: B });
-    await state.loadScopeFirstPage({ kind: 'later' }, false);
-    solid.flush();
-    expect(ctx.requestUrl(2)).toBe(
-      '/api/saved-pages?limit=30&unread=false&order=oldest'
-    );
   });
 });

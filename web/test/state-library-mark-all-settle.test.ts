@@ -11,6 +11,8 @@ import {
   makeItem,
   makePage,
   noContentResponse,
+  savedOrder,
+  uuid,
 } from './support/state-fixture';
 
 const B2 = '019363b8-0000-7000-8000-000000000002';
@@ -33,7 +35,8 @@ const loadLater = async (
   items: Array<ReturnType<typeof makePage>>,
   boundary = B2
 ): Promise<void> => {
-  ctx.queue({ items, cursor: null, boundary });
+  ctx.queue(savedOrder(items, boundary));
+  if (items.length > 0) ctx.queue({ items });
   await ctx.state.loadScopeFirstPage({ kind: 'later' }, false);
   ctx.solid.flush();
 };
@@ -178,11 +181,14 @@ describe('mark-all folder membership', () => {
     const readSync = await import('../src/state/read-sync');
     const release = state.trackLibraryMount();
     ctx.queueSidebar({
-      feeds: [makeFeed({ id: 'f1', folderId: 'A' }), makeFeed({ id: 'f2' })],
+      feeds: [
+        makeFeed({ id: uuid(1001), folderId: 'A' }),
+        makeFeed({ id: uuid(1002) }),
+      ],
       folders: [makeFolder('A')],
     });
     await state.refreshSidebar();
-    ctx.queue({ items: [], cursor: null, boundary: B2 });
+    ctx.queue({ groups: [], boundary: B2 });
     await state.loadScopeFirstPage({ kind: 'folder', folderId: 'A' }, false);
     solid.flush();
     ctx.fetchMock.mockImplementation((input: unknown, init?: RequestInit) => {
@@ -190,17 +196,15 @@ describe('mark-all folder membership', () => {
       if ((init?.method ?? 'GET') !== 'GET')
         return Promise.resolve(noContentResponse());
       if (url.startsWith('/api/folders/A/items'))
-        return Promise.resolve(
-          jsonResponse({ items: [], cursor: null, boundary: B2 })
-        );
+        return Promise.resolve(jsonResponse({ groups: [], boundary: B2 }));
       return answerLibraryRead(url);
     });
 
     const staleSnapshot = readSync.beginRecordSnapshot();
     await state.markScopeAllRead({ kind: 'folder', folderId: 'A' });
-    await state.moveFeedToFolder(makeFeed({ id: 'f2' }), 'A');
+    await state.moveFeedToFolder(makeFeed({ id: uuid(1002) }), 'A');
     const f2Item = {
-      ...makeItem({ id: B1, feedId: 'f2' }),
+      ...makeItem({ id: B1, feedId: uuid(1002) }),
       kind: 'feed' as const,
     };
     expect(readSync.mergeSnapshotRead(f2Item, staleSnapshot.seq)).toBe(false);
@@ -242,11 +246,10 @@ const routeReadAfterMarkAll = (
         jsonResponse({ item: makePage({ id: B1, read: true }) })
       );
     }
-    if (url.startsWith('/api/saved-pages?')) {
-      return Promise.resolve(
-        jsonResponse({ items: listItems, cursor: null, boundary: B2 })
-      );
-    }
+    if (url.startsWith('/api/saved-pages/order?'))
+      return Promise.resolve(jsonResponse(savedOrder(listItems, B2)));
+    if (url.startsWith('/api/saved-pages?ids='))
+      return Promise.resolve(jsonResponse({ items: listItems }));
     return answerLibraryRead(url);
   });
 };

@@ -23,7 +23,7 @@ export interface SidebarSnapshotOptions {
 export interface LoadedLibraryOptions {
   scope: Parameters<StateModule['loadScopeFirstPage']>[0];
   items: Array<SavedPage | FeedItem>;
-  cursor?: string | null;
+  queuedItems?: Array<SavedPage | FeedItem>;
   unreadOnly?: boolean;
   feeds?: Array<Feed>;
   counts?: Array<FeedUnreadCount>;
@@ -139,7 +139,32 @@ const createInspectorHelpers = (getMock: () => ReturnType<typeof vi.fn>) => {
   return { requestUrl, requestInit, requestBody, fetchCount };
 };
 
+export const uuid = (n: number): string =>
+  `019363b8-0000-7000-8000-${n.toString(16).padStart(12, '0')}`;
+
 const DEFAULT_BOUNDARY = '019363b8-0000-7000-8000-000000000000';
+
+export const savedOrder = (
+  items: ReadonlyArray<SavedPage>,
+  boundary = DEFAULT_BOUNDARY
+) => ({ ids: items.map(({ id }) => id), boundary });
+
+export const feedOrder = (
+  items: ReadonlyArray<FeedItem | SavedPage>,
+  boundary = DEFAULT_BOUNDARY
+) => {
+  const idsByFeed = new Map<string, Array<string>>();
+  for (const item of items) {
+    if (!('feedId' in item)) throw new Error('Expected a feed item');
+    const ids = idsByFeed.get(item.feedId) ?? [];
+    ids.push(item.id);
+    idsByFeed.set(item.feedId, ids);
+  }
+  return {
+    groups: Array.from(idsByFeed, ([feedId, ids]) => ({ feedId, ids })),
+    boundary,
+  };
+};
 
 const sidebarResponses = (options: SidebarSnapshotOptions = {}) => [
   { items: options.feeds ?? [] },
@@ -184,11 +209,13 @@ const createSidebarHelpers = (
       await state.refreshSidebar();
       solid.flush();
     }
-    mock.queue({
-      items: options.items,
-      cursor: options.cursor ?? null,
-      boundary: DEFAULT_BOUNDARY,
-    });
+    const items = [...options.items, ...(options.queuedItems ?? [])];
+    mock.queue(
+      options.scope.kind === 'later'
+        ? savedOrder(items as Array<SavedPage>)
+        : feedOrder(items)
+    );
+    if (items.length > 0) mock.queue({ items: options.items });
     await state.loadScopeFirstPage(options.scope, options.unreadOnly ?? false);
     solid.flush();
   };

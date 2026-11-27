@@ -110,7 +110,7 @@ describe('settings load and derived flags', () => {
     solid.flush();
 
     expect(state.settings()?.retention).toBe(100);
-    expect(drafts.retention).toBe(100);
+    expect(drafts.retention).toBe('100');
     expect(drafts.browserlessUrl).toBe('https://browserless.example.com');
     expect(drafts.browserlessToken).toBe('');
     expect(drafts.browserlessResidentialProxy).toBe(true);
@@ -160,11 +160,11 @@ describe('dirty tracking', () => {
   it('tracks articles and kindle dirty state', async () => {
     await load();
 
-    setDrafts((d) => ({ ...d, retention: 50 }));
+    setDrafts((d) => ({ ...d, retention: '50' }));
     solid.flush();
     expect(state.isSectionDirty('articles', drafts)).toBe(true);
     expect(state.hasAnyUnsavedChanges(drafts)).toBe(true);
-    setDrafts((d) => ({ ...d, retention: 100 }));
+    setDrafts((d) => ({ ...d, retention: '100' }));
     solid.flush();
     expect(state.isSectionDirty('articles', drafts)).toBe(false);
 
@@ -236,7 +236,7 @@ describe('draft reset', () => {
 
     setDrafts((d) => ({
       ...d,
-      retention: 25,
+      retention: '25',
       browserlessUrl: 'https://other.example.com',
       browserlessToken: 'secret',
       browserlessResidentialProxy: false,
@@ -256,7 +256,7 @@ describe('draft reset', () => {
     state.resetSectionDraft('kindle', setDrafts);
     solid.flush();
 
-    expect(drafts.retention).toBe(100);
+    expect(drafts.retention).toBe('100');
     expect(drafts.browserlessUrl).toBe('https://browserless.example.com');
     expect(drafts.browserlessToken).toBe('');
     expect(drafts.browserlessResidentialProxy).toBe(true);
@@ -274,7 +274,7 @@ describe('draft reset', () => {
 describe('save guard', () => {
   it('allows only one save at a time', async () => {
     await load();
-    setDrafts((d) => ({ ...d, retention: 50 }));
+    setDrafts((d) => ({ ...d, retention: '50' }));
     solid.flush();
 
     const slow = pending();
@@ -312,7 +312,7 @@ describe('secret draft disposal', () => {
     expect(state.hasAnyUnsavedChanges(drafts)).toBe(false);
 
     const nextVisit = createDraftStore(state.settings());
-    expect(nextVisit.store.retention).toBe(100);
+    expect(nextVisit.store.retention).toBe('100');
     expect(nextVisit.store.smtpHost).toBe('smtp.example.com');
     expect(nextVisit.store.browserlessUrl).toBe(
       'https://browserless.example.com'

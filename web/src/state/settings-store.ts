@@ -19,7 +19,7 @@ import { onSessionCleared } from './session';
 export type SettingsSection = 'articles' | 'kindle' | 'services';
 
 export interface SettingsDrafts {
-  retention: number;
+  retention: string;
   browserlessUrl: string;
   browserlessToken: string;
   browserlessResidentialProxy: boolean;
@@ -70,7 +70,7 @@ export const kindleDraftsOf = (kindle: Settings['kindle']): KindleDrafts => ({
 export const draftsFromSettings = (
   loaded: Settings | null
 ): SettingsDrafts => ({
-  retention: loaded?.retention ?? DEFAULT_RETENTION,
+  retention: String(loaded?.retention ?? DEFAULT_RETENTION),
   browserlessUrl: loaded?.browserless?.url ?? '',
   browserlessToken: '',
   browserlessResidentialProxy: loaded?.browserless?.residentialProxy ?? false,

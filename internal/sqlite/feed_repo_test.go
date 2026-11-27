@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -66,6 +67,79 @@ func TestFeedRepoCreate(t *testing.T) {
 
 	if feeds, schedules := countRows(t, store, `SELECT COUNT(*) FROM feed`), countRows(t, store, `SELECT COUNT(*) FROM feed_schedule`); feeds != 1 || schedules != 1 {
 		t.Fatalf("feeds and schedules after rejected creates = %d/%d, want 1/1", feeds, schedules)
+	}
+}
+
+func TestFeedRepoCreateAtBudgetCapacity(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.Settings().UpdateRetention(ctx, domain.FeedItemBudget); err != nil {
+		t.Fatalf("update retention: %v", err)
+	}
+
+	first := createFeed(t, store, "At capacity", nil)
+	for _, test := range []struct {
+		name     string
+		url      domain.NormalizedURL
+		folderID *string
+		want     domain.ErrorCode
+	}{
+		{name: "new feed", url: mustURL(t, "https://example.com/over-budget"), want: domain.ErrFeedItemBudgetExceeded},
+		{name: "duplicate", url: first.URL, want: domain.ErrFeedAlreadyExists},
+		{name: "missing folder", url: mustURL(t, "https://example.com/missing-folder"), folderID: ptr("missing"), want: domain.ErrFolderNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := store.Feeds().Create(ctx, domain.Feed{
+				ID: domain.NewID(), URL: test.url, Title: test.name, FolderID: test.folderID,
+				ReaderMode: domain.ReaderModeDefault, Order: domain.SortOrderNewest,
+			}, refreshAt(1))
+			requireCode(t, err, test.want)
+			if feeds, schedules := countRows(t, store, `SELECT COUNT(*) FROM feed`), countRows(t, store, `SELECT COUNT(*) FROM feed_schedule`); feeds != 1 || schedules != 1 {
+				t.Fatalf("feeds and schedules after rejected create = %d/%d, want 1/1", feeds, schedules)
+			}
+		})
+	}
+}
+
+func TestFeedRepoCreateCountsExcessStoredItems(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.Settings().UpdateRetention(ctx, 2); err != nil {
+		t.Fatalf("update retention: %v", err)
+	}
+
+	heavy := createFeed(t, store, "Excess", nil)
+	tx, err := store.WriteDB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin seed: %v", err)
+	}
+
+	for n := range domain.FeedItemBudget - 1 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO feed_item (id, feed_id, url, title) VALUES (?, ?, ?, 'Item')`, domain.NewID(), heavy.ID, fmt.Sprintf("https://example.com/excess/%d", n)); err != nil {
+			t.Fatalf("seed excess item: %v", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
+
+	_, err = store.Feeds().Create(ctx, domain.Feed{
+		ID: domain.NewID(), URL: mustURL(t, "https://example.com/second"), Title: "Second",
+		ReaderMode: domain.ReaderModeDefault, Order: domain.SortOrderNewest,
+	}, refreshAt(1))
+	requireCode(t, err, domain.ErrFeedItemBudgetExceeded)
+
+	if feeds := countRows(t, store, `SELECT COUNT(*) FROM feed`); feeds != 1 {
+		t.Fatalf("feeds after rejected create = %d, want 1", feeds)
+	}
+
+	if err := store.Settings().UpdateRetention(ctx, 1); err != nil {
+		t.Fatalf("lowering retention must prune before checking the budget: %v", err)
+	}
+
+	if items := countRows(t, store, `SELECT COUNT(*) FROM feed_item`); items != 1 {
+		t.Fatalf("items after lowering retention = %d, want 1", items)
 	}
 }
 
@@ -210,13 +284,13 @@ func TestFeedRepoSucceedRefresh(t *testing.T) {
 	recordFailure(t, store, feed, "boom", startedAt)
 
 	publishedAt := time.Date(2024, 3, 1, 10, 30, 0, 0, time.UTC)
-	items := []domain.FeedItem{
-		{ID: domain.NewID(), URL: mustURL(t, "https://example.com/a"), Title: "A", PublishedAt: &publishedAt},
-		{ID: domain.NewID(), URL: mustURL(t, "https://example.com/b"), Title: "B"},
+	entries := []domain.ParsedFeedEntry{
+		{URL: mustURL(t, "https://example.com/a"), Title: "A", PublishedAt: &publishedAt},
+		{URL: mustURL(t, "https://example.com/b"), Title: "B"},
 	}
 
 	meta := domain.FeedSyncMeta{Title: "Synced", SiteURL: ptr("https://example.com/"), IconURL: ptr("https://example.com/icon.png")}
-	succeedRefresh(t, store, feed, meta, items, nil, finishedAt)
+	succeedRefresh(t, store, feed, meta, entries, finishedAt)
 
 	synced, err := store.Feeds().GetByID(ctx, feed.ID)
 	if err != nil {
@@ -239,21 +313,18 @@ func TestFeedRepoSucceedRefresh(t *testing.T) {
 		t.Fatalf("synced feed failure state = %d/%v, want 0/nil", synced.FailureCount, synced.LastError)
 	}
 
-	stored, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
-	if err != nil {
-		t.Fatalf("list synced items: %v", err)
+	stored := loadTestFeedItems(t, store, feed.ID)
+
+	if len(stored) != 2 || stored[0].URL != entries[0].URL || stored[1].URL != entries[1].URL {
+		t.Fatalf("synced items = %v, want A then B", stored)
 	}
 
-	if got := itemIDs(stored.Items); !slices.Equal(got, []string{items[1].ID, items[0].ID}) {
-		t.Fatalf("synced item ids = %v", got)
+	if stored[0].PublishedAt == nil || !stored[0].PublishedAt.Equal(publishedAt) {
+		t.Fatalf("stored published at = %v, want %v", stored[0].PublishedAt, publishedAt)
 	}
 
-	if stored.Items[1].PublishedAt == nil || !stored.Items[1].PublishedAt.Equal(publishedAt) {
-		t.Fatalf("stored published at = %v, want %v", stored.Items[1].PublishedAt, publishedAt)
-	}
-
-	duplicate := []domain.FeedItem{{ID: domain.NewID(), URL: mustURL(t, "https://example.com/a"), Title: "A again"}}
-	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: "Synced"}, duplicate, nil, finishedAt.Add(time.Minute))
+	duplicate := []domain.ParsedFeedEntry{{URL: mustURL(t, "https://example.com/a"), Title: "A again"}}
+	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: "Synced"}, duplicate, finishedAt.Add(time.Minute))
 
 	cleared, err := store.Feeds().GetByID(ctx, feed.ID)
 	if err != nil {
@@ -264,29 +335,16 @@ func TestFeedRepoSucceedRefresh(t *testing.T) {
 		t.Fatalf("site/icon after sync without them = %v/%v, want both replaced by nil", cleared.SiteURL, cleared.IconURL)
 	}
 
-	afterDuplicate, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
-	if err != nil {
-		t.Fatalf("list items after duplicate sync: %v", err)
+	afterDuplicate := loadTestFeedItems(t, store, feed.ID)
+
+	if len(afterDuplicate) != 2 {
+		t.Fatalf("items after duplicate sync = %d, want 2", len(afterDuplicate))
 	}
 
-	if len(afterDuplicate.Items) != 2 {
-		t.Fatalf("items after duplicate sync = %d, want 2", len(afterDuplicate.Items))
-	}
-
-	if got := afterDuplicate.Items[1]; got.ID != items[0].ID || got.Title != items[0].Title || got.URL != items[0].URL || got.PublishedAt == nil || !got.PublishedAt.Equal(publishedAt) {
+	if got := afterDuplicate[0]; got.ID != stored[0].ID || got.Title != stored[0].Title || got.URL != stored[0].URL || got.PublishedAt == nil || !got.PublishedAt.Equal(publishedAt) {
 		t.Fatalf("duplicate changed original item: %+v", got)
 	}
 
-	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: "Synced"}, nil, []string{items[0].ID}, finishedAt.Add(2*time.Minute))
-
-	afterDelete, err := store.FeedItems().ListByFeed(ctx, feed.ID, domain.PageParams{Limit: 10, Boundary: maxTestBoundary})
-	if err != nil {
-		t.Fatalf("list items after deletion sync: %v", err)
-	}
-
-	if got := itemIDs(afterDelete.Items); !slices.Equal(got, []string{items[1].ID}) {
-		t.Fatalf("items after deletion sync = %v", got)
-	}
 }
 
 func TestStoreExportOPML(t *testing.T) {
@@ -464,6 +522,37 @@ func TestImportOPMLDuplicateURLsCreateOneFeedAndSchedule(t *testing.T) {
 	}
 
 	requireNextRefreshAt(t, store, feed, refreshAt(3))
+}
+
+func TestImportOPMLAtBudgetCapacity(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.Settings().UpdateRetention(ctx, domain.FeedItemBudget); err != nil {
+		t.Fatalf("update retention: %v", err)
+	}
+
+	first := createFeed(t, store, "At capacity", nil)
+	duplicate := domain.OPMLFeedInput{URL: first.URL, Title: "Duplicate"}
+	_, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{
+		Folders: []string{"Over budget"},
+		Feeds: []domain.OPMLFeedInput{
+			duplicate,
+			{URL: mustURL(t, "https://example.com/new"), Title: "New", FolderName: ptr("Over budget")},
+		},
+	}, refreshAt(1))
+	requireCode(t, err, domain.ErrFeedItemBudgetExceeded)
+	if folders := countRows(t, store, `SELECT COUNT(*) FROM folder`); folders != 0 {
+		t.Fatalf("folders after rejected import = %d, want 0", folders)
+	}
+
+	if feeds, schedules := countRows(t, store, `SELECT COUNT(*) FROM feed`), countRows(t, store, `SELECT COUNT(*) FROM feed_schedule`); feeds != 1 || schedules != 1 {
+		t.Fatalf("feeds and schedules after rejected import = %d/%d, want 1/1", feeds, schedules)
+	}
+
+	result, err := store.Feeds().ImportOPML(ctx, domain.OPMLDocument{Feeds: []domain.OPMLFeedInput{duplicate}}, refreshAt(2))
+	if err != nil || result.ImportedFeeds != 0 || result.SkippedFeeds != 1 {
+		t.Fatalf("duplicate-only import = (%+v, %v), want one skipped feed", result, err)
+	}
 }
 
 func TestImportOPMLIsAtomic(t *testing.T) {

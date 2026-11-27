@@ -224,6 +224,23 @@ func TestSettingsUpdates(t *testing.T) {
 	requireAPIError(t, h.authed(http.MethodPut, "/api/settings/retention", map[string]any{"retention": 0}), http.StatusBadRequest, "InvalidRetention")
 }
 
+func TestRetentionUpdateLimits(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.seedFeed("First", "https://first.example.com/rss", nil)
+	h.seedFeed("Second", "https://second.example.com/rss", nil)
+
+	const target = "/api/settings/retention"
+	requireStatus(t, h.authed(http.MethodPut, target, map[string]any{"retention": 5000}), http.StatusNoContent)
+	requireAPIError(t, h.authed(http.MethodPut, target, map[string]any{"retention": 5001}), http.StatusBadRequest, "FeedItemBudgetExceeded")
+	requireAPIError(t, h.authed(http.MethodPut, target, map[string]any{"retention": 10001}), http.StatusBadRequest, "InvalidRetention")
+
+	if got := h.loadSettings().Retention; got != 5000 {
+		t.Fatalf("retention after rejected updates = %d, want 5000", got)
+	}
+}
+
 func TestBrowserlessSettingsUpdate(t *testing.T) {
 	t.Parallel()
 

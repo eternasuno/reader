@@ -1,20 +1,24 @@
 import type { Mock } from 'vitest';
-import { jsonResponse, makePage, noContentResponse } from './state-fixture';
+import {
+  jsonResponse,
+  makePage,
+  noContentResponse,
+  savedOrder,
+  uuid,
+} from './state-fixture';
 
 /** Answers the non-write reads that mark-all tests need. */
 export const answerLibraryRead = (url: string): Promise<Response> => {
-  if (url.startsWith('/api/saved-pages?')) {
+  const items = [
+    makePage({ id: uuid(1018), read: true }),
+    makePage({ id: uuid(1019), read: true }),
+  ];
+  if (url.startsWith('/api/saved-pages/order?'))
     return Promise.resolve(
-      jsonResponse({
-        items: [
-          makePage({ id: 'p1', read: true }),
-          makePage({ id: 'p2', read: true }),
-        ],
-        cursor: null,
-        boundary: '019363b8-0000-7000-8000-000000000002',
-      })
+      jsonResponse(savedOrder(items, '019363b8-0000-7000-8000-000000000002'))
     );
-  }
+  if (url.startsWith('/api/saved-pages?ids='))
+    return Promise.resolve(jsonResponse({ items }));
   if (url === '/api/saved-pages/unread-count')
     return Promise.resolve(
       jsonResponse({

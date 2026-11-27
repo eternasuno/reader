@@ -167,7 +167,11 @@ func (r *FeedRepo) Create(ctx context.Context, feed domain.Feed, now time.Time) 
 			return err
 		}
 
-		return insertFeedSchedule(ctx, tx, created.ID, now)
+		if err := insertFeedSchedule(ctx, tx, created.ID, now); err != nil {
+			return err
+		}
+
+		return checkCurrentFeedItemBudget(ctx, tx)
 	})
 	if err != nil {
 		return domain.Feed{}, mapCreateFeedError(err, feed.URL)
@@ -191,7 +195,50 @@ func mapCreateFeedError(err error, url domain.NormalizedURL) error {
 		return domain.NewError(domain.ErrFolderNotFound, nil)
 	}
 
-	return domain.NewError(domain.ErrFeedRepositoryError, err)
+	return wrapRepositoryError(err, domain.ErrFeedRepositoryError)
+}
+
+func checkCurrentFeedItemBudget(ctx context.Context, tx *sql.Tx) error {
+	retention, err := loadRetention(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	return checkFeedItemBudget(ctx, tx, retention)
+}
+
+func checkFeedItemBudget(ctx context.Context, tx *sql.Tx, retention int) error {
+	counts, err := storedCountsPerFeed(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	if domain.ExceedsFeedItemBudget(counts, retention) {
+		return domain.NewError(domain.ErrFeedItemBudgetExceeded, nil)
+	}
+
+	return nil
+}
+
+func storedCountsPerFeed(ctx context.Context, tx *sql.Tx) ([]int, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT (SELECT COUNT(*) FROM feed_item WHERE feed_item.feed_id = feed.id) FROM feed`)
+	if err != nil {
+		return nil, err
+	}
+
+	defer closeRows(rows)
+
+	counts := []int{}
+	for rows.Next() {
+		var count int
+		if err := rows.Scan(&count); err != nil {
+			return nil, err
+		}
+
+		counts = append(counts, count)
+	}
+
+	return counts, rows.Err()
 }
 
 func (r *FeedRepo) Delete(ctx context.Context, id string) error {
@@ -287,14 +334,14 @@ func claimDueRefreshInTx(ctx context.Context, tx *sql.Tx, attemptID string, now 
 // SucceedRefresh finishes the running attempt, applies the sync, and schedules the
 // next refresh. It writes nothing when the attempt is not running (feed deleted or
 // outcome already recorded).
-func (r *FeedRepo) SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta domain.FeedSyncMeta, newItems []domain.FeedItem, deleteIDs []string, finishedAt, nextRefreshAt time.Time) error {
+func (r *FeedRepo) SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta domain.FeedSyncMeta, entries []domain.ParsedFeedEntry, finishedAt, nextRefreshAt time.Time) error {
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
 		finished, err := finishFeedRefresh(ctx, tx, attemptID, feedID, domain.FeedRefreshSucceeded, nil, finishedAt)
 		if err != nil || !finished {
 			return err
 		}
 
-		if err := applyFeedSync(ctx, tx, feedID, meta, newItems, deleteIDs); err != nil {
+		if err := applyFeedSync(ctx, tx, feedID, meta, entries); err != nil {
 			return err
 		}
 
@@ -431,7 +478,18 @@ func pruneFeedRefresh(ctx context.Context, tx *sql.Tx, feedID string) error {
 	return err
 }
 
-func applyFeedSync(ctx context.Context, tx *sql.Tx, feedID string, meta domain.FeedSyncMeta, newItems []domain.FeedItem, deleteIDs []string) error {
+func applyFeedSync(ctx context.Context, tx *sql.Tx, feedID string, meta domain.FeedSyncMeta, entries []domain.ParsedFeedEntry) error {
+	retention, err := loadRetention(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	storedRefs, err := listStoredRefsByFeed(ctx, tx, feedID)
+	if err != nil {
+		return err
+	}
+
+	newItems, deleteIDs := domain.PlanFeedSync(feedID, entries, storedRefs, retention, domain.NewID)
 	if err := updateFeedSyncMeta(ctx, tx, feedID, meta); err != nil {
 		return err
 	}
@@ -498,7 +556,11 @@ func deleteSyncItems(ctx context.Context, tx *sql.Tx, feedID string, deleteIDs [
 func (r *FeedRepo) ImportOPML(ctx context.Context, doc domain.OPMLDocument, now time.Time) (domain.OPMLImportResult, error) {
 	importer := &opmlImporter{ctx: ctx, now: now, result: domain.OPMLImportResult{SkippedFeeds: doc.SkippedInvalid}}
 	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		return importer.run(tx, doc)
+		if err := importer.run(tx, doc); err != nil {
+			return err
+		}
+
+		return checkCurrentFeedItemBudget(ctx, tx)
 	})
 	if err != nil {
 		return domain.OPMLImportResult{}, wrapRepositoryError(err, domain.ErrFeedRepositoryError)

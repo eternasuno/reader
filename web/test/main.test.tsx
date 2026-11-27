@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAppHarness, json } from './support/app-harness';
+import { feedOrder, uuid } from './support/state-fixture';
 
 const harness = createAppHarness({ settleTimes: 1 });
 const { respond, respondUnauthenticated, settle, mountApp: mount } = harness;
@@ -71,7 +72,7 @@ describe('app entry', () => {
     harness.fetchMock.mockImplementation((input: unknown) =>
       String(input).includes('/api/auth/session')
         ? pending
-        : Promise.resolve(json({ items: [], cursor: null, item: null }))
+        : Promise.resolve(json({ items: [], groups: [], item: null }))
     );
 
     const { container } = mount('/login');
@@ -205,7 +206,7 @@ describe('session guard login errors', () => {
 
 /** `LIB-RELOAD-1`: the first list page request for the active scope. */
 const listPages = (): ReadonlyArray<string> =>
-  requestUrls().filter((url) => url.startsWith('/api/feed-items?limit=30'));
+  requestUrls().filter((url) => url.startsWith('/api/feed-items/order?'));
 
 describe('library layout', () => {
   it('renders the responsive three-panel layout and loads the route scope', async () => {
@@ -261,20 +262,32 @@ describe('library reload', () => {
 
   it('does not auto-paginate when the list has no measurable layout', async () => {
     const item = {
-      id: 'item-1',
-      feedId: 'feed-1',
+      id: uuid(1),
+      feedId: uuid(100),
       url: 'https://example.com/item-1',
       title: 'Item 1',
       description: 'Summary',
       content: '<p>Body</p>',
       read: false,
     };
-    respond((url) =>
-      url.startsWith('/api/feed-items?limit=30')
-        ? json({ items: [item], cursor: 'item-1' })
-        : undefined
-    );
+    const items = [
+      item,
+      ...Array.from({ length: 30 }, (_, index) => ({
+        ...item,
+        id: uuid(index + 2),
+      })),
+    ];
+    respond((url) => {
+      if (url.startsWith('/api/feed-items/order?'))
+        return json(feedOrder(items));
+      if (url.startsWith('/api/feed-items?ids='))
+        return json({ items: items.slice(0, 30) });
+      return undefined;
+    });
     await mountApp('/all');
     expect(listPages()).toHaveLength(1);
+    expect(
+      requestUrls().filter((url) => url.startsWith('/api/feed-items?ids='))
+    ).toHaveLength(1);
   });
 });

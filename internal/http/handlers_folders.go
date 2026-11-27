@@ -108,20 +108,20 @@ func (s *server) handleFolderMarkRead(w http.ResponseWriter, r *http.Request) {
 	writeNoContent(w)
 }
 
-func (s *server) handleFolderItems(w http.ResponseWriter, r *http.Request) {
-	params, err := parseDefaultPageParams(r)
+func (s *server) handleFolderItemSnapshot(w http.ResponseWriter, r *http.Request) {
+	params, err := parseSnapshotParams(r)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	result, err := s.cfg.FeedItems.ListByFolder(r.Context(), r.PathValue("id"), params)
+	groups, err := s.cfg.FeedItems.SnapshotByFolder(r.Context(), r.PathValue("id"), params)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toFeedItemsPage(result, params.Boundary))
+	writeJSON(w, http.StatusOK, toFeedItemSnapshot(groups, params.Boundary))
 }

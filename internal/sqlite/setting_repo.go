@@ -157,9 +157,51 @@ func buildKindleSchedule(s settingsRow) *domain.KindleSchedule {
 	return &domain.KindleSchedule{Hour: int(s.sendHour.Int64), Minute: int(s.sendMinute.Int64), Timezone: s.timezone.String}
 }
 
+const pruneFeedItemsQuery = `DELETE FROM feed_item WHERE id IN (
+	SELECT id FROM (
+		SELECT id, ROW_NUMBER() OVER (PARTITION BY feed_id ORDER BY id DESC) AS position
+		FROM feed_item
+	) WHERE position > ?
+)`
+
+func loadRetention(ctx context.Context, tx *sql.Tx) (int, error) {
+	var retention int
+	err := tx.QueryRowContext(ctx, `SELECT retention FROM setting WHERE id = 1`).Scan(&retention)
+
+	return retention, err
+}
+
+// updateRetentionInTx prunes before checking the budget so a decrease is judged by the
+// counts it leaves behind.
+func updateRetentionInTx(ctx context.Context, tx *sql.Tx, retention int) error {
+	previous, err := loadRetention(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE setting SET retention = ? WHERE id = 1`, retention); err != nil {
+		return err
+	}
+
+	if retention < previous {
+		if _, err := tx.ExecContext(ctx, pruneFeedItemsQuery, retention); err != nil {
+			return err
+		}
+	}
+
+	return checkFeedItemBudget(ctx, tx, retention)
+}
+
 func (r *SettingRepo) UpdateRetention(ctx context.Context, retention int) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET retention = ? WHERE id = 1`, retention); err != nil {
-		return domain.NewError(domain.ErrSettingRepositoryError, err)
+	if err := domain.ValidateRetention(retention); err != nil {
+		return err
+	}
+
+	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
+		return updateRetentionInTx(ctx, tx, retention)
+	})
+	if err != nil {
+		return wrapRepositoryError(err, domain.ErrSettingRepositoryError)
 	}
 
 	return nil

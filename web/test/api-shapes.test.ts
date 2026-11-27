@@ -24,12 +24,13 @@ const P = `${S}/services`;
 const PAGE = 'https://example.com/a';
 const B = '019363b8-0000-7000-8000-000000000000';
 const BEFORE = { before: B };
-const CONT = { cursor: 'c1', boundary: B };
-const CQ = `cursor=c1&boundary=${B}`;
-const LIST_URL = `${SAVED}?limit=30&unread=true&cursor=abc&boundary=${B}`;
-const PARAMS = { limit: 30, unread: true, cursor: 'abc', boundary: B };
-const FIRST_PARAMS = { limit: 30, unread: true, cursor: null, boundary: B };
-const EMPTY_PAGE = { items: [], cursor: null, boundary: B };
+const IDS = [B, '019363b8-0000-7000-8000-000000000001'];
+const IDS_QUERY = `ids=${IDS.join(',')}`;
+const SAVED_ORDER = `${SAVED}/order?unread=true`;
+const FEED_ORDER = `${FEEDS}/f/items/order?unread=false&order=oldest`;
+const ALL_ORDER = `${ITEMS}/order`;
+const FOLDER_ORDER = `${FOLDERS}/f/items/order?unread=true`;
+const EMPTY_GROUPS = { groups: [], boundary: B };
 const sp = savedPagesApi;
 const fa = feedsApi;
 const fi = feedItemsApi;
@@ -79,8 +80,8 @@ const VALID_SEND = {
 
 const SHAPE_RESPONSES: Record<string, unknown> = {
   'GET /api/auth/session': { authenticated: true },
-  [`GET ${LIST_URL}`]: EMPTY_PAGE,
-  [`GET ${SAVED}?limit=30&unread=true`]: EMPTY_PAGE,
+  [`GET ${SAVED_ORDER}`]: { ids: [], boundary: B },
+  [`GET ${SAVED}?${IDS_QUERY}`]: { items: [] },
   [`GET ${SAVED}/unread-count`]: { count: 0, boundary: B },
   [`GET ${SAVED}/p%2F1`]: { item: null },
   [`POST ${SAVED}`]: { item: VALID_PAGE },
@@ -91,17 +92,15 @@ const SHAPE_RESPONSES: Record<string, unknown> = {
   },
   [`POST ${FEEDS}`]: { item: VALID_FEED },
   [`GET ${FEEDS}/unread-counts`]: { items: [], boundary: B },
-  [`GET ${FEEDS}/f/items?limit=10&unread=false`]: EMPTY_PAGE,
-  [`GET ${FEEDS}/f/items?${CQ}`]: EMPTY_PAGE,
-  [`GET ${ITEMS}`]: EMPTY_PAGE,
-  [`GET ${ITEMS}?${CQ}`]: EMPTY_PAGE,
+  [`GET ${FEED_ORDER}`]: EMPTY_GROUPS,
+  [`GET ${ALL_ORDER}`]: EMPTY_GROUPS,
+  [`GET ${ITEMS}?${IDS_QUERY}`]: { items: [] },
   [`POST ${ITEMS}/i/extract`]: {
     item: { ...VALID_ITEM, extractedContent: '<p>extracted</p>' },
   },
   [`GET ${FOLDERS}`]: { items: [] },
   [`POST ${FOLDERS}`]: { item: { id: 'f', name: 't' } },
-  [`GET ${FOLDERS}/f/items?unread=true`]: EMPTY_PAGE,
-  [`GET ${FOLDERS}/f/items?${CQ}`]: EMPTY_PAGE,
+  [`GET ${FOLDER_ORDER}`]: EMPTY_GROUPS,
   [`GET ${S}`]: { retention: 100 },
   'POST /api/kindle/send': { item: VALID_SEND },
   'GET /api/kindle/sends': { running: false, items: [] },
@@ -148,13 +147,8 @@ const SHAPES: Array<Shape> = [
     { password: 'pw' },
   ],
   ['logout', () => authApi.logout(), '/api/auth/logout', 'POST'],
-  ['list', () => sp.list(PARAMS), LIST_URL, 'GET'],
-  [
-    'list first',
-    () => sp.list(FIRST_PARAMS),
-    `${SAVED}?limit=30&unread=true`,
-    'GET',
-  ],
+  ['saved batch', () => sp.byIds(IDS), `${SAVED}?${IDS_QUERY}`, 'GET'],
+  ['saved order', () => sp.order({ unread: true }), SAVED_ORDER, 'GET'],
   ['count', () => sp.unreadCount(), `${SAVED}/unread-count`, 'GET'],
   ['page', () => sp.getById('p/1'), `${SAVED}/p%2F1`, 'GET'],
   ['add', () => sp.create(PAGE), SAVED, 'POST', { url: PAGE }],
@@ -204,14 +198,13 @@ const SHAPES: Array<Shape> = [
   ['feed drop', () => fa.remove('f'), `${FEEDS}/f`, 'DELETE'],
   ['unread', () => fa.unreadCounts(), `${FEEDS}/unread-counts`, 'GET'],
   [
-    'feed items',
-    () => fa.listItems('f', { limit: 10, unread: false }),
-    `${FEEDS}/f/items?limit=10&unread=false`,
+    'feed order',
+    () => fa.itemsOrder('f', { unread: false, order: 'oldest' }),
+    FEED_ORDER,
     'GET',
   ],
-  ['feed cont', () => fa.listItems('f', CONT), `${FEEDS}/f/items?${CQ}`, 'GET'],
-  ['items', () => fi.listAll(), ITEMS, 'GET'],
-  ['items cont', () => fi.listAll(CONT), `${ITEMS}?${CQ}`, 'GET'],
+  ['all order', () => fi.order(), ALL_ORDER, 'GET'],
+  ['feed batch', () => fi.byIds(IDS), `${ITEMS}?${IDS_QUERY}`, 'GET'],
   ['extract', () => fi.extract('i'), `${ITEMS}/i/extract`, 'POST'],
   ['item', () => fi.setRead('i', true), `${ITEMS}/i`, 'PATCH', { read: true }],
   [
@@ -234,15 +227,9 @@ const SHAPES: Array<Shape> = [
     BEFORE,
   ],
   [
-    'folder items',
-    () => fo.listItems('f', { unread: true }),
-    `${FOLDERS}/f/items?unread=true`,
-    'GET',
-  ],
-  [
-    'folder cont',
-    () => fo.listItems('f', CONT),
-    `${FOLDERS}/f/items?${CQ}`,
+    'folder order',
+    () => fo.itemsOrder('f', { unread: true }),
+    FOLDER_ORDER,
     'GET',
   ],
   ['settings', () => st.get(), S, 'GET'],

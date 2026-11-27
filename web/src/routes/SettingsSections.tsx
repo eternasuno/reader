@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import {
   isSaving,
   isSettingsReady,
+  parseRetentionDraft,
   saveRetention,
   savingAction,
 } from '../state';
@@ -25,7 +26,10 @@ function RetentionGroup(props: SettingsDraftProps): JSX.Element {
           variant="primary"
           size="sm"
           loading={savingAction() === 'retention'}
-          disabled={controlsDisabled()}
+          disabled={
+            controlsDisabled() ||
+            parseRetentionDraft(props.drafts.retention) === undefined
+          }
           onClick={() => void saveRetention(props.drafts)}
         >
           {t('settings.saveArticles')}
@@ -39,16 +43,18 @@ function RetentionGroup(props: SettingsDraftProps): JSX.Element {
       >
         <Input
           id={inputId}
-          type="number"
-          min={1}
+          name="retention"
+          type="text"
+          inputmode="numeric"
           containerClass="sm:w-28"
           class="tabular-nums"
-          value={String(props.drafts.retention)}
+          value={props.drafts.retention}
           disabled={controlsDisabled()}
           onInput={(event) => {
-            const parsed = Number.parseInt(event.currentTarget.value, 10);
-            const retention = Number.isNaN(parsed) ? 0 : parsed;
-            props.setDrafts((draft) => ({ ...draft, retention }));
+            const retention = event.currentTarget.value;
+            props.setDrafts((draft) => {
+              draft.retention = retention;
+            });
           }}
         />
       </SettingsRow>

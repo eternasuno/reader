@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Feed, FeedItem, FeedUnreadCount, SavedPage } from '../src/api';
 import {
   createStateTestContext,
+  feedOrder,
   jsonResponse,
   makeFeed,
   makeItem,
   makePage,
   noContentResponse,
+  savedOrder,
+  uuid,
 } from './support/state-fixture';
 
 const B1 = '019363b8-0000-7000-8000-000000000001';
@@ -42,11 +45,14 @@ const routeReads = (routes: ReadRoutes): void => {
     }
     const url = String(input);
     const body = bodies[url];
-    return Promise.resolve(
-      jsonResponse(
-        body ? body() : { items: routes.page, cursor: null, boundary: B2 }
-      )
-    );
+    if (body) return Promise.resolve(jsonResponse(body()));
+    if (url.startsWith('/api/saved-pages/order?'))
+      return Promise.resolve(
+        jsonResponse(savedOrder(routes.page as Array<SavedPage>, B2))
+      );
+    if (url.includes('/order?'))
+      return Promise.resolve(jsonResponse(feedOrder(routes.page, B2)));
+    return Promise.resolve(jsonResponse({ items: routes.page }));
   });
 };
 
@@ -54,53 +60,56 @@ beforeEach(async () => {
   await ctx.reset();
 });
 
-describe('scope mark-all', () => {
-  it('is pessimistic and reloads the active feed scope after confirmation', async () => {
-    const { state, solid } = ctx;
-    const sidebarRefresh = await import('../src/state/sidebar-refresh');
-    const releaseLibrary = state.trackLibraryMount();
-    const stopPolling = sidebarRefresh.mountSidebarRefresh();
-    await ctx.queueLoadedLibrary({
-      scope: { kind: 'feed', feedId: 'f1' },
-      items: [makeItem({ id: 'i1', feedId: 'f1' })],
-      feeds: [makeFeed({ id: 'f1' }), makeFeed({ id: 'f2' })],
-      counts: [
-        { feedId: 'f1', count: 1 },
-        { feedId: 'f2', count: 1 },
-      ],
-    });
-
-    const markReq = ctx.pending();
-    const before = ctx.fetchCount();
-    const marking = state.markScopeAllRead({ kind: 'feed', feedId: 'f1' });
-    solid.flush();
-
-    expect(ctx.requestUrl(before)).toBe('/api/feeds/f1/read-all');
-    expect(state.rows().find((row) => row.id === 'i1')?.read).toBe(false);
-    expect(state.feedUnreadCount('f1')).toBe(1);
-    expect(state.feedUnreadCount('f2')).toBe(1);
-    expect(state.isMarkingScope({ kind: 'feed', feedId: 'f1' })).toBe(true);
-
-    routeReads({
-      feeds: [makeFeed({ id: 'f1' }), makeFeed({ id: 'f2' })],
-      counts: [
-        { feedId: 'f1', count: 0 },
-        { feedId: 'f2', count: 1 },
-      ],
-      saved: 0,
-      page: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
-    });
-    markReq.resolve(noContentResponse());
-    await marking;
-    await vi.waitFor(() => expect(state.feedUnreadCount('f1')).toBe(0));
-    solid.flush();
-
-    expect(state.rows().find((row) => row.id === 'i1')?.read).toBe(true);
-    expect(state.feedUnreadCount('f2')).toBe(1);
-    expect(state.isMarkingScope({ kind: 'feed', feedId: 'f1' })).toBe(false);
-    stopPolling();
-    releaseLibrary();
+it('is pessimistic and reloads the active feed scope after confirmation', async () => {
+  const { state, solid } = ctx;
+  const sidebarRefresh = await import('../src/state/sidebar-refresh');
+  const releaseLibrary = state.trackLibraryMount();
+  const stopPolling = sidebarRefresh.mountSidebarRefresh();
+  await ctx.queueLoadedLibrary({
+    scope: { kind: 'feed', feedId: uuid(1001) },
+    items: [makeItem({ id: uuid(1007), feedId: uuid(1001) })],
+    feeds: [makeFeed({ id: uuid(1001) }), makeFeed({ id: uuid(1002) })],
+    counts: [
+      { feedId: uuid(1001), count: 1 },
+      { feedId: uuid(1002), count: 1 },
+    ],
   });
+
+  const markReq = ctx.pending();
+  const before = ctx.fetchCount();
+  const marking = state.markScopeAllRead({
+    kind: 'feed',
+    feedId: uuid(1001),
+  });
+  solid.flush();
+
+  expect(ctx.requestUrl(before)).toBe(`/api/feeds/${uuid(1001)}/read-all`);
+  expect(state.rows().find((row) => row.id === uuid(1007))?.read).toBe(false);
+  expect(state.feedUnreadCount(uuid(1001))).toBe(1);
+  expect(state.feedUnreadCount(uuid(1002))).toBe(1);
+  expect(state.isMarkingScope({ kind: 'feed', feedId: uuid(1001) })).toBe(true);
+
+  routeReads({
+    feeds: [makeFeed({ id: uuid(1001) }), makeFeed({ id: uuid(1002) })],
+    counts: [
+      { feedId: uuid(1001), count: 0 },
+      { feedId: uuid(1002), count: 1 },
+    ],
+    saved: 0,
+    page: [makeItem({ id: uuid(1007), feedId: uuid(1001), read: true })],
+  });
+  markReq.resolve(noContentResponse());
+  await marking;
+  await vi.waitFor(() => expect(state.feedUnreadCount(uuid(1001))).toBe(0));
+  solid.flush();
+
+  expect(state.rows().find((row) => row.id === uuid(1007))?.read).toBe(true);
+  expect(state.feedUnreadCount(uuid(1002))).toBe(1);
+  expect(state.isMarkingScope({ kind: 'feed', feedId: uuid(1001) })).toBe(
+    false
+  );
+  stopPolling();
+  releaseLibrary();
 });
 
 describe('saved mark-all', () => {
@@ -109,7 +118,9 @@ describe('saved mark-all', () => {
     const sidebarRefresh = await import('../src/state/sidebar-refresh');
     const releaseLibrary = state.trackLibraryMount();
     const stopPolling = sidebarRefresh.mountSidebarRefresh();
-    ctx.queue({ items: [makePage({ id: 'p1' })], cursor: null, boundary: B1 });
+    const items = [makePage({ id: uuid(1018) })];
+    ctx.queue(savedOrder(items, B1));
+    ctx.queue({ items });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     ctx.queueSidebar({ saved: 1 });
     await state.refreshSidebar();
@@ -127,7 +138,7 @@ describe('saved mark-all', () => {
 
     routeReads({
       saved: 0,
-      page: [makePage({ id: 'p1', read: true })],
+      page: [makePage({ id: uuid(1018), read: true })],
     });
     markReq.resolve(noContentResponse());
     await marking;
@@ -146,9 +157,9 @@ describe('mark-all failure', () => {
     const { state, solid, ui, i18n } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
-      items: [makeItem({ id: 'i1', feedId: 'f1' })],
-      feeds: [makeFeed({ id: 'f1' })],
-      counts: [{ feedId: 'f1', count: 1 }],
+      items: [makeItem({ id: uuid(1007), feedId: uuid(1001) })],
+      feeds: [makeFeed({ id: uuid(1001) })],
+      counts: [{ feedId: uuid(1001), count: 1 }],
     });
 
     const before = ctx.fetchCount();
@@ -158,7 +169,7 @@ describe('mark-all failure', () => {
 
     expect(ctx.fetchCount()).toBe(before + 1);
     expect(state.rows()[0].read).toBe(false);
-    expect(state.feedUnreadCount('f1')).toBe(1);
+    expect(state.feedUnreadCount(uuid(1001))).toBe(1);
     expect(state.isMarkingScope({ kind: 'all' })).toBe(false);
     expect(ui.currentToast()?.message).toBe(
       i18n.translateErrorCode('FeedItemRepositoryError')
@@ -171,18 +182,16 @@ describe('stale scope rollback guard', () => {
     const { state, solid, ui } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1' })],
+      items: [makePage({ id: uuid(1018) })],
     });
 
     const failure = ctx.pending();
     state.markLoadedRead();
     solid.flush();
 
-    ctx.queue({
-      items: [makeItem({ id: 'i1', feedId: 'f1' })],
-      cursor: null,
-      boundary: B1,
-    });
+    const items = [makeItem({ id: uuid(1007), feedId: uuid(1001) })];
+    ctx.queue(feedOrder(items, B1));
+    ctx.queue({ items });
     await state.loadScopeFirstPage({ kind: 'all' }, false);
     solid.flush();
 
@@ -191,7 +200,7 @@ describe('stale scope rollback guard', () => {
     await vi.waitFor(() => expect(ui.currentToast()).not.toBeNull());
     solid.flush();
 
-    expect(state.rows().map((row) => row.id)).toEqual(['i1']);
+    expect(state.rows().map((row) => row.id)).toEqual([uuid(1007)]);
     expect(state.rows()[0].read).toBe(false);
     expect(ui.currentToast()?.variant).toBe('error');
   });
@@ -202,7 +211,7 @@ describe('bulk vs newer toggle: failure', () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1' }), makePage({ id: 'p2' })],
+      items: [makePage({ id: uuid(1018) }), makePage({ id: uuid(1019) })],
       feeds: [],
       saved: 2,
     });
@@ -211,9 +220,9 @@ describe('bulk vs newer toggle: failure', () => {
 
     state.markLoadedRead();
     solid.flush();
-    const toggling = state.toggleArticleRead('p1', false);
+    const toggling = state.toggleArticleRead(uuid(1018), false);
     solid.flush();
-    expect(state.rows().find((row) => row.id === 'p1')?.read).toBe(false);
+    expect(state.rows().find((row) => row.id === uuid(1018))?.read).toBe(false);
 
     bulkReq.resolve(jsonResponse({ error: 'SavedPageRepositoryError' }, 500));
     await expect(toggling).resolves.toBe(true);
@@ -243,21 +252,19 @@ const routeBulkToggle = () => {
         resolveToggle = () => res(noContentResponse());
       });
     }
-    if (url.startsWith('/api/saved-pages?')) {
-      return Promise.resolve(
-        jsonResponse({
-          items: [
-            makePage({ id: B1, read: true }),
-            makePage({ id: B3, read: true }),
-          ],
-          cursor: null,
-          boundary: B2,
-        })
-      );
-    }
-    if (url === '/api/saved-pages/unread-count')
-      return Promise.resolve(jsonResponse({ count: 1, boundary: B2 }));
-    return Promise.resolve(jsonResponse({ items: [], boundary: B2 }));
+    const path = url.split('?')[0];
+    const items = [
+      makePage({ id: B1, read: true }),
+      makePage({ id: B3, read: true }),
+    ];
+    const responses: Record<string, unknown> = {
+      '/api/saved-pages/order': savedOrder(items, B2),
+      '/api/saved-pages': { items },
+      '/api/saved-pages/unread-count': { count: 1, boundary: B2 },
+    };
+    return Promise.resolve(
+      jsonResponse(responses[path] ?? { items: [], boundary: B2 })
+    );
   });
   return {
     sent,
@@ -272,11 +279,9 @@ describe('bulk vs newer toggle: success', () => {
     state.trackLibraryMount();
     ctx.queueSidebar({ saved: 2 });
     await state.refreshSidebar();
-    ctx.queue({
-      items: [makePage({ id: B1 }), makePage({ id: B3 })],
-      cursor: null,
-      boundary: B2,
-    });
+    const items = [makePage({ id: B1 }), makePage({ id: B3 })];
+    ctx.queue(savedOrder(items, B2));
+    ctx.queue({ items });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     solid.flush();
     const routed = routeBulkToggle();

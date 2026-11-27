@@ -77,7 +77,7 @@ describe('stale settings GET after remount', () => {
 
     visit2.setStore((d) => ({
       ...d,
-      retention: 42,
+      retention: '42',
       browserlessToken: 'new-secret',
       smtpPassword: 'smtp-secret',
     }));
@@ -89,7 +89,7 @@ describe('stale settings GET after remount', () => {
     solid.flush();
 
     expect(state.settings()?.retention).toBe(100);
-    expect(visit2.store.retention).toBe(42);
+    expect(visit2.store.retention).toBe('42');
     expect(visit2.store.browserlessToken).toBe('new-secret');
     expect(visit2.store.smtpPassword).toBe('smtp-secret');
     expect(fetchMock.mock.calls.length).toBe(callsBeforeStale);

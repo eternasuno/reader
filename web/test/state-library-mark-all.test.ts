@@ -5,11 +5,14 @@ import {
 } from './support/mark-all-routes';
 import {
   createStateTestContext,
+  feedOrder,
   jsonResponse,
   makeFeed,
   makeItem,
   makePage,
   noContentResponse,
+  savedOrder,
+  uuid,
 } from './support/state-fixture';
 
 const B1 = '019363b8-0000-7000-8000-000000000001';
@@ -27,7 +30,8 @@ const loadLater = async (
   items: Array<ReturnType<typeof makePage>>,
   boundary = B2
 ): Promise<void> => {
-  ctx.queue({ items, cursor: null, boundary });
+  ctx.queue(savedOrder(items, boundary));
+  if (items.length > 0) ctx.queue({ items });
   await ctx.state.loadScopeFirstPage({ kind: 'later' }, false);
   ctx.solid.flush();
 };
@@ -39,15 +43,13 @@ const routeAllListReload = (): void => {
     if ((init?.method ?? 'GET') !== 'GET') {
       return Promise.resolve(noContentResponse());
     }
-    if (url.startsWith('/api/feed-items?')) {
-      return Promise.resolve(
-        jsonResponse({
-          items: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
-          cursor: null,
-          boundary: B2,
-        })
-      );
-    }
+    const items = [
+      makeItem({ id: uuid(1007), feedId: uuid(1001), read: true }),
+    ];
+    if (url.startsWith('/api/feed-items/order?'))
+      return Promise.resolve(jsonResponse(feedOrder(items, B2)));
+    if (url.startsWith('/api/feed-items?ids='))
+      return Promise.resolve(jsonResponse({ items }));
     return answerLibraryRead(url);
   });
 };
@@ -91,7 +93,7 @@ describe('mark-all repeat clicks', () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1' })],
+      items: [makePage({ id: uuid(1018) })],
     });
     const routed = routeDeferredWrites(ctx.fetchMock);
 
@@ -120,11 +122,11 @@ describe('mark-all boundary fallback and errors', () => {
   it('fetches the count endpoint for boundary on first click without publishing to sidebar', async () => {
     const { state, solid } = ctx;
     ctx.queue({
-      items: [{ feedId: 'f1', count: 3 }],
+      items: [{ feedId: uuid(1001), count: 3 }],
       boundary: B_COUNT,
     });
     const writeSlot = ctx.pending();
-    ctx.queueSidebar({ feeds: [makeFeed({ id: 'f1' })], counts: [] });
+    ctx.queueSidebar({ feeds: [makeFeed({ id: uuid(1001) })], counts: [] });
 
     const before = ctx.fetchCount();
     const marking = state.markScopeAllRead({ kind: 'all' });
@@ -137,7 +139,7 @@ describe('mark-all boundary fallback and errors', () => {
 
     expect(ctx.requestUrl(before)).toBe('/api/feeds/unread-counts');
     expect(state.feedCountsBoundary()).toBeNull();
-    expect(state.feedUnreadCount('f1')).toBe(0);
+    expect(state.feedUnreadCount(uuid(1001))).toBe(0);
     expect(ctx.requestUrl(before + 1)).toBe('/api/feed-items/read-all');
     expect(ctx.requestBody(before + 1)).toEqual({ before: B_COUNT });
 
@@ -170,25 +172,25 @@ describe('mark-all of a scope other than the open list', () => {
     const release = state.trackLibraryMount();
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
-      items: [makeItem({ id: 'i1', feedId: 'f1' })],
-      feeds: [makeFeed({ id: 'f1' }), makeFeed({ id: 'f2' })],
+      items: [makeItem({ id: uuid(1007), feedId: uuid(1001) })],
+      feeds: [makeFeed({ id: uuid(1001) }), makeFeed({ id: uuid(1002) })],
       counts: [
-        { feedId: 'f1', count: 1 },
-        { feedId: 'f2', count: 1 },
+        { feedId: uuid(1001), count: 1 },
+        { feedId: uuid(1002), count: 1 },
       ],
     });
     routeAllListReload();
 
     const before = ctx.fetchCount();
-    await state.markScopeAllRead({ kind: 'feed', feedId: 'f1' });
+    await state.markScopeAllRead({ kind: 'feed', feedId: uuid(1001) });
     solid.flush();
 
-    expect(ctx.requestUrl(before)).toBe('/api/feeds/f1/read-all');
+    expect(ctx.requestUrl(before)).toBe(`/api/feeds/${uuid(1001)}/read-all`);
     expect(ctx.requestBody(before)).toEqual({
       before: '019363b8-0000-7000-8000-000000000000',
     });
-    expect(ctx.fetchCount()).toBe(before + 2);
-    expect(ctx.requestUrl(before + 1)).toContain('/api/feed-items?limit=30');
+    expect(ctx.fetchCount()).toBe(before + 3);
+    expect(ctx.requestUrl(before + 1)).toContain('/api/feed-items/order?');
     expect(state.rows()[0].read).toBe(true);
     release();
   });
@@ -200,24 +202,24 @@ describe('mark-all ambiguous failure', () => {
     const release = state.trackLibraryMount();
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
-      items: [makeItem({ id: 'i1', feedId: 'f1' })],
-      feeds: [makeFeed({ id: 'f1' })],
-      counts: [{ feedId: 'f1', count: 1 }],
+      items: [makeItem({ id: uuid(1007), feedId: uuid(1001) })],
+      feeds: [makeFeed({ id: uuid(1001) })],
+      counts: [{ feedId: uuid(1001), count: 1 }],
     });
 
     const before = ctx.fetchCount();
     ctx.fetchMock.mockRejectedValueOnce(new TypeError('network down'));
-    ctx.queue({
-      items: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
-      cursor: null,
-      boundary: B1,
-    });
+    const items = [
+      makeItem({ id: uuid(1007), feedId: uuid(1001), read: true }),
+    ];
+    ctx.queue(feedOrder(items, B1));
+    ctx.queue({ items });
 
     await state.markScopeAllRead({ kind: 'all' });
     solid.flush();
 
     expect(ctx.requestUrl(before)).toBe('/api/feed-items/read-all');
-    expect(ctx.requestUrl(before + 1)).toContain('/api/feed-items?limit=30');
+    expect(ctx.requestUrl(before + 1)).toContain('/api/feed-items/order?');
     expect(state.rows()[0].read).toBe(true);
     expect(ui.currentToast()).toBeNull();
     release();
@@ -229,7 +231,7 @@ describe('mark-all session clear', () => {
     const { state, solid, ui } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1' })],
+      items: [makePage({ id: uuid(1018) })],
     });
     const pendingReq = ctx.pending();
     const before = ctx.fetchCount();

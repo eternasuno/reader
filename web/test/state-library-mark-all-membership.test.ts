@@ -7,6 +7,7 @@ import {
   makeFolder,
   makeItem,
   noContentResponse,
+  uuid,
 } from './support/state-fixture';
 
 const B1 = '019363b8-0000-7000-8000-000000000001';
@@ -49,14 +50,12 @@ const routeFolderMarkAll = (): (() => void) => {
     if (url === ITEM_URL) {
       return Promise.resolve(
         jsonResponse({
-          item: makeItem({ id: B1, feedId: 'f1', read: serverRead }),
+          item: makeItem({ id: B1, feedId: uuid(1001), read: serverRead }),
         })
       );
     }
     if (url.startsWith('/api/folders/A/items')) {
-      return Promise.resolve(
-        jsonResponse({ items: [], cursor: null, boundary: B2 })
-      );
+      return Promise.resolve(jsonResponse({ groups: [], boundary: B2 }));
     }
     return answerLibraryRead(url);
   });
@@ -68,11 +67,11 @@ describe('mark-all folder membership refresh', () => {
     const { state, solid } = ctx;
     const release = state.trackLibraryMount();
     ctx.queueSidebar({
-      feeds: [makeFeed({ id: 'f1', folderId: 'A' })],
+      feeds: [makeFeed({ id: uuid(1001), folderId: 'A' })],
       folders: [makeFolder('A')],
     });
     await state.refreshSidebar();
-    ctx.queue({ items: [], cursor: null, boundary: B2 });
+    ctx.queue({ groups: [], boundary: B2 });
     await state.loadScopeFirstPage({ kind: 'folder', folderId: 'A' }, false);
     solid.flush();
     const settlePost = routeFolderMarkAll();
@@ -80,7 +79,10 @@ describe('mark-all folder membership refresh', () => {
     await state.openArticleByRoute({ kind: 'folder', folderId: 'A' }, B1);
     const marking = state.markScopeAllRead({ kind: 'folder', folderId: 'A' });
     await vi.waitFor(() => expect(requests()).toContain(`POST ${POST_URL}`));
-    await state.moveFeedToFolder(makeFeed({ id: 'f1', folderId: 'A' }), null);
+    await state.moveFeedToFolder(
+      makeFeed({ id: uuid(1001), folderId: 'A' }),
+      null
+    );
     settlePost();
     await marking;
     solid.flush();

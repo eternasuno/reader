@@ -26,10 +26,14 @@ const makeFeedArticle = (id: string): state.LibraryArticle => ({
   read: false,
 });
 
-const mountHeader = (unreadOnly: boolean, onToggleUnread = vi.fn()) =>
+const mountHeader = (
+  unreadOnly: boolean,
+  onToggleUnread = vi.fn(),
+  scope: state.LibraryScope = { kind: 'all' }
+) =>
   mount(() => (
     <ArticleListHeader
-      scope={{ kind: 'all' }}
+      scope={scope}
       unreadOnly={unreadOnly}
       drawerOpen={false}
       onToggleNav={vi.fn()}
@@ -43,7 +47,21 @@ const mountHeader = (unreadOnly: boolean, onToggleUnread = vi.fn()) =>
   ));
 
 describe('ArticleListHeader', () => {
-  it('toggles unread filter from the header button and offers 从旧到新 at the top level of the header menu', () => {
+  it.each([
+    { kind: 'later' },
+    { kind: 'folder', folderId: 'folder' },
+  ] satisfies Array<state.LibraryScope>)(
+    'omits the order toggle from the $kind menu',
+    (scope) => {
+      const container = mountHeader(false, vi.fn(), scope);
+      clickAria(container, '更多操作');
+      const menu = container.querySelector('[role="menu"]');
+      expect(menu?.textContent).toContain('全部标记为已读');
+      expect(menu?.textContent).not.toContain('从旧到新');
+    }
+  );
+
+  it('toggles unread filter from the header button and omits the order toggle from the all-feeds menu', () => {
     const onToggleUnread = vi.fn();
     const c1 = mountHeader(true, onToggleUnread);
     expect(ariaBtn(c1, '只显示未读')?.getAttribute('aria-pressed')).toBe(
@@ -57,7 +75,7 @@ describe('ArticleListHeader', () => {
       '只显示未读'
     );
 
-    expect(c1.textContent).toContain('从旧到新');
+    expect(c1.textContent).not.toContain('从旧到新');
     expect(c1.textContent).not.toContain('视图选项');
     expect(c1.textContent).not.toContain('摘要行数');
     expect(c1.textContent).not.toContain('刷新');
@@ -81,7 +99,7 @@ const stubPendingMarkAll = () => {
       if (url === '/api/saved-pages/unread-count')
         return Promise.resolve(Response.json({ count: 0, boundary }));
       return Promise.resolve(
-        Response.json({ items: [], cursor: null, boundary })
+        Response.json({ items: [], groups: [], boundary })
       );
     })
   );

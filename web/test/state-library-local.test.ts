@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createStateTestContext,
+  jsonResponse,
   makeItem,
   makePage,
+  savedOrder,
+  uuid,
 } from './support/state-fixture';
 
 const ctx = createStateTestContext();
@@ -16,66 +19,54 @@ describe('local saved pages: newest order', () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1', read: true })],
+      items: [makePage({ id: uuid(1018), read: true })],
     });
     ctx.queueSidebar({ saved: 1 });
     await state.refreshSidebar();
     solid.flush();
 
-    state.insertSavedPageLocal(makePage({ id: 'p2', title: 'Fresh' }));
+    state.insertSavedPageLocal(makePage({ id: uuid(1019), title: 'Fresh' }));
     solid.flush();
-    expect(state.rows().map((row) => row.id)).toEqual(['p2', 'p1']);
+    expect(state.rows().map((row) => row.id)).toEqual([uuid(1019), uuid(1018)]);
     expect(state.savedUnreadCount()).toBe(2);
 
-    state.insertSavedPageLocal(makePage({ id: 'p2', title: 'Fresh' }));
+    state.insertSavedPageLocal(makePage({ id: uuid(1019), title: 'Fresh' }));
     solid.flush();
     expect(state.rows()).toHaveLength(2);
     expect(state.savedUnreadCount()).toBe(2);
 
-    state.removeSavedPageLocal('p2');
+    state.removeSavedPageLocal(uuid(1019));
     solid.flush();
-    expect(state.rows().map((row) => row.id)).toEqual(['p1']);
+    expect(state.rows().map((row) => row.id)).toEqual([uuid(1018)]);
     expect(state.savedUnreadCount()).toBe(1);
 
-    state.removeSavedPageLocal('missing');
+    state.removeSavedPageLocal(uuid(1015));
     solid.flush();
     expect(state.savedUnreadCount()).toBe(1);
   });
 });
 
-describe('local saved pages: oldest order', () => {
-  it('appends in oldest order only when the final page is loaded', async () => {
-    localStorage.setItem('reader.listOrder', 'oldest');
-    await ctx.fresh();
-    const { state, solid } = ctx;
+describe('local changes during a saved-page batch', () => {
+  it('prepends and deduplicates the new page and ignores a deleted ID in a late batch', async () => {
+    const { state } = ctx;
+    const fresh = makePage({ id: uuid(3), title: 'Fresh' });
+    const deleted = makePage({ id: uuid(2) });
+    const older = makePage({ id: uuid(1) });
+    ctx.queue(savedOrder([fresh, deleted, older]));
+    const batch = ctx.pending();
+    const loading = state.loadScopeFirstPage({ kind: 'later' }, false);
+    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(2));
 
-    await ctx.queueLoadedLibrary({
-      scope: { kind: 'later' },
-      items: [makePage({ id: 'p1', read: true })],
-      cursor: 'p1',
-      feeds: [],
-      saved: 0,
-    });
-    expect(state.activeOrder()).toBe('oldest');
-
-    state.insertSavedPageLocal(makePage({ id: 'p3', title: 'Newest' }));
-    solid.flush();
-    expect(state.rows().map((row) => row.id)).toEqual(['p1']);
-    expect(state.savedUnreadCount()).toBe(1);
-
-    ctx.queue({
-      items: [makePage({ id: 'p2' }), makePage({ id: 'p3', title: 'Newest' })],
-      cursor: null,
-      boundary: '019363b8-0000-7000-8000-000000000001',
-    });
-    await state.loadNextPage();
-    solid.flush();
-    expect(state.rows().map((row) => row.id)).toEqual(['p1', 'p2', 'p3']);
-
-    state.insertSavedPageLocal(makePage({ id: 'p4', title: 'Latest' }));
-    solid.flush();
-    expect(state.rows().map((row) => row.id)).toEqual(['p1', 'p2', 'p3', 'p4']);
-    expect(state.savedUnreadCount()).toBe(2);
+    state.insertSavedPageLocal(fresh);
+    state.insertSavedPageLocal(fresh);
+    state.removeSavedPageLocal(deleted.id);
+    batch.resolve(
+      jsonResponse({ items: [{ ...fresh, title: 'Stale' }, deleted, older] })
+    );
+    await loading;
+    expect(state.rowIds()).toEqual([fresh.id, older.id]);
+    expect(state.articleById(fresh.id)?.title).toBe('Fresh');
+    expect(state.articleById(deleted.id)).toBeNull();
   });
 });
 
@@ -84,12 +75,12 @@ describe('local inserts outside scope', () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
-      items: [makeItem({ id: 'i1', feedId: 'f1' })],
+      items: [makeItem({ id: uuid(1007), feedId: uuid(1001) })],
     });
 
-    state.insertSavedPageLocal(makePage({ id: 'p2' }));
+    state.insertSavedPageLocal(makePage({ id: uuid(1019) }));
     solid.flush();
 
-    expect(state.rows().map((row) => row.id)).toEqual(['i1']);
+    expect(state.rows().map((row) => row.id)).toEqual([uuid(1007)]);
   });
 });

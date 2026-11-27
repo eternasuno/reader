@@ -7,13 +7,6 @@ import { onSessionCleared } from './session';
 
 let mutationEpoch = 0;
 
-export interface DroppedFeedRows {
-  scopeGeneration: number;
-  folderId: string | null;
-  ids: ReadonlyArray<string>;
-  orderIds: ReadonlyArray<string>;
-}
-
 interface FeedMoveIntent {
   token: number;
   targetFolderId: string | null;
@@ -23,13 +16,11 @@ interface FeedMoveEntry {
   confirmedFolderId: string | null;
   confirmedToken: number;
   pending: Array<FeedMoveIntent>;
-  dropped: DroppedFeedRows | null;
 }
 
 interface FeedMoveSettleResult {
   owns: boolean;
   targetFolderId: string | null;
-  dropped: DroppedFeedRows | null;
 }
 
 class FeedMoveTracker {
@@ -50,7 +41,6 @@ class FeedMoveTracker {
         confirmedFolderId: currentFolderId,
         confirmedToken: 0,
         pending: [{ token, targetFolderId }],
-        dropped: null,
       });
     } else {
       existing.pending.push({ token, targetFolderId });
@@ -58,18 +48,18 @@ class FeedMoveTracker {
     return token;
   }
 
-  recordDrop(feedId: string, drop: DroppedFeedRows): void {
-    const entry = this.entries.get(feedId);
-    if (entry === undefined || drop.ids.length === 0) return;
-
-    const current = entry.dropped;
-    if (
-      current === null ||
-      current.scopeGeneration !== drop.scopeGeneration ||
-      current.folderId !== drop.folderId
-    ) {
-      entry.dropped = drop;
+  pendingFolders(): Array<[string, string | null]> {
+    const folders: Array<[string, string | null]> = [];
+    for (const [feedId, entry] of this.entries) {
+      const latest = entry.pending.at(-1);
+      folders.push([
+        feedId,
+        latest !== undefined && latest.token > entry.confirmedToken
+          ? latest.targetFolderId
+          : entry.confirmedFolderId,
+      ]);
     }
+    return folders;
   }
 
   private settle(
@@ -98,9 +88,8 @@ class FeedMoveTracker {
       latestValid !== undefined
         ? latestValid.targetFolderId
         : entry.confirmedFolderId;
-    const dropped = entry.dropped;
     if (entry.pending.length === 0) this.entries.delete(feedId);
-    return { owns, targetFolderId, dropped };
+    return { owns, targetFolderId };
   }
 
   succeed(

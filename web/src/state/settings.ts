@@ -75,7 +75,7 @@ const sectionDraftPatch = (
 ): Partial<SettingsDrafts> => {
   switch (section) {
     case 'articles':
-      return { retention: loaded.retention };
+      return { retention: String(loaded.retention) };
     case 'kindle':
       return kindleDraftsOf(loaded.kindle);
     case 'services':
@@ -158,7 +158,7 @@ export const isSectionDirty = (
 
   switch (section) {
     case 'articles':
-      return drafts.retention !== loaded.retention;
+      return parseRetentionDraft(drafts.retention) !== loaded.retention;
     case 'kindle':
       return kindleDirty(drafts, loaded.kindle);
     case 'services':
@@ -204,10 +204,21 @@ const commitSettingSave = async (
   }
 };
 
+export const parseRetentionDraft = (draft: string): number | undefined => {
+  const text = draft.trim();
+  if (!/^\d+$/.test(text)) return undefined;
+
+  const retention = Number(text);
+  return retention >= 1 && retention <= 10000 ? retention : undefined;
+};
+
 export const saveRetention = (drafts: SettingsDrafts): Promise<boolean> =>
   runSave('retention', async () => {
     if (settings() === null) return false;
-    const retention = drafts.retention;
+
+    const retention = parseRetentionDraft(drafts.retention);
+    if (retention === undefined) return false;
+
     return commitSettingSave(
       () => settingsApi.updateRetention(retention),
       (current) => ({ ...current, retention }),

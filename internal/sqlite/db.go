@@ -331,6 +331,40 @@ func encodeIDs(ids []string) (string, error) {
 	return string(payload), nil
 }
 
+func getByIDs[T any](ctx context.Context, db *sql.DB, query string, ids []string, scan func(interface{ Scan(...any) error }) (T, error), code domain.ErrorCode) ([]T, error) {
+	items := []T{}
+	if len(ids) == 0 {
+		return items, nil
+	}
+
+	payload, err := encodeIDs(ids)
+	if err != nil {
+		return nil, domain.NewError(code, err)
+	}
+
+	rows, err := db.QueryContext(ctx, query, payload)
+	if err != nil {
+		return nil, domain.NewError(code, err)
+	}
+
+	defer closeRows(rows)
+
+	for rows.Next() {
+		item, err := scan(rows)
+		if err != nil {
+			return nil, domain.NewError(code, err)
+		}
+
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, domain.NewError(code, err)
+	}
+
+	return items, nil
+}
+
 func markIDsRead(ctx context.Context, exec execer, query string, ids []string) error {
 	if len(ids) == 0 {
 		return nil

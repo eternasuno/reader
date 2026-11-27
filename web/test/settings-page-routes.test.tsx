@@ -105,8 +105,8 @@ it('settings: mounts 3 sections, renders Kindle history, and guards edits', asyn
   const { container, history } = await mountSettings();
   expect(container.textContent).toContain('已发送 3 篇（1 封邮件）');
   expect(container.textContent).toContain('smtp: connection refused');
-  expect(inputValue(container, 'input[type="number"]')).toBe('50');
-  typeInto(container, 'input[type="number"]', '25');
+  expect(inputValue(container, 'input[name="retention"]')).toBe('50');
+  typeInto(container, 'input[name="retention"]', '25');
   tab(container, 1, 'Kindle');
   expect(confirm.mock.calls[0]?.[0]).toContain('当前分区有未保存的修改');
   click(btn(container, '返回阅读器'));
@@ -261,15 +261,15 @@ it('settings kindle: shows the saved schedule and keeps an unlisted saved timezo
 it('settings sections: a declined switch keeps the draft and a confirmed switch discards it', async () => {
   const confirm = confirmPair();
   const { container } = await mountSettings();
-  typeInto(container, 'input[type="number"]', '25');
+  typeInto(container, 'input[name="retention"]', '25');
   tab(container, 1, 'Kindle');
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(currentTab(container)).toContain('文章与订阅');
-  expect(inputValue(container, 'input[type="number"]')).toBe('25');
+  expect(inputValue(container, 'input[name="retention"]')).toBe('25');
   tab(container, 1, 'Kindle');
   expect(confirm).toHaveBeenCalledTimes(2);
   expect(currentTab(container)).toContain('Kindle');
-  expect(inputValue(container, 'input[type="number"]')).toBe('50');
+  expect(inputValue(container, 'input[name="retention"]')).toBe('50');
 });
 
 it('settings kindle: guards on SMTP, disables send while running, and imports OPML', async () => {

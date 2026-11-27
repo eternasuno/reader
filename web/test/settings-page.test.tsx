@@ -85,6 +85,48 @@ it('marks exactly one settings section as current when navigating', async () => 
   }
 });
 
+describe('retention save', () => {
+  const retentionRequests = () =>
+    harness.fetchMock.mock.calls.filter(
+      ([url]) => url === '/api/settings/retention'
+    );
+
+  it.each(['1e3', '12.7', '0', '10001', '-1', ''])(
+    'sends no request for %j',
+    async (value) => {
+      const { container } = await mountSettings();
+      setInput(container, 'input[name="retention"]', value);
+      const save = findButton(container, '保存文章设置');
+      save.click();
+      await settle();
+
+      expect(retentionRequests()).toHaveLength(0);
+      expect(save.disabled).toBe(true);
+      expect(
+        container.querySelector<HTMLInputElement>('input[name="retention"]')
+          ?.value
+      ).toBe(value);
+    }
+  );
+
+  it.each([
+    ['1000', 1000],
+    [' 5 ', 5],
+  ])('sends %j as %i', async (value, retention) => {
+    const { container } = await mountSettings();
+    setInput(container, 'input[name="retention"]', value);
+    findButton(container, '保存文章设置').click();
+    await settle();
+
+    const requests = retentionRequests();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.[1]).toMatchObject({
+      method: 'PUT',
+      body: JSON.stringify({ retention }),
+    });
+  });
+});
+
 describe('kindle history refresh on section entry', () => {
   it('refreshes sends once on entering Kindle and re-enables send when finished', async () => {
     sendsState = { running: true, items: [] };
@@ -113,7 +155,7 @@ describe('kindle history refresh on section entry', () => {
     const { container } = await mountSettings();
     const initialCalls = sendsCalls();
 
-    setInput(container, 'input[type="number"]', '25');
+    setInput(container, 'input[name="retention"]', '25');
     navBtn(container, 1).click();
     await settle(2);
 
@@ -129,7 +171,7 @@ describe('settings leave guards', () => {
     window.dispatchEvent(cleanEvent);
     expect(cleanEvent.defaultPrevented).toBe(false);
 
-    setInput(container, 'input[type="number"]', '25');
+    setInput(container, 'input[name="retention"]', '25');
 
     const dirtyEvent = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(dirtyEvent);
@@ -224,7 +266,7 @@ describe('cold-visit editing gate', () => {
     );
 
     const retentionInput = container.querySelector<HTMLInputElement>(
-      'input[type="number"]'
+      'input[name="retention"]'
     );
     const controls = browserlessControls(container);
     expect(retentionInput?.disabled).toBe(true);
@@ -248,7 +290,7 @@ describe('cold-visit editing gate', () => {
     );
 
     const retentionInput = container.querySelector<HTMLInputElement>(
-      'input[type="number"]'
+      'input[name="retention"]'
     );
     expect(retentionInput?.disabled).toBe(true);
     expect(findButton(container, '保存文章设置').disabled).toBe(true);

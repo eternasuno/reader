@@ -45,6 +45,26 @@ describe('createOrFindSavedPage create and conflict lookup', () => {
 });
 
 describe('createOrFindSavedPage errors', () => {
+  it('propagates the saved-page limit error with its translated copy', async () => {
+    const { setLocale, translateErrorCode } = await import('../src/i18n');
+    fetchMock.mockResolvedValueOnce(
+      json({ error: 'SavedPageLimitExceeded' }, 400)
+    );
+    await expect(createOrFindSavedPage(page.url)).rejects.toMatchObject({
+      code: 'SavedPageLimitExceeded',
+      status: 400,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    setLocale('en');
+    expect(translateErrorCode('SavedPageLimitExceeded')).toBe(
+      'Read Later can hold at most 10,000 pages'
+    );
+    setLocale('zh-CN');
+    expect(translateErrorCode('SavedPageLimitExceeded')).toBe(
+      '稍后阅读最多保存 10000 篇'
+    );
+  });
+
   it('throws when 409 SavedPageAlreadyExists lacks an id', async () => {
     fetchMock.mockResolvedValueOnce(
       json({ error: 'SavedPageAlreadyExists', url: page.url }, 409)

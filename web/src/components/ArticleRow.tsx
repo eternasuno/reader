@@ -65,7 +65,11 @@ export function ArticleRow(props: ArticleRowProps): JSX.Element {
             : 'hover:bg-base-200',
         ]}
       >
-        <ReadToggle row={props.row} active={props.active} />
+        <ReadToggle
+          row={props.row}
+          active={props.active}
+          hasMeta={hasSourceMeta(props.scope, props.row)}
+        />
         <a
           href={href()}
           class="flex min-w-0 flex-1 flex-col gap-1 rounded-field focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
@@ -100,32 +104,45 @@ function RowSummary(props: { html: string | undefined }): JSX.Element {
   );
 }
 
+function isGroupedScope(scope: LibraryScope): boolean {
+  return scope.kind === 'all' || scope.kind === 'folder';
+}
+
+function hasSourceMeta(scope: LibraryScope, row: LibraryArticle): boolean {
+  return !isGroupedScope(scope) || Boolean(row.publishedAt);
+}
+
 function RowSourceMeta(props: {
   row: LibraryArticle;
   scope: LibraryScope;
 }): JSX.Element {
+  const grouped = (): boolean => isGroupedScope(props.scope);
   return (
-    <span class="flex w-full items-center justify-between gap-2 text-xs opacity-65">
-      <span class="flex min-w-0 flex-1 items-center gap-1.5">
-        <Show when={props.scope.kind !== 'feed'}>
-          <SiteIcon
-            srcs={articleSource(props.row).iconSrcs}
-            fallback="rss"
-            size={14}
-          />
-        </Show>
-        <span class="min-w-0 flex-1 truncate">
-          {articleSource(props.row).title}
+    <Show when={hasSourceMeta(props.scope, props.row)}>
+      <span class="flex w-full items-center justify-between gap-2 text-xs opacity-65">
+        <span class="flex min-w-0 flex-1 items-center gap-1.5">
+          <Show when={!grouped()}>
+            <Show when={props.scope.kind !== 'feed'}>
+              <SiteIcon
+                srcs={articleSource(props.row).iconSrcs}
+                fallback="rss"
+                size={14}
+              />
+            </Show>
+            <span class="min-w-0 flex-1 truncate">
+              {articleSource(props.row).title}
+            </span>
+          </Show>
         </span>
+        <Show when={props.row.publishedAt}>
+          {(publishedAt) => (
+            <time class="shrink-0 tabular-nums" datetime={publishedAt()}>
+              {formatRelativeTime(publishedAt(), locale())}
+            </time>
+          )}
+        </Show>
       </span>
-      <Show when={props.row.publishedAt}>
-        {(publishedAt) => (
-          <time class="shrink-0 tabular-nums" datetime={publishedAt()}>
-            {formatRelativeTime(publishedAt(), locale())}
-          </time>
-        )}
-      </Show>
-    </span>
+    </Show>
   );
 }
 
@@ -144,13 +161,19 @@ function RowTitle(props: { row: LibraryArticle }): JSX.Element {
 function ReadToggle(props: {
   row: LibraryArticle;
   active: boolean;
+  hasMeta: boolean;
 }): JSX.Element {
   const label = (): string => t('library.readToggle');
 
   return (
     <button
       type="button"
-      class="group/toggle mt-6 flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-base-content/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:mt-4.5 pointer-coarse:size-8"
+      class={[
+        'group/toggle flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-base-content/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:size-8',
+        props.hasMeta
+          ? 'mt-6 pointer-coarse:mt-4.5'
+          : 'mt-0 pointer-coarse:-mt-1.5',
+      ]}
       aria-pressed={props.row.read ? 'true' : 'false'}
       aria-label={label()}
       title={label()}

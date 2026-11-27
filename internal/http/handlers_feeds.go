@@ -70,11 +70,27 @@ func toFeedItemJSON(item domain.FeedItem) feedItemJSON {
 	}
 }
 
-func toFeedItemsPage(result domain.PageResult[domain.FeedItem], boundary string) pageResponse[feedItemJSON] {
-	return pageResponse[feedItemJSON]{
-		Items:    mapSlice(result.Items, toFeedItemJSON),
-		Cursor:   result.Cursor,
+type feedItemGroupJSON struct {
+	FeedID string   `json:"feedId"`
+	IDs    []string `json:"ids"`
+}
+
+type feedItemSnapshotResponse struct {
+	Boundary string              `json:"boundary"`
+	Groups   []feedItemGroupJSON `json:"groups"`
+}
+
+func toFeedItemSnapshot(groups []domain.FeedItemGroup, boundary string) feedItemSnapshotResponse {
+	return feedItemSnapshotResponse{
 		Boundary: boundary,
+		Groups: mapSlice(groups, func(group domain.FeedItemGroup) feedItemGroupJSON {
+			ids := group.IDs
+			if ids == nil {
+				ids = []string{}
+			}
+
+			return feedItemGroupJSON{FeedID: group.FeedID, IDs: ids}
+		}),
 	}
 }
 
@@ -408,42 +424,54 @@ func (s *server) handleFeedMarkRead(w http.ResponseWriter, r *http.Request) {
 	writeNoContent(w)
 }
 
-func (s *server) handleFeedItems(w http.ResponseWriter, r *http.Request) {
-	query, err := parsePageQuery(r)
+func (s *server) handleFeedItemSnapshot(w http.ResponseWriter, r *http.Request) {
+	params, order, err := parseFeedItemSnapshotQuery(r)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	// Validate and mint the boundary before any data read, so items stored during
-	// the preference lookup fall outside the first page.
-	params, err := query.params(query.orderOrDefault())
-	if err != nil {
-		writeError(w, err)
-
-		return
-	}
-
-	if !query.hasOrder {
-		storedOrder, err := s.storedFeedOrder(r.Context(), r.PathValue("id"))
+	feedID := r.PathValue("id")
+	if order == "" {
+		order, err = s.storedFeedOrder(r.Context(), feedID)
 		if err != nil {
 			writeError(w, err)
 
 			return
 		}
-
-		params.Order = storedOrder
 	}
 
-	result, err := s.cfg.FeedItems.ListByFeed(r.Context(), r.PathValue("id"), params)
+	groups, err := s.cfg.FeedItems.SnapshotByFeed(r.Context(), feedID, order, params)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toFeedItemsPage(result, params.Boundary))
+	writeJSON(w, http.StatusOK, toFeedItemSnapshot(groups, params.Boundary))
+}
+
+func parseFeedItemSnapshotQuery(r *http.Request) (domain.SnapshotParams, domain.SortOrder, error) {
+	query, err := parseStrictQuery(r, "unread", "order")
+	if err != nil {
+		return domain.SnapshotParams{}, "", err
+	}
+
+	unread, err := parseUnreadFlag(query)
+	if err != nil {
+		return domain.SnapshotParams{}, "", err
+	}
+
+	order := domain.SortOrder(query.Get("order"))
+	if query.Has("order") {
+		if err := domain.ValidateSortOrder(order); err != nil {
+			return domain.SnapshotParams{}, "", err
+		}
+	}
+
+	// Mint the boundary before the caller looks up the feed's stored order.
+	return domain.NewSnapshotParams(unread), order, nil
 }
 
 // storedFeedOrder returns the feed's stored sort order, or newest when the feed is unknown.
@@ -464,22 +492,40 @@ func (s *server) storedFeedOrder(ctx context.Context, feedID string) (domain.Sor
 	return feed.Order, nil
 }
 
-func (s *server) handleFeedItemList(w http.ResponseWriter, r *http.Request) {
-	params, err := parseDefaultPageParams(r)
+func (s *server) handleAllFeedItemSnapshot(w http.ResponseWriter, r *http.Request) {
+	params, err := parseSnapshotParams(r)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	result, err := s.cfg.FeedItems.ListAll(r.Context(), params)
+	groups, err := s.cfg.FeedItems.SnapshotAll(r.Context(), params)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toFeedItemsPage(result, params.Boundary))
+	writeJSON(w, http.StatusOK, toFeedItemSnapshot(groups, params.Boundary))
+}
+
+func (s *server) handleFeedItemBatch(w http.ResponseWriter, r *http.Request) {
+	ids, err := parseBatchIDs(r)
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	items, err := s.cfg.FeedItems.GetByIDs(r.Context(), ids)
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, listResponse[feedItemJSON]{Items: mapSlice(items, toFeedItemJSON)})
 }
 
 func (s *server) handleFeedItemGet(w http.ResponseWriter, r *http.Request) {
