@@ -23,7 +23,7 @@ const (
 	maxRequestBodyBytes            = 10 << 20
 	maxLoginBodyBytes              = 4 << 10
 	maxConcurrentForegroundFetches = 4
-	defaultForegroundFetchTimeout  = 30 * time.Second
+	defaultForegroundFetchTimeout  = 55 * time.Second
 
 	apiCacheControl       = "no-store"
 	immutableCacheControl = "public, max-age=31536000, immutable"
@@ -75,8 +75,7 @@ type Config struct {
 
 	FeedFetcher      domain.FeedFetcher
 	FeedParser       domain.FeedParser
-	WebpageFetcher   domain.WebpageFetcher
-	ArticleExtractor domain.ArticleExtractor
+	WebpageExtractor domain.WebpageExtractor
 
 	Refresher FeedRefresher
 	Kindle    KindleDispatcher
@@ -254,11 +253,9 @@ func (s *server) registerFolderAndSettingRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings/retention", s.handleRetentionUpdate)
-	mux.HandleFunc("PUT /api/settings/provider", s.handleProviderUpdate)
-	mux.HandleFunc("PUT /api/settings/services/jina", s.handleJinaKeySave)
-	mux.HandleFunc("DELETE /api/settings/services/jina", s.handleJinaKeyDelete)
-	mux.HandleFunc("PUT /api/settings/services/browser", s.handleBrowserEndpointSave)
-	mux.HandleFunc("DELETE /api/settings/services/browser", s.handleBrowserEndpointDelete)
+	mux.HandleFunc("PUT /api/settings/services/browserless", s.handleBrowserlessSave)
+	mux.HandleFunc("DELETE /api/settings/services/browserless", s.handleBrowserlessDelete)
+	mux.HandleFunc("DELETE /api/settings/services/browserless/token", s.handleBrowserlessTokenDelete)
 	mux.HandleFunc("PUT /api/settings/services/smtp", s.handleSMTPSave)
 	mux.HandleFunc("DELETE /api/settings/services/smtp", s.handleSMTPDelete)
 	mux.HandleFunc("DELETE /api/settings/services/smtp/password", s.handleSMTPPasswordDelete)
@@ -358,16 +355,7 @@ func (s *server) extractWebpage(ctx context.Context, pageURL domain.NormalizedUR
 	fetchCtx, cancel := s.withForegroundFetchTimeout(ctx)
 	defer cancel()
 
-	return s.extractWebpageWithSlot(fetchCtx, pageURL)
-}
-
-func (s *server) extractWebpageWithSlot(ctx context.Context, pageURL domain.NormalizedURL) (domain.ExtractedArticle, error) {
-	htmlBody, finalURL, err := s.cfg.WebpageFetcher.FetchWebpage(ctx, pageURL)
-	if err != nil {
-		return domain.ExtractedArticle{}, err
-	}
-
-	return s.cfg.ArticleExtractor.ExtractArticle(htmlBody, finalURL)
+	return s.cfg.WebpageExtractor.ExtractWebpage(fetchCtx, pageURL)
 }
 
 type readStateRepository interface {
@@ -675,9 +663,7 @@ func statusForCode(code domain.ErrorCode) int {
 		domain.ErrInvalidOpml,
 		domain.ErrInvalidFolderName,
 		domain.ErrInvalidRetention,
-		domain.ErrInvalidProvider,
-		domain.ErrInvalidJinaKey,
-		domain.ErrInvalidEndpoint,
+		domain.ErrInvalidBrowserlessSetting,
 		domain.ErrInvalidSMTPSetting,
 		domain.ErrInvalidKindleSetting,
 		domain.ErrRequestFailed:
@@ -698,7 +684,6 @@ func statusForCode(code domain.ErrorCode) int {
 		domain.ErrArticleExtractorError,
 		domain.ErrFetchFeedError,
 		domain.ErrFeedParserError,
-		domain.ErrBrowserEndpointRequired,
 		domain.ErrSMTPNotConfigured,
 		domain.ErrKindleNotConfigured:
 		return http.StatusUnprocessableEntity

@@ -1,44 +1,18 @@
 import type { JSX } from '@solidjs/web';
-import { createUniqueId, For, Show } from 'solid-js';
-import type { ExtractorProvider } from '../api';
+import { createUniqueId } from 'solid-js';
 import { feedsApi } from '../api';
 import { t } from '../i18n';
 import {
-  isBrowserAvailable,
   isSaving,
   isSettingsReady,
-  saveProvider,
   saveRetention,
   savingAction,
-  settings,
 } from '../state';
 import { Button, Icon, Input, SettingsGroup, SettingsRow } from '../ui';
 import { useOpmlImport } from './importOpml';
 import type { SettingsDraftProps } from './settingsHelpers';
 
 const controlsDisabled = (): boolean => isSaving() || !isSettingsReady();
-
-const PROVIDERS = [
-  {
-    id: 'direct',
-    labelKey: 'settings.providerDirect',
-    hintKey: 'settings.providerDirectHint',
-  },
-  {
-    id: 'jina',
-    labelKey: 'settings.providerJina',
-    hintKey: 'settings.providerJinaHint',
-  },
-  {
-    id: 'browser',
-    labelKey: 'settings.providerBrowser',
-    hintKey: 'settings.providerBrowserHint',
-  },
-] as const satisfies ReadonlyArray<{
-  id: ExtractorProvider;
-  labelKey: string;
-  hintKey: string;
-}>;
 
 function RetentionGroup(props: SettingsDraftProps): JSX.Element {
   const inputId = createUniqueId();
@@ -141,115 +115,5 @@ export function ArticlesSection(props: SettingsDraftProps): JSX.Element {
       <OpmlGroup />
       <BookmarkletGroup />
     </div>
-  );
-}
-
-function BrowserUnavailableHint(props: {
-  onGoToServices: () => void;
-}): JSX.Element {
-  return (
-    <span class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-warning">
-      <Icon name="warning" size={14} />
-      {t('settings.browserUnavailableHint')}
-      <Button
-        variant="ghost"
-        size="sm"
-        class="btn-xs text-primary"
-        disabled={controlsDisabled()}
-        onClick={props.onGoToServices}
-      >
-        {t('settings.goToServices')}
-      </Button>
-    </span>
-  );
-}
-
-/** A selectable row: the label toggles the radio; disabled options stay legible. */
-function ProviderOption(
-  props: SettingsDraftProps & {
-    provider: (typeof PROVIDERS)[number];
-    onGoToServices: () => void;
-  }
-): JSX.Element {
-  const browserUnavailable = (): boolean =>
-    props.provider.id === 'browser' &&
-    settings() !== null &&
-    !isBrowserAvailable();
-
-  return (
-    <div class="flex flex-col gap-1 px-4 py-3.5 transition-colors has-[:checked]:bg-base-200">
-      <label class="flex cursor-pointer items-start gap-3 has-[:disabled]:cursor-not-allowed">
-        <input
-          type="radio"
-          class="radio radio-sm radio-primary mt-0.5 disabled:border-base-content/30 disabled:opacity-100"
-          name="extractor-provider"
-          value={props.provider.id}
-          checked={props.drafts.provider === props.provider.id}
-          disabled={controlsDisabled() || browserUnavailable()}
-          onChange={() => {
-            props.setDrafts((draft) => ({
-              ...draft,
-              provider: props.provider.id,
-            }));
-          }}
-        />
-        <span class="flex min-w-0 flex-col gap-1">
-          <span
-            class={[
-              'text-sm font-medium',
-              browserUnavailable() ? 'text-base-content/50' : '',
-            ]}
-          >
-            {t(props.provider.labelKey)}
-          </span>
-          <span class="text-xs leading-relaxed text-base-content/60">
-            {t(props.provider.hintKey)}
-          </span>
-        </span>
-      </label>
-      <Show when={browserUnavailable()}>
-        <div class="pl-7">
-          <BrowserUnavailableHint onGoToServices={props.onGoToServices} />
-        </div>
-      </Show>
-    </div>
-  );
-}
-
-/** `settings.md:19`: extraction provider choice; external services live under services. */
-export function ExtractionSection(
-  props: SettingsDraftProps & {
-    onGoToServices: () => void;
-  }
-): JSX.Element {
-  return (
-    <fieldset disabled={controlsDisabled()}>
-      <legend class="sr-only">{t('settings.providerLabel')}</legend>
-      <SettingsGroup
-        title={t('settings.providerLabel')}
-        footer={
-          <Button
-            variant="primary"
-            size="sm"
-            loading={savingAction() === 'provider'}
-            disabled={controlsDisabled()}
-            onClick={() => void saveProvider(props.drafts)}
-          >
-            {t('settings.saveExtraction')}
-          </Button>
-        }
-      >
-        <For each={PROVIDERS}>
-          {(provider) => (
-            <ProviderOption
-              provider={provider}
-              drafts={props.drafts}
-              setDrafts={props.setDrafts}
-              onGoToServices={props.onGoToServices}
-            />
-          )}
-        </For>
-      </SettingsGroup>
-    </fieldset>
   );
 }

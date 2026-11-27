@@ -40,26 +40,12 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 		items: items,
 	}
 
-	fetcher := &fakeWebpageFetcher{}
-	fetcher.fetch = func(ctx context.Context, url domain.NormalizedURL) (string, string, error) {
+	extractor := &fakeWebpageExtractor{}
+	extractor.extract = func(ctx context.Context, url domain.NormalizedURL) (domain.ExtractedArticle, error) {
 		switch url.Raw() {
 		case "https://example.com/uncached":
-			return "<html>", "https://example.com/final", nil
-		case "https://example.com/extract-fail":
-			return "<bad>", "https://example.com/final", nil
-		case "https://example.com/blank":
-			return "<blank>", "https://example.com/final", nil
-		default:
-			return "", "", errors.New("fetch failed")
-		}
-	}
-
-	extractor := &fakeArticleExtractor{}
-	extractor.extract = func(ctx context.Context, htmlBody string, pageURL string) (domain.ExtractedArticle, error) {
-		switch htmlBody {
-		case "<html>":
 			return domain.ExtractedArticle{Content: "<p>extracted body</p>"}, nil
-		case "<blank>":
+		case "https://example.com/blank":
 			return domain.ExtractedArticle{Content: "   "}, nil
 		default:
 			return domain.ExtractedArticle{}, errors.New("extraction failed")
@@ -72,13 +58,12 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 	}}
 
 	sender := newTestKindleSender(t, KindleConfig{
-		KindleSends: sends,
-		FeedItems:   feedItems,
-		Fetcher:     fetcher,
-		Extractor:   extractor,
-		EPUBBuilder: builder,
-		MailSender:  &fakeMailSender{},
-		Now:         func() time.Time { return now },
+		KindleSends:      sends,
+		FeedItems:        feedItems,
+		WebpageExtractor: extractor,
+		EPUBBuilder:      builder,
+		MailSender:       &fakeMailSender{},
+		Now:              func() time.Time { return now },
 	})
 
 	if _, err := sender.EnqueueManual(context.Background()); err != nil {
@@ -116,7 +101,7 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 		}
 	}
 
-	fetched := fetcher.callList()
+	fetched := extractor.callList()
 	if slices.Contains(fetched, "https://example.com/extracted-cached") {
 		t.Fatal("cached extracted content was fetched again")
 	}
@@ -168,10 +153,7 @@ func TestExtractFeedItemContinuesOnCacheWriteError(t *testing.T) {
 	sender := newTestKindleSender(t, KindleConfig{
 		KindleSends: sends,
 		FeedItems:   &fakeFeedItemRepository{saveErr: errors.New("db busy for https://user:secret@example.com/db")},
-		Fetcher: &fakeWebpageFetcher{fetch: func(ctx context.Context, url domain.NormalizedURL) (string, string, error) {
-			return "<html>", url.Raw(), nil
-		}},
-		Extractor: &fakeArticleExtractor{extract: func(ctx context.Context, htmlBody string, pageURL string) (domain.ExtractedArticle, error) {
+		WebpageExtractor: &fakeWebpageExtractor{extract: func(ctx context.Context, url domain.NormalizedURL) (domain.ExtractedArticle, error) {
 			return domain.ExtractedArticle{Content: "<p>fresh</p>"}, nil
 		}},
 		EPUBBuilder: builder,
@@ -224,10 +206,7 @@ func TestExtractFeedItemKeepsConcurrentWinnerContent(t *testing.T) {
 			sender := newTestKindleSender(t, KindleConfig{
 				KindleSends: sends,
 				FeedItems:   feedItems,
-				Fetcher: &fakeWebpageFetcher{fetch: func(ctx context.Context, url domain.NormalizedURL) (string, string, error) {
-					return "<html>", url.Raw(), nil
-				}},
-				Extractor: &fakeArticleExtractor{extract: func(ctx context.Context, htmlBody string, pageURL string) (domain.ExtractedArticle, error) {
+				WebpageExtractor: &fakeWebpageExtractor{extract: func(ctx context.Context, url domain.NormalizedURL) (domain.ExtractedArticle, error) {
 					return domain.ExtractedArticle{Content: "<p>mine</p>"}, nil
 				}},
 				EPUBBuilder: builder,

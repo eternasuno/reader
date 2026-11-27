@@ -4,8 +4,6 @@ go 1.27.3
 
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.3
-	github.com/chromedp/cdproto v0.160.9
-	github.com/chromedp/chromedp v0.24.0
 	github.com/google/uuid v1.6.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mmcdole/gofeed v1.5.0
@@ -84,7 +82,6 @@ require (
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/ghostiam/protogetter v1.0.2 // indirect
 	github.com/go-critic/go-critic v0.15.0 // indirect
-	github.com/go-json-experiment/json v1.27.2 // indirect
 	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c // indirect
 	github.com/go-toolsmith/astcast v1.1.0 // indirect
 	github.com/go-toolsmith/astcopy v1.1.0 // indirect

@@ -1,5 +1,5 @@
 import type {
-  ExtractorProvider,
+  BrowserlessSettingsView,
   Feed,
   FeedItem,
   FeedPreview,
@@ -220,14 +220,19 @@ export const isOPMLImportResult: TypeGuard<OPMLImportResult> = (
   isFiniteNumber(value.skippedFeeds) &&
   isFiniteNumber(value.createdFolders);
 
-const isProvider = (value: unknown): value is ExtractorProvider =>
-  value === 'direct' || value === 'jina' || value === 'browser';
-
 const isSMTPSecurity = (value: unknown): value is SMTPSecurity =>
   value === 'tls' || value === 'starttls';
 
 const isKindleLanguage = (value: unknown): value is KindleLanguage =>
   value === 'zh' || value === 'en' || value === 'ja';
+
+const isBrowserlessSettingsView: TypeGuard<BrowserlessSettingsView> = (
+  value
+): value is BrowserlessSettingsView =>
+  isRecord(value) &&
+  isString(value.url) &&
+  isBoolean(value.tokenConfigured) &&
+  isBoolean(value.residentialProxy);
 
 const isSmtpSettingsView: TypeGuard<SmtpSettingsView> = (
   value
@@ -260,9 +265,7 @@ const isKindleSettingsView: TypeGuard<KindleSettingsView> = (
 export const isSettings: TypeGuard<Settings> = (value): value is Settings =>
   isRecord(value) &&
   isFiniteNumber(value.retention) &&
-  isProvider(value.provider) &&
-  isBoolean(value.jinaKeyConfigured) &&
-  isBoolean(value.browserEndpointConfigured) &&
+  isOptionalObject(value.browserless, isBrowserlessSettingsView) &&
   isOptionalObject(value.smtp, isSmtpSettingsView) &&
   isOptionalObject(value.kindle, isKindleSettingsView);
 

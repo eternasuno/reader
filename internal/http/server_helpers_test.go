@@ -113,35 +113,36 @@ func (f *fakeFeedFetcher) FetchFeed(ctx context.Context, target domain.Normalize
 	return body, finalURL, nil
 }
 
-type fakeWebpageFetcher struct {
-	mu       sync.Mutex
-	html     string
-	finalURL string
-	err      error
-	calls    int
-	lastURL  string
-	fetch    func(ctx context.Context, target domain.NormalizedURL) (string, string, error)
+// beforeExtract models the fetch phase (blocking, cancellation) that precedes the article result.
+type fakeWebpageExtractor struct {
+	mu            sync.Mutex
+	article       domain.ExtractedArticle
+	err           error
+	calls         int
+	lastURL       string
+	beforeExtract func(ctx context.Context, target domain.NormalizedURL) error
 }
 
-func (f *fakeWebpageFetcher) FetchWebpage(ctx context.Context, target domain.NormalizedURL) (string, string, error) {
+func (f *fakeWebpageExtractor) ExtractWebpage(ctx context.Context, target domain.NormalizedURL) (domain.ExtractedArticle, error) {
 	f.mu.Lock()
 	f.calls++
 	f.lastURL = target.Raw()
-	fetch := f.fetch
-	html := f.html
-	finalURL := f.finalURL
+	beforeExtract := f.beforeExtract
+	article := f.article
 	err := f.err
 	f.mu.Unlock()
 
-	if fetch != nil {
-		return fetch(ctx, target)
+	if beforeExtract != nil {
+		if hookErr := beforeExtract(ctx, target); hookErr != nil {
+			return domain.ExtractedArticle{}, hookErr
+		}
 	}
 
 	if err != nil {
-		return "", "", err
+		return domain.ExtractedArticle{}, err
 	}
 
-	return html, finalURL, nil
+	return article, nil
 }
 
 type fakeFeedParser struct {
@@ -155,29 +156,6 @@ func (f *fakeFeedParser) ParseFeed(body []byte, baseURL string) (domain.ParsedFe
 	}
 
 	return f.parsed, nil
-}
-
-type fakeArticleExtractor struct {
-	mu       sync.Mutex
-	article  domain.ExtractedArticle
-	err      error
-	lastHTML string
-	lastURL  string
-	calls    int
-}
-
-func (f *fakeArticleExtractor) ExtractArticle(htmlBody string, pageURL string) (domain.ExtractedArticle, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.calls++
-	f.lastHTML = htmlBody
-	f.lastURL = pageURL
-	if f.err != nil {
-		return domain.ExtractedArticle{}, f.err
-	}
-
-	return f.article, nil
 }
 
 type fakeRefresher struct {
@@ -226,11 +204,10 @@ type harness struct {
 	clock     *testClock
 	refresher *fakeRefresher
 
-	kindle         *fakeKindleDispatcher
-	feedFetcher    *fakeFeedFetcher
-	feedParser     *fakeFeedParser
-	webpageFetcher *fakeWebpageFetcher
-	extractor      *fakeArticleExtractor
+	kindle      *fakeKindleDispatcher
+	feedFetcher *fakeFeedFetcher
+	feedParser  *fakeFeedParser
+	extractor   *fakeWebpageExtractor
 
 	cookieMu sync.Mutex
 	cookie   *http.Cookie
@@ -257,15 +234,14 @@ func newHarnessWith(t *testing.T, configure func(*Config)) *harness {
 	})
 
 	h := &harness{
-		t:              t,
-		db:             db,
-		clock:          &testClock{current: time.Date(2026, time.March, 1, 8, 0, 0, 0, time.UTC)},
-		refresher:      &fakeRefresher{},
-		kindle:         &fakeKindleDispatcher{},
-		feedFetcher:    &fakeFeedFetcher{},
-		feedParser:     &fakeFeedParser{},
-		webpageFetcher: &fakeWebpageFetcher{},
-		extractor:      &fakeArticleExtractor{},
+		t:           t,
+		db:          db,
+		clock:       &testClock{current: time.Date(2026, time.March, 1, 8, 0, 0, 0, time.UTC)},
+		refresher:   &fakeRefresher{},
+		kindle:      &fakeKindleDispatcher{},
+		feedFetcher: &fakeFeedFetcher{},
+		feedParser:  &fakeFeedParser{},
+		extractor:   &fakeWebpageExtractor{},
 	}
 
 	cfg := Config{
@@ -285,8 +261,7 @@ func newHarnessWith(t *testing.T, configure func(*Config)) *harness {
 
 		FeedFetcher:      h.feedFetcher,
 		FeedParser:       h.feedParser,
-		WebpageFetcher:   h.webpageFetcher,
-		ArticleExtractor: h.extractor,
+		WebpageExtractor: h.extractor,
 
 		Refresher: h.refresher,
 		Kindle:    h.kindle,

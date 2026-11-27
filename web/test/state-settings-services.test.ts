@@ -79,9 +79,6 @@ const SMTP_VIEW: SmtpSettingsView = {
 
 const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
   ...overrides,
 });
 
@@ -112,107 +109,6 @@ const fillSmtpDrafts = (password = ''): void =>
     smtpUser: ' user@example.com ',
     smtpPassword: password,
   });
-
-describe('saveJinaKey', () => {
-  it('saves Jina key, updates state, clears draft and shows toast', async () => {
-    await load();
-    patchDrafts({ jinaKey: ' jina-secret ' });
-
-    queueEmpty();
-    await expect(state.saveJinaKey(drafts, setDrafts)).resolves.toBe(true);
-    solid.flush();
-
-    expect(requestUrl(2)).toBe('/api/settings/services/jina');
-    expect(requestMethod(2)).toBe('PUT');
-    expect(requestBody(2)).toEqual({ key: 'jina-secret' });
-    expect(state.settings()?.jinaKeyConfigured).toBe(true);
-    expect(drafts.jinaKey).toBe('');
-    expect(state.isSectionDirty('services', drafts)).toBe(false);
-    expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.jinaKeySavedToast'))
-    );
-  });
-});
-
-describe('removeJinaKey', () => {
-  it('deletes Jina key, updates state and shows error toast on failure', async () => {
-    await load(makeSettings({ jinaKeyConfigured: true }));
-
-    queueEmpty();
-    await expect(state.removeJinaKey(setDrafts)).resolves.toBe(true);
-    solid.flush();
-
-    expect(requestUrl(2)).toBe('/api/settings/services/jina');
-    expect(requestMethod(2)).toBe('DELETE');
-    expect(state.settings()?.jinaKeyConfigured).toBe(false);
-    toastIs(String(i18n.t('settings.jinaKeyDeletedToast')));
-
-    queue({ error: 'SettingRepositoryError' }, 500);
-    await expect(state.removeJinaKey(setDrafts)).resolves.toBe(false);
-    solid.flush();
-    toastIs(i18n.translateErrorCode('SettingRepositoryError'));
-  });
-});
-
-describe('saveBrowserEndpoint', () => {
-  it('saves browser endpoint, updates availability and clears draft', async () => {
-    await load();
-    patchDrafts({ browserEndpoint: ' http://browser:9222 ' });
-
-    queueEmpty();
-    await expect(state.saveBrowserEndpoint(drafts, setDrafts)).resolves.toBe(
-      true
-    );
-    solid.flush();
-
-    expect(requestUrl(2)).toBe('/api/settings/services/browser');
-    expect(requestMethod(2)).toBe('PUT');
-    expect(requestBody(2)).toEqual({ endpoint: 'http://browser:9222' });
-    expect(state.settings()?.browserEndpointConfigured).toBe(true);
-    expect(state.isBrowserAvailable()).toBe(true);
-    expect(drafts.browserEndpoint).toBe('');
-    expect(ui.currentToast()?.message).toBe(
-      String(i18n.t('settings.browserEndpointSavedToast'))
-    );
-  });
-});
-
-describe('removeBrowserEndpoint', () => {
-  it('clears endpoint and falls back browser provider to direct', async () => {
-    await load(
-      makeSettings({ provider: 'browser', browserEndpointConfigured: true })
-    );
-
-    queueEmpty();
-    await expect(state.removeBrowserEndpoint(setDrafts)).resolves.toBe(true);
-    solid.flush();
-
-    expect(requestUrl(2)).toBe('/api/settings/services/browser');
-    expect(requestMethod(2)).toBe('DELETE');
-    expect(state.settings()?.browserEndpointConfigured).toBe(false);
-    expect(state.isBrowserAvailable()).toBe(false);
-    expect(state.settings()?.provider).toBe('direct');
-    expect(drafts.provider).toBe('direct');
-    toastIs(String(i18n.t('settings.browserEndpointDeletedToast')));
-  });
-
-  it('keeps non-browser provider and surfaces errors', async () => {
-    await load(
-      makeSettings({ provider: 'jina', browserEndpointConfigured: true })
-    );
-
-    queue({ error: 'SettingRepositoryError' }, 500);
-    await expect(state.removeBrowserEndpoint(setDrafts)).resolves.toBe(false);
-    solid.flush();
-    toastIs(i18n.translateErrorCode('SettingRepositoryError'));
-
-    queueEmpty();
-    await expect(state.removeBrowserEndpoint(setDrafts)).resolves.toBe(true);
-    solid.flush();
-    expect(state.settings()?.provider).toBe('jina');
-    expect(drafts.provider).toBe('jina');
-  });
-});
 
 describe('saveSmtp', () => {
   it('saves SMTP settings, preserves passwordConfigured and omits blank password', async () => {

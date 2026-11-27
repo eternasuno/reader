@@ -15,8 +15,6 @@ func TestSavedPageCreateAndDuplicate(t *testing.T) {
 
 	h := newHarness(t)
 	published := time.Date(2024, time.May, 1, 12, 0, 0, 0, time.UTC)
-	h.webpageFetcher.html = "<html><body><p>hi</p></body></html>"
-	h.webpageFetcher.finalURL = "https://example.com/redirected"
 	h.extractor.article = domain.ExtractedArticle{
 		Title:       "Hello",
 		Description: strPtr("desc"),
@@ -53,12 +51,12 @@ func TestSavedPageCreateAndDuplicate(t *testing.T) {
 		t.Fatal("a new saved page must be unread")
 	}
 
-	if h.webpageFetcher.calls != 1 || h.extractor.calls != 1 {
-		t.Fatalf("fetch/extract calls = %d/%d", h.webpageFetcher.calls, h.extractor.calls)
+	if h.extractor.calls != 1 {
+		t.Fatalf("extract calls = %d", h.extractor.calls)
 	}
 
-	if h.webpageFetcher.lastURL != "https://example.com/post?id=7" {
-		t.Fatalf("fetched url = %q", h.webpageFetcher.lastURL)
+	if h.extractor.lastURL != "https://example.com/post?id=7" {
+		t.Fatalf("extracted url = %q", h.extractor.lastURL)
 	}
 
 	duplicate := h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://example.com/post?id=7&utm_campaign=again"})
@@ -70,7 +68,7 @@ func TestSavedPageCreateAndDuplicate(t *testing.T) {
 		t.Fatalf("conflict = %+v, want url=%q id=%q", conflict, "https://example.com/post?id=7", created.Item.ID)
 	}
 
-	if h.webpageFetcher.calls != 1 {
+	if h.extractor.calls != 1 {
 		t.Fatal("duplicate detection must run before fetching the webpage")
 	}
 }
@@ -85,7 +83,6 @@ func TestSavedPageCreateConflictAtInsertReturnsID(t *testing.T) {
 	})
 
 	existing := h.seedSavedPage("https://user:secret@example.com/race", false)
-	h.webpageFetcher.html = "<html><body><p>hi</p></body></html>"
 	h.extractor.article = domain.ExtractedArticle{Title: "Hello", Content: "<p>hi</p>"}
 
 	duplicate := h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://user:secret@example.com/race?utm_source=x"})
@@ -106,7 +103,6 @@ func TestSavedPageRedactsURLCredentials(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.webpageFetcher.html = "<p>private</p>"
 	h.extractor.article = domain.ExtractedArticle{Title: "Private", Content: "<p>private</p>"}
 
 	recorder := h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://user:supersecret@example.com/private"})
@@ -135,7 +131,6 @@ func TestSavedPageValidationAndUpstreamFailures(t *testing.T) {
 	cases := []struct {
 		name       string
 		body       map[string]any
-		fetchErr   error
 		extractErr error
 		wantStatus int
 		wantCode   string
@@ -155,7 +150,7 @@ func TestSavedPageValidationAndUpstreamFailures(t *testing.T) {
 		{
 			name:       "fetch failure",
 			body:       map[string]any{"url": "https://example.com/post"},
-			fetchErr:   domain.NewError(domain.ErrWebpageFetcherError, errors.New("dial tcp 10.0.0.1: connect: connection refused")),
+			extractErr: domain.NewError(domain.ErrWebpageFetcherError, errors.New("dial tcp 10.0.0.1: connect: connection refused")),
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "WebpageFetcherError",
 		},
@@ -171,7 +166,6 @@ func TestSavedPageValidationAndUpstreamFailures(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			h := newHarness(t)
-			h.webpageFetcher.err = testCase.fetchErr
 			h.extractor.err = testCase.extractErr
 
 			recorder := h.authed(http.MethodPost, "/api/saved-pages", testCase.body)
@@ -433,7 +427,6 @@ func TestFeedItemSave(t *testing.T) {
 	bare := h.seedItem(feed.ID, "https://example.com/bare", func(item *domain.FeedItem) {
 		item.Title = "Bare"
 	})
-	h.webpageFetcher.html = "<html></html>"
 	h.extractor.article = domain.ExtractedArticle{Title: "Fetched", Content: "<p>fetched</p>"}
 
 	recorder := h.authed(http.MethodPost, "/api/feed-items/"+extracted.ID+"/save", nil)
@@ -453,7 +446,7 @@ func TestFeedItemSave(t *testing.T) {
 		t.Fatal("saved copies must start unread")
 	}
 
-	if h.webpageFetcher.calls != 0 {
+	if h.extractor.calls != 0 {
 		t.Fatal("saving an item with extracted content must not fetch the webpage")
 	}
 
@@ -473,7 +466,7 @@ func TestFeedItemSave(t *testing.T) {
 		t.Fatalf("feed content was not reused: %+v", created.Item)
 	}
 
-	if h.webpageFetcher.calls != 0 {
+	if h.extractor.calls != 0 {
 		t.Fatal("saving an item with feed content must not fetch the webpage")
 	}
 
@@ -484,8 +477,8 @@ func TestFeedItemSave(t *testing.T) {
 		t.Fatalf("fetched save = %+v", created.Item)
 	}
 
-	if h.webpageFetcher.calls != 1 {
-		t.Fatalf("expected one webpage fetch, got %d", h.webpageFetcher.calls)
+	if h.extractor.calls != 1 {
+		t.Fatalf("expected one webpage fetch, got %d", h.extractor.calls)
 	}
 
 	missing := h.authed(http.MethodPost, "/api/feed-items/"+domain.NewID()+"/save", nil)

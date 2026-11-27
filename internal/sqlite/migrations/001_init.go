@@ -123,6 +123,7 @@ func All() []*goose.Migration {
 	return []*goose.Migration{
 		goose.NewGoMigration(1, &goose.GoFunc{RunTx: initUp}, nil),
 		goose.NewGoMigration(2, &goose.GoFunc{RunTx: kindleLanguageUp}, nil),
+		goose.NewGoMigration(3, &goose.GoFunc{RunTx: browserlessUp}, nil),
 	}
 }
 

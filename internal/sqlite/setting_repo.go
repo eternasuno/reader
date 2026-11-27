@@ -12,7 +12,7 @@ import (
 
 // settingsQuery reads the singleton setting row with its kindle_schedule row
 // (absent while scheduled sending is off) in one snapshot.
-const settingsQuery = `SELECT retention, provider, jina_key, browser_endpoint, kindle_email, kindle_language, sender_email, smtp_host, smtp_port, smtp_security, smtp_user, smtp_password, timezone, send_hour, send_minute, kindle_schedule.id, kindle_schedule.next_send_at
+const settingsQuery = `SELECT retention, browserless_url, browserless_token, browserless_residential_proxy, kindle_email, kindle_language, sender_email, smtp_host, smtp_port, smtp_security, smtp_user, smtp_password, timezone, send_hour, send_minute, kindle_schedule.id, kindle_schedule.next_send_at
 	FROM setting LEFT JOIN kindle_schedule ON kindle_schedule.setting_id = setting.id
 	WHERE setting.id = 1`
 
@@ -22,23 +22,23 @@ type SettingRepo struct {
 }
 
 type settingsRow struct {
-	retention       int64
-	provider        string
-	jinaKey         sql.NullString
-	browserEndpoint sql.NullString
-	kindleEmail     sql.NullString
-	kindleLanguage  string
-	senderEmail     sql.NullString
-	smtpHost        sql.NullString
-	smtpPort        sql.NullInt64
-	smtpSecurity    sql.NullString
-	smtpUser        sql.NullString
-	smtpPassword    sql.NullString
-	timezone        sql.NullString
-	sendHour        sql.NullInt64
-	sendMinute      sql.NullInt64
-	scheduleID      sql.NullString
-	nextSendAt      sql.NullInt64
+	retention                   int64
+	browserlessURL              sql.NullString
+	browserlessToken            sql.NullString
+	browserlessResidentialProxy int64
+	kindleEmail                 sql.NullString
+	kindleLanguage              string
+	senderEmail                 sql.NullString
+	smtpHost                    sql.NullString
+	smtpPort                    sql.NullInt64
+	smtpSecurity                sql.NullString
+	smtpUser                    sql.NullString
+	smtpPassword                sql.NullString
+	timezone                    sql.NullString
+	sendHour                    sql.NullInt64
+	sendMinute                  sql.NullInt64
+	scheduleID                  sql.NullString
+	nextSendAt                  sql.NullInt64
 }
 
 func (r *SettingRepo) Get(ctx context.Context) (domain.Settings, error) {
@@ -61,12 +61,10 @@ func settingsFromRow(row settingsRow) (domain.Settings, error) {
 	}
 
 	return domain.Settings{
-		Retention:       int(row.retention),
-		Provider:        domain.ExtractorProvider(row.provider),
-		JinaKey:         optionalText(row.jinaKey),
-		BrowserEndpoint: optionalText(row.browserEndpoint),
-		SMTP:            buildSMTPSettings(row),
-		Kindle:          kindle,
+		Retention:   int(row.retention),
+		Browserless: buildBrowserlessSettings(row),
+		SMTP:        buildSMTPSettings(row),
+		Kindle:      kindle,
 	}, nil
 }
 
@@ -90,9 +88,9 @@ func loadSettingsRow(ctx context.Context, querier rowQuerier) (settingsRow, erro
 	var s settingsRow
 	err := querier.QueryRowContext(ctx, settingsQuery).Scan(
 		&s.retention,
-		&s.provider,
-		&s.jinaKey,
-		&s.browserEndpoint,
+		&s.browserlessURL,
+		&s.browserlessToken,
+		&s.browserlessResidentialProxy,
 		&s.kindleEmail,
 		&s.kindleLanguage,
 		&s.senderEmail,
@@ -109,6 +107,18 @@ func loadSettingsRow(ctx context.Context, querier rowQuerier) (settingsRow, erro
 	)
 
 	return s, err
+}
+
+func buildBrowserlessSettings(s settingsRow) *domain.BrowserlessSettings {
+	if !s.browserlessURL.Valid {
+		return nil
+	}
+
+	return &domain.BrowserlessSettings{
+		URL:              s.browserlessURL.String,
+		Token:            optionalText(s.browserlessToken),
+		ResidentialProxy: intBool(s.browserlessResidentialProxy),
+	}
 }
 
 func buildSMTPSettings(s settingsRow) *domain.SMTPSettings {
@@ -155,58 +165,36 @@ func (r *SettingRepo) UpdateRetention(ctx context.Context, retention int) error 
 	return nil
 }
 
-func (r *SettingRepo) UpdateProvider(ctx context.Context, provider domain.ExtractorProvider) error {
-	err := withTx(ctx, r.write, func(tx *sql.Tx) error {
-		if provider == domain.ProviderBrowser {
-			var stored sql.NullString
-			if err := tx.QueryRowContext(ctx, `SELECT browser_endpoint FROM setting WHERE id = 1`).Scan(&stored); err != nil {
-				return err
-			}
+func (r *SettingRepo) UpdateBrowserless(ctx context.Context, browserless domain.BrowserlessSettings) error {
+	query := `UPDATE setting SET browserless_url = ?, browserless_residential_proxy = ?`
+	args := []any{browserless.URL, boolInt(browserless.ResidentialProxy)}
 
-			if !stored.Valid {
-				return domain.NewError(domain.ErrBrowserEndpointRequired, nil)
-			}
-		}
-
-		_, err := tx.ExecContext(ctx, `UPDATE setting SET provider = ? WHERE id = 1`, string(provider))
-
-		return err
-	})
-	if err != nil {
-		return wrapRepositoryError(err, domain.ErrSettingRepositoryError)
+	if browserless.Token != nil && strings.TrimSpace(*browserless.Token) != "" {
+		query += `, browserless_token = ?`
+		args = append(args, *browserless.Token)
 	}
 
-	return nil
-}
+	query += ` WHERE id = 1`
 
-func (r *SettingRepo) UpdateJinaKey(ctx context.Context, key string) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET jina_key = ? WHERE id = 1`, key); err != nil {
+	if _, err := r.write.ExecContext(ctx, query, args...); err != nil {
 		return domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
 	return nil
 }
 
-func (r *SettingRepo) DeleteJinaKey(ctx context.Context) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET jina_key = NULL WHERE id = 1`); err != nil {
+func (r *SettingRepo) DeleteBrowserlessToken(ctx context.Context) error {
+	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET browserless_token = NULL WHERE id = 1`); err != nil {
 		return domain.NewError(domain.ErrSettingRepositoryError, err)
 	}
 
 	return nil
 }
 
-func (r *SettingRepo) UpdateBrowserEndpoint(ctx context.Context, endpoint string) error {
-	if _, err := r.write.ExecContext(ctx, `UPDATE setting SET browser_endpoint = ? WHERE id = 1`, endpoint); err != nil {
-		return domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
-	return nil
-}
-
-func (r *SettingRepo) DeleteBrowserEndpoint(ctx context.Context) error {
+func (r *SettingRepo) DeleteBrowserless(ctx context.Context) error {
 	_, err := r.write.ExecContext(
 		ctx,
-		`UPDATE setting SET browser_endpoint = NULL, provider = CASE WHEN provider = 'browser' THEN 'direct' ELSE provider END WHERE id = 1`,
+		`UPDATE setting SET browserless_url = NULL, browserless_token = NULL, browserless_residential_proxy = 0 WHERE id = 1`,
 	)
 	if err != nil {
 		return domain.NewError(domain.ErrSettingRepositoryError, err)

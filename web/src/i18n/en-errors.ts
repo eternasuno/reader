@@ -36,10 +36,7 @@ export const enErrors: typeof zhErrors = {
   FolderRepositoryError:
     'Folders are temporarily unavailable. Please try again later.',
   InvalidRetention: 'Retention must be a positive integer.',
-  InvalidProvider: 'Invalid extraction method.',
-  InvalidJinaKey: 'Enter a Jina key.',
-  InvalidEndpoint: 'Enter a valid browser service address.',
-  BrowserEndpointRequired: 'Enter the browser service address.',
+  InvalidBrowserlessSetting: 'Enter a valid Browserless URL.',
   InvalidSMTPSetting: 'Check the SMTP settings and try again.',
   SMTPNotConfigured: 'Configure SMTP under External services first.',
   InvalidKindleSetting: 'Check the Kindle settings and try again.',

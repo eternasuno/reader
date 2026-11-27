@@ -1,18 +1,17 @@
 import type { JSX } from '@solidjs/web';
-import { Show, type StoreSetter } from 'solid-js';
+import { createUniqueId, Show, type StoreSetter } from 'solid-js';
 import type { SMTPSecurity } from '../api';
 import { t } from '../i18n';
 import {
   isSaving,
   isSettingsReady,
   isSmtpConfigured,
-  removeBrowserEndpoint,
-  removeJinaKey,
+  removeBrowserless,
+  removeBrowserlessToken,
   removeSmtp,
   removeSmtpPassword,
   type SettingsDrafts,
-  saveBrowserEndpoint,
-  saveJinaKey,
+  saveBrowserless,
   saveSmtp,
   savingAction,
   settings,
@@ -29,9 +28,11 @@ import { type SettingsDraftProps, statusKey } from './settingsHelpers';
 
 const controlsDisabled = (): boolean => isSaving() || !isSettingsReady();
 
-const confirmClearBrowser = (setDrafts: StoreSetter<SettingsDrafts>): void => {
-  if (window.confirm(t('settings.clearBrowserEndpointConfirm'))) {
-    void removeBrowserEndpoint(setDrafts);
+const confirmClearBrowserless = (
+  setDrafts: StoreSetter<SettingsDrafts>
+): void => {
+  if (window.confirm(t('settings.clearBrowserlessConfirm'))) {
+    void removeBrowserless(setDrafts);
   }
 };
 
@@ -74,109 +75,113 @@ function SaveButton(props: { label: string; loading: boolean }): JSX.Element {
   );
 }
 
-function JinaCard(props: SettingsDraftProps): JSX.Element {
-  const configured = (): boolean => settings()?.jinaKeyConfigured === true;
+const isBrowserlessConfigured = (): boolean =>
+  settings()?.browserless !== undefined;
+
+function BrowserlessProxyRow(props: SettingsDraftProps): JSX.Element {
+  const toggleId = createUniqueId();
 
   return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        void saveJinaKey(props.drafts, props.setDrafts);
-      }}
+    <SettingsRow
+      label={t('settings.browserlessResidentialProxyLabel')}
+      labelFor={toggleId}
+      description={t('settings.browserlessResidentialProxyHint')}
     >
-      <SettingsGroup
-        title={t('settings.jinaHeading')}
-        aside={
-          <StatusBadge on={configured()}>
-            {t('settings.jinaStatus', {
-              status: String(t(statusKey(configured()))),
-            })}
-          </StatusBadge>
-        }
-        footer={
-          <>
-            <Show when={configured()}>
-              <RemoveButton
-                label={t('settings.deleteJinaKey')}
-                onClick={() => void removeJinaKey(props.setDrafts)}
-              />
-            </Show>
-            <SaveButton
-              label={t('settings.saveJinaKey')}
-              loading={savingAction() === 'jina-key'}
-            />
-          </>
-        }
-      >
-        <SettingsRow stacked>
-          <Input
-            type="password"
-            required
-            autocomplete="off"
-            label={t('settings.jinaKeyLabel')}
-            placeholder={t('settings.jinaKeyPlaceholder')}
-            value={props.drafts.jinaKey}
-            disabled={controlsDisabled()}
-            onInput={(event) => {
-              const jinaKey = event.currentTarget.value;
-              props.setDrafts((draft) => ({ ...draft, jinaKey }));
-            }}
-          />
-        </SettingsRow>
-      </SettingsGroup>
-    </form>
+      <input
+        id={toggleId}
+        type="checkbox"
+        class="toggle toggle-sm toggle-primary disabled:border-base-content/30 disabled:opacity-100"
+        checked={props.drafts.browserlessResidentialProxy}
+        disabled={controlsDisabled()}
+        onChange={(event) => {
+          const browserlessResidentialProxy = event.currentTarget.checked;
+          props.setDrafts((draft) => ({
+            ...draft,
+            browserlessResidentialProxy,
+          }));
+        }}
+      />
+    </SettingsRow>
   );
 }
 
-function BrowserCard(props: SettingsDraftProps): JSX.Element {
-  const configured = (): boolean =>
-    settings()?.browserEndpointConfigured === true;
+function BrowserlessFooter(props: {
+  setDrafts: StoreSetter<SettingsDrafts>;
+}): JSX.Element {
+  return (
+    <>
+      <Show when={settings()?.browserless?.tokenConfigured}>
+        <RemoveButton
+          label={t('settings.deleteBrowserlessToken')}
+          onClick={() => void removeBrowserlessToken(props.setDrafts)}
+        />
+      </Show>
+      <Show when={isBrowserlessConfigured()}>
+        <RemoveButton
+          label={t('settings.clearBrowserless')}
+          onClick={() => confirmClearBrowserless(props.setDrafts)}
+        />
+      </Show>
+      <SaveButton
+        label={t('settings.saveBrowserless')}
+        loading={savingAction() === 'browserless'}
+      />
+    </>
+  );
+}
 
+function BrowserlessCard(props: SettingsDraftProps): JSX.Element {
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void saveBrowserEndpoint(props.drafts, props.setDrafts);
+        void saveBrowserless(props.drafts, props.setDrafts);
       }}
     >
       <SettingsGroup
-        title={t('settings.browserHeading')}
+        title={t('settings.browserlessHeading')}
         aside={
-          <StatusBadge on={configured()}>
-            {t('settings.browserStatus', {
-              status: String(t(statusKey(configured()))),
+          <StatusBadge on={isBrowserlessConfigured()}>
+            {t('settings.browserlessStatus', {
+              status: String(t(statusKey(isBrowserlessConfigured()))),
             })}
           </StatusBadge>
         }
-        footer={
-          <>
-            <Show when={configured()}>
-              <RemoveButton
-                label={t('settings.clearBrowserEndpoint')}
-                onClick={() => confirmClearBrowser(props.setDrafts)}
-              />
-            </Show>
-            <SaveButton
-              label={t('settings.saveBrowserEndpoint')}
-              loading={savingAction() === 'browser-endpoint'}
-            />
-          </>
-        }
+        footer={<BrowserlessFooter setDrafts={props.setDrafts} />}
       >
+        <SettingsRow description={t('settings.browserlessHint')} />
         <SettingsRow stacked>
           <Input
             type="url"
             required
-            label={t('settings.browserEndpointLabel')}
-            placeholder={t('settings.browserEndpointPlaceholder')}
-            value={props.drafts.browserEndpoint}
+            label={t('settings.browserlessUrlLabel')}
+            placeholder={t('settings.browserlessUrlPlaceholder')}
+            value={props.drafts.browserlessUrl}
             disabled={controlsDisabled()}
             onInput={(event) => {
-              const browserEndpoint = event.currentTarget.value;
-              props.setDrafts((draft) => ({ ...draft, browserEndpoint }));
+              const browserlessUrl = event.currentTarget.value;
+              props.setDrafts((draft) => ({ ...draft, browserlessUrl }));
             }}
           />
         </SettingsRow>
+        <SettingsRow stacked>
+          <Input
+            type="password"
+            autocomplete="new-password"
+            label={t('settings.browserlessTokenLabel')}
+            placeholder={t('settings.browserlessTokenPlaceholder')}
+            value={props.drafts.browserlessToken}
+            disabled={controlsDisabled()}
+            onInput={(event) => {
+              const browserlessToken = event.currentTarget.value;
+              props.setDrafts((draft) => ({ ...draft, browserlessToken }));
+            }}
+          />
+        </SettingsRow>
+        <BrowserlessProxyRow
+          drafts={props.drafts}
+          setDrafts={props.setDrafts}
+        />
       </SettingsGroup>
     </form>
   );
@@ -352,12 +357,11 @@ function SmtpCard(props: SettingsDraftProps): JSX.Element {
   );
 }
 
-/** `settings.md:21-24`: independent external services (Jina, browser extraction, SMTP). */
+/** `settings.md:21-24`: independent external services (Browserless fallback, SMTP). */
 export function ServicesSection(props: SettingsDraftProps): JSX.Element {
   return (
     <div class="flex flex-col gap-6">
-      <JinaCard drafts={props.drafts} setDrafts={props.setDrafts} />
-      <BrowserCard drafts={props.drafts} setDrafts={props.setDrafts} />
+      <BrowserlessCard drafts={props.drafts} setDrafts={props.setDrafts} />
       <SmtpCard drafts={props.drafts} setDrafts={props.setDrafts} />
     </div>
   );

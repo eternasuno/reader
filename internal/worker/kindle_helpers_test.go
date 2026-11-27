@@ -478,49 +478,30 @@ func (r *fakeKindleSendRepository) recordCallsList() int {
 	return r.recordCalls
 }
 
-type fakeWebpageFetcher struct {
-	mu    sync.Mutex
-	calls []string
-	fetch func(ctx context.Context, url domain.NormalizedURL) (string, string, error)
+type fakeWebpageExtractor struct {
+	mu      sync.Mutex
+	calls   []string
+	extract func(ctx context.Context, url domain.NormalizedURL) (domain.ExtractedArticle, error)
 }
 
-func (f *fakeWebpageFetcher) FetchWebpage(ctx context.Context, url domain.NormalizedURL) (string, string, error) {
+func (f *fakeWebpageExtractor) ExtractWebpage(ctx context.Context, url domain.NormalizedURL) (domain.ExtractedArticle, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, url.Raw())
-	hook := f.fetch
+	hook := f.extract
 	f.mu.Unlock()
 
 	if hook == nil {
-		return "", "", errors.New("unexpected webpage fetch")
+		return domain.ExtractedArticle{}, errors.New("unexpected webpage extraction")
 	}
 
 	return hook(ctx, url)
 }
 
-func (f *fakeWebpageFetcher) callList() []string {
+func (f *fakeWebpageExtractor) callList() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	return append([]string(nil), f.calls...)
-}
-
-type fakeArticleExtractor struct {
-	mu      sync.Mutex
-	calls   int
-	extract func(ctx context.Context, htmlBody string, pageURL string) (domain.ExtractedArticle, error)
-}
-
-func (e *fakeArticleExtractor) ExtractArticle(htmlBody string, pageURL string) (domain.ExtractedArticle, error) {
-	e.mu.Lock()
-	e.calls++
-	hook := e.extract
-	e.mu.Unlock()
-
-	if hook == nil {
-		return domain.ExtractedArticle{Content: htmlBody}, nil
-	}
-
-	return hook(context.Background(), htmlBody, pageURL)
 }
 
 type buildCall struct {

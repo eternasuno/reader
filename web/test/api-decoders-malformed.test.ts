@@ -16,13 +16,19 @@ const B = '019363b8-0000-7000-8000-000000000000';
 const COUNTS_OK = [{ feedId: 'f', count: 2 }];
 const SETTINGS_OK = {
   retention: 100,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
 };
 const KINDLE_OK = { kindleEmail: 'k@example.com', language: 'zh' };
 const SCHEDULE_OK = { hour: 8, minute: 0, timezone: 'UTC' };
 const withKindle = (kindle: unknown) => ({ ...SETTINGS_OK, kindle });
+const BROWSERLESS_OK = {
+  url: 'https://browserless.example.com',
+  tokenConfigured: false,
+  residentialProxy: false,
+};
+const withBrowserless = (browserless: unknown) => ({
+  ...SETTINGS_OK,
+  browserless,
+});
 const OPML_FILE = new File(['<opml/>'], 'a.opml', { type: 'text/xml' });
 
 const spList = () => savedPagesApi.list();
@@ -77,8 +83,39 @@ const MALFORMED_CASES: Array<[string, () => Promise<unknown>, unknown]> = [
   ['items boundary', () => feedItemsApi.listAll(), NO_B],
   ['item get', () => feedItemsApi.getById('i1'), { item: 'bad' }],
   ['extract', () => feedItemsApi.extract('i1'), { item: null }],
-  ['settings', () => settingsApi.get(), { retention: 100, provider: 'x' }],
+  ['settings', () => settingsApi.get(), { retention: '100' }],
   ['settings smtp', () => settingsApi.get(), { ...SETTINGS_OK, smtp: null }],
+  ['settings browserless null', () => settingsApi.get(), withBrowserless(null)],
+  [
+    'browserless without tokenConfigured',
+    () => settingsApi.get(),
+    withBrowserless({ url: BROWSERLESS_OK.url, residentialProxy: false }),
+  ],
+  [
+    'browserless tokenConfigured type',
+    () => settingsApi.get(),
+    withBrowserless({ ...BROWSERLESS_OK, tokenConfigured: 'yes' }),
+  ],
+  [
+    'browserless without residentialProxy',
+    () => settingsApi.get(),
+    withBrowserless({ url: BROWSERLESS_OK.url, tokenConfigured: false }),
+  ],
+  [
+    'browserless residentialProxy type',
+    () => settingsApi.get(),
+    withBrowserless({ ...BROWSERLESS_OK, residentialProxy: 1 }),
+  ],
+  [
+    'browserless without url',
+    () => settingsApi.get(),
+    withBrowserless({ tokenConfigured: false, residentialProxy: false }),
+  ],
+  [
+    'browserless url type',
+    () => settingsApi.get(),
+    withBrowserless({ ...BROWSERLESS_OK, url: 8 }),
+  ],
   [
     'kindle schedule without timezone',
     () => settingsApi.get(),

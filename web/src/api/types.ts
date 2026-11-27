@@ -1,7 +1,6 @@
 /** A feed's stored starting view; the embedded webpage view is only ever temporary. */
 export type ReaderMode = 'default' | 'extracted';
 export type SortOrder = 'newest' | 'oldest';
-export type ExtractorProvider = 'direct' | 'jina' | 'browser';
 export type SMTPSecurity = 'tls' | 'starttls';
 type KindleTrigger = 'manual' | 'scheduled';
 type KindleStatus = 'running' | 'succeeded' | 'failed';
@@ -126,6 +125,18 @@ export interface SmtpSettingsInput extends SmtpSettings {
   password?: string;
 }
 
+export interface BrowserlessSettingsView {
+  url: string;
+  tokenConfigured: boolean;
+  residentialProxy: boolean;
+}
+
+export interface BrowserlessSettingsInput {
+  url: string;
+  token?: string;
+  residentialProxy: boolean;
+}
+
 export interface KindleSchedule {
   hour: number;
   minute: number;
@@ -147,9 +158,7 @@ export interface KindleSettingsView extends KindleSettings {
 
 export interface Settings {
   retention: number;
-  provider: ExtractorProvider;
-  jinaKeyConfigured: boolean;
-  browserEndpointConfigured: boolean;
+  browserless?: BrowserlessSettingsView;
   smtp?: SmtpSettingsView;
   kindle?: KindleSettingsView;
 }

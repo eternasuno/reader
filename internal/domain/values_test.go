@@ -244,77 +244,65 @@ func TestValueValidators(t *testing.T) {
 	}
 }
 
-func TestValueBrowserEndpoint(t *testing.T) {
+func TestValueBrowserlessSettings(t *testing.T) {
 	t.Parallel()
 
+	token := " secret "
+	blank := "   "
 	valid := []struct {
-		in   string
-		want string
+		in   BrowserlessSettings
+		want BrowserlessSettings
 	}{
-		{in: " http://localhost:9222 ", want: "http://localhost:9222"},
-		{in: "https://browser.example.com", want: "https://browser.example.com"},
-		{in: "ws://127.0.0.1:9222/devtools/browser/abc", want: "ws://127.0.0.1:9222/devtools/browser/abc"},
-		{in: "WSS://browser.example.com/devtools", want: "WSS://browser.example.com/devtools"},
+		{
+			in:   BrowserlessSettings{URL: " https://production-sfo.browserless.io/ ", Token: &token, ResidentialProxy: true},
+			want: BrowserlessSettings{URL: "https://production-sfo.browserless.io", Token: &token, ResidentialProxy: true},
+		},
+		{
+			in:   BrowserlessSettings{URL: "http://browserless:3000/base//", Token: &blank},
+			want: BrowserlessSettings{URL: "http://browserless:3000/base"},
+		},
+		{
+			in:   BrowserlessSettings{URL: "HTTPS://Browserless.example.com"},
+			want: BrowserlessSettings{URL: "HTTPS://Browserless.example.com"},
+		},
 	}
 
 	for _, tc := range valid {
-		got, err := ValidateBrowserEndpoint(tc.in)
+		got, err := ValidateBrowserlessSettings(tc.in)
 		if err != nil {
-			t.Fatalf("endpoint %q should be valid: %v", tc.in, err)
+			t.Fatalf("browserless %+v should be valid: %v", tc.in, err)
 		}
 
-		if got != tc.want {
-			t.Fatalf("endpoint = %q, want %q", got, tc.want)
+		if got.URL != tc.want.URL || got.ResidentialProxy != tc.want.ResidentialProxy || !equalOptional(got.Token, tc.want.Token) {
+			t.Fatalf("browserless = %+v, want %+v", got, tc.want)
 		}
 	}
 
-	invalid := []string{"", "   ", "ftp://example.com", "http://", "not a url", "example.com:9222"}
+	invalid := []string{
+		"",
+		"   ",
+		"ws://browserless:3000",
+		"ftp://example.com",
+		"http://",
+		"not a url",
+		"example.com:3000",
+		"https://user:pass@browserless.example.com",
+		"https://browserless.example.com?token=x",
+		"https://browserless.example.com?",
+		"https://browserless.example.com#frag",
+	}
 	for _, raw := range invalid {
-		_, err := ValidateBrowserEndpoint(raw)
-		requireDomainError(t, err, ErrInvalidEndpoint)
+		_, err := ValidateBrowserlessSettings(BrowserlessSettings{URL: raw})
+		requireDomainError(t, err, ErrInvalidBrowserlessSetting)
 	}
 }
 
-func TestValueProvider(t *testing.T) {
-	t.Parallel()
-
-	for _, provider := range []ExtractorProvider{ProviderDirect, ProviderJina, ProviderBrowser} {
-		if err := ValidateProvider(provider); err != nil {
-			t.Fatalf("provider %q should be valid: %v", provider, err)
-		}
+func equalOptional(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
 	}
 
-	for _, invalid := range []ExtractorProvider{"", ExtractorProvider("other"), ExtractorProvider("DIRECT")} {
-		requireDomainError(t, ValidateProvider(invalid), ErrInvalidProvider)
-	}
-}
-
-func TestValueJinaKey(t *testing.T) {
-	t.Parallel()
-
-	valid := []struct {
-		in   string
-		want string
-	}{
-		{in: "jina-key", want: "jina-key"},
-		{in: "  jina_secret_123 \n", want: "jina_secret_123"},
-	}
-
-	for _, tc := range valid {
-		got, err := ValidateJinaKey(tc.in)
-		if err != nil {
-			t.Fatalf("jina key %q should be valid: %v", tc.in, err)
-		}
-
-		if got != tc.want {
-			t.Fatalf("jina key = %q, want %q", got, tc.want)
-		}
-	}
-
-	for _, raw := range []string{"", "   ", "\t\n"} {
-		_, err := ValidateJinaKey(raw)
-		requireDomainError(t, err, ErrInvalidJinaKey)
-	}
+	return *a == *b
 }
 
 func TestValueSMTPSettings(t *testing.T) {

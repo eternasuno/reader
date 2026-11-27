@@ -195,7 +195,7 @@ func TestFetchFeedErrors(t *testing.T) {
 	})
 }
 
-func TestFetchWebpageDirect(t *testing.T) {
+func TestFetchDirect(t *testing.T) {
 	var gotAuthorization string
 	var gotUserAgent string
 
@@ -215,7 +215,7 @@ func TestFetchWebpageDirect(t *testing.T) {
 	credentialed := fmt.Sprintf("http://pageuser:pagesecret@%s/page", parsed.Host)
 	client := New(Config{AllowPrivateNetwork: true})
 
-	body, finalURL, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, credentialed))
+	body, finalURL, err := client.FetchDirect(context.Background(), mustNormalizedURL(t, credentialed))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -238,12 +238,6 @@ func TestFetchWebpageDirect(t *testing.T) {
 	}
 }
 
-func TestFetchWebpageSettingsError(t *testing.T) {
-	client := New(Config{AllowPrivateNetwork: true, Settings: stubSettings(ExtractorSettings{}, errors.New("settings unavailable"))})
-	_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, "http://example.com/page"))
-	requireDomainCode(t, err, domain.ErrWebpageFetcherError)
-}
-
 func TestFetchStatusCheckedBeforeBufferingBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -252,7 +246,7 @@ func TestFetchStatusCheckedBeforeBufferingBody(t *testing.T) {
 	defer server.Close()
 
 	client := New(Config{AllowPrivateNetwork: true, MaxBodyBytes: 8})
-	_, _, err := client.FetchWebpage(context.Background(), mustNormalizedURL(t, server.URL+"/err"))
+	_, _, err := client.FetchDirect(context.Background(), mustNormalizedURL(t, server.URL+"/err"))
 	requireDomainCode(t, err, domain.ErrWebpageFetcherError)
 
 	if !strings.Contains(err.Error(), "unexpected status code 500") {
@@ -439,7 +433,7 @@ func TestFetchBoundaries(t *testing.T) {
 				case "feed":
 					_, _, err = client.FetchFeed(context.Background(), mustNormalizedURL(t, target))
 				case "webpage":
-					_, _, err = client.FetchWebpage(context.Background(), mustNormalizedURL(t, target))
+					_, _, err = client.FetchDirect(context.Background(), mustNormalizedURL(t, target))
 				case "image":
 					_, _, _, err = client.FetchImage(context.Background(), target)
 				}

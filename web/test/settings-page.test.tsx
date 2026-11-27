@@ -8,9 +8,6 @@ let sendsState = { running: false, items: [] as Array<unknown> };
 
 const SETTINGS = {
   retention: 50,
-  provider: 'direct',
-  jinaKeyConfigured: false,
-  browserEndpointConfigured: false,
   smtp: { senderEmail: 'a@b', host: 'h', port: 465, security: 'tls' },
   kindle: { kindleEmail: 'k@b', language: 'zh' },
 };
@@ -67,7 +64,11 @@ beforeEach(() => {
 
 it('marks exactly one settings section as current when navigating', async () => {
   const { container } = await mountSettings();
-  const names = ['文章与订阅', '提取', 'Kindle', '外部服务'];
+  const names = ['文章与订阅', 'Kindle', '外部服务'];
+  expect(
+    Array.from(container.querySelectorAll('nav button'), (b) => b.textContent)
+  ).toEqual(names);
+  expect(container.querySelector('section[aria-label="提取"]')).toBeNull();
   for (const [index, name] of names.entries()) {
     if (index > 0) {
       navBtn(container, index).click();
@@ -90,7 +91,7 @@ describe('kindle history refresh on section entry', () => {
     const { container } = await mountSettings();
     const initialCalls = sendsCalls();
 
-    navBtn(container, 2).click();
+    navBtn(container, 1).click();
     await settle(3);
     expect(sendsCalls()).toBe(initialCalls + 1);
     expect(findButton(container, '正在发送中…').disabled).toBe(true);
@@ -100,7 +101,7 @@ describe('kindle history refresh on section entry', () => {
     expect(sendsCalls()).toBe(initialCalls + 1);
 
     sendsState = { running: false, items: [] };
-    navBtn(container, 2).click();
+    navBtn(container, 1).click();
     await settle(3);
 
     expect(sendsCalls()).toBe(initialCalls + 2);
@@ -113,7 +114,7 @@ describe('kindle history refresh on section entry', () => {
     const initialCalls = sendsCalls();
 
     setInput(container, 'input[type="number"]', '25');
-    navBtn(container, 2).click();
+    navBtn(container, 1).click();
     await settle(2);
 
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -152,13 +153,13 @@ describe('settings leave guards', () => {
 describe('settings secret disposal', () => {
   it('disposes secret drafts on exit so secrets never persist across visits', async () => {
     const { container, history } = await mountSettings();
-    navBtn(container, 3).click();
+    navBtn(container, 2).click();
     harness.modules.solid.flush();
 
     const svc = container.querySelector('section[aria-label="外部服务"]');
     if (svc === null) throw new Error('missing services section');
-    setInput(svc, 'input[type="password"]', 'jina-secret', 0);
-    setInput(svc, 'input[type="url"]', 'http://browser:9222');
+    setInput(svc, 'input[type="password"]', 'browserless-secret', 0);
+    setInput(svc, 'input[type="url"]', 'https://browserless.example.com');
     setInput(svc, 'input[type="password"]', 'smtp-secret', 1);
 
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
@@ -172,7 +173,7 @@ describe('settings secret disposal', () => {
 
     history.set({ value: '/settings' });
     await settle(4);
-    navBtn(container, 3).click();
+    navBtn(container, 2).click();
     harness.modules.solid.flush();
 
     const nextSvc = container.querySelector('section[aria-label="外部服务"]');
@@ -204,6 +205,15 @@ const mountPendingSettings = async (res: Promise<Response>) => {
   return container;
 };
 
+/** The Browserless URL, token and proxy toggle: the first services card. */
+const browserlessControls = (root: ParentNode) =>
+  ['input[type="url"]', 'input[type="password"]', 'input[type="checkbox"]'].map(
+    (selector) =>
+      root.querySelector<HTMLInputElement>(
+        `section[aria-label="外部服务"] form:first-child ${selector}`
+      )
+  );
+
 describe('cold-visit editing gate', () => {
   it('disables settings controls until initial GET completes', async () => {
     let resolveSettings: (r: Response) => void = () => {};
@@ -216,17 +226,11 @@ describe('cold-visit editing gate', () => {
     const retentionInput = container.querySelector<HTMLInputElement>(
       'input[type="number"]'
     );
-    const jinaInput = container.querySelector<HTMLInputElement>(
-      'section[aria-label="外部服务"] input[type="password"]'
-    );
-    const radio = container.querySelector<HTMLInputElement>(
-      'input[name="extractor-provider"][value="jina"]'
-    );
+    const controls = browserlessControls(container);
     expect(retentionInput?.disabled).toBe(true);
     expect(findButton(container, '保存文章设置').disabled).toBe(true);
-    expect(radio?.disabled).toBe(true);
-    expect(findButton(container, '保存提取设置').disabled).toBe(true);
-    expect(jinaInput?.disabled).toBe(true);
+    expect(findButton(container, '保存 Browserless 设置').disabled).toBe(true);
+    expect(controls.map((el) => el?.disabled)).toEqual([true, true, true]);
 
     resolveSettings(json({ ...SETTINGS, retention: 75 }));
     await settle(3);
@@ -234,8 +238,8 @@ describe('cold-visit editing gate', () => {
     expect(retentionInput?.disabled).toBe(false);
     expect(retentionInput?.value).toBe('75');
     expect(findButton(container, '保存文章设置').disabled).toBe(false);
-    expect(radio?.disabled).toBe(false);
-    expect(jinaInput?.disabled).toBe(false);
+    expect(findButton(container, '保存 Browserless 设置').disabled).toBe(false);
+    expect(controls.map((el) => el?.disabled)).toEqual([false, false, false]);
   });
 
   it('keeps controls disabled when initial GET fails', async () => {

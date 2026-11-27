@@ -39,7 +39,7 @@ const (
 	readHeaderTimeout  = 10 * time.Second
 	readTimeout        = 30 * time.Second
 	// writeTimeout bounds full handler execution and response writing; 60s stays
-	// well above the 30s default foreground fetch/extract timeout.
+	// above the 55s foreground fetch/extract timeout.
 	writeTimeout          = 60 * time.Second
 	shutdownTimeout       = 3 * time.Second
 	databaseFileName      = "reader.db"
@@ -48,8 +48,8 @@ const (
 )
 
 // envConfig is the bootstrap configuration read from environment variables.
-// External service settings (Jina key, browser endpoint, Kindle/SMTP
-// credentials) live in SQLite and are read dynamically instead.
+// External service settings (Browserless URL/token, Kindle/SMTP credentials)
+// live in SQLite and are read dynamically instead.
 type envConfig struct {
 	AppPassword         string
 	AppURL              string
@@ -62,7 +62,7 @@ type envConfig struct {
 type appDependencies struct {
 	fetchClient      *fetcher.Client
 	feedParser       *content.Parser
-	articleExtractor *content.Extractor
+	webpageExtractor *content.WebpageExtractor
 	refreshQueue     *worker.RefreshQueue
 	kindleSender     *worker.KindleSender
 }
@@ -191,14 +191,14 @@ func startWorkers(appCtx context.Context, cancelApp context.CancelFunc, deps app
 func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.Store, onFatal func(error)) appDependencies {
 	sanitizer := content.NewSanitizer()
 	feedParser := content.NewFeedParser(sanitizer)
-	articleExtractor := content.NewArticleExtractor(sanitizer)
 	settings := store.Settings()
-	fetchClient := newFetchClient(cfg.AllowPrivateNetwork, settings)
+	fetchClient := fetcher.New(fetcher.Config{AllowPrivateNetwork: cfg.AllowPrivateNetwork})
+	webpageExtractor := content.NewWebpageExtractor(fetchClient, content.NewArticleExtractor(sanitizer), settings)
 
 	return appDependencies{
 		fetchClient:      fetchClient,
 		feedParser:       feedParser,
-		articleExtractor: articleExtractor,
+		webpageExtractor: webpageExtractor,
 		refreshQueue: worker.NewRefreshQueue(worker.RefreshConfig{
 			Feeds:     store.Feeds(),
 			FeedItems: store.FeedItems(),
@@ -208,11 +208,10 @@ func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.S
 			OnFatal:   onFatal,
 		}),
 		kindleSender: worker.NewKindleSender(worker.KindleConfig{
-			BaseCtx:     appCtx,
-			KindleSends: store.KindleSends(),
-			FeedItems:   store.FeedItems(),
-			Fetcher:     fetchClient,
-			Extractor:   articleExtractor,
+			BaseCtx:          appCtx,
+			KindleSends:      store.KindleSends(),
+			FeedItems:        store.FeedItems(),
+			WebpageExtractor: webpageExtractor,
 			EPUBBuilder: epub.NewBuilder(epub.Config{
 				ImageFetcher: fetchClient,
 				SpoolDir:     filepath.Join(cfg.DataDir, epubSpoolDirName),
@@ -221,24 +220,6 @@ func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.S
 			OnFatal:    onFatal,
 		}),
 	}
-}
-
-func newFetchClient(allowPrivateNetwork bool, settings *sqlite.SettingRepo) *fetcher.Client {
-	return fetcher.New(fetcher.Config{
-		AllowPrivateNetwork: allowPrivateNetwork,
-		Settings: func(ctx context.Context) (fetcher.ExtractorSettings, error) {
-			loaded, err := settings.Get(ctx)
-			if err != nil {
-				return fetcher.ExtractorSettings{}, err
-			}
-
-			return fetcher.ExtractorSettings{
-				Provider:        loaded.Provider,
-				JinaKey:         loaded.JinaKey,
-				BrowserEndpoint: loaded.BrowserEndpoint,
-			}, nil
-		},
-	})
 }
 
 func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (*httpserver.Server, error) {
@@ -262,8 +243,7 @@ func buildAppHandler(cfg envConfig, store *sqlite.Store, deps appDependencies) (
 		KindleSends:      store.KindleSends(),
 		FeedFetcher:      deps.fetchClient,
 		FeedParser:       deps.feedParser,
-		WebpageFetcher:   deps.fetchClient,
-		ArticleExtractor: deps.articleExtractor,
+		WebpageExtractor: deps.webpageExtractor,
 		Refresher:        deps.refreshQueue,
 		Kindle:           deps.kindleSender,
 	})

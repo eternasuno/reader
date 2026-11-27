@@ -34,12 +34,7 @@ describe('settings bookmarklet', () => {
   it('uses #url= fragment instead of ?url= query parameter', async () => {
     respond((u) => {
       if (u === '/api/settings') {
-        return json({
-          retention: 50,
-          provider: 'direct',
-          jinaKeyConfigured: false,
-          browserEndpointConfigured: false,
-        });
+        return json({ retention: 50 });
       }
       if (u.includes('sends')) return json({ running: false, items: [] });
       return undefined;

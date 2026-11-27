@@ -2,6 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
+	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -37,7 +40,33 @@ func requireNextSendAt(t *testing.T, store *Store, want *time.Time) {
 	}
 }
 
-func TestSettingRepoProvider(t *testing.T) {
+func browserlessString(browserless *domain.BrowserlessSettings) string {
+	if browserless == nil {
+		return "nil"
+	}
+
+	token := "nil"
+	if browserless.Token != nil {
+		token = strconv.Quote(*browserless.Token)
+	}
+
+	return fmt.Sprintf("{url=%q token=%s residentialProxy=%t}", browserless.URL, token, browserless.ResidentialProxy)
+}
+
+func requireBrowserless(t *testing.T, repo *SettingRepo, want *domain.BrowserlessSettings) {
+	t.Helper()
+
+	settings, err := repo.Get(context.Background())
+	if err != nil {
+		t.Fatalf("get settings: %v", err)
+	}
+
+	if !reflect.DeepEqual(settings.Browserless, want) {
+		t.Fatalf("browserless = %s, want %s", browserlessString(settings.Browserless), browserlessString(want))
+	}
+}
+
+func TestSettingRepoRetention(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	repo := store.Settings()
@@ -47,124 +76,158 @@ func TestSettingRepoProvider(t *testing.T) {
 		t.Fatalf("get settings: %v", err)
 	}
 
-	if settings.Provider != domain.ProviderDirect || settings.Retention != 100 {
-		t.Fatalf("default settings = %+v", settings)
+	if settings.Retention != 100 || settings.Browserless != nil {
+		t.Fatalf("default settings = %+v, want retention 100 and no browserless", settings)
 	}
 
 	if err := repo.UpdateRetention(ctx, 250); err != nil {
 		t.Fatalf("update retention: %v", err)
 	}
 
-	if err := repo.UpdateProvider(ctx, domain.ProviderJina); err != nil {
-		t.Fatalf("update provider jina without key: %v", err)
-	}
-
 	settings, err = repo.Get(ctx)
 	if err != nil {
-		t.Fatalf("get settings after jina: %v", err)
+		t.Fatalf("get settings after retention: %v", err)
 	}
 
-	if settings.Retention != 250 || settings.Provider != domain.ProviderJina || settings.JinaKey != nil {
-		t.Fatalf("settings after jina = %+v", settings)
+	if settings.Retention != 250 {
+		t.Fatalf("retention = %d, want 250", settings.Retention)
+	}
+}
+
+func TestSettingRepoBrowserlessRoundTrip(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.Settings()
+
+	requireBrowserless(t, repo, nil)
+
+	full := domain.BrowserlessSettings{URL: "https://browserless.example.com", Token: ptr("token-1"), ResidentialProxy: true}
+	if err := repo.UpdateBrowserless(ctx, full); err != nil {
+		t.Fatalf("update browserless: %v", err)
 	}
 
-	if err := repo.UpdateProvider(ctx, domain.ProviderBrowser); err == nil {
-		t.Fatal("expected a required browser endpoint error")
-	} else {
-		requireCode(t, err, domain.ErrBrowserEndpointRequired)
+	requireBrowserless(t, repo, &full)
+
+	if got := countRows(t, store, `SELECT COUNT(*) FROM setting WHERE browserless_residential_proxy = 1`); got != 1 {
+		t.Fatalf("rows with residential proxy stored as 1 = %d, want 1", got)
 	}
 
-	settings, err = repo.Get(ctx)
+	changed := domain.BrowserlessSettings{URL: "http://browserless.internal:3000/base"}
+	if err := repo.UpdateBrowserless(ctx, changed); err != nil {
+		t.Fatalf("update browserless without token: %v", err)
+	}
+
+	requireBrowserless(t, repo, &domain.BrowserlessSettings{URL: changed.URL, Token: ptr("token-1")})
+}
+
+func TestSettingRepoBrowserlessWithoutTokenStoresNoToken(t *testing.T) {
+	store := newTestStore(t)
+	repo := store.Settings()
+
+	service := domain.BrowserlessSettings{URL: "https://browserless.example.com"}
+	if err := repo.UpdateBrowserless(context.Background(), service); err != nil {
+		t.Fatalf("update browserless: %v", err)
+	}
+
+	requireBrowserless(t, repo, &service)
+}
+
+func TestSettingRepoBrowserlessBlankTokenKeepsStoredToken(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.Settings()
+
+	service := domain.BrowserlessSettings{URL: "https://browserless.example.com", Token: ptr("token-1")}
+	if err := repo.UpdateBrowserless(ctx, service); err != nil {
+		t.Fatalf("update browserless: %v", err)
+	}
+
+	for name, token := range map[string]*string{"nil": nil, "blank": ptr("   "), "empty": ptr("")} {
+		t.Run(name, func(t *testing.T) {
+			update := domain.BrowserlessSettings{URL: service.URL, Token: token}
+			if err := repo.UpdateBrowserless(ctx, update); err != nil {
+				t.Fatalf("update browserless: %v", err)
+			}
+
+			requireBrowserless(t, repo, &service)
+		})
+	}
+
+	rotated := domain.BrowserlessSettings{URL: service.URL, Token: ptr("token-2")}
+	if err := repo.UpdateBrowserless(ctx, rotated); err != nil {
+		t.Fatalf("update browserless with rotated token: %v", err)
+	}
+
+	requireBrowserless(t, repo, &rotated)
+}
+
+func TestSettingRepoDeleteBrowserlessToken(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.Settings()
+
+	service := domain.BrowserlessSettings{URL: "https://browserless.example.com", Token: ptr("token-1"), ResidentialProxy: true}
+	if err := repo.UpdateBrowserless(ctx, service); err != nil {
+		t.Fatalf("update browserless: %v", err)
+	}
+
+	if err := repo.DeleteBrowserlessToken(ctx); err != nil {
+		t.Fatalf("delete browserless token: %v", err)
+	}
+
+	requireBrowserless(t, repo, &domain.BrowserlessSettings{URL: service.URL, ResidentialProxy: true})
+}
+
+func TestSettingRepoDeleteBrowserlessClearsEverythingElseStays(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.Settings()
+
+	if err := repo.UpdateRetention(ctx, 250); err != nil {
+		t.Fatalf("update retention: %v", err)
+	}
+
+	smtp := domain.SMTPSettings{SenderEmail: "sender@example.com", Host: "smtp.example.com", Port: 587, Security: domain.SMTPSecuritySTARTTLS}
+	if err := repo.UpdateSMTP(ctx, smtp); err != nil {
+		t.Fatalf("update smtp: %v", err)
+	}
+
+	service := domain.BrowserlessSettings{URL: "https://browserless.example.com", Token: ptr("token-1"), ResidentialProxy: true}
+	if err := repo.UpdateBrowserless(ctx, service); err != nil {
+		t.Fatalf("update browserless: %v", err)
+	}
+
+	if err := repo.DeleteBrowserless(ctx); err != nil {
+		t.Fatalf("delete browserless: %v", err)
+	}
+
+	requireBrowserless(t, repo, nil)
+
+	cleared := `SELECT COUNT(*) FROM setting WHERE browserless_url IS NULL AND browserless_token IS NULL AND browserless_residential_proxy = 0`
+	if got := countRows(t, store, cleared); got != 1 {
+		t.Fatalf("setting rows with cleared browserless columns = %d, want 1", got)
+	}
+
+	settings, err := repo.Get(ctx)
 	if err != nil {
-		t.Fatalf("get settings after failed browser switch: %v", err)
+		t.Fatalf("get settings: %v", err)
 	}
 
-	if settings.Provider != domain.ProviderJina || settings.BrowserEndpoint != nil {
-		t.Fatalf("settings after failed browser switch = %+v", settings)
+	if settings.Retention != 250 || settings.SMTP == nil {
+		t.Fatalf("settings after deleting browserless = %+v, want retention 250 and smtp kept", settings)
 	}
 
-	if err := repo.UpdateBrowserEndpoint(ctx, "wss://browser.internal:3000"); err != nil {
-		t.Fatalf("update browser endpoint: %v", err)
+	if err := repo.UpdateBrowserless(ctx, domain.BrowserlessSettings{URL: service.URL}); err != nil {
+		t.Fatalf("update browserless after delete: %v", err)
 	}
 
-	if err := repo.UpdateProvider(ctx, domain.ProviderBrowser); err != nil {
-		t.Fatalf("update provider browser: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after browser: %v", err)
-	}
-
-	if settings.Provider != domain.ProviderBrowser || settings.BrowserEndpoint == nil || *settings.BrowserEndpoint != "wss://browser.internal:3000" {
-		t.Fatalf("settings after browser = %+v", settings)
-	}
-
-	if err := repo.DeleteBrowserEndpoint(ctx); err != nil {
-		t.Fatalf("delete browser endpoint while provider=browser: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after deleting browser endpoint: %v", err)
-	}
-
-	if settings.Provider != domain.ProviderDirect || settings.BrowserEndpoint != nil {
-		t.Fatalf("settings after deleting browser endpoint = %+v", settings)
-	}
-
-	if err := repo.UpdateBrowserEndpoint(ctx, "https://browser.internal:3001"); err != nil {
-		t.Fatalf("set browser endpoint again: %v", err)
-	}
-
-	if err := repo.UpdateProvider(ctx, domain.ProviderJina); err != nil {
-		t.Fatalf("switch provider to jina: %v", err)
-	}
-
-	if err := repo.DeleteBrowserEndpoint(ctx); err != nil {
-		t.Fatalf("delete browser endpoint while provider=jina: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after deleting browser endpoint under jina: %v", err)
-	}
-
-	if settings.Provider != domain.ProviderJina || settings.BrowserEndpoint != nil {
-		t.Fatalf("settings after deleting browser endpoint under jina = %+v", settings)
-	}
+	requireBrowserless(t, repo, &domain.BrowserlessSettings{URL: service.URL})
 }
 
 func TestSettingRepoServices(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	repo := store.Settings()
-
-	if err := repo.UpdateJinaKey(ctx, "key-1"); err != nil {
-		t.Fatalf("update jina key: %v", err)
-	}
-
-	settings, err := repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after jina key: %v", err)
-	}
-
-	if settings.JinaKey == nil || *settings.JinaKey != "key-1" {
-		t.Fatalf("jina key = %v, want key-1", settings.JinaKey)
-	}
-
-	if err := repo.DeleteJinaKey(ctx); err != nil {
-		t.Fatalf("delete jina key: %v", err)
-	}
-
-	settings, err = repo.Get(ctx)
-	if err != nil {
-		t.Fatalf("get settings after deleting jina key: %v", err)
-	}
-
-	if settings.JinaKey != nil {
-		t.Fatalf("jina key after delete = %v, want nil", settings.JinaKey)
-	}
 
 	smtp := domain.SMTPSettings{
 		SenderEmail: "sender@example.com",
@@ -179,7 +242,7 @@ func TestSettingRepoServices(t *testing.T) {
 		t.Fatalf("update smtp: %v", err)
 	}
 
-	settings, err = repo.Get(ctx)
+	settings, err := repo.Get(ctx)
 	if err != nil {
 		t.Fatalf("get settings after smtp: %v", err)
 	}

@@ -8,12 +8,16 @@ import (
 )
 
 type settingsJSON struct {
-	Retention                 int                      `json:"retention"`
-	Provider                  domain.ExtractorProvider `json:"provider"`
-	JinaKeyConfigured         bool                     `json:"jinaKeyConfigured"`
-	BrowserEndpointConfigured bool                     `json:"browserEndpointConfigured"`
-	SMTP                      *smtpSettingsJSON        `json:"smtp,omitempty"`
-	Kindle                    *kindleSettingsJSON      `json:"kindle,omitempty"`
+	Retention   int                 `json:"retention"`
+	Browserless *browserlessView    `json:"browserless,omitempty"`
+	SMTP        *smtpSettingsJSON   `json:"smtp,omitempty"`
+	Kindle      *kindleSettingsJSON `json:"kindle,omitempty"`
+}
+
+type browserlessView struct {
+	URL              string `json:"url"`
+	TokenConfigured  bool   `json:"tokenConfigured"`
+	ResidentialProxy bool   `json:"residentialProxy"`
 }
 
 type smtpSettingsJSON struct {
@@ -42,16 +46,10 @@ type retentionRequest struct {
 	Retention int `json:"retention"`
 }
 
-type providerRequest struct {
-	Provider domain.ExtractorProvider `json:"provider"`
-}
-
-type jinaKeyRequest struct {
-	Key string `json:"key"`
-}
-
-type browserEndpointRequest struct {
-	Endpoint string `json:"endpoint"`
+type browserlessRequest struct {
+	URL              string  `json:"url"`
+	Token            *string `json:"token"`
+	ResidentialProxy bool    `json:"residentialProxy"`
 }
 
 type smtpSettingsRequest struct {
@@ -85,11 +83,14 @@ func (s *server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := settingsJSON{
-		Retention:                 settings.Retention,
-		Provider:                  settings.Provider,
-		JinaKeyConfigured:         secretConfigured(settings.JinaKey),
-		BrowserEndpointConfigured: secretConfigured(settings.BrowserEndpoint),
+	response := settingsJSON{Retention: settings.Retention}
+
+	if settings.Browserless != nil {
+		response.Browserless = &browserlessView{
+			URL:              settings.Browserless.URL,
+			TokenConfigured:  secretConfigured(settings.Browserless.Token),
+			ResidentialProxy: settings.Browserless.ResidentialProxy,
+		}
 	}
 
 	if settings.SMTP != nil {
@@ -139,44 +140,27 @@ func (s *server) handleRetentionUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *server) handleProviderUpdate(w http.ResponseWriter, r *http.Request) {
-	decodeAndSave(w, r, func(ctx context.Context, req providerRequest) error {
-		if err := domain.ValidateProvider(req.Provider); err != nil {
-			return err
-		}
-
-		return s.cfg.Settings.UpdateProvider(ctx, req.Provider)
-	})
-}
-
-func (s *server) handleJinaKeySave(w http.ResponseWriter, r *http.Request) {
-	decodeAndSave(w, r, func(ctx context.Context, req jinaKeyRequest) error {
-		validated, err := domain.ValidateJinaKey(req.Key)
+func (s *server) handleBrowserlessSave(w http.ResponseWriter, r *http.Request) {
+	decodeAndSave(w, r, func(ctx context.Context, req browserlessRequest) error {
+		validated, err := domain.ValidateBrowserlessSettings(domain.BrowserlessSettings{
+			URL:              req.URL,
+			Token:            req.Token,
+			ResidentialProxy: req.ResidentialProxy,
+		})
 		if err != nil {
 			return err
 		}
 
-		return s.cfg.Settings.UpdateJinaKey(ctx, validated)
+		return s.cfg.Settings.UpdateBrowserless(ctx, validated)
 	})
 }
 
-func (s *server) handleJinaKeyDelete(w http.ResponseWriter, r *http.Request) {
-	runSettingUpdate(w, r, s.cfg.Settings.DeleteJinaKey)
+func (s *server) handleBrowserlessDelete(w http.ResponseWriter, r *http.Request) {
+	runSettingUpdate(w, r, s.cfg.Settings.DeleteBrowserless)
 }
 
-func (s *server) handleBrowserEndpointSave(w http.ResponseWriter, r *http.Request) {
-	decodeAndSave(w, r, func(ctx context.Context, req browserEndpointRequest) error {
-		validated, err := domain.ValidateBrowserEndpoint(req.Endpoint)
-		if err != nil {
-			return err
-		}
-
-		return s.cfg.Settings.UpdateBrowserEndpoint(ctx, validated)
-	})
-}
-
-func (s *server) handleBrowserEndpointDelete(w http.ResponseWriter, r *http.Request) {
-	runSettingUpdate(w, r, s.cfg.Settings.DeleteBrowserEndpoint)
+func (s *server) handleBrowserlessTokenDelete(w http.ResponseWriter, r *http.Request) {
+	runSettingUpdate(w, r, s.cfg.Settings.DeleteBrowserlessToken)
 }
 
 func (s *server) handleSMTPSave(w http.ResponseWriter, r *http.Request) {

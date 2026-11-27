@@ -34,7 +34,7 @@ Open <http://localhost:8080> and sign in with `APP_PASSWORD`. Behind a reverse p
 
 ## Configuration
 
-Only bootstrap options are environment variables. Jina key, external browser endpoint, and Kindle / SMTP settings are configured in the web UI (**Settings**) and take effect immediately.
+Only bootstrap options are environment variables. The Browserless fallback (optional) and Kindle / SMTP settings are configured in the web UI (**Settings**) and take effect immediately.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -50,7 +50,7 @@ Only bootstrap options are environment variables. Jina key, external browser end
 - **Data**: mount `/data` as a directory or named volume (never a single file) and keep one instance per database. The container runs as UID `65532`; bind mounts must be writable by it.
 - **Health check**: `GET /healthz` returns `200` when the server and database are healthy.
 - **Shutdown and restarts**: shutdown is capped at 3 seconds and unfinished work is abandoned. If the database keeps failing, the process exits non-zero and `restart: unless-stopped` brings it back; `docker stop` never restarts it.
-- **External browser / Jina (optional)**: inside Docker, `localhost` is the reader container itself. Firewall the browser container's egress if you fetch untrusted pages, because the SSRF filter only covers the reader's own HTTP fetches.
+- **Browserless (optional)**: pages are fetched directly first; when that fails (for example on a bot check) and Browserless is configured, the reader retries once through its `/unblock` API. Inside Docker, `localhost` is the reader container itself, so point the URL at the Browserless container or service name. Firewall Browserless's egress if you fetch untrusted pages, because the SSRF filter only covers the reader's own HTTP fetches.
 
 ## Development
 

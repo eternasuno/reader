@@ -6,7 +6,7 @@ import {
 } from './decoders';
 import { item, request, requestNoContent } from './request';
 import type {
-  ExtractorProvider,
+  BrowserlessSettingsInput,
   KindleSendRecord,
   KindleSends,
   KindleSettings,
@@ -27,37 +27,22 @@ export const settingsApi = {
       method: 'PUT',
       body: { retention },
     }),
-  updateProvider: (
-    provider: ExtractorProvider,
+  saveBrowserless: (
+    input: BrowserlessSettingsInput,
     options?: RequestCallOptions
   ): Promise<void> =>
-    requestNoContent('/api/settings/provider', {
+    requestNoContent('/api/settings/services/browserless', {
       ...options,
       method: 'PUT',
-      body: { provider },
+      body: input,
     }),
-  saveJinaKey: (key: string, options?: RequestCallOptions): Promise<void> =>
-    requestNoContent('/api/settings/services/jina', {
-      ...options,
-      method: 'PUT',
-      body: { key },
-    }),
-  deleteJinaKey: (options?: RequestCallOptions): Promise<void> =>
-    requestNoContent('/api/settings/services/jina', {
+  deleteBrowserless: (options?: RequestCallOptions): Promise<void> =>
+    requestNoContent('/api/settings/services/browserless', {
       ...options,
       method: 'DELETE',
     }),
-  saveBrowserEndpoint: (
-    endpoint: string,
-    options?: RequestCallOptions
-  ): Promise<void> =>
-    requestNoContent('/api/settings/services/browser', {
-      ...options,
-      method: 'PUT',
-      body: { endpoint },
-    }),
-  deleteBrowserEndpoint: (options?: RequestCallOptions): Promise<void> =>
-    requestNoContent('/api/settings/services/browser', {
+  deleteBrowserlessToken: (options?: RequestCallOptions): Promise<void> =>
+    requestNoContent('/api/settings/services/browserless/token', {
       ...options,
       method: 'DELETE',
     }),
