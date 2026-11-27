@@ -78,7 +78,7 @@ func ValidateFolderName(raw string) (string, error) {
 
 func ValidateReaderMode(mode ReaderMode) error {
 	switch mode {
-	case ReaderModeDefault, ReaderModeExtracted, ReaderModeEmbedded:
+	case ReaderModeDefault, ReaderModeExtracted:
 		return nil
 	}
 

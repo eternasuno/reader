@@ -101,10 +101,10 @@ describe('local feed and folder edits', () => {
     await state.refreshSidebar();
     solid.flush();
 
-    state.updateFeedLocal('f1', { title: 'Renamed', readerMode: 'embedded' });
+    state.updateFeedLocal('f1', { title: 'Renamed', readerMode: 'extracted' });
     solid.flush();
     expect(state.feeds()[0].title).toBe('Renamed');
-    expect(state.feeds()[0].readerMode).toBe('embedded');
+    expect(state.feeds()[0].readerMode).toBe('extracted');
 
     state.removeFolderLocal('d1');
     solid.flush();

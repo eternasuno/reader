@@ -19,7 +19,6 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 
 	defaultFeed := domain.Feed{ID: "default", Title: "Default Feed", ReaderMode: domain.ReaderModeDefault, Order: domain.SortOrderNewest}
 	extractedFeed := domain.Feed{ID: "extracted", Title: "Extracted Feed", ReaderMode: domain.ReaderModeExtracted, Order: domain.SortOrderNewest}
-	embeddedFeed := domain.Feed{ID: "embedded", Title: "Embedded Feed", ReaderMode: domain.ReaderModeEmbedded, Order: domain.SortOrderNewest}
 
 	items := map[string][]domain.FeedItem{
 		"default": {
@@ -34,13 +33,10 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 			{ID: "extracted-extract-fail", FeedID: "extracted", URL: testURL(t, "https://example.com/extract-fail"), Title: "Extract Fail", Description: ptrTo("<p>description fallback</p>")},
 			{ID: "extracted-blank", FeedID: "extracted", URL: testURL(t, "https://example.com/blank"), Title: "Blank Extract", Content: ptrTo("<p>blank fallback</p>")},
 		},
-		"embedded": {
-			{ID: "embedded-fetch", FeedID: "embedded", URL: testURL(t, "https://example.com/uncached"), Title: "Embedded Fetched"},
-		},
 	}
 
 	sends := &fakeKindleSendRepository{
-		feeds: []domain.Feed{defaultFeed, extractedFeed, embeddedFeed},
+		feeds: []domain.Feed{defaultFeed, extractedFeed},
 		items: items,
 	}
 
@@ -110,7 +106,6 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 		"extracted-fetch-fail":   "<p>fetch fallback</p>",
 		"extracted-extract-fail": "<p>description fallback</p>",
 		"extracted-blank":        "<p>blank fallback</p>",
-		"embedded-fetch":         "<p>extracted body</p>",
 	}
 
 	for id, want := range wantBodies {
@@ -141,9 +136,8 @@ func TestRunJobResolvesFeedItemBodies(t *testing.T) {
 		}
 	}
 
-	slices.Sort(savedIDs)
-	if !slices.Equal(savedIDs, []string{"embedded-fetch", "extracted-fetch"}) {
-		t.Fatalf("cached extracted IDs = %v, want [embedded-fetch extracted-fetch]", savedIDs)
+	if !slices.Equal(savedIDs, []string{"extracted-fetch"}) {
+		t.Fatalf("cached extracted IDs = %v, want [extracted-fetch]", savedIDs)
 	}
 }
 func TestExtractFeedItemContinuesOnCacheWriteError(t *testing.T) {

@@ -115,7 +115,6 @@ type ReaderMode string
 const (
 	ReaderModeDefault   ReaderMode = "default"
 	ReaderModeExtracted ReaderMode = "extracted"
-	ReaderModeEmbedded  ReaderMode = "embedded"
 )
 
 type SortOrder string

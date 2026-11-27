@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Feed } from '../src/api';
 import { ArticleListHeader } from '../src/components/ArticleListHeader';
 import { FeedMoveSubpanel } from '../src/components/FeedMoveSubpanel';
+import { FeedReaderModeSubpanel } from '../src/components/FeedReaderModeSubpanel';
 import { ReaderMoreMenu } from '../src/components/ReaderMoreMenu';
 import * as state from '../src/state';
 import {
@@ -14,13 +15,6 @@ import {
 } from './support/list-helpers';
 
 setupInteractions();
-
-const makeNav = (onNavigate = vi.fn()) => ({
-  listUrl: () => '/later',
-  laterUrl: () => '/later',
-  articleUrl: (id: string) => `/later/${id}`,
-  onNavigate,
-});
 
 const makeFeedArticle = (id: string): state.LibraryArticle => ({
   kind: 'feed',
@@ -126,35 +120,43 @@ describe('ArticleListHeader mark-all indicator', () => {
 });
 
 describe('ReaderMoreMenu 视图选项 sub-panel', () => {
-  it('opens view options, steps values, picks font, and resets', () => {
+  const radioLabels = (c: HTMLElement): Array<string | null> =>
+    Array.from(
+      c.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).map((r) => r.textContent);
+
+  const pick = (c: HTMLElement, row: string, option: string): void => {
+    clickButton(c, row);
+    const radio = Array.from(
+      c.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((r) => r.textContent === option);
+    radio?.click();
+    clickButton(c, row);
+  };
+
+  it('picks tiered values, has no more-options item, and resets', () => {
     const container = mount(() => (
-      <ReaderMoreMenu
-        article={makeFeedArticle('i1')}
-        nav={makeNav()}
-        onDelete={vi.fn()}
-        onRequestFeedOptions={vi.fn()}
-      />
+      <ReaderMoreMenu article={makeFeedArticle('i1')} onDelete={vi.fn()} />
     ));
     clickAria(container, '更多操作');
     clickButton(container, '视图选项');
-    for (const label of ['字体大小 增大', '行高 增大', '正文宽度 减小']) {
-      clickAria(container, label);
-    }
-    expect(state.readerAppearance()).toMatchObject({
-      fontSize: 18,
-      lineHeight: 2.0,
-      lineWidth: 5,
+    expect(container.textContent).not.toContain('更多选项');
+
+    clickButton(container, '字体大小');
+    expect(radioLabels(container)).toEqual(['小', '中', '大', '特大']);
+    clickButton(container, '字体大小');
+
+    pick(container, '字体大小', '大');
+    pick(container, '行高', '宽松');
+    pick(container, '正文宽度', '适中');
+    pick(container, '字体', '衬线');
+    expect(state.readerAppearance()).toEqual({
+      fontSize: 'lg',
+      fontFamily: 'serif',
+      lineHeight: 'relaxed',
+      lineWidth: 'medium',
     });
 
-    clickButton(container, '字体');
-    const radios = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
-    );
-    expect(radios.map((r) => r.textContent)).toEqual(['无衬线', '衬线']);
-    radios[1]?.click();
-    expect(state.readerAppearance().fontFamily).toBe('serif');
-
-    clickButton(container, '字体');
     clickButton(container, '恢复默认');
     expect(state.isDefaultAppearance()).toBe(true);
   });
@@ -181,5 +183,39 @@ describe('FeedMoveSubpanel', () => {
     expect(onRequestNewFolder).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'f1' })
     );
+  });
+});
+
+describe('FeedReaderModeSubpanel', () => {
+  it('offers only the stored views, saves a new pick, and goes back', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    const onBack = vi.fn();
+    const feed = { id: 'f1', readerMode: 'default' } as unknown as Feed;
+    const container = mount(() => (
+      <FeedReaderModeSubpanel feed={feed} onBack={onBack} />
+    ));
+
+    const radios = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    );
+    expect(radios.map((r) => r.textContent)).toEqual([
+      '订阅源文本',
+      '网页全文',
+    ]);
+    expect(radios[0]?.getAttribute('aria-checked')).toBe('true');
+
+    radios[0]?.click();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    radios[1]?.click();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).toBe('/api/feeds/f1/reader-mode');
+    expect(JSON.parse(String(init?.body))).toEqual({ readerMode: 'extracted' });
+
+    clickButton(container, '缺省视图');
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

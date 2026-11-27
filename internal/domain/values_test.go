@@ -209,14 +209,16 @@ func TestValueFolderName(t *testing.T) {
 func TestValueValidators(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range []ReaderMode{ReaderModeDefault, ReaderModeExtracted, ReaderModeEmbedded} {
+	for _, mode := range []ReaderMode{ReaderModeDefault, ReaderModeExtracted} {
 		if err := ValidateReaderMode(mode); err != nil {
 			t.Fatalf("mode %q should be valid: %v", mode, err)
 		}
 	}
 
-	if err := ValidateReaderMode(ReaderMode("other")); err == nil {
-		t.Fatalf("unexpected valid reader mode")
+	for _, mode := range []ReaderMode{"other", "embedded"} {
+		if err := ValidateReaderMode(mode); err == nil {
+			t.Fatalf("mode %q should be invalid", mode)
+		}
 	}
 
 	for _, order := range []SortOrder{SortOrderNewest, SortOrderOldest} {

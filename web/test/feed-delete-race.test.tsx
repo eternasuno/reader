@@ -33,13 +33,6 @@ const button = (
   return found;
 };
 
-const dialog = (): Element => {
-  const element = document.querySelector('[role="dialog"]');
-  if (!element) throw new Error('Missing dialog');
-
-  return element;
-};
-
 const setup = async (path: string) => {
   let resolveDelete!: (response: Response) => void;
   const pending = new Promise<Response>((resolve) => {
@@ -54,37 +47,18 @@ const setup = async (path: string) => {
   return { ...app, resolveDelete };
 };
 
-const openOptions = async (name: string): Promise<void> => {
+const deleteFromRowMenu = async (name: string): Promise<void> => {
   const row = button(`Feed ${name}`).parentElement;
   if (!row) throw new Error('Missing feed row');
   button('更多操作', row).click();
   await harness.settle();
-  button('订阅源选项…').click();
+  button('删除 RSS 源').click();
   await harness.settle();
 };
 
-it('keeps the new feed drawer open when an earlier delete completes', async () => {
-  const { resolveDelete } = await setup('/later');
-  await openOptions('A');
-  button('退订', dialog()).click();
-  await harness.settle();
-  button('关闭', dialog()).click();
-  await harness.settle();
-  await openOptions('B');
-  resolveDelete(new Response(null, { status: 204 }));
-  await harness.settle();
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
-    'Feed B'
-  );
-});
-
 it('preserves a changed unread filter when a pending delete navigates', async () => {
   const { resolveDelete, history } = await setup('/feed/A');
-  await openOptions('A');
-  button('退订', dialog()).click();
-  await harness.settle();
-  button('关闭', dialog()).click();
-  await harness.settle();
+  await deleteFromRowMenu('A');
   button('只显示未读').click();
   await harness.settle();
   resolveDelete(new Response(null, { status: 204 }));

@@ -18,6 +18,7 @@ import {
 } from './articleListScope';
 import { FeedFailureMenu } from './FeedFailureMenu';
 import { FeedMoveSubpanel } from './FeedMoveSubpanel';
+import { FeedReaderModeSubpanel } from './FeedReaderModeSubpanel';
 import { ScopeMenuItems } from './ScopeRow';
 import { MarkingIndicator } from './SidebarRowEnd';
 
@@ -33,7 +34,6 @@ export interface ArticleListHeaderProps {
   onRequestAddLink: () => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
   onRequestNewFolder: (feed: Feed) => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
   onDeleteFeed: (feed: Feed) => void;
 }
 
@@ -95,8 +95,8 @@ function UnreadToggleButton(props: {
       size="sm"
       class={
         props.unreadOnly
-          ? 'max-md:size-10 pointer-coarse:size-10 bg-primary/15 text-primary hover:bg-primary/20'
-          : 'max-md:size-10 pointer-coarse:size-10'
+          ? 'max-md:size-10 bg-primary/15 text-primary hover:bg-primary/20'
+          : 'max-md:size-10'
       }
       aria-pressed={props.unreadOnly ? 'true' : 'false'}
       aria-label={t('library.unreadOnly')}
@@ -116,7 +116,7 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
         ref={props.navToggleRef}
         variant="icon"
         size="sm"
-        class="max-md:size-10 pointer-coarse:size-10 md:hidden"
+        class="max-md:size-10 md:hidden"
         aria-label={t('library.toggleNav')}
         aria-expanded={props.drawerOpen ? 'true' : 'false'}
         onClick={props.onToggleNav}
@@ -135,7 +135,7 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
       <Button
         variant="icon"
         size="sm"
-        class="max-md:size-10 pointer-coarse:size-10"
+        class="max-md:size-10"
         aria-label={t('library.markLoadedRead')}
         title={t('library.markLoadedRead')}
         onClick={markLoadedRead}
@@ -147,7 +147,6 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
         onRequestAddLink={props.onRequestAddLink}
         onMoveFeed={props.onMoveFeed}
         onRequestNewFolder={props.onRequestNewFolder}
-        onRequestFeedOptions={props.onRequestFeedOptions}
         onDeleteFeed={props.onDeleteFeed}
       />
     </header>
@@ -159,18 +158,17 @@ interface ArticleHeaderMenuProps {
   onRequestAddLink: () => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
   onRequestNewFolder: (feed: Feed) => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
   onDeleteFeed: (feed: Feed) => void;
 }
 
 function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
-  const [panel, setPanel] = createSignal<'main' | 'move'>('main');
+  const [panel, setPanel] = createSignal<'main' | 'move' | 'mode'>('main');
   const feed = () => activeFeed(props.scope);
 
   return (
     <Menu
       label={t('library.moreActions')}
-      triggerClass="btn-sm max-md:size-10 pointer-coarse:size-10"
+      triggerClass="btn-sm max-md:size-10"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
       }}
@@ -178,13 +176,25 @@ function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
       <Show
         when={panel() === 'move' && feed()}
         fallback={
-          <ArticleHeaderMainItems
-            scope={props.scope}
-            onRequestAddLink={props.onRequestAddLink}
-            onOpenMove={() => setPanel('move')}
-            onRequestFeedOptions={props.onRequestFeedOptions}
-            onDeleteFeed={props.onDeleteFeed}
-          />
+          <Show
+            when={panel() === 'mode' && feed()}
+            fallback={
+              <ArticleHeaderMainItems
+                scope={props.scope}
+                onRequestAddLink={props.onRequestAddLink}
+                onOpenMove={() => setPanel('move')}
+                onOpenMode={() => setPanel('mode')}
+                onDeleteFeed={props.onDeleteFeed}
+              />
+            }
+          >
+            {(target) => (
+              <FeedReaderModeSubpanel
+                feed={target()}
+                onBack={() => setPanel('main')}
+              />
+            )}
+          </Show>
         }
       >
         {(target) => (
@@ -204,7 +214,7 @@ interface ArticleHeaderMainItemsProps {
   scope: LibraryScope;
   onRequestAddLink: () => void;
   onOpenMove: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onOpenMode: () => void;
   onDeleteFeed: (feed: Feed) => void;
 }
 
@@ -225,7 +235,7 @@ function ArticleHeaderMainItems(
           <FeedMenuOptions
             feed={feed()}
             onOpenMove={props.onOpenMove}
-            onRequestFeedOptions={props.onRequestFeedOptions}
+            onOpenMode={props.onOpenMode}
             onDeleteFeed={props.onDeleteFeed}
           />
         )}
@@ -237,7 +247,7 @@ function ArticleHeaderMainItems(
 interface FeedMenuOptionsProps {
   feed: Feed;
   onOpenMove: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onOpenMode: () => void;
   onDeleteFeed: (feed: Feed) => void;
 }
 
@@ -248,11 +258,8 @@ function FeedMenuOptions(props: FeedMenuOptionsProps): JSX.Element {
       <MenuItem submenu onSelect={props.onOpenMove}>
         {t('feeds.moveTo')}
       </MenuItem>
-      <MenuItem
-        opensDialog
-        onSelect={() => props.onRequestFeedOptions?.(props.feed)}
-      >
-        {t('feeds.feedOptions')}
+      <MenuItem submenu onSelect={props.onOpenMode}>
+        {t('feeds.defaultDisplay')}
       </MenuItem>
       <MenuItem icon="trash" onSelect={() => props.onDeleteFeed(props.feed)}>
         {t('feeds.deleteFeedMenu')}

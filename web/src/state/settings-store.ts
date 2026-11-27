@@ -12,6 +12,7 @@ import type {
   SMTPSecurity,
 } from '../api';
 import { showToast } from '../ui';
+import { browserTimezone } from './browserTimezone';
 import { errorText } from './errorText';
 import { onSessionCleared } from './session';
 
@@ -48,13 +49,12 @@ export type KindleDrafts = Pick<
 const DEFAULT_RETENTION = 100;
 
 /** Draft-only defaults: the server stores no schedule time or timezone until scheduled sending is enabled. */
-const DEFAULT_TIMEZONE = 'UTC';
 const DEFAULT_SCHEDULE_HOUR = 8;
 const DEFAULT_SCHEDULE_MINUTE = 0;
 
 export const kindleDraftsOf = (kindle: Settings['kindle']): KindleDrafts => ({
   kindleEmail: kindle?.kindleEmail ?? '',
-  timezone: kindle?.schedule?.timezone ?? DEFAULT_TIMEZONE,
+  timezone: kindle?.schedule?.timezone ?? browserTimezone(),
   scheduleEnabled: kindle?.schedule !== undefined,
   scheduleHour: kindle?.schedule?.hour ?? DEFAULT_SCHEDULE_HOUR,
   scheduleMinute: kindle?.schedule?.minute ?? DEFAULT_SCHEDULE_MINUTE,

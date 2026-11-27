@@ -316,14 +316,14 @@ describe('feed reader mode', () => {
     expect(state.feeds()[0].readerMode).toBe('extracted');
 
     ctx.queue({ error: 'FeedRepositoryError' }, 500);
-    await state.changeFeedReaderMode(target, 'embedded');
+    await state.changeFeedReaderMode(target, 'default');
     solid.flush();
     expect(state.feeds()[0].readerMode).toBe('extracted');
     expect(ui.currentToast()?.variant).toBe('error');
 
     const slow = ctx.pending();
     const fast = ctx.pending();
-    const first = state.changeFeedReaderMode(target, 'embedded');
+    const first = state.changeFeedReaderMode(target, 'extracted');
     const second = state.changeFeedReaderMode(target, 'default');
     fast.resolve(noContentResponse());
     await second;

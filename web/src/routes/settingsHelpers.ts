@@ -2,6 +2,7 @@ import type { StoreSetter } from 'solid-js';
 import type { KindleSendRecord } from '../api';
 import { locale, t } from '../i18n';
 import type { SettingsDrafts } from '../state';
+import { COMMON_TIMEZONES } from './kindleTimezones';
 
 export interface SettingsDraftProps {
   drafts: SettingsDrafts;
@@ -54,28 +55,119 @@ export interface TimezoneOption {
   label: string;
 }
 
-/** `longOffset` yields `GMT`, `GMT+08:00`, or `GMT-03:30`; show it as `UTC±HH:MM`. */
-const utcOffsetLabel = (timeZone: string, at: Date): string => {
-  const offset = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    timeZoneName: 'longOffset',
-  })
-    .formatToParts(at)
-    .find((part) => part.type === 'timeZoneName')?.value;
-  if (offset === undefined) throw new Error(`no UTC offset for ${timeZone}`);
+/** `SET-KINDLE-1`: the time zone picker's option groups, each zone listed once. */
+export interface TimezoneGroups {
+  current: ReadonlyArray<TimezoneOption>;
+  common: ReadonlyArray<TimezoneOption>;
+  others: ReadonlyArray<TimezoneOption>;
+}
 
-  return offset === 'GMT' ? 'UTC+00:00' : offset.replace('GMT', 'UTC');
+interface ZoneEntry {
+  zone: string;
+  name: string;
+  offset: number | null;
+}
+
+/**
+ * The engine's canonical spelling, so aliases such as `Asia/Kolkata` and `Asia/Calcutta` match;
+ * names the engine does not know (e.g. a legacy saved zone) stay as they are.
+ */
+const canonicalZone = (zone: string): string => {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+    }).resolvedOptions().timeZone;
+  } catch {
+    return zone;
+  }
 };
 
-/** `UTC` first, then every other supported IANA zone labelled `Name (UTC±HH:MM)` for today. */
-export const timezoneOptions = (): ReadonlyArray<TimezoneOption> => {
-  const now = new Date();
-  const zones = new Set(['UTC', ...Intl.supportedValuesOf('timeZone')]);
+/** Minutes east of UTC today, or `null` for a zone the engine does not know. */
+const zoneOffset = (timeZone: string, at: Date): number | null => {
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      timeZoneName: 'longOffset',
+    });
+  } catch {
+    return null;
+  }
+  // `longOffset` yields `GMT`, `GMT+08:00`, or `GMT-03:30`.
+  const name = formatter
+    .formatToParts(at)
+    .find((part) => part.type === 'timeZoneName')?.value;
+  if (name === 'GMT') return 0;
+  const match =
+    name === undefined ? null : /^GMT([+-])(\d{2}):(\d{2})$/.exec(name);
+  if (!match) throw new Error(`unexpected UTC offset ${name} for ${timeZone}`);
+  const minutes = Number(match[2]) * 60 + Number(match[3]);
 
-  return Array.from(zones, (zone) => ({
-    value: zone,
-    label: `${zone} (${utcOffsetLabel(zone, now)})`,
-  }));
+  return match[1] === '-' ? -minutes : minutes;
+};
+
+const formatOffset = (minutes: number): string => {
+  const abs = Math.abs(minutes);
+
+  return `UTC${minutes < 0 ? '-' : '+'}${padTwoDigits(Math.floor(abs / 60))}:${padTwoDigits(abs % 60)}`;
+};
+
+const byOffset = (a: ZoneEntry, b: ZoneEntry): number =>
+  (a.offset ?? 0) - (b.offset ?? 0) || a.name.localeCompare(b.name);
+
+const toOption = (entry: ZoneEntry, suffix = ''): TimezoneOption => ({
+  value: entry.zone,
+  label:
+    entry.offset === null
+      ? `${entry.name}${suffix}`
+      : `${formatOffset(entry.offset)} · ${entry.name}${suffix}`,
+});
+
+/**
+ * `SET-KINDLE-1`: `current` pins the device zone and the selected zone; `common` is the curated
+ * list in `kindleTimezones.ts`; `others` holds every remaining supported zone only when
+ * `showAll` is set. Groups sort by today's UTC offset and labels read `UTC±HH:MM · City`.
+ */
+export const timezoneGroups = (
+  selected: string,
+  device: string,
+  showAll: boolean,
+  now: Date = new Date()
+): TimezoneGroups => {
+  const cities = new Map(
+    COMMON_TIMEZONES.map((entry) => [canonicalZone(entry.zone), entry.city])
+  );
+  const seen = new Set<string>();
+  const entry = (zone: string): ZoneEntry | null => {
+    const key = canonicalZone(zone);
+    if (seen.has(key)) return null;
+    seen.add(key);
+    const city = cities.get(key);
+
+    return { zone, name: city ? t(city) : zone, offset: zoneOffset(zone, now) };
+  };
+  const collect = (zones: ReadonlyArray<string>): Array<ZoneEntry> =>
+    zones.flatMap((zone) => entry(zone) ?? []);
+
+  const deviceEntry = entry(device);
+  const current = [
+    ...(deviceEntry
+      ? [toOption(deviceEntry, t('kindle.timezoneDeviceSuffix'))]
+      : []),
+    ...collect([selected]).map((item) => toOption(item)),
+  ];
+  const common = collect(COMMON_TIMEZONES.map((item) => item.zone)).sort(
+    byOffset
+  );
+  const others = showAll
+    ? collect(['UTC', ...Intl.supportedValuesOf('timeZone')]).sort(byOffset)
+    : [];
+
+  return {
+    current,
+    common: common.map((item) => toOption(item)),
+    others: others.map((item) => toOption(item)),
+  };
 };
 
 /** `kindle.md`: sanitized error summaries never inject markup or stray line breaks. */

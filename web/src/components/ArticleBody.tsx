@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal } from 'solid-js';
 import { t } from '../i18n';
 import { type ReaderAppearance, readerAppearance } from '../state';
 import './articleBody.css';
-import { FONT_FAMILIES } from './articleTypography';
+import { FONT_FAMILIES, FONT_SIZES, LINE_HEIGHTS } from './articleTypography';
 import { ImageLightbox } from './ImageLightbox';
 
 interface LightboxState {
@@ -61,9 +61,9 @@ const previewableImage = (target: EventTarget | null): LightboxState | null => {
 };
 
 const typographyVariables = (appearance: ReaderAppearance) => ({
-  '--article-font-size': `${appearance.fontSize}px`,
+  '--article-font-size': FONT_SIZES[appearance.fontSize],
   '--article-font-family': FONT_FAMILIES[appearance.fontFamily],
-  '--article-line-height': String(appearance.lineHeight),
+  '--article-line-height': LINE_HEIGHTS[appearance.lineHeight],
 });
 
 /**

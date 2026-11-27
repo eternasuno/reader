@@ -3,6 +3,10 @@ import type { Settings } from '../src/api';
 import type { SettingsDrafts } from '../src/state';
 import { makeKindleSettings as makeSettings } from './support/state-fixture';
 
+vi.mock('../src/state/browserTimezone', () => ({
+  browserTimezone: () => 'Asia/Shanghai',
+}));
+
 type StateModule = typeof import('../src/state');
 type I18nModule = typeof import('../src/i18n');
 type UiModule = typeof import('../src/ui');
@@ -149,7 +153,7 @@ describe('kindle save', () => {
 });
 
 describe('kindle schedule enable', () => {
-  it('enables scheduled sending with the default 08:00 time', async () => {
+  it('enables scheduled sending at the default 08:00 in the device time zone', async () => {
     await loadWithoutSchedule();
     edit({ scheduleEnabled: true });
 
@@ -157,7 +161,7 @@ describe('kindle schedule enable', () => {
       makeSettings({
         kindle: {
           kindleEmail: 'kindle@example.com',
-          schedule: { hour: 8, minute: 0, timezone: 'UTC' },
+          schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
           nextSendAt: '2026-11-21T08:00:00Z',
         },
       })
@@ -165,7 +169,7 @@ describe('kindle schedule enable', () => {
 
     expect(requestBody(2)).toEqual({
       kindleEmail: 'kindle@example.com',
-      schedule: { hour: 8, minute: 0, timezone: 'UTC' },
+      schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
     });
     expect(state.isSectionDirty('kindle', drafts)).toBe(false);
   });

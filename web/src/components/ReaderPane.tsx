@@ -1,6 +1,5 @@
 import type { JSX } from '@solidjs/web';
 import { Show } from 'solid-js';
-import type { Feed } from '../api';
 import { buildLibraryUrl, type LibraryScope, openArticle } from '../state';
 import { ReaderEmptyState } from './ReaderEmptyState';
 import { ReaderView } from './ReaderView';
@@ -11,7 +10,6 @@ export interface ReaderPaneProps {
   scope: LibraryScope;
   unreadOnly: boolean;
   onNavigate: (url: string) => void;
-  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 /**
@@ -39,7 +37,6 @@ export function ReaderPane(props: ReaderPaneProps): JSX.Element {
             nav={nav}
             onSaveToLater={() => void saveOpenArticle(current())}
             onDelete={() => void deleteOpenArticle(nav, current())}
-            onRequestFeedOptions={props.onRequestFeedOptions}
           />
         )}
       </Show>

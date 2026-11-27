@@ -12,6 +12,7 @@ import { Menu, MenuDivider, MenuItem } from '../ui';
 import { deleteFeed } from './articleListActions';
 import { FeedFailureMenu } from './FeedFailureMenu';
 import { FeedMoveSubpanel } from './FeedMoveSubpanel';
+import { FeedReaderModeSubpanel } from './FeedReaderModeSubpanel';
 import { hasRefreshFailures } from './feedFailure';
 import { ScopeMenuItems } from './ScopeRow';
 import { SidebarRowEnd } from './SidebarRowEnd';
@@ -95,12 +96,12 @@ function FeedRowButton(props: {
 }
 
 function FeedRowMenu(props: { feed: Feed; state: SidebarProps }): JSX.Element {
-  const [panel, setPanel] = createSignal<'main' | 'move'>('main');
+  const [panel, setPanel] = createSignal<'main' | 'move' | 'mode'>('main');
 
   return (
     <Menu
       label={t('library.moreActions')}
-      triggerClass="btn-xs pointer-coarse:size-9"
+      triggerClass="btn-xs"
       onOpenChange={(open) => {
         if (!open) setPanel('main');
       }}
@@ -108,11 +109,22 @@ function FeedRowMenu(props: { feed: Feed; state: SidebarProps }): JSX.Element {
       <Show
         when={panel() === 'move'}
         fallback={
-          <FeedRowMainItems
-            feed={props.feed}
-            state={props.state}
-            onOpenMove={() => setPanel('move')}
-          />
+          <Show
+            when={panel() === 'mode'}
+            fallback={
+              <FeedRowMainItems
+                feed={props.feed}
+                state={props.state}
+                onOpenMove={() => setPanel('move')}
+                onOpenMode={() => setPanel('mode')}
+              />
+            }
+          >
+            <FeedReaderModeSubpanel
+              feed={props.feed}
+              onBack={() => setPanel('main')}
+            />
+          </Show>
         }
       >
         <FeedMoveSubpanel
@@ -130,6 +142,7 @@ function FeedRowMainItems(props: {
   feed: Feed;
   state: SidebarProps;
   onOpenMove: () => void;
+  onOpenMode: () => void;
 }): JSX.Element {
   return (
     <>
@@ -141,11 +154,8 @@ function FeedRowMainItems(props: {
       <MenuItem submenu onSelect={props.onOpenMove}>
         {t('feeds.moveTo')}
       </MenuItem>
-      <MenuItem
-        opensDialog
-        onSelect={() => props.state.onRequestFeedOptions?.(props.feed)}
-      >
-        {t('feeds.feedOptions')}
+      <MenuItem submenu onSelect={props.onOpenMode}>
+        {t('feeds.defaultDisplay')}
       </MenuItem>
       <MenuItem
         icon="trash"

@@ -129,6 +129,20 @@ it('exposes folder collapse label with aria-controls, failure title, and OPML me
   expect(container.textContent).toContain('导出…');
 });
 
+it('opens the shared view options panel from the app menu', () => {
+  const container = mount(() => <SidebarBrand onNavigate={vi.fn()} />);
+  clickAria(container, '应用菜单');
+  expect(container.textContent).not.toContain('主题');
+  clickButton(container, '视图选项');
+  for (const row of ['主题', '字体', '字体大小', '行高', '正文宽度']) {
+    expect(container.textContent).toContain(row);
+  }
+  expect(container.textContent).not.toContain('更多选项');
+
+  clickButton(container, '视图选项');
+  expect(container.textContent).toContain('退出登录');
+});
+
 it('renders a single role="alert" on sign-out failure', async () => {
   fetchMock.mockResolvedValueOnce(
     Response.json({ error: 'RequestFailed' }, { status: 500 })

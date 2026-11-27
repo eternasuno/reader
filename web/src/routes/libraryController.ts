@@ -40,7 +40,6 @@ export interface LibraryController {
   addLinkOpen: Accessor<boolean>;
   addFeedOpen: Accessor<boolean>;
   folderDialog: Accessor<FolderDialogState | null>;
-  optionsFeed: Accessor<Feed | null>;
   toggleDrawer: () => void;
   dismissDrawer: () => void;
   closeDrawer: () => void;
@@ -49,12 +48,10 @@ export interface LibraryController {
   requestAddFeed: () => void;
   requestNewFolder: (feed?: Feed) => void;
   requestRenameFolder: (folder: Folder) => void;
-  requestFeedOptions: (feed: Feed) => void;
   requestImportOpml: () => void;
   closeAddLink: () => void;
   closeAddFeed: () => void;
   closeFolderDialog: () => void;
-  closeFeedOptions: () => void;
   handleSavedPage: (page: SavedPage) => void;
   openExistingPage: (page: SavedPage) => void;
   openFeed: (feed: Feed) => void;
@@ -148,7 +145,6 @@ const useDialogs = () => {
   const [addFeedOpen, setAddFeedOpen] = createSignal(false);
   const [folderDialog, setFolderDialog] =
     createSignal<FolderDialogState | null>(null);
-  const [optionsFeed, setOptionsFeed] = createSignal<Feed | null>(null);
 
   const folder = (
     mode: 'create' | 'rename',
@@ -162,16 +158,13 @@ const useDialogs = () => {
     addLinkOpen,
     addFeedOpen,
     folderDialog,
-    optionsFeed,
     requestAddLink: () => setAddLinkOpen(true),
     requestAddFeed: () => setAddFeedOpen(true),
     requestNewFolder: (feed?: Feed) => folder('create', null, feed),
     requestRenameFolder: (target: Folder) => folder('rename', target),
-    requestFeedOptions: (feed: Feed) => setOptionsFeed(feed),
     closeAddLink: () => setAddLinkOpen(false),
     closeAddFeed: () => setAddFeedOpen(false),
     closeFolderDialog: () => setFolderDialog(null),
-    closeFeedOptions: () => setOptionsFeed(null),
   };
 };
 

@@ -133,7 +133,7 @@ export const isFolder: TypeGuard<Folder> = (value): value is Folder =>
   isRecord(value) && isString(value.id) && isString(value.name);
 
 const isReaderMode = (value: unknown): value is ReaderMode =>
-  value === 'default' || value === 'extracted' || value === 'embedded';
+  value === 'default' || value === 'extracted';
 
 const isSortOrder = (value: unknown): value is SortOrder =>
   value === 'newest' || value === 'oldest';

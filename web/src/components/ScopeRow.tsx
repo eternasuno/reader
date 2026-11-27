@@ -41,10 +41,7 @@ export function ScopeRow(props: ScopeRowProps): JSX.Element {
         <span class="flex-1 truncate">{props.label}</span>
       </button>
       <SidebarRowEnd count={props.count} marking={isMarkingScope(props.scope)}>
-        <Menu
-          label={t('library.moreActions')}
-          triggerClass="btn-xs pointer-coarse:size-9"
-        >
+        <Menu label={t('library.moreActions')} triggerClass="btn-xs">
           {props.children}
         </Menu>
       </SidebarRowEnd>

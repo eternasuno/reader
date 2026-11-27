@@ -86,7 +86,7 @@ function CollapseButton(props: {
   return (
     <button
       type="button"
-      class="btn btn-ghost btn-xs btn-square shrink-0 pointer-coarse:size-9"
+      class="btn btn-ghost btn-xs btn-square shrink-0"
       aria-label={label()}
       aria-expanded={props.collapsed ? 'false' : 'true'}
       aria-controls={props.controlsId}
@@ -132,10 +132,7 @@ function FolderMenu(props: {
   state: SidebarProps;
 }): JSX.Element {
   return (
-    <Menu
-      label={t('library.moreActions')}
-      triggerClass="btn-xs pointer-coarse:size-9"
-    >
+    <Menu label={t('library.moreActions')} triggerClass="btn-xs">
       <ScopeMenuItems scope={{ kind: 'folder', folderId: props.folder.id }} />
       <MenuDivider />
       <MenuItem

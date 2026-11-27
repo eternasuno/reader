@@ -50,7 +50,7 @@ export type IconName =
 
 export interface IconProps {
   name: IconName;
-  size?: number | string;
+  size?: number;
   strokeWidth?: number;
   class?: string;
   /** Accessible name. Omit to render the icon as decorative (`aria-hidden`). */
@@ -286,11 +286,8 @@ export function Icon(props: IconProps): JSX.Element {
       stroke-width={props.strokeWidth ?? 1.75}
       stroke-linecap="round"
       stroke-linejoin="round"
-      style={{ '--icon-size': `${size()}px` }}
-      class={[
-        'inline-block shrink-0 pointer-coarse:size-[calc(var(--icon-size)*1.25)]',
-        props.class,
-      ]}
+      style={{ width: `${size() / 16}rem`, height: `${size() / 16}rem` }}
+      class={['inline-block shrink-0', props.class]}
       role={props.label ? 'img' : undefined}
       aria-label={props.label}
       aria-hidden={props.label ? undefined : 'true'}

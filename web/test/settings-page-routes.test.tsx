@@ -1,6 +1,10 @@
 import { expect, it, vi } from 'vitest';
 import { createAppHarness, json } from './support/app-harness';
 
+vi.mock('../src/state/browserTimezone', () => ({
+  browserTimezone: () => 'Asia/Shanghai',
+}));
+
 const harness = createAppHarness({ settleTimes: 1 });
 const { respond, settle, mountApp: mount } = harness;
 harness.installHarnessLifecycle();
@@ -141,8 +145,23 @@ const mountKindle = async (ov?: FetchHandler, body?: unknown) => {
   };
 };
 
-it('settings kindle: schedule selects list hours, 5-minute steps and UTC-first zones, disabled while the toggle is off', async () => {
-  const { toggle, hour, minute, zone } = await mountKindle();
+const groupOf = (select: HTMLSelectElement, label: string) =>
+  Array.from(select.querySelectorAll('optgroup')).find(
+    (group) => group.label === label
+  );
+const groupTexts = (select: HTMLSelectElement, label: string) =>
+  Array.from(groupOf(select, label)?.querySelectorAll('option') ?? [], (o) =>
+    String(o.textContent)
+  );
+const offsetOf = (text: string): number => {
+  const match = /^UTC([+-])(\d{2}):(\d{2})/.exec(text);
+  if (!match) throw new Error(`no offset in ${text}`);
+  const minutes = Number(match[2]) * 60 + Number(match[3]);
+  return match[1] === '-' ? -minutes : minutes;
+};
+
+it('settings kindle: schedule selects list hours, 5-minute steps and pinned, offset-sorted common zones, disabled while the toggle is off', async () => {
+  const { kindle, toggle, hour, minute, zone } = await mountKindle();
 
   expect(toggle.type).toBe('checkbox');
   expect(toggle.checked).toBe(false);
@@ -151,19 +170,44 @@ it('settings kindle: schedule selects list hours, 5-minute steps and UTC-first z
     true,
     true,
   ]);
+  expect(btn(kindle, '显示全部时区').disabled).toBe(true);
   expect(optionTexts(hour)).toHaveLength(24);
   expect(optionTexts(hour).slice(0, 2)).toEqual(['00', '01']);
   expect(optionTexts(hour).at(-1)).toBe('23');
   expect(optionTexts(minute)).toEqual(MINUTE_STEPS);
-  expect(zone.options[0]?.value).toBe('UTC');
-  expect(zone.options[0]?.textContent).toBe('UTC (UTC+00:00)');
-  const zoneValues = Array.from(zone.options, (o) => o.value);
-  expect(new Set(zoneValues).size).toBe(zoneValues.length);
+
+  expect([hour.value, minute.value, zone.value]).toEqual([
+    '8',
+    '0',
+    'Asia/Shanghai',
+  ]);
+  expect(groupTexts(zone, '当前')).toEqual(['UTC+08:00 · 北京 / 上海（本机）']);
+  const common = groupTexts(zone, '常用');
+  expect(common).toHaveLength(27);
+  expect(common).toContain('UTC+09:00 · 东京');
+  expect(common.some((text) => text.includes('北京'))).toBe(false);
+  const offsets = common.map(offsetOf);
+  expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
+  expect(groupOf(zone, '其他时区')).toBeUndefined();
+});
+
+it('settings kindle: shows every other zone on demand without losing the selection', async () => {
+  const { kindle, toggle, zone } = await mountKindle();
+  click(toggle);
+  click(btn(kindle, '显示全部时区'));
+
+  const others = groupOf(zone, '其他时区');
   expect(
-    Array.from(zone.options).find((o) => o.value === 'Asia/Shanghai')
-      ?.textContent
-  ).toBe('Asia/Shanghai (UTC+08:00)');
-  expect([hour.value, minute.value, zone.value]).toEqual(['8', '0', 'UTC']);
+    others?.querySelector('option[value="Europe/Zurich"]')?.textContent
+  ).toBe('UTC+01:00 · Europe/Zurich');
+  const values = Array.from(zone.options, (o) => o.value);
+  expect(values.length).toBeGreaterThan(300);
+  expect(new Set(values).size).toBe(values.length);
+  expect(zone.value).toBe('Asia/Shanghai');
+
+  click(btn(kindle, '只显示常用时区'));
+  expect(groupOf(zone, '其他时区')).toBeUndefined();
+  expect(zone.value).toBe('Asia/Shanghai');
 });
 
 it('settings kindle: toggling enables the selects and saves the timezone inside the schedule', async () => {
@@ -184,13 +228,13 @@ it('settings kindle: toggling enables the selects and saves the timezone inside 
   ]);
   choose(hour, '21');
   choose(minute, '45');
-  choose(zone, 'Asia/Shanghai');
+  choose(zone, 'Asia/Tokyo');
   click(btn(kindle, '保存 Kindle 设置'));
   await settle(4);
 
   expect(saved).toEqual({
     kindleEmail: 'k@b',
-    schedule: { hour: 21, minute: 45, timezone: 'Asia/Shanghai' },
+    schedule: { hour: 21, minute: 45, timezone: 'Asia/Tokyo' },
   });
 });
 

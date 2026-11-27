@@ -9,10 +9,10 @@ export const APPEARANCE_STORAGE_KEY = 'reader.appearance';
 const THEME_STORAGE_KEY = 'reader.theme';
 
 export type ReaderTheme = 'auto' | 'light' | 'dark';
-export type ReaderFontSize = 14 | 16 | 18 | 20 | 22;
+export type ReaderFontSize = 'sm' | 'md' | 'lg' | 'xl';
 export type ReaderFontFamily = 'sans' | 'serif';
-export type ReaderLineHeight = 1.4 | 1.6 | 1.8 | 2.0;
-export type ReaderLineWidth = 1 | 2 | 3 | 4 | 5 | 6;
+export type ReaderLineHeight = 'compact' | 'medium' | 'relaxed';
+export type ReaderLineWidth = 'narrow' | 'medium' | 'wide';
 
 export interface ReaderAppearance {
   fontSize: ReaderFontSize;
@@ -21,45 +21,26 @@ export interface ReaderAppearance {
   lineHeight: ReaderLineHeight;
 }
 
-export interface ReaderAppearanceInput {
-  fontSize?: ReaderFontSize | 'sm' | 'md' | 'lg' | 'xl';
-  fontFamily?: ReaderFontFamily;
-  lineWidth?: ReaderLineWidth | 'narrow' | 'standard' | 'wide';
-  lineHeight?: ReaderLineHeight | 'compact' | 'comfortable' | 'relaxed';
-}
-
-const FONT_SIZE_STEPS: ReadonlyArray<ReaderFontSize> = [14, 16, 18, 20, 22];
-const LINE_HEIGHT_STEPS: ReadonlyArray<ReaderLineHeight> = [1.4, 1.6, 1.8, 2.0];
-const LINE_WIDTH_STEPS: ReadonlyArray<ReaderLineWidth> = [1, 2, 3, 4, 5, 6];
-
-export const DEFAULT_APPEARANCE: ReaderAppearance = {
-  fontSize: 16,
-  fontFamily: 'sans',
-  lineWidth: 6,
-  lineHeight: 1.8,
-};
-
+const FONT_SIZES: ReadonlyArray<ReaderFontSize> = ['sm', 'md', 'lg', 'xl'];
 const FONT_FAMILIES: ReadonlyArray<ReaderFontFamily> = ['sans', 'serif'];
+const LINE_HEIGHTS: ReadonlyArray<ReaderLineHeight> = [
+  'compact',
+  'medium',
+  'relaxed',
+];
+const LINE_WIDTHS: ReadonlyArray<ReaderLineWidth> = [
+  'narrow',
+  'medium',
+  'wide',
+];
 const THEMES: ReadonlyArray<ReaderTheme> = ['auto', 'light', 'dark'];
 
-const LEGACY_FONT_SIZES = new Map<string, ReaderFontSize>([
-  ['sm', 14],
-  ['md', 16],
-  ['lg', 18],
-  ['xl', 20],
-]);
-
-const LEGACY_LINE_HEIGHTS = new Map<string, ReaderLineHeight>([
-  ['compact', 1.6],
-  ['comfortable', 1.8],
-  ['relaxed', 2.0],
-]);
-
-const LEGACY_LINE_WIDTHS = new Map<string, ReaderLineWidth>([
-  ['narrow', 2],
-  ['standard', 4],
-  ['wide', 6],
-]);
+export const DEFAULT_APPEARANCE: ReaderAppearance = {
+  fontSize: 'md',
+  fontFamily: 'sans',
+  lineWidth: 'wide',
+  lineHeight: 'medium',
+};
 
 const pickAllowed = <T extends string>(
   value: unknown,
@@ -71,25 +52,6 @@ const pickAllowed = <T extends string>(
     ? (value as T)
     : fallback;
 
-const pickStep = <T extends number>(
-  value: unknown,
-  steps: ReadonlyArray<T>,
-  legacy: ReadonlyMap<string, T>,
-  fallback: T
-): T => {
-  if (
-    typeof value === 'number' &&
-    (steps as ReadonlyArray<number>).includes(value)
-  ) {
-    return value as T;
-  }
-  if (typeof value === 'string') {
-    const mapped = legacy.get(value);
-    if (mapped !== undefined) return mapped;
-  }
-  return fallback;
-};
-
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -100,25 +62,10 @@ const normalizeAppearance = (
   if (!isPlainRecord(raw)) return { ...fallback };
 
   return {
-    fontSize: pickStep(
-      raw.fontSize,
-      FONT_SIZE_STEPS,
-      LEGACY_FONT_SIZES,
-      fallback.fontSize
-    ),
+    fontSize: pickAllowed(raw.fontSize, FONT_SIZES, fallback.fontSize),
     fontFamily: pickAllowed(raw.fontFamily, FONT_FAMILIES, fallback.fontFamily),
-    lineWidth: pickStep(
-      raw.lineWidth,
-      LINE_WIDTH_STEPS,
-      LEGACY_LINE_WIDTHS,
-      fallback.lineWidth
-    ),
-    lineHeight: pickStep(
-      raw.lineHeight,
-      LINE_HEIGHT_STEPS,
-      LEGACY_LINE_HEIGHTS,
-      fallback.lineHeight
-    ),
+    lineWidth: pickAllowed(raw.lineWidth, LINE_WIDTHS, fallback.lineWidth),
+    lineHeight: pickAllowed(raw.lineHeight, LINE_HEIGHTS, fallback.lineHeight),
   };
 };
 
@@ -147,40 +94,13 @@ const [readerAppearance, setReaderAppearance] = createSignal<ReaderAppearance>(
 
 export { readerAppearance };
 
-export const updateReaderAppearance = (patch: ReaderAppearanceInput): void => {
-  const current = readerAppearance();
-  const next = normalizeAppearance(patch, current);
+export const updateReaderAppearance = (
+  patch: Partial<ReaderAppearance>
+): void => {
+  const next = normalizeAppearance(patch, readerAppearance());
   setReaderAppearance(next);
   persistAppearance(next);
   flush();
-};
-
-const stepValue = <T extends number>(
-  current: T,
-  steps: ReadonlyArray<T>,
-  delta: -1 | 1
-): T | undefined => {
-  const index = steps.indexOf(current);
-  return index < 0 ? steps[0] : steps[index + delta];
-};
-
-export const stepFontSize = (delta: -1 | 1): void => {
-  const next = stepValue(readerAppearance().fontSize, FONT_SIZE_STEPS, delta);
-  if (next !== undefined) updateReaderAppearance({ fontSize: next });
-};
-
-export const stepLineHeight = (delta: -1 | 1): void => {
-  const next = stepValue(
-    readerAppearance().lineHeight,
-    LINE_HEIGHT_STEPS,
-    delta
-  );
-  if (next !== undefined) updateReaderAppearance({ lineHeight: next });
-};
-
-export const stepLineWidth = (delta: -1 | 1): void => {
-  const next = stepValue(readerAppearance().lineWidth, LINE_WIDTH_STEPS, delta);
-  if (next !== undefined) updateReaderAppearance({ lineWidth: next });
 };
 
 export const resetReaderAppearance = (): void => {

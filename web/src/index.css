@@ -21,6 +21,13 @@
     "Segoe UI Emoji", "Noto Color Emoji";
 }
 
+/* Touch devices scale every rem-based size (text, spacing, controls, icons) at once. */
+@media (pointer: coarse) {
+  html {
+    font-size: 112.5%;
+  }
+}
+
 @plugin "daisyui/theme" {
   name: "blackwhite";
   default: true;

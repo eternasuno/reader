@@ -35,17 +35,14 @@ function FeedTreeHeader(props: { state: SidebarProps }): JSX.Element {
       <div class="flex items-center gap-0.5">
         <button
           type="button"
-          class="btn btn-ghost btn-xs btn-square pointer-coarse:size-9"
+          class="btn btn-ghost btn-xs btn-square"
           aria-label={t('library.addFeed')}
           title={t('library.addFeed')}
           onClick={props.state.onRequestAddFeed}
         >
           <Icon name="plus" size={16} />
         </button>
-        <Menu
-          label={t('library.moreActions')}
-          triggerClass="btn-xs pointer-coarse:size-9"
-        >
+        <Menu label={t('library.moreActions')} triggerClass="btn-xs">
           <MenuItem onSelect={props.state.onRequestImportOpml}>
             {t('library.importOpmlMenu')}
           </MenuItem>

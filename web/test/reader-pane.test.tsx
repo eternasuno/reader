@@ -79,27 +79,27 @@ describe('ArticleBody typography', () => {
   it('updates the typography CSS variables when appearance changes', () => {
     const body = bodyOf(mount(() => <ArticleBody html="<p>Post</p>" />));
     expect(typography(body)).toEqual({
-      size: '16px',
+      size: '1rem',
       family: FONT_FAMILIES.sans,
       lineHeight: '1.8',
     });
 
-    state.stepFontSize(1);
-    expect(typography(body).size).toBe('18px');
+    state.updateReaderAppearance({ fontSize: 'lg' });
+    expect(typography(body).size).toBe('1.125rem');
 
     state.updateReaderAppearance({ fontFamily: 'serif' });
     expect(typography(body).family).toBe(FONT_FAMILIES.serif);
 
-    state.updateReaderAppearance({ lineHeight: 2.0 });
+    state.updateReaderAppearance({ lineHeight: 'relaxed' });
     expect(typography(body)).toEqual({
-      size: '18px',
+      size: '1.125rem',
       family: FONT_FAMILIES.serif,
       lineHeight: '2',
     });
 
     state.resetReaderAppearance();
     expect(typography(body)).toEqual({
-      size: '16px',
+      size: '1rem',
       family: FONT_FAMILIES.sans,
       lineHeight: '1.8',
     });
@@ -110,13 +110,13 @@ describe('ArticleBody typography', () => {
     const paragraph = body.querySelector('p');
     const before = typography(body);
 
-    state.stepLineWidth(-1);
+    state.updateReaderAppearance({ lineWidth: 'narrow' });
     expect(body.querySelector('p')).toBe(paragraph);
     expect(typography(body)).toEqual(before);
 
-    state.stepFontSize(1);
+    state.updateReaderAppearance({ fontSize: 'lg' });
     expect(body.querySelector('p')).toBe(paragraph);
-    expect(typography(body).size).toBe('18px');
+    expect(typography(body).size).toBe('1.125rem');
   });
 });
 
@@ -200,7 +200,6 @@ describe('shared Read-Later saving guard: button', () => {
           scope={{ kind: 'feed', feedId: 'f1' }}
           unreadOnly={false}
           onNavigate={vi.fn()}
-          onRequestFeedOptions={vi.fn()}
         />
       );
     });
