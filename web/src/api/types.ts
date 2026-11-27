@@ -132,8 +132,12 @@ export interface KindleSchedule {
   timezone: string;
 }
 
+/** `KD-BOOK-1`: the EPUB's primary language. */
+export type KindleLanguage = 'zh' | 'en' | 'ja';
+
 export interface KindleSettings {
   kindleEmail: string;
+  language: KindleLanguage;
   schedule?: KindleSchedule;
 }
 

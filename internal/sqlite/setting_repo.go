@@ -12,7 +12,7 @@ import (
 
 // settingsQuery reads the singleton setting row with its kindle_schedule row
 // (absent while scheduled sending is off) in one snapshot.
-const settingsQuery = `SELECT retention, provider, jina_key, browser_endpoint, kindle_email, sender_email, smtp_host, smtp_port, smtp_security, smtp_user, smtp_password, timezone, send_hour, send_minute, kindle_schedule.id, kindle_schedule.next_send_at
+const settingsQuery = `SELECT retention, provider, jina_key, browser_endpoint, kindle_email, kindle_language, sender_email, smtp_host, smtp_port, smtp_security, smtp_user, smtp_password, timezone, send_hour, send_minute, kindle_schedule.id, kindle_schedule.next_send_at
 	FROM setting LEFT JOIN kindle_schedule ON kindle_schedule.setting_id = setting.id
 	WHERE setting.id = 1`
 
@@ -27,6 +27,7 @@ type settingsRow struct {
 	jinaKey         sql.NullString
 	browserEndpoint sql.NullString
 	kindleEmail     sql.NullString
+	kindleLanguage  string
 	senderEmail     sql.NullString
 	smtpHost        sql.NullString
 	smtpPort        sql.NullInt64
@@ -53,6 +54,10 @@ func settingsFromRow(row settingsRow) (domain.Settings, error) {
 	kindle := buildKindleSettings(row)
 	if err := validateStoredSchedule(kindle); err != nil {
 		return domain.Settings{}, err
+	}
+
+	if err := domain.ValidateKindleLanguage(domain.KindleLanguage(row.kindleLanguage)); err != nil {
+		return domain.Settings{}, domain.NewError(domain.ErrSettingRepositoryError, fmt.Errorf("stored kindle language %q is invalid", row.kindleLanguage))
 	}
 
 	return domain.Settings{
@@ -89,6 +94,7 @@ func loadSettingsRow(ctx context.Context, querier rowQuerier) (settingsRow, erro
 		&s.jinaKey,
 		&s.browserEndpoint,
 		&s.kindleEmail,
+		&s.kindleLanguage,
 		&s.senderEmail,
 		&s.smtpHost,
 		&s.smtpPort,
@@ -127,6 +133,7 @@ func buildKindleSettings(s settingsRow) *domain.KindleSettings {
 
 	return &domain.KindleSettings{
 		KindleEmail: s.kindleEmail.String,
+		Language:    domain.KindleLanguage(s.kindleLanguage),
 		Schedule:    buildKindleSchedule(s),
 		NextSendAt:  optionalMillis(s.nextSendAt),
 	}
@@ -278,8 +285,9 @@ func (r *SettingRepo) UpdateKindle(ctx context.Context, kindle domain.KindleSett
 		hour, minute, timezone := scheduleColumns(kindle.Schedule)
 		_, err = tx.ExecContext(
 			ctx,
-			`UPDATE setting SET kindle_email = ?, send_hour = ?, send_minute = ?, timezone = ? WHERE id = 1`,
+			`UPDATE setting SET kindle_email = ?, kindle_language = ?, send_hour = ?, send_minute = ?, timezone = ? WHERE id = 1`,
 			kindle.KindleEmail,
+			string(kindle.Language),
 			hour,
 			minute,
 			timezone,

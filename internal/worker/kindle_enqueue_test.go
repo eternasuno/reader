@@ -304,12 +304,16 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 		t.Fatalf("build dateStr = %q, want none for a manual send", captured.dateStr)
 	}
 
+	if captured.language != domain.KindleLanguageChinese {
+		t.Fatalf("build language = %q, want the snapshotted %q", captured.language, domain.KindleLanguageChinese)
+	}
+
 	if len(captured.articles) != 2 {
 		t.Fatalf("articles = %d, want 2", len(captured.articles))
 	}
 
 	savedArticle := captured.articles[0]
-	if !savedArticle.IsSavedPage || savedArticle.ID != "page-1" || savedArticle.SourceTitle != "example.com" {
+	if !savedArticle.IsSavedPage || savedArticle.ID != "page-1" || savedArticle.SourceTitle != "example.com" || savedArticle.Section != "稍后阅读" {
 		t.Fatalf("saved page article = %+v", savedArticle)
 	}
 
@@ -318,7 +322,7 @@ func TestEnqueueManualRunsJob(t *testing.T) {
 	}
 
 	feedArticle := captured.articles[1]
-	if feedArticle.IsSavedPage || feedArticle.ID != "item-1" || feedArticle.SourceTitle != "Example Feed" {
+	if feedArticle.IsSavedPage || feedArticle.ID != "item-1" || feedArticle.SourceTitle != "Example Feed" || feedArticle.Section != "Example Feed" {
 		t.Fatalf("feed article = %+v", feedArticle)
 	}
 
@@ -448,5 +452,23 @@ func TestEnqueueManualRejectsConcurrentSend(t *testing.T) {
 
 	if sender.IsRunning() {
 		t.Fatal("IsRunning() = true after job finished")
+	}
+}
+
+func TestFeedItemArticleUsesFolderAsSection(t *testing.T) {
+	t.Parallel()
+
+	feed := &domain.Feed{ID: "feed-1", Title: "Example Feed", ReaderMode: domain.ReaderModeDefault}
+	item := &domain.FeedItem{ID: "item-1", FeedID: feed.ID, Title: "Item"}
+	folderName := "Tech"
+
+	inFolder, ok := (&KindleSender{}).feedItemArticle(context.Background(), feed, item, &folderName)
+	if !ok || inFolder.Section != "Tech" || inFolder.SourceTitle != "Example Feed" {
+		t.Fatalf("folder feed article = %+v, want section Tech and source Example Feed", inFolder)
+	}
+
+	topLevel, ok := (&KindleSender{}).feedItemArticle(context.Background(), feed, item, nil)
+	if !ok || topLevel.Section != "Example Feed" {
+		t.Fatalf("top-level feed article = %+v, want section Example Feed", topLevel)
 	}
 }

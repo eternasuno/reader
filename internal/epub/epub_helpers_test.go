@@ -24,6 +24,18 @@ import (
 	"testing"
 )
 
+// testCoverImage keeps the static cover entry tiny so size-limit tests stay
+// calibrated to their article payloads.
+var testCoverImage = []byte{0xff, 0xd8, 0xff, 0xd9}
+
+func newTestBuilder(cfg Config) *Builder {
+	if cfg.CoverImage == nil {
+		cfg.CoverImage = testCoverImage
+	}
+
+	return NewBuilder(cfg)
+}
+
 type fakeImage struct {
 	data      []byte
 	mediaType string
@@ -423,7 +435,7 @@ func (b *Builder) BuildBooks(ctx context.Context, dateStr string, articles []dom
 		return nil, ctx.Err()
 	}
 
-	packer, err := b.NewPacker(ctx, dateStr)
+	packer, err := b.NewPacker(ctx, dateStr, domain.KindleLanguageChinese)
 	if err != nil {
 		return nil, err
 	}

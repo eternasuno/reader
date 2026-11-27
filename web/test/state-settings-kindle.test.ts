@@ -88,6 +88,7 @@ const load = async (loaded: Settings = makeSettings()): Promise<void> => {
 
 const SAVED_KINDLE = {
   kindleEmail: 'kindle@example.com',
+  language: 'zh',
   schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
   nextSendAt: '2026-11-20T00:00:00Z',
 };
@@ -98,7 +99,11 @@ const edit = (patch: Partial<SettingsDrafts>): void => {
 };
 
 const loadWithoutSchedule = (): Promise<void> =>
-  load(makeSettings({ kindle: { kindleEmail: 'kindle@example.com' } }));
+  load(
+    makeSettings({
+      kindle: { kindleEmail: 'kindle@example.com', language: 'zh' },
+    })
+  );
 
 /** Saves successfully and answers the follow-up `GET /api/settings` with `reread`. */
 const saveRereading = async (reread: Settings): Promise<void> => {
@@ -127,6 +132,7 @@ describe('kindle save', () => {
     expect(state.isSectionDirty('kindle', drafts)).toBe(true);
     const savedKindle = {
       kindleEmail: 'new@kindle.com',
+      language: 'zh' as const,
       schedule: { hour: 7, minute: 30, timezone: 'Europe/Paris' },
       nextSendAt: '2026-11-21T05:30:00Z',
     };
@@ -138,6 +144,7 @@ describe('kindle save', () => {
     const body = requestBody(2) as Record<string, unknown>;
     expect(body).toEqual({
       kindleEmail: 'new@kindle.com',
+      language: 'zh',
       schedule: { hour: 7, minute: 30, timezone: 'Europe/Paris' },
     });
     expect('timezone' in body).toBe(false);
@@ -161,6 +168,7 @@ describe('kindle schedule enable', () => {
       makeSettings({
         kindle: {
           kindleEmail: 'kindle@example.com',
+          language: 'zh',
           schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
           nextSendAt: '2026-11-21T08:00:00Z',
         },
@@ -169,6 +177,7 @@ describe('kindle schedule enable', () => {
 
     expect(requestBody(2)).toEqual({
       kindleEmail: 'kindle@example.com',
+      language: 'zh',
       schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
     });
     expect(state.isSectionDirty('kindle', drafts)).toBe(false);
@@ -179,7 +188,10 @@ describe('kindle schedule disable', () => {
   it('omits the schedule and the timezone when scheduled sending is off', async () => {
     await load();
     edit({ scheduleEnabled: false, scheduleHour: 21, scheduleMinute: 45 });
-    const disabledKindle = { kindleEmail: 'kindle@example.com' };
+    const disabledKindle = {
+      kindleEmail: 'kindle@example.com',
+      language: 'zh' as const,
+    };
 
     await saveRereading(makeSettings({ kindle: disabledKindle }));
 
@@ -197,11 +209,13 @@ describe('kindle schedule disable', () => {
     edit({ kindleEmail: 'other@kindle.com', timezone: 'Asia/Tokyo' });
 
     await saveRereading(
-      makeSettings({ kindle: { kindleEmail: 'other@kindle.com' } })
+      makeSettings({
+        kindle: { kindleEmail: 'other@kindle.com', language: 'zh' },
+      })
     );
 
     const body = requestBody(2) as Record<string, unknown>;
-    expect(body).toEqual({ kindleEmail: 'other@kindle.com' });
+    expect(body).toEqual({ kindleEmail: 'other@kindle.com', language: 'zh' });
     expect('timezone' in body).toBe(false);
     expect(state.isSectionDirty('kindle', drafts)).toBe(false);
   });
@@ -216,6 +230,7 @@ describe('kindle save fallback', () => {
 
     expect(state.settings()?.kindle).toEqual({
       kindleEmail: 'fallback@kindle.com',
+      language: 'zh',
       schedule: { hour: 9, minute: 0, timezone: 'Asia/Shanghai' },
     });
     expect(state.settings()?.kindle?.nextSendAt).toBeUndefined();
@@ -251,6 +266,7 @@ describe('kindle save fallback', () => {
     expect(state.settings()?.kindle).toEqual({
       ...SAVED_KINDLE,
       kindleEmail: 'fallback@kindle.com',
+      language: 'zh',
     });
   });
 });

@@ -268,7 +268,7 @@ func TestBuildBooksChargesInterlacedPNGAgainstDecodeBudget(t *testing.T) {
 				fetch[url] = fakeImage{data: imgs[name], mediaType: "image/png"}
 				body.WriteString(`<img alt="` + name + `" src="` + url + `">`)
 			}
-			books, err := NewBuilder(Config{ImageFetcher: newFakeImageFetcher(fetch), ImageDecodeMemoryBudget: tt.budget}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{{ID: "article-1", URL: "https://example.com/posts/1", Title: "位深", HTMLBody: body.String()}})
+			books, err := newTestBuilder(Config{ImageFetcher: newFakeImageFetcher(fetch), ImageDecodeMemoryBudget: tt.budget}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{{ID: "article-1", URL: "https://example.com/posts/1", Title: "位深", HTMLBody: body.String()}})
 			if err != nil {
 				t.Fatalf("BuildBooks() error = %v", err)
 			}
@@ -314,7 +314,7 @@ func TestBuildBooksRejectsSmallJPEGExceedingDecodeBudget(t *testing.T) {
 		HTMLBody: `<p>正文</p><img src="https://example.com/big-decode.jpg"><img src="https://example.com/tiny.png">`,
 	}}
 
-	books, err := NewBuilder(Config{
+	books, err := newTestBuilder(Config{
 		ImageFetcher:            fetcher,
 		ImageDecodeMemoryBudget: 1 << 20,
 	}).BuildBooks(context.Background(), "2026-03-15", articles)

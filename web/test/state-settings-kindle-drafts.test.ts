@@ -44,7 +44,11 @@ const load = async (loaded: Settings = makeKindleSettings()): Promise<void> => {
 };
 
 const loadWithoutSchedule = (): Promise<void> =>
-  load(makeKindleSettings({ kindle: { kindleEmail: 'kindle@example.com' } }));
+  load(
+    makeKindleSettings({
+      kindle: { kindleEmail: 'kindle@example.com', language: 'zh' },
+    })
+  );
 
 const edit = (patch: Partial<SettingsDrafts>): void => {
   setDrafts((d) => ({ ...d, ...patch }));
@@ -58,6 +62,7 @@ describe('kindle drafts from settings', () => {
     await load(makeKindleSettings({ kindle: undefined }));
 
     expect(drafts.kindleEmail).toBe('');
+    expect(drafts.kindleLanguage).toBe('zh');
     expect(drafts.timezone).toBe('Europe/Paris');
     expect(drafts.scheduleEnabled).toBe(false);
     expect(drafts.scheduleHour).toBe(8);
@@ -80,6 +85,7 @@ describe('kindle drafts from settings', () => {
       makeKindleSettings({
         kindle: {
           kindleEmail: 'kindle@example.com',
+          language: 'zh',
           schedule: { hour: 21, minute: 45, timezone: 'Asia/Tokyo' },
         },
       })
@@ -89,6 +95,17 @@ describe('kindle drafts from settings', () => {
     expect(drafts.scheduleEnabled).toBe(true);
     expect(drafts.scheduleHour).toBe(21);
     expect(drafts.scheduleMinute).toBe(45);
+  });
+
+  it('loads the saved primary language', async () => {
+    await load(
+      makeKindleSettings({
+        kindle: { kindleEmail: 'kindle@example.com', language: 'ja' },
+      })
+    );
+
+    expect(drafts.kindleLanguage).toBe('ja');
+    expect(kindleDirty()).toBe(false);
   });
 });
 
@@ -104,6 +121,16 @@ describe('kindle dirty tracking', () => {
     edit(patch);
     expect(kindleDirty()).toBe(true);
     expect(ctx.state.hasAnyUnsavedChanges(drafts)).toBe(true);
+  });
+
+  it('marks Kindle dirty when the primary language changes, with or without a schedule', async () => {
+    await loadWithoutSchedule();
+
+    edit({ kindleLanguage: 'en' });
+    expect(kindleDirty()).toBe(true);
+
+    edit({ kindleLanguage: 'zh' });
+    expect(kindleDirty()).toBe(false);
   });
 
   it('ignores hour, minute and timezone while scheduled sending is disabled', async () => {

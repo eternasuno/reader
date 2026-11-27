@@ -113,6 +113,7 @@ func deliverySnapshot(settings domain.Settings) domain.KindleDelivery {
 	return domain.KindleDelivery{
 		SMTP:        *settings.SMTP,
 		KindleEmail: settings.Kindle.KindleEmail,
+		Language:    settings.Kindle.Language,
 	}
 }
 
@@ -524,6 +525,7 @@ func (e *fakeArticleExtractor) ExtractArticle(htmlBody string, pageURL string) (
 
 type buildCall struct {
 	dateStr  string
+	language domain.KindleLanguage
 	articles []domain.KindleArticle
 }
 
@@ -535,10 +537,10 @@ type fakeEPUBBuilder struct {
 	lastCall  buildCall
 }
 
-func (b *fakeEPUBBuilder) NewPacker(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {
+func (b *fakeEPUBBuilder) NewPacker(ctx context.Context, dateStr string, language domain.KindleLanguage) (domain.EPUBPacker, error) {
 	b.mu.Lock()
 	b.calls++
-	b.lastCall = buildCall{dateStr: dateStr}
+	b.lastCall = buildCall{dateStr: dateStr, language: language}
 	custom := b.newPacker
 	b.mu.Unlock()
 
@@ -619,7 +621,7 @@ func (b *fakeEPUBBuilder) captured() buildCall {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return buildCall{dateStr: b.lastCall.dateStr, articles: append([]domain.KindleArticle(nil), b.lastCall.articles...)}
+	return buildCall{dateStr: b.lastCall.dateStr, language: b.lastCall.language, articles: append([]domain.KindleArticle(nil), b.lastCall.articles...)}
 }
 
 type sentMail struct {

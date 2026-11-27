@@ -26,17 +26,19 @@ import {
 /** The timezone belongs to the schedule, so it is sent only while scheduled sending is enabled. */
 const kindleSettingsOf = (drafts: SettingsDrafts): KindleSettings => {
   const kindleEmail = drafts.kindleEmail.trim();
+  const language = drafts.kindleLanguage;
 
   return drafts.scheduleEnabled
     ? {
         kindleEmail,
+        language,
         schedule: {
           hour: drafts.scheduleHour,
           minute: drafts.scheduleMinute,
           timezone: drafts.timezone,
         },
       }
-    : { kindleEmail };
+    : { kindleEmail, language };
 };
 
 const isSameSchedule = (a: KindleSettings, b: KindleSettings): boolean =>

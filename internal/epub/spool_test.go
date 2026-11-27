@@ -18,7 +18,7 @@ func TestPackerSpoolCleanupOnSuccessFailureAndCancel(t *testing.T) {
 		t.Parallel()
 
 		spoolDir := t.TempDir()
-		packer, err := NewBuilder(Config{MaxEPUBBytes: 200 * 1024, SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15")
+		packer, err := newTestBuilder(Config{MaxEPUBBytes: 200 * 1024, SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15", domain.KindleLanguageChinese)
 		if err != nil {
 			t.Fatalf("NewPacker() error = %v", err)
 		}
@@ -87,7 +87,7 @@ func TestPackerSpoolCleanupOnSuccessFailureAndCancel(t *testing.T) {
 		t.Parallel()
 
 		spoolDir := t.TempDir()
-		packer, err := NewBuilder(Config{MaxEPUBBytes: 64 * 1024, SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15")
+		packer, err := newTestBuilder(Config{MaxEPUBBytes: 64 * 1024, SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15", domain.KindleLanguageChinese)
 		if err != nil {
 			t.Fatalf("NewPacker() error = %v", err)
 		}
@@ -127,7 +127,7 @@ func TestPackerSpoolCleanupOnSuccessFailureAndCancel(t *testing.T) {
 
 		spoolDir := t.TempDir()
 		ctx, cancel := context.WithCancel(context.Background())
-		packer, err := NewBuilder(Config{MaxEPUBBytes: 128 * 1024, SpoolDir: spoolDir}).NewPacker(ctx, "2026-03-15")
+		packer, err := newTestBuilder(Config{MaxEPUBBytes: 128 * 1024, SpoolDir: spoolDir}).NewPacker(ctx, "2026-03-15", domain.KindleLanguageChinese)
 		if err != nil {
 			t.Fatalf("NewPacker() error = %v", err)
 		}
@@ -167,11 +167,11 @@ func TestPackerEnforcesPerJobSpoolQuota(t *testing.T) {
 	t.Parallel()
 
 	spoolDir := t.TempDir()
-	packer, err := NewBuilder(Config{
+	packer, err := newTestBuilder(Config{
 		MaxEPUBBytes:     128 * 1024,
 		MaxJobSpoolBytes: 150 * 1024,
 		SpoolDir:         spoolDir,
-	}).NewPacker(context.Background(), "2026-03-15")
+	}).NewPacker(context.Background(), "2026-03-15", domain.KindleLanguageChinese)
 	if err != nil {
 		t.Fatalf("NewPacker() error = %v", err)
 	}
@@ -248,7 +248,7 @@ func TestPackerRetriesSpoolRemovalOnCloseAfterReadBookFailure(t *testing.T) {
 	t.Parallel()
 
 	spoolDir := t.TempDir()
-	rawPacker, err := NewBuilder(Config{SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15")
+	rawPacker, err := newTestBuilder(Config{SpoolDir: spoolDir}).NewPacker(context.Background(), "2026-03-15", domain.KindleLanguageChinese)
 	if err != nil {
 		t.Fatalf("NewPacker() error = %v", err)
 	}

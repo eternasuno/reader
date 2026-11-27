@@ -613,7 +613,7 @@ func configuredSMTPSettings() domain.SMTPSettings {
 }
 
 func configuredKindleSettings() domain.KindleSettings {
-	return domain.KindleSettings{KindleEmail: "reader@kindle.com"}
+	return domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "reader@kindle.com"}
 }
 
 func configuredDeliverySettings() domain.Settings {

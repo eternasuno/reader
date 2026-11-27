@@ -22,7 +22,7 @@ func TestEncodeDownscaledJPEGSkipsResamplingForOpaqueInBoundsImage(t *testing.T)
 		"https://example.com/gray.png": {data: grayPNG, mediaType: "image/png"},
 	})
 
-	books, err := NewBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{{
+	books, err := newTestBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{{
 		ID:       "a-1",
 		URL:      "https://example.com/posts/1",
 		Title:    "免重采样",

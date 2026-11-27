@@ -1,6 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js';
-import type { KindleSendRecord } from '../api';
+import type { KindleLanguage, KindleSendRecord } from '../api';
 import { t } from '../i18n';
 import {
   browserTimezone,
@@ -176,6 +176,46 @@ function ScheduleTimeRow(props: SettingsDraftProps): JSX.Element {
   );
 }
 
+/** Each language is named in itself, independent of the interface language. */
+const KINDLE_LANGUAGE_OPTIONS: ReadonlyArray<{
+  value: KindleLanguage;
+  label: string;
+}> = [
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: 'English' },
+  { value: 'ja', label: '日本語' },
+];
+
+/** `KD-BOOK-1`: the EPUB primary language, saved with the delivery settings. */
+function LanguageRow(props: SettingsDraftProps): JSX.Element {
+  return (
+    <SettingsRow stacked>
+      <Select
+        label={t('kindle.languageLabel')}
+        hint={t('kindle.languageHint')}
+        class="sm:max-w-48"
+        value={props.drafts.kindleLanguage}
+        disabled={isSaving()}
+        onChange={(event) => {
+          const selected = event.currentTarget.value;
+          const option = KINDLE_LANGUAGE_OPTIONS.find(
+            (candidate) => candidate.value === selected
+          );
+          if (option === undefined) return;
+          props.setDrafts((draft) => ({
+            ...draft,
+            kindleLanguage: option.value,
+          }));
+        }}
+      >
+        <For each={KINDLE_LANGUAGE_OPTIONS}>
+          {(option) => <option value={option.value}>{option.label}</option>}
+        </For>
+      </Select>
+    </SettingsRow>
+  );
+}
+
 function DeliveryFields(props: SettingsDraftProps): JSX.Element {
   return (
     <>
@@ -192,6 +232,7 @@ function DeliveryFields(props: SettingsDraftProps): JSX.Element {
           }}
         />
       </SettingsRow>
+      <LanguageRow drafts={props.drafts} setDrafts={props.setDrafts} />
       <ScheduleToggleRow drafts={props.drafts} setDrafts={props.setDrafts} />
       <ScheduleTimeRow drafts={props.drafts} setDrafts={props.setDrafts} />
     </>

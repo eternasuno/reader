@@ -70,7 +70,7 @@ func corruptStoredSchedule(t *testing.T, store *Store, assignment string) {
 func configureManualKindleForTest(t *testing.T, store *Store) {
 	t.Helper()
 
-	kindle := domain.KindleSettings{KindleEmail: "reader@kindle.com"}
+	kindle := domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "reader@kindle.com"}
 	configureKindleDeliveryForTest(t, store, kindle, time.Time{})
 }
 

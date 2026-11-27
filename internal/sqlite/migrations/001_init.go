@@ -122,6 +122,7 @@ CREATE TABLE kindle_send (
 func All() []*goose.Migration {
 	return []*goose.Migration{
 		goose.NewGoMigration(1, &goose.GoFunc{RunTx: initUp}, nil),
+		goose.NewGoMigration(2, &goose.GoFunc{RunTx: kindleLanguageUp}, nil),
 	}
 }
 

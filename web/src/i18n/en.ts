@@ -263,6 +263,9 @@ export const enDict: Dict = {
     sendNowHint:
       'Package every unread article into an EPUB and send it to Kindle now; sent articles are marked read.',
     kindleEmailLabel: 'Kindle email address',
+    languageLabel: 'EPUB primary language',
+    languageHint:
+      "Kindle picks its lookup dictionary from the primary language; the book's fixed text, such as the table of contents, also uses it.",
     scheduleLabel: 'Daily scheduled send',
     hourLabel: 'Hour',
     minuteLabel: 'Minute',

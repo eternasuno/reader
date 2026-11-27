@@ -7,6 +7,7 @@
 import { createSignal, flush, type StoreSetter } from 'solid-js';
 import type {
   ExtractorProvider,
+  KindleLanguage,
   KindleSendRecord,
   Settings,
   SMTPSecurity,
@@ -30,6 +31,7 @@ export interface SettingsDrafts {
   smtpUser: string;
   smtpPassword: string;
   kindleEmail: string;
+  kindleLanguage: KindleLanguage;
   timezone: string;
   scheduleEnabled: boolean;
   scheduleHour: number;
@@ -39,6 +41,7 @@ export interface SettingsDrafts {
 export type KindleDrafts = Pick<
   SettingsDrafts,
   | 'kindleEmail'
+  | 'kindleLanguage'
   | 'timezone'
   | 'scheduleEnabled'
   | 'scheduleHour'
@@ -52,8 +55,12 @@ const DEFAULT_RETENTION = 100;
 const DEFAULT_SCHEDULE_HOUR = 8;
 const DEFAULT_SCHEDULE_MINUTE = 0;
 
+/** `KD-BOOK-1`: books default to Chinese until a primary language is saved. */
+const DEFAULT_KINDLE_LANGUAGE: KindleLanguage = 'zh';
+
 export const kindleDraftsOf = (kindle: Settings['kindle']): KindleDrafts => ({
   kindleEmail: kindle?.kindleEmail ?? '',
+  kindleLanguage: kindle?.language ?? DEFAULT_KINDLE_LANGUAGE,
   timezone: kindle?.schedule?.timezone ?? browserTimezone(),
   scheduleEnabled: kindle?.schedule !== undefined,
   scheduleHour: kindle?.schedule?.hour ?? DEFAULT_SCHEDULE_HOUR,

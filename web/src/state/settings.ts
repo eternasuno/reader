@@ -117,6 +117,7 @@ const kindleDirty = (
   const saved = kindleDraftsOf(kindle);
   if (
     drafts.kindleEmail !== saved.kindleEmail ||
+    drafts.kindleLanguage !== saved.kindleLanguage ||
     drafts.scheduleEnabled !== saved.scheduleEnabled
   ) {
     return true;

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -23,12 +24,15 @@ import (
 const (
 	epubMimetype        = "application/epub+zip"
 	bookCreator         = "Lantern"
-	bookLanguage        = "zh"
 	chapterSourcePrefix = "chapters/"
+	coverImageFileName  = "cover.jpg"
+	coverPageHref       = "cover.xhtml"
+	navHref             = "nav.xhtml"
+	navSectionClose     = "</ol></li>\n"
+	ncxNavPointClose    = "</navPoint>\n"
 	oebpsPrefix         = "OEBPS/"
 	imagesPrefix        = "OEBPS/images/"
 	xmlDeclaration      = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
-	xhtmlOpenTag        = "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"" + bookLanguage + "\" lang=\"" + bookLanguage + "\">\n"
 	containerXML        = `<?xml version="1.0" encoding="utf-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles>
@@ -85,6 +89,39 @@ img {
   font-size: 0.85em;
   margin-bottom: 1.5em;
 }
+
+body.cover {
+  margin: 0;
+  padding: 0;
+  text-align: center;
+}
+
+body.cover img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+#toc ol {
+  list-style-type: none;
+  margin: 0;
+  padding-left: 0;
+}
+
+#toc ol ol {
+  padding-left: 1.5em;
+}
+
+#toc > ol > li {
+  margin-top: 0.8em;
+}
+
+#toc > ol > li > a {
+  font-weight: bold;
+}
+
+#landmarks {
+  display: none;
+}
 `
 	deflateStoredBlockStride = 65535
 	deflateBlockHeaderBytes  = 5
@@ -93,7 +130,7 @@ img {
 	zipCentralDirHeaderLen   = 46
 	zip64EOCDOverheadLen     = 76
 	zipMaxNonZip64Entries    = 65535
-	zipStaticEntryCount      = 6
+	zipStaticEntryCount      = 8
 	maxMeasurementMargin     = 8 << 10
 	minMeasurementMargin     = 1 << 10
 	zipDeflateReaderVersion  = 20
@@ -103,10 +140,14 @@ img {
 var (
 	errArchiveTooLarge = errors.New("epub archive exceeds max bytes")
 	zeroCopyBuf        [32 << 10]byte
+
+	//go:embed cover.jpg
+	coverJPEG []byte
 )
 
 type chapterMeta struct {
 	title              string
+	section            string
 	hasRemoteResources bool
 }
 
@@ -143,10 +184,12 @@ func newBookIdentity() bookIdentity {
 }
 
 type archiveMeta struct {
-	title    string
-	identity bookIdentity
-	chapters []chapterMeta
-	images   []imageManifestItem
+	title      string
+	locale     bookLocale
+	identity   bookIdentity
+	coverImage []byte
+	chapters   []chapterMeta
+	images     []imageManifestItem
 }
 
 type limitCountWriter struct {
@@ -275,7 +318,7 @@ func spooledEntryZipBytes(entry spooledEntry) int64 {
 	return zipLocalFileHeaderLen + zipCentralDirHeaderLen + 2*int64(len(entry.name)) + int64(entry.compressedSize)
 }
 
-func chapterNavOpfUncompressedBytes(chapterIndex int, chapter chapterMeta, newImages []imageManifestItem) int64 {
+func chapterNavOpfUncompressedBytes(chapterIndex int, chapter chapterMeta, opensSection bool, newImages []imageManifestItem) int64 {
 	hrefLen := int64(len(chapterHref(chapterIndex)))
 	escapedTitleLen := int64(escapedXMLTextLen(chapter.title))
 	plainDigits := int64(decimalDigits(chapterIndex + 1))
@@ -283,6 +326,12 @@ func chapterNavOpfUncompressedBytes(chapterIndex int, chapter chapterMeta, newIm
 
 	navLine := int64(27) + hrefLen + escapedTitleLen
 	ncxBlock := int64(102) + paddedDigits + plainDigits + escapedTitleLen + hrefLen
+	if opensSection {
+		escapedSectionLen := int64(escapedXMLTextLen(chapter.section))
+		navLine += int64(38) + hrefLen + escapedSectionLen
+		ncxBlock += int64(101) + paddedDigits + plainDigits + escapedSectionLen + hrefLen
+	}
+
 	opfChapter := int64(93) + 2*paddedDigits + hrefLen
 	if chapter.hasRemoteResources {
 		opfChapter += int64(len(remoteResourcesAttr))
@@ -357,16 +406,10 @@ func writeStaticAndNavEntries(ctx context.Context, writer *zip.Writer, meta arch
 		{name: "mimetype", method: zip.Store, body: []byte(epubMimetype)},
 		{name: "META-INF/container.xml", method: zip.Deflate, body: []byte(containerXML)},
 		{name: "OEBPS/styles.css", method: zip.Deflate, body: []byte(stylesCSS)},
-		{
-			name:    "OEBPS/nav.xhtml",
-			method:  zip.Deflate,
-			writeFn: func(w io.Writer) error { return writeNav(w, meta.title, meta.chapters) },
-		},
-		{
-			name:    "OEBPS/toc.ncx",
-			method:  zip.Deflate,
-			writeFn: func(w io.Writer) error { return writeNCX(w, meta) },
-		},
+		{name: imagesPrefix + coverImageFileName, method: zip.Store, body: meta.coverImage},
+		{name: oebpsPrefix + coverPageHref, method: zip.Deflate, body: meta.locale.coverPage()},
+		{name: oebpsPrefix + navHref, method: zip.Deflate, writeFn: func(w io.Writer) error { return writeNav(w, meta) }},
+		{name: "OEBPS/toc.ncx", method: zip.Deflate, writeFn: func(w io.Writer) error { return writeNCX(w, meta) }},
 	}
 
 	for _, entry := range staticEntries {
@@ -563,18 +606,29 @@ func (w *stickyXMLWriter) flush() error {
 	return w.bw.Flush()
 }
 
-func writeNav(w io.Writer, title string, chapters []chapterMeta) error {
+func writeNav(w io.Writer, meta archiveMeta) error {
 	sw := newStickyXMLWriter(w)
 	sw.writeString(xmlDeclaration)
 	sw.writeString("<!DOCTYPE html>\n")
-	sw.writeString(xhtmlOpenTag)
+	sw.writeString(meta.locale.htmlOpenTag())
 	sw.writeString("<head>\n<meta charset=\"utf-8\"/>\n<title>")
-	writeEscapedText(sw, title)
-	sw.writeString("</title>\n</head>\n<body>\n<nav epub:type=\"toc\" id=\"toc\">\n<h1>目录</h1>\n<ol>\n")
+	writeEscapedText(sw, meta.title)
+	sw.writeString("</title>\n<link rel=\"stylesheet\" type=\"text/css\" href=\"styles.css\"/>\n</head>\n<body>\n")
+	sw.writeString("<nav epub:type=\"toc\" id=\"toc\">\n<h1>" + meta.locale.toc + "</h1>\n<ol>\n")
 
-	for i, ch := range chapters {
+	for i, ch := range meta.chapters {
 		if !sw.ok() {
 			break
+		}
+
+		if opensSection(meta.chapters, i) {
+			if i > 0 {
+				sw.writeString(navSectionClose)
+			}
+
+			sw.printf("<li><a href=\"%s\">", chapterHref(i))
+			writeEscapedText(sw, ch.section)
+			sw.writeString("</a>\n<ol>\n")
 		}
 
 		sw.printf("<li><a href=\"%s\">", chapterHref(i))
@@ -582,9 +636,23 @@ func writeNav(w io.Writer, title string, chapters []chapterMeta) error {
 		sw.writeString("</a></li>\n")
 	}
 
-	sw.writeString("</ol>\n</nav>\n</body>\n</html>\n")
+	if len(meta.chapters) > 0 {
+		sw.writeString(navSectionClose)
+	}
+
+	sw.writeString("</ol>\n</nav>\n")
+	writeNavLandmarks(sw, meta.locale)
+	sw.writeString("</body>\n</html>\n")
 
 	return sw.flush()
+}
+
+func writeNavLandmarks(sw *stickyXMLWriter, locale bookLocale) {
+	sw.writeString("<nav epub:type=\"landmarks\" id=\"landmarks\" hidden=\"\">\n<ol>\n")
+	sw.writeString("<li><a epub:type=\"cover\" href=\"" + coverPageHref + "\">" + locale.cover + "</a></li>\n")
+	sw.writeString("<li><a epub:type=\"toc\" href=\"" + navHref + "#toc\">" + locale.toc + "</a></li>\n")
+	sw.writeString("<li><a epub:type=\"bodymatter\" href=\"" + chapterHref(0) + "\">" + locale.start + "</a></li>\n")
+	sw.writeString("</ol>\n</nav>\n")
 }
 
 func writeNCX(w io.Writer, meta archiveMeta) error {
@@ -593,7 +661,7 @@ func writeNCX(w io.Writer, meta archiveMeta) error {
 	sw.writeString("<ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\">\n")
 	sw.writeString("<head>\n<meta name=\"dtb:uid\" content=\"")
 	writeEscapedAttr(sw, meta.identity.identifier)
-	sw.writeString("\"/>\n<meta name=\"dtb:depth\" content=\"1\"/>\n")
+	sw.writeString("\"/>\n<meta name=\"dtb:depth\" content=\"2\"/>\n")
 	sw.writeString("<meta name=\"dtb:totalPageCount\" content=\"0\"/>\n")
 	sw.writeString("<meta name=\"dtb:maxPageNumber\" content=\"0\"/>\n</head>\n")
 	sw.writeString("<docTitle><text>")
@@ -605,9 +673,24 @@ func writeNCX(w io.Writer, meta archiveMeta) error {
 			break
 		}
 
+		// A section shares its first chapter's target, so it shares that playOrder.
+		if opensSection(meta.chapters, i) {
+			if i > 0 {
+				sw.writeString(ncxNavPointClose)
+			}
+
+			sw.printf("<navPoint id=\"section-%04d\" playOrder=\"%d\">\n<navLabel><text>", i+1, i+1)
+			writeEscapedText(sw, ch.section)
+			sw.printf("</text></navLabel>\n<content src=\"%s\"/>\n", chapterHref(i))
+		}
+
 		sw.printf("<navPoint id=\"navPoint-%04d\" playOrder=\"%d\">\n<navLabel><text>", i+1, i+1)
 		writeEscapedText(sw, ch.title)
-		sw.printf("</text></navLabel>\n<content src=\"%s\"/>\n</navPoint>\n", chapterHref(i))
+		sw.printf("</text></navLabel>\n<content src=\"%s\"/>\n"+ncxNavPointClose, chapterHref(i))
+	}
+
+	if len(meta.chapters) > 0 {
+		sw.writeString(ncxNavPointClose)
 	}
 
 	sw.writeString("</navMap>\n</ncx>\n")
@@ -624,17 +707,24 @@ func writeOPF(w io.Writer, meta archiveMeta) error {
 	writeEscapedText(sw, meta.identity.identifier)
 	sw.writeString("</dc:identifier>\n<dc:title>")
 	writeEscapedText(sw, meta.title)
-	sw.writeString("</dc:title>\n<dc:language>" + bookLanguage + "</dc:language>\n<dc:creator>")
+	sw.writeString("</dc:title>\n<dc:language>" + string(meta.locale.language) + "</dc:language>\n<dc:creator>")
 	writeEscapedText(sw, bookCreator)
 	sw.writeString("</dc:creator>\n<meta property=\"dcterms:modified\">" + meta.identity.modifiedAt.UTC().Format("2006-01-02T15:04:05Z") + "</meta>\n")
+	sw.writeString("<meta name=\"cover\" content=\"cover-image\"/>\n")
 	sw.writeString("</metadata>\n<manifest>\n")
-	sw.writeString("<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n")
+	sw.writeString("<item id=\"nav\" href=\"" + navHref + "\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n")
 	sw.writeString("<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n")
 	sw.writeString("<item id=\"css\" href=\"styles.css\" media-type=\"text/css\"/>\n")
+	sw.writeString("<item id=\"cover-image\" href=\"images/" + coverImageFileName + "\" media-type=\"image/jpeg\" properties=\"cover-image\"/>\n")
+	sw.writeString("<item id=\"cover\" href=\"" + coverPageHref + "\" media-type=\"application/xhtml+xml\"/>\n")
 
 	writeOPFManifest(sw, meta)
 	writeOPFSpine(sw, meta.chapters)
-	sw.writeString("</package>\n")
+	sw.writeString("<guide>\n")
+	sw.writeString("<reference type=\"cover\" title=\"" + meta.locale.cover + "\" href=\"" + coverPageHref + "\"/>\n")
+	sw.writeString("<reference type=\"toc\" title=\"" + meta.locale.toc + "\" href=\"" + navHref + "\"/>\n")
+	sw.writeString("<reference type=\"text\" title=\"" + meta.locale.start + "\" href=\"" + chapterHref(0) + "\"/>\n")
+	sw.writeString("</guide>\n</package>\n")
 
 	return sw.flush()
 }
@@ -665,7 +755,7 @@ func writeOPFManifest(sw *stickyXMLWriter, meta archiveMeta) {
 }
 
 func writeOPFSpine(sw *stickyXMLWriter, chapters []chapterMeta) {
-	sw.writeString("<spine toc=\"ncx\">\n")
+	sw.writeString("<spine toc=\"ncx\">\n<itemref idref=\"cover\"/>\n<itemref idref=\"nav\"/>\n")
 
 	for i := range chapters {
 		if !sw.ok() {
@@ -676,6 +766,12 @@ func writeOPFSpine(sw *stickyXMLWriter, chapters []chapterMeta) {
 	}
 
 	sw.writeString("</spine>\n")
+}
+
+// opensSection reports whether chapter i starts a new TOC section; the packer
+// keeps each section's chapters contiguous.
+func opensSection(chapters []chapterMeta, i int) bool {
+	return i == 0 || chapters[i-1].section != chapters[i].section
 }
 
 func chapterHref(index int) string {

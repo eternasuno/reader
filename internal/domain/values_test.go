@@ -410,6 +410,7 @@ func TestValueKindleSettings(t *testing.T) {
 
 	base := func() KindleSettings {
 		return KindleSettings{
+			Language:    KindleLanguageChinese,
 			KindleEmail: "kindle@example.com",
 			Schedule:    &KindleSchedule{Hour: 8, Minute: 0, Timezone: "UTC"},
 		}
@@ -472,6 +473,8 @@ func TestValueKindleSettings(t *testing.T) {
 
 	invalidCases := map[string]func(*KindleSettings){
 		"empty kindle email":      func(k *KindleSettings) { k.KindleEmail = " " },
+		"missing language":        func(k *KindleSettings) { k.Language = "" },
+		"unsupported language":    func(k *KindleSettings) { k.Language = "fr" },
 		"kindle email without at": func(k *KindleSettings) { k.KindleEmail = "kindle.example.com" },
 		"kindle email double at":  func(k *KindleSettings) { k.KindleEmail = "a@@b" },
 		"kindle email bad host":   func(k *KindleSettings) { k.KindleEmail = "reader@-bad.example" },

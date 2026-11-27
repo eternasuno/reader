@@ -34,7 +34,7 @@ func TestBuildBooksProducesSingleValidBook(t *testing.T) {
 		},
 	}
 
-	books, err := NewBuilder(Config{}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -99,7 +99,7 @@ func TestBuildBooksProducesSingleValidBook(t *testing.T) {
 		t.Fatalf("nav.xhtml missing first chapter link:\n%s", nav)
 	}
 
-	if !strings.Contains(nav, `<a href="chapters/chapter-0002.xhtml">Untitled</a>`) {
+	if !strings.Contains(nav, `<a href="chapters/chapter-0002.xhtml">无标题</a>`) {
 		t.Fatalf("nav.xhtml missing untitled chapter link:\n%s", nav)
 	}
 
@@ -142,7 +142,7 @@ func TestBuildBooksProducesSingleValidBook(t *testing.T) {
 	}
 
 	secondChapter := string(entryBody(t, entryByName(t, reader, "OEBPS/chapters/chapter-0002.xhtml")))
-	if !strings.Contains(secondChapter, "<h1>Untitled</h1>") {
+	if !strings.Contains(secondChapter, "<h1>无标题</h1>") {
 		t.Fatalf("chapter-0002 missing untitled heading:\n%s", secondChapter)
 	}
 
@@ -157,7 +157,7 @@ func TestBuildBooksPropagatesParentContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := NewBuilder(Config{}).BuildBooks(ctx, "2026-03-15", []domain.KindleArticle{{
+	_, err := newTestBuilder(Config{}).BuildBooks(ctx, "2026-03-15", []domain.KindleArticle{{
 		ID:       "article-1",
 		Title:    "已取消",
 		HTMLBody: "<p>hello</p>",

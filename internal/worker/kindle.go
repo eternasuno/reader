@@ -24,6 +24,13 @@ const (
 	defaultRecordBaseBackoff   = 50 * time.Millisecond
 )
 
+// readLaterSections names the saved-page TOC section in each book language.
+var readLaterSections = map[domain.KindleLanguage]string{
+	domain.KindleLanguageChinese:  "稍后阅读",
+	domain.KindleLanguageEnglish:  "Read Later",
+	domain.KindleLanguageJapanese: "後で読む",
+}
+
 type KindleConfig struct {
 	BaseCtx      context.Context
 	KindleSends  domain.KindleSendRepository
@@ -211,7 +218,8 @@ func (s *KindleSender) executeJob(ctx context.Context, claimed domain.ClaimedKin
 func (s *KindleSender) deliverBooks(ctx context.Context, claimed domain.ClaimedKindleSend, refs []domain.KindleArticleRef) error {
 	sendID := claimed.Record.ID
 
-	packer, err := s.epubBuilder.NewPacker(ctx, bookDate(claimed))
+	language := claimed.Delivery.Language
+	packer, err := s.epubBuilder.NewPacker(ctx, bookDate(claimed), language)
 	if err != nil {
 		return err
 	}
@@ -222,7 +230,7 @@ func (s *KindleSender) deliverBooks(ctx context.Context, claimed domain.ClaimedK
 		}
 	}()
 
-	bookCount, err := s.packArticles(ctx, packer, refs)
+	bookCount, err := s.packArticles(ctx, packer, refs, language)
 	if err != nil {
 		return err
 	}
@@ -240,13 +248,18 @@ func bookDate(claimed domain.ClaimedKindleSend) string {
 	return claimed.ScheduledFor.In(claimed.ScheduleLocation).Format(kindleDateLayout)
 }
 
-func (s *KindleSender) packArticles(ctx context.Context, packer domain.EPUBPacker, refs []domain.KindleArticleRef) (int, error) {
+func (s *KindleSender) packArticles(
+	ctx context.Context,
+	packer domain.EPUBPacker,
+	refs []domain.KindleArticleRef,
+	language domain.KindleLanguage,
+) (int, error) {
 	for _, ref := range refs {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
 
-		article, ok, err := s.loadArticle(ctx, ref)
+		article, ok, err := s.loadArticle(ctx, ref, language)
 		if err != nil {
 			return 0, err
 		}
@@ -323,24 +336,24 @@ func (s *KindleSender) recordBookAccepted(ctx context.Context, sendID string, bo
 	return err
 }
 
-func (s *KindleSender) loadArticle(ctx context.Context, ref domain.KindleArticleRef) (domain.KindleArticle, bool, error) {
+func (s *KindleSender) loadArticle(ctx context.Context, ref domain.KindleArticleRef, language domain.KindleLanguage) (domain.KindleArticle, bool, error) {
 	page, feed, item, err := s.kindleSends.GetKindleArticle(ctx, ref)
 	if err != nil {
 		return domain.KindleArticle{}, false, err
 	}
 
 	if ref.IsSavedPage {
-		article, ok := savedPageArticle(page)
+		article, ok := savedPageArticle(page, readLaterSections[language])
 
 		return article, ok, nil
 	}
 
-	article, ok := s.feedItemArticle(ctx, feed, item)
+	article, ok := s.feedItemArticle(ctx, feed, item, ref.FolderName)
 
 	return article, ok, nil
 }
 
-func savedPageArticle(page *domain.SavedPage) (domain.KindleArticle, bool) {
+func savedPageArticle(page *domain.SavedPage, section string) (domain.KindleArticle, bool) {
 	if page == nil {
 		return domain.KindleArticle{}, false
 	}
@@ -349,6 +362,7 @@ func savedPageArticle(page *domain.SavedPage) (domain.KindleArticle, bool) {
 		ID:          page.ID,
 		IsSavedPage: true,
 		SourceTitle: page.URL.Host(),
+		Section:     section,
 		URL:         page.URL.RedactedString(),
 		Title:       page.Title,
 		HTMLBody:    page.Content,
@@ -356,15 +370,26 @@ func savedPageArticle(page *domain.SavedPage) (domain.KindleArticle, bool) {
 	}, true
 }
 
-func (s *KindleSender) feedItemArticle(ctx context.Context, feed *domain.Feed, item *domain.FeedItem) (domain.KindleArticle, bool) {
+func (s *KindleSender) feedItemArticle(
+	ctx context.Context,
+	feed *domain.Feed,
+	item *domain.FeedItem,
+	folderName *string,
+) (domain.KindleArticle, bool) {
 	if feed == nil || item == nil {
 		return domain.KindleArticle{}, false
+	}
+
+	section := feed.Title
+	if folderName != nil {
+		section = *folderName
 	}
 
 	return domain.KindleArticle{
 		ID:          item.ID,
 		IsSavedPage: false,
 		SourceTitle: feed.Title,
+		Section:     section,
 		URL:         item.URL.RedactedString(),
 		Title:       item.Title,
 		HTMLBody:    s.feedItemBody(ctx, *feed, *item),

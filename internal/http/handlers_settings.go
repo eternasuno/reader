@@ -32,9 +32,10 @@ type kindleScheduleJSON struct {
 }
 
 type kindleSettingsJSON struct {
-	KindleEmail string              `json:"kindleEmail"`
-	Schedule    *kindleScheduleJSON `json:"schedule,omitempty"`
-	NextSendAt  *string             `json:"nextSendAt,omitempty"`
+	KindleEmail string                `json:"kindleEmail"`
+	Language    domain.KindleLanguage `json:"language"`
+	Schedule    *kindleScheduleJSON   `json:"schedule,omitempty"`
+	NextSendAt  *string               `json:"nextSendAt,omitempty"`
 }
 
 type retentionRequest struct {
@@ -72,6 +73,7 @@ type kindleScheduleRequest struct {
 
 type kindleSettingsRequest struct {
 	KindleEmail string                 `json:"kindleEmail"`
+	Language    domain.KindleLanguage  `json:"language"`
 	Schedule    *kindleScheduleRequest `json:"schedule"`
 }
 
@@ -112,6 +114,7 @@ func (s *server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 func toKindleSettingsJSON(kindle domain.KindleSettings) kindleSettingsJSON {
 	response := kindleSettingsJSON{
 		KindleEmail: kindle.KindleEmail,
+		Language:    kindle.Language,
 		NextSendAt:  formatTimestampPtr(kindle.NextSendAt),
 	}
 
@@ -219,7 +222,7 @@ func (s *server) handleKindleSettingsUpdate(w http.ResponseWriter, r *http.Reque
 }
 
 func toKindleSettings(req kindleSettingsRequest) (domain.KindleSettings, error) {
-	kindle := domain.KindleSettings{KindleEmail: req.KindleEmail}
+	kindle := domain.KindleSettings{KindleEmail: req.KindleEmail, Language: req.Language}
 	if req.Schedule == nil {
 		return kindle, nil
 	}

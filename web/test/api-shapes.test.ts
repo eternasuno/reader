@@ -39,6 +39,7 @@ const SMTP_IN: SmtpSettingsInput = {
 };
 const KD_IN: KindleSettings = {
   kindleEmail: 'k@example.com',
+  language: 'zh',
   schedule: { hour: 8, minute: 30, timezone: 'Asia/Shanghai' },
 };
 const VALID_PAGE = {

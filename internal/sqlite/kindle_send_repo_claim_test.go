@@ -32,6 +32,7 @@ func configureDailyScheduleForTest(t *testing.T, store *Store, schedule domain.K
 	t.Helper()
 
 	configureKindleDeliveryForTest(t, store, domain.KindleSettings{
+		Language:    domain.KindleLanguageChinese,
 		KindleEmail: "reader@kindle.com",
 		Schedule:    &schedule,
 	}, setAt)
@@ -232,7 +233,7 @@ func TestKindleSendRepoClaimDueSendRecomputesNextSendAfterScheduleChange(t *test
 	requireNextSendAt(t, store, ptrTime(may2024(2, 9, 0)))
 
 	// The 09:30 occurrence of day 2 is older than the schedule change, so it must not fire retroactively.
-	changed := domain.KindleSettings{KindleEmail: "reader@kindle.com", Schedule: &domain.KindleSchedule{Hour: 9, Minute: 30, Timezone: "UTC"}}
+	changed := domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "reader@kindle.com", Schedule: &domain.KindleSchedule{Hour: 9, Minute: 30, Timezone: "UTC"}}
 	if err := store.Settings().UpdateKindle(ctx, changed, may2024(2, 10, 0)); err != nil {
 		t.Fatalf("update kindle: %v", err)
 	}
@@ -349,11 +350,13 @@ func TestKindleSendRepoClaimDueSendRaceWithSettingsUpdate(t *testing.T) {
 
 	now := may2024(1, 9, 30)
 	configureKindleDeliveryForTest(t, store, domain.KindleSettings{
+		Language:    domain.KindleLanguageChinese,
 		KindleEmail: "old@kindle.com",
 		Schedule:    &domain.KindleSchedule{Hour: 9, Minute: 0, Timezone: "UTC"},
 	}, now.Add(-2*time.Hour))
 
 	updated := domain.KindleSettings{
+		Language:    domain.KindleLanguageChinese,
 		KindleEmail: "new@kindle.com",
 		Schedule:    &domain.KindleSchedule{Hour: 15, Minute: 0, Timezone: "UTC"},
 	}
@@ -415,14 +418,14 @@ func TestKindleSendRepoClaimSnapshotsDelivery(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
-	configureKindleDeliveryForTest(t, store, domain.KindleSettings{KindleEmail: "old@kindle.com"}, time.Time{})
+	configureKindleDeliveryForTest(t, store, domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "old@kindle.com"}, time.Time{})
 
 	claimed, err := store.KindleSends().ClaimManualSend(ctx, domain.NewID(), may2024(1, 9, 30))
 	if err != nil || !claimed.Claimed {
 		t.Fatalf("ClaimManualSend() = (%+v, %v), want a claim", claimed, err)
 	}
 
-	if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{KindleEmail: "new@kindle.com"}, time.Time{}); err != nil {
+	if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "new@kindle.com"}, time.Time{}); err != nil {
 		t.Fatalf("update kindle: %v", err)
 	}
 

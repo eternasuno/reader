@@ -6,9 +6,8 @@ vi.mock('../src/state/browserTimezone', () => ({
 }));
 
 const harness = createAppHarness({ settleTimes: 1 });
-const { respond, settle, mountApp: mount } = harness;
+const { respond, settle, mountApp } = harness;
 harness.installHarnessLifecycle();
-const mountApp = mount;
 
 type FetchHandler = (url: string, init: RequestInit) => Response | undefined;
 
@@ -43,7 +42,7 @@ const cfg = {
   jinaKeyConfigured: true,
   browserEndpointConfigured: false,
   smtp: { senderEmail: 'a@b', host: 'h', port: 465, security: 'tls' },
-  kindle: { kindleEmail: 'k@b' },
+  kindle: { kindleEmail: 'k@b', language: 'zh' },
 };
 const SENDS = [
   {
@@ -229,11 +228,13 @@ it('settings kindle: toggling enables the selects and saves the timezone inside 
   choose(hour, '21');
   choose(minute, '45');
   choose(zone, 'Asia/Tokyo');
+  choose(labelled<HTMLSelectElement>(kindle, 'EPUB 主语言'), 'ja');
   click(btn(kindle, '保存 Kindle 设置'));
   await settle(4);
 
   expect(saved).toEqual({
     kindleEmail: 'k@b',
+    language: 'ja',
     schedule: { hour: 21, minute: 45, timezone: 'Asia/Tokyo' },
   });
 });
@@ -242,7 +243,7 @@ it('settings kindle: shows the saved schedule and keeps an unlisted saved timezo
   const { toggle, hour, minute, zone } = await mountKindle(undefined, {
     ...cfg,
     kindle: {
-      kindleEmail: 'k@b',
+      ...cfg.kindle,
       schedule: { hour: 6, minute: 5, timezone: 'Legacy/Zone' },
       nextSendAt: '2026-11-25T06:05:00Z',
     },
@@ -266,7 +267,6 @@ it('settings extraction: toggles browser radio by endpoint config and links to s
   click(radio(ext, 'jina'));
   click(btn(ext, '前往外部服务'));
   expect(confirm).toHaveBeenCalledTimes(1);
-  expect(radio(ext, 'jina').checked).toBe(true);
   expect(radio(ext, 'jina').checked).toBe(true);
   click(btn(ext, '前往外部服务'));
   expect(btn(sec(container, '外部服务'), '清除 SMTP 设置')).toBeDefined();

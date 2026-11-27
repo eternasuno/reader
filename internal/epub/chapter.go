@@ -11,8 +11,6 @@ import (
 	"reader/internal/domain"
 )
 
-const untitledArticle = "Untitled"
-
 var voidElements = map[string]struct{}{
 	"area":   {},
 	"base":   {},
@@ -127,8 +125,8 @@ func nodeAttr(node *html.Node, key string) string {
 	return ""
 }
 
-func renderChapter(ch chapterInput, rewrites map[string]string) ([]byte, bool) {
-	title := chapterTitle(ch.article)
+func renderChapter(ch chapterInput, rewrites map[string]string, locale bookLocale) ([]byte, bool) {
+	title := chapterTitle(ch.article, locale)
 
 	cw := chapterWriter{
 		nodeURLs: ch.nodeURLs,
@@ -136,13 +134,13 @@ func renderChapter(ch chapterInput, rewrites map[string]string) ([]byte, bool) {
 	}
 	cw.out.WriteString(xmlDeclaration)
 	cw.out.WriteString("<!DOCTYPE html>\n")
-	cw.out.WriteString(xhtmlOpenTag)
+	cw.out.WriteString(locale.htmlOpenTag())
 	cw.out.WriteString("<head>\n<title>")
 	writeEscapedText(builderXMLWriter{sb: &cw.out}, title)
 	cw.out.WriteString("</title>\n<link rel=\"stylesheet\" type=\"text/css\" href=\"../styles.css\"/>\n</head>\n<body>\n<h1>")
 	writeEscapedText(builderXMLWriter{sb: &cw.out}, title)
 	cw.out.WriteString("</h1>\n")
-	writeChapterMeta(&cw.out, ch.article)
+	writeChapterMeta(&cw.out, ch.article, locale)
 	cw.out.WriteString("<div class=\"article-content\">")
 	cw.writeChildren(ch.root)
 	cw.out.WriteString("</div>\n</body>\n</html>\n")
@@ -157,7 +155,7 @@ type chapterWriter struct {
 	hasRemoteResources bool
 }
 
-func writeChapterMeta(out *strings.Builder, article domain.KindleArticle) {
+func writeChapterMeta(out *strings.Builder, article domain.KindleArticle, locale bookLocale) {
 	parts := make([]string, 0, 3)
 
 	if sourceTitle := strings.TrimSpace(article.SourceTitle); sourceTitle != "" {
@@ -169,7 +167,7 @@ func writeChapterMeta(out *strings.Builder, article domain.KindleArticle) {
 	}
 
 	if articleURL := strings.TrimSpace(article.URL); articleURL != "" {
-		parts = append(parts, "<a href=\""+escapeXMLAttr(articleURL)+"\">原文链接</a>")
+		parts = append(parts, "<a href=\""+escapeXMLAttr(articleURL)+"\">"+locale.originalLink+"</a>")
 	}
 
 	if len(parts) == 0 {
@@ -179,12 +177,12 @@ func writeChapterMeta(out *strings.Builder, article domain.KindleArticle) {
 	out.WriteString("<p class=\"article-meta\">" + strings.Join(parts, " · ") + "</p>\n")
 }
 
-func chapterTitle(article domain.KindleArticle) string {
+func chapterTitle(article domain.KindleArticle, locale bookLocale) string {
 	if title := strings.TrimSpace(article.Title); title != "" {
 		return title
 	}
 
-	return untitledArticle
+	return locale.untitled
 }
 
 func (cw *chapterWriter) writeChildren(parent *html.Node) {

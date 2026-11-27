@@ -26,7 +26,7 @@ func TestPackerEnforcesPerBookImageBudget(t *testing.T) {
 		"https://example.com/3.png": {data: img3, mediaType: "image/png"},
 	})
 
-	books, err := NewBuilder(Config{
+	books, err := newTestBuilder(Config{
 		ImageFetcher:      fetcher,
 		MaxEPUBBytes:      512 * 1024,
 		MaxBookImageBytes: 50 * 1024,
@@ -80,7 +80,7 @@ func TestPackerSharesSingleImagePrepDeadlineAcrossArticles(t *testing.T) {
 	}
 
 	start := time.Now()
-	books, err := NewBuilder(Config{
+	books, err := newTestBuilder(Config{
 		ImageFetcher:     fetcher,
 		ImagePrepTimeout: prepTimeout,
 		MaxEPUBBytes:     64 * 1024,
@@ -142,7 +142,7 @@ func TestPrepareImagesSkipsOversizedWithoutConsumingBookBudget(t *testing.T) {
 		"https://example.com/3.png": {data: img3, mediaType: "image/png"},
 	})
 
-	books, err := NewBuilder(Config{
+	books, err := newTestBuilder(Config{
 		ImageFetcher:      fetcher,
 		ImageConcurrency:  1,
 		MaxEPUBBytes:      512 * 1024,
@@ -203,7 +203,7 @@ func TestPrepareImagesBookBudgetRejectionDoesNotPoisonLaterBook(t *testing.T) {
 		},
 	}
 
-	books, err := NewBuilder(Config{
+	books, err := newTestBuilder(Config{
 		ImageFetcher:      fetcher,
 		ImageConcurrency:  1,
 		MaxEPUBBytes:      96 * 1024,
