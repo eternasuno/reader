@@ -29,7 +29,7 @@ Every scope and open article has its own URL so reloads and browser history rest
 
 | Path | Shows |
 | --- | --- |
-| `/` | redirects to `/later` |
+| `/` | redirects to `/all` (the library home; unknown paths and invalid `?next` fall back there too) |
 | `/login` | password sign-in page (public) |
 | `/save` | quick-save landing route for `#url=...` (and legacy `?url=...`; requires session, strips draft into memory, and redirects back after login) |
 | `/later`, `/later/:pageId` | saved pages; with `:pageId`, that page open in the reader |
@@ -38,7 +38,7 @@ Every scope and open article has its own URL so reloads and browser history rest
 | `/folder/:folderId`, `/folder/:folderId/:itemId` | items of feeds in one folder |
 | `/settings` | settings page |
 
-- The unread filter (`只显示未读`) is shared across all scopes via query `?unread` (present = on, absent = off).
+- The unread filter (`只显示未读`) is on by default and shared across all scopes; turning it off is encoded as query `?all` (present = show all, absent = unread only).
 - Every route except `/login` requires a valid session. An unknown `feedId`, `folderId`, or article id in a URL renders the empty scope/reader rather than an error page.
 
 ## API & Client Conventions

@@ -30,7 +30,6 @@ export interface ArticleListPaneProps {
   onRequestAddFeed: () => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
   onRequestNewFolder: (feed: Feed) => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
 }
 
 function ArticleListContent(props: ArticleListPaneProps): JSX.Element {
@@ -103,7 +102,6 @@ export function ArticleListPane(props: ArticleListPaneProps): JSX.Element {
         onRequestAddLink={props.onRequestAddLink}
         onMoveFeed={props.onMoveFeed}
         onRequestNewFolder={props.onRequestNewFolder}
-        onRequestFeedOptions={props.onRequestFeedOptions}
         onDeleteFeed={removeFeed}
       />
       <ArticleListContent {...props} />

@@ -1,8 +1,9 @@
 import type { JSX } from '@solidjs/web';
-import { createUniqueId, For, Show } from 'solid-js';
+import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js';
 import type { KindleSendRecord } from '../api';
 import { t } from '../i18n';
 import {
+  browserTimezone,
   canSendToKindle,
   isSaving,
   isSmtpConfigured,
@@ -23,8 +24,9 @@ import {
   SEND_STATUS_KEYS,
   type SettingsDraftProps,
   sendResultText,
+  type TimezoneOption,
   TRIGGER_KEYS,
-  timezoneOptions,
+  timezoneGroups,
 } from './settingsHelpers';
 
 function SmtpRequiredBanner(props: {
@@ -69,8 +71,70 @@ function ScheduleToggleRow(props: SettingsDraftProps): JSX.Element {
   );
 }
 
+const ZoneOptions = (props: {
+  label: string;
+  options: ReadonlyArray<TimezoneOption>;
+}): JSX.Element => (
+  <Show when={props.options.length > 0}>
+    <optgroup label={props.label}>
+      <For each={props.options}>
+        {(zone) => <option value={zone.value}>{zone.label}</option>}
+      </For>
+    </optgroup>
+  </Show>
+);
+
+/**
+ * `SET-KINDLE-1`: native select with the device and selected zones pinned, the curated common
+ * zones, and every other zone only after `显示全部时区`.
+ */
+function TimezoneSelect(
+  props: SettingsDraftProps & { disabled: boolean }
+): JSX.Element {
+  const [showAll, setShowAll] = createSignal(false);
+  const device = browserTimezone();
+  const groups = createMemo(() =>
+    timezoneGroups(props.drafts.timezone, device, showAll())
+  );
+
+  return (
+    <div class="col-span-2 flex min-w-0 flex-col gap-1 sm:col-span-1">
+      <Select
+        label={t('kindle.timezoneLabel')}
+        value={props.drafts.timezone}
+        disabled={props.disabled}
+        onChange={(event) => {
+          const timezone = event.currentTarget.value;
+          props.setDrafts((draft) => ({ ...draft, timezone }));
+        }}
+      >
+        <ZoneOptions
+          label={t('kindle.timezoneGroupCurrent')}
+          options={groups().current}
+        />
+        <ZoneOptions
+          label={t('kindle.timezoneGroupCommon')}
+          options={groups().common}
+        />
+        <ZoneOptions
+          label={t('kindle.timezoneGroupOthers')}
+          options={groups().others}
+        />
+      </Select>
+      <button
+        type="button"
+        class="link link-hover self-start text-xs text-base-content/60 disabled:pointer-events-none disabled:opacity-50"
+        disabled={props.disabled}
+        aria-pressed={showAll() ? 'true' : 'false'}
+        onClick={() => setShowAll((value) => !value)}
+      >
+        {t(showAll() ? 'kindle.timezoneShowCommon' : 'kindle.timezoneShowAll')}
+      </button>
+    </div>
+  );
+}
+
 function ScheduleTimeRow(props: SettingsDraftProps): JSX.Element {
-  const zones = timezoneOptions();
   const disabled = (): boolean => isSaving() || !props.drafts.scheduleEnabled;
 
   return (
@@ -102,27 +166,11 @@ function ScheduleTimeRow(props: SettingsDraftProps): JSX.Element {
             {(minute) => <option value={minute}>{padTwoDigits(minute)}</option>}
           </For>
         </Select>
-        <Select
-          containerClass="col-span-2 sm:col-span-1"
-          label={t('kindle.timezoneLabel')}
-          value={props.drafts.timezone}
+        <TimezoneSelect
+          drafts={props.drafts}
+          setDrafts={props.setDrafts}
           disabled={disabled()}
-          onChange={(event) => {
-            const timezone = event.currentTarget.value;
-            props.setDrafts((draft) => ({ ...draft, timezone }));
-          }}
-        >
-          <Show
-            when={!zones.some((zone) => zone.value === props.drafts.timezone)}
-          >
-            <option value={props.drafts.timezone}>
-              {props.drafts.timezone}
-            </option>
-          </Show>
-          <For each={zones}>
-            {(zone) => <option value={zone.value}>{zone.label}</option>}
-          </For>
-        </Select>
+        />
       </div>
     </SettingsRow>
   );

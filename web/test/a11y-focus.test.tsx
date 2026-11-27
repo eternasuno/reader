@@ -157,11 +157,7 @@ describe('ReaderAppearanceMenu keyboard accessibility', () => {
     const restored = menuButtons(container);
     expect(document.activeElement).toBe(restored[1]);
     expect(Array.from(restored).at(-1)?.textContent).toBe('恢复默认');
-    expect(
-      container.querySelector<HTMLButtonElement>(
-        'button[aria-label="正文宽度 增大"]'
-      )?.disabled
-    ).toBe(true);
+    expect(restored[1]?.textContent).toBe('字体衬线');
   });
 });
 

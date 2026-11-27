@@ -1,4 +1,4 @@
-import { createSignal, flush } from 'solid-js';
+import { flush } from 'solid-js';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { SidebarBrand } from '../src/components/SidebarBrand';
 import { SidebarFeedTree } from '../src/components/SidebarFeedTree';
@@ -67,21 +67,11 @@ const seedTree = async (): Promise<void> => {
   flush();
 };
 
-it('keeps feed row menu open when toggling order or unread filter', async () => {
+it('keeps feed row menu open when toggling order and omits the unread filter', async () => {
   await seedTree();
   fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
-  const [unreadOnly, setUnreadOnly] = createSignal(false);
-  const onNavigate = vi.fn((url: string) => {
-    setUnreadOnly(url.includes('unread=true') || url.includes('?unread'));
-  });
-  const props: SidebarProps = {
-    ...sidebarProps({ onNavigate }),
-    get unreadOnly() {
-      return unreadOnly();
-    },
-  };
-
+  const props = sidebarProps();
   const container = mount(() => <SidebarFeedTree state={props} />);
   const moreButtons = Array.from(
     container.querySelectorAll<HTMLButtonElement>(
@@ -99,10 +89,9 @@ it('keeps feed row menu open when toggling order or unread filter', async () => 
   flush();
   expect(container.querySelector('[role="menu"]')).not.toBeNull();
 
-  clickButton(container, '只显示未读');
-  flush();
-  expect(onNavigate).toHaveBeenCalledWith('/all?unread');
-  expect(container.querySelector('[role="menu"]')).not.toBeNull();
+  expect(container.querySelector('[role="menu"]')?.textContent).not.toContain(
+    '只显示未读'
+  );
 
   moreButtons[2]?.click();
   flush();
@@ -138,6 +127,20 @@ it('exposes folder collapse label with aria-controls, failure title, and OPML me
   flush();
   expect(container.textContent).toContain('导入…');
   expect(container.textContent).toContain('导出…');
+});
+
+it('opens the shared view options panel from the app menu', () => {
+  const container = mount(() => <SidebarBrand onNavigate={vi.fn()} />);
+  clickAria(container, '应用菜单');
+  expect(container.textContent).not.toContain('主题');
+  clickButton(container, '视图选项');
+  for (const row of ['主题', '字体', '字体大小', '行高', '正文宽度']) {
+    expect(container.textContent).toContain(row);
+  }
+  expect(container.textContent).not.toContain('更多选项');
+
+  clickButton(container, '视图选项');
+  expect(container.textContent).toContain('退出登录');
 });
 
 it('renders a single role="alert" on sign-out failure', async () => {

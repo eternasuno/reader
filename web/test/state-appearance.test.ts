@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FONT_FAMILIES } from '../src/components/articleTypography';
 
 type StateModule = typeof import('../src/state');
+type ReaderAppearance = import('../src/state').ReaderAppearance;
 
 let state: StateModule;
 
@@ -14,10 +15,10 @@ beforeEach(async () => {
 describe('readerAppearance state', () => {
   it('updates appearance, sets isDefaultAppearance false, and persists JSON', () => {
     const next = {
-      fontSize: 18 as const,
+      fontSize: 'lg' as const,
       fontFamily: 'serif' as const,
-      lineWidth: 5 as const,
-      lineHeight: 2.0 as const,
+      lineWidth: 'medium' as const,
+      lineHeight: 'relaxed' as const,
     };
 
     state.updateReaderAppearance(next);
@@ -30,7 +31,7 @@ describe('readerAppearance state', () => {
   });
 
   it('restores DEFAULT_APPEARANCE on resetReaderAppearance', () => {
-    state.updateReaderAppearance({ fontSize: 20, fontFamily: 'serif' });
+    state.updateReaderAppearance({ fontSize: 'xl', fontFamily: 'serif' });
     expect(state.isDefaultAppearance()).toBe(false);
 
     state.resetReaderAppearance();
@@ -41,63 +42,33 @@ describe('readerAppearance state', () => {
   });
 });
 
-describe('readerAppearance steppers', () => {
-  it('steps fontSize, lineHeight, and lineWidth within bounds', () => {
-    state.stepFontSize(1);
-    expect(state.readerAppearance().fontSize).toBe(18);
-    state.stepFontSize(1);
-    state.stepFontSize(1);
-    state.stepFontSize(1);
-    expect(state.readerAppearance().fontSize).toBe(22);
-    state.stepFontSize(-1);
-    expect(state.readerAppearance().fontSize).toBe(20);
-
-    state.stepLineHeight(1);
-    state.stepLineHeight(1);
-    expect(state.readerAppearance().lineHeight).toBe(2.0);
-    state.stepLineHeight(-1);
-    state.stepLineHeight(-1);
-    state.stepLineHeight(-1);
-    state.stepLineHeight(-1);
-    expect(state.readerAppearance().lineHeight).toBe(1.4);
-
-    state.stepLineWidth(1);
-    expect(state.readerAppearance().lineWidth).toBe(6);
-    state.stepLineWidth(-1);
-    expect(state.readerAppearance().lineWidth).toBe(5);
-  });
-});
-
-describe('readerAppearance legacy migration', () => {
-  it('normalizes legacy string values on update and reload', async () => {
+describe('readerAppearance tiers', () => {
+  it('keeps the previous tier when a stored or patched value is unknown', async () => {
+    state.updateReaderAppearance({ fontSize: 'xl' });
     state.updateReaderAppearance({
-      fontSize: 'lg',
-      lineHeight: 'relaxed',
-      lineWidth: 'wide',
-    });
-    expect(state.readerAppearance()).toEqual({
       fontSize: 18,
-      fontFamily: 'sans',
-      lineWidth: 6,
-      lineHeight: 2.0,
+      lineHeight: 2,
+    } as unknown as Partial<ReaderAppearance>);
+    expect(state.readerAppearance()).toEqual({
+      ...state.DEFAULT_APPEARANCE,
+      fontSize: 'xl',
     });
 
     localStorage.setItem(
       state.APPEARANCE_STORAGE_KEY,
       JSON.stringify({
-        fontSize: 'lg',
+        fontSize: 22,
         fontFamily: 'serif',
-        lineWidth: 'wide',
-        lineHeight: 'relaxed',
+        lineWidth: 'narrow',
+        lineHeight: 'loose',
       })
     );
     vi.resetModules();
     const reloaded = await import('../src/state');
     expect(reloaded.readerAppearance()).toEqual({
-      fontSize: 18,
+      ...reloaded.DEFAULT_APPEARANCE,
       fontFamily: 'serif',
-      lineWidth: 6,
-      lineHeight: 2.0,
+      lineWidth: 'narrow',
     });
   });
 });
@@ -117,9 +88,9 @@ describe('safe storage fallback', () => {
       expect(isolated.readerAppearance()).toEqual(isolated.DEFAULT_APPEARANCE);
       expect(isolated.readerTheme()).toBe('auto');
       expect(() =>
-        isolated.updateReaderAppearance({ fontSize: 20 })
+        isolated.updateReaderAppearance({ fontSize: 'xl' })
       ).not.toThrow();
-      expect(isolated.readerAppearance().fontSize).toBe(20);
+      expect(isolated.readerAppearance().fontSize).toBe('xl');
       expect(() => isolated.setReaderTheme('dark')).not.toThrow();
       expect(isolated.readerTheme()).toBe('dark');
       expect(() => isolated.resetReaderAppearance()).not.toThrow();

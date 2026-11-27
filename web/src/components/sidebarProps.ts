@@ -9,7 +9,6 @@ export interface SidebarProps {
   onRequestNewFolder: (feed: Feed) => void;
   onRequestRenameFolder: (folder: Folder) => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
-  onRequestFeedOptions?: (feed: Feed) => void;
   onRequestImportOpml: () => void;
   /** `SP-ADD-1`: opens the add-link dialog from the read-later row menu. */
   onRequestAddLink: () => void;

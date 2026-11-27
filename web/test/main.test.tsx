@@ -58,9 +58,9 @@ describe('app entry', () => {
     root.remove();
   });
 
-  it('redirects the root route and unknown routes to /later', async () => {
-    expect((await mountApp('/')).history.get()).toBe('/later');
-    expect((await mountApp('/does-not-exist')).history.get()).toBe('/later');
+  it('redirects the root route and unknown routes to /all', async () => {
+    expect((await mountApp('/')).history.get()).toBe('/all');
+    expect((await mountApp('/does-not-exist')).history.get()).toBe('/all');
   });
 
   it('shows only a spinner on /login until the session check resolves', async () => {
@@ -125,12 +125,12 @@ describe('session guard redirect', () => {
         : undefined
     );
 
-    const { history } = await mountApp('/all?unread');
+    const { history } = await mountApp('/all?all');
 
     await harness.modules.state.toggleArticleRead('item-1', true);
     await settle(4);
 
-    expect(history.get()).toBe('/login?next=%2Fall%3Funread');
+    expect(history.get()).toBe('/login?next=%2Fall%3Fall');
   });
 });
 

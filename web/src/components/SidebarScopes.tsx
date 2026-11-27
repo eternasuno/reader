@@ -3,7 +3,7 @@ import { t } from '../i18n';
 import { allFeedsUnreadCount, isSameScope, savedUnreadCount } from '../state';
 import { MenuDivider, MenuItem } from '../ui';
 import { ScopeMenuItems, ScopeRow } from './ScopeRow';
-import { selectScope, toggleUnread } from './sidebarActions';
+import { selectScope } from './sidebarActions';
 import type { SidebarProps } from './sidebarProps';
 
 /** `LIB-SCOPE-1`: the read-later and all-feeds scopes with their row menus. */
@@ -26,11 +26,7 @@ function LaterScopeRow(props: { state: SidebarProps }): JSX.Element {
       count={savedUnreadCount()}
       onSelect={() => selectScope(props.state, { kind: 'later' })}
     >
-      <ScopeMenuItems
-        scope={{ kind: 'later' }}
-        unreadOnly={props.state.unreadOnly}
-        onToggleUnread={() => toggleUnread(props.state)}
-      />
+      <ScopeMenuItems scope={{ kind: 'later' }} />
       <MenuDivider />
       <MenuItem opensDialog icon="plus" onSelect={props.state.onRequestAddLink}>
         {t('later.addLinkTitle')}
@@ -49,11 +45,7 @@ function AllScopeRow(props: { state: SidebarProps }): JSX.Element {
       count={allFeedsUnreadCount()}
       onSelect={() => selectScope(props.state, { kind: 'all' })}
     >
-      <ScopeMenuItems
-        scope={{ kind: 'all' }}
-        unreadOnly={props.state.unreadOnly}
-        onToggleUnread={() => toggleUnread(props.state)}
-      />
+      <ScopeMenuItems scope={{ kind: 'all' }} />
     </ScopeRow>
   );
 }

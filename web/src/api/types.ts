@@ -1,4 +1,5 @@
-export type ReaderMode = 'default' | 'extracted' | 'embedded';
+/** A feed's stored starting view; the embedded webpage view is only ever temporary. */
+export type ReaderMode = 'default' | 'extracted';
 export type SortOrder = 'newest' | 'oldest';
 export type ExtractorProvider = 'direct' | 'jina' | 'browser';
 export type SMTPSecurity = 'tls' | 'starttls';

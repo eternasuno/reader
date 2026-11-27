@@ -1,4 +1,8 @@
-import type { ReaderFontFamily } from '../state';
+import type {
+  ReaderFontFamily,
+  ReaderFontSize,
+  ReaderLineHeight,
+} from '../state';
 
 /**
  * `RD-BODY-1`: reader typography, explicit sans and serif stacks (no bare
@@ -15,4 +19,18 @@ const READER_SERIF_STACK =
 export const FONT_FAMILIES: Record<ReaderFontFamily, string> = {
   sans: READER_FONT_STACK,
   serif: READER_SERIF_STACK,
+};
+
+/** Font size tiers in `rem`, so the coarse-pointer root scale enlarges them too. */
+export const FONT_SIZES: Record<ReaderFontSize, string> = {
+  sm: '0.875rem',
+  md: '1rem',
+  lg: '1.125rem',
+  xl: '1.25rem',
+};
+
+export const LINE_HEIGHTS: Record<ReaderLineHeight, string> = {
+  compact: '1.6',
+  medium: '1.8',
+  relaxed: '2',
 };

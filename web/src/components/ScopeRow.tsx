@@ -7,14 +7,7 @@ import {
   markScopeAllRead,
   triggerKindleSend,
 } from '../state';
-import {
-  Icon,
-  type IconName,
-  Menu,
-  MenuCheckbox,
-  MenuDivider,
-  MenuItem,
-} from '../ui';
+import { Icon, type IconName, Menu, MenuDivider, MenuItem } from '../ui';
 import { ListOrderCheckbox } from './ListOrderCheckbox';
 import { SidebarRowEnd } from './SidebarRowEnd';
 import {
@@ -59,11 +52,12 @@ export function ScopeRow(props: ScopeRowProps): JSX.Element {
 export interface ScopeMenuItemsProps {
   scope: LibraryScope;
   feed?: Feed | null;
-  unreadOnly: boolean;
-  onToggleUnread: () => void;
 }
 
-/** Shared mark-all-read, Kindle send, unread filter, and sort order menu items. */
+/**
+ * Shared mark-all-read, Kindle send, and sort order menu items. The unread filter lives only
+ * on the list heading toggle.
+ */
 export function ScopeMenuItems(props: ScopeMenuItemsProps): JSX.Element {
   return (
     <>
@@ -77,9 +71,6 @@ export function ScopeMenuItems(props: ScopeMenuItemsProps): JSX.Element {
         {t('reader.sendAsEbook')}
       </MenuItem>
       <MenuDivider />
-      <MenuCheckbox checked={props.unreadOnly} onSelect={props.onToggleUnread}>
-        {t('library.unreadOnly')}
-      </MenuCheckbox>
       <ListOrderCheckbox feed={props.feed ?? null} />
     </>
   );

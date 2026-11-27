@@ -18,6 +18,7 @@ import {
 } from './articleListScope';
 import { FeedFailureMenu } from './FeedFailureMenu';
 import { FeedMoveSubpanel } from './FeedMoveSubpanel';
+import { FeedReaderModeSubpanel } from './FeedReaderModeSubpanel';
 import { ScopeMenuItems } from './ScopeRow';
 import { MarkingIndicator } from './SidebarRowEnd';
 
@@ -33,7 +34,6 @@ export interface ArticleListHeaderProps {
   onRequestAddLink: () => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
   onRequestNewFolder: (feed: Feed) => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
   onDeleteFeed: (feed: Feed) => void;
 }
 
@@ -144,12 +144,9 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
       </Button>
       <ArticleHeaderMenu
         scope={props.scope}
-        unreadOnly={props.unreadOnly}
-        onToggleUnread={props.onToggleUnread}
         onRequestAddLink={props.onRequestAddLink}
         onMoveFeed={props.onMoveFeed}
         onRequestNewFolder={props.onRequestNewFolder}
-        onRequestFeedOptions={props.onRequestFeedOptions}
         onDeleteFeed={props.onDeleteFeed}
       />
     </header>
@@ -158,17 +155,14 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
 
 interface ArticleHeaderMenuProps {
   scope: LibraryScope;
-  unreadOnly: boolean;
-  onToggleUnread: () => void;
   onRequestAddLink: () => void;
   onMoveFeed: (feed: Feed, folderId: string | null) => Promise<void>;
   onRequestNewFolder: (feed: Feed) => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
   onDeleteFeed: (feed: Feed) => void;
 }
 
 function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
-  const [panel, setPanel] = createSignal<'main' | 'move'>('main');
+  const [panel, setPanel] = createSignal<'main' | 'move' | 'mode'>('main');
   const feed = () => activeFeed(props.scope);
 
   return (
@@ -182,15 +176,25 @@ function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
       <Show
         when={panel() === 'move' && feed()}
         fallback={
-          <ArticleHeaderMainItems
-            scope={props.scope}
-            unreadOnly={props.unreadOnly}
-            onToggleUnread={props.onToggleUnread}
-            onRequestAddLink={props.onRequestAddLink}
-            onOpenMove={() => setPanel('move')}
-            onRequestFeedOptions={props.onRequestFeedOptions}
-            onDeleteFeed={props.onDeleteFeed}
-          />
+          <Show
+            when={panel() === 'mode' && feed()}
+            fallback={
+              <ArticleHeaderMainItems
+                scope={props.scope}
+                onRequestAddLink={props.onRequestAddLink}
+                onOpenMove={() => setPanel('move')}
+                onOpenMode={() => setPanel('mode')}
+                onDeleteFeed={props.onDeleteFeed}
+              />
+            }
+          >
+            {(target) => (
+              <FeedReaderModeSubpanel
+                feed={target()}
+                onBack={() => setPanel('main')}
+              />
+            )}
+          </Show>
         }
       >
         {(target) => (
@@ -208,11 +212,9 @@ function ArticleHeaderMenu(props: ArticleHeaderMenuProps): JSX.Element {
 
 interface ArticleHeaderMainItemsProps {
   scope: LibraryScope;
-  unreadOnly: boolean;
-  onToggleUnread: () => void;
   onRequestAddLink: () => void;
   onOpenMove: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onOpenMode: () => void;
   onDeleteFeed: (feed: Feed) => void;
 }
 
@@ -221,12 +223,7 @@ function ArticleHeaderMainItems(
 ): JSX.Element {
   return (
     <>
-      <ScopeMenuItems
-        scope={props.scope}
-        feed={activeFeed(props.scope)}
-        unreadOnly={props.unreadOnly}
-        onToggleUnread={props.onToggleUnread}
-      />
+      <ScopeMenuItems scope={props.scope} feed={activeFeed(props.scope)} />
       <Show when={props.scope.kind === 'later'}>
         <MenuDivider />
         <MenuItem opensDialog icon="plus" onSelect={props.onRequestAddLink}>
@@ -238,7 +235,7 @@ function ArticleHeaderMainItems(
           <FeedMenuOptions
             feed={feed()}
             onOpenMove={props.onOpenMove}
-            onRequestFeedOptions={props.onRequestFeedOptions}
+            onOpenMode={props.onOpenMode}
             onDeleteFeed={props.onDeleteFeed}
           />
         )}
@@ -250,7 +247,7 @@ function ArticleHeaderMainItems(
 interface FeedMenuOptionsProps {
   feed: Feed;
   onOpenMove: () => void;
-  onRequestFeedOptions?: (feed: Feed) => void;
+  onOpenMode: () => void;
   onDeleteFeed: (feed: Feed) => void;
 }
 
@@ -261,11 +258,8 @@ function FeedMenuOptions(props: FeedMenuOptionsProps): JSX.Element {
       <MenuItem submenu onSelect={props.onOpenMove}>
         {t('feeds.moveTo')}
       </MenuItem>
-      <MenuItem
-        opensDialog
-        onSelect={() => props.onRequestFeedOptions?.(props.feed)}
-      >
-        {t('feeds.feedOptions')}
+      <MenuItem submenu onSelect={props.onOpenMode}>
+        {t('feeds.defaultDisplay')}
       </MenuItem>
       <MenuItem icon="trash" onSelect={() => props.onDeleteFeed(props.feed)}>
         {t('feeds.deleteFeedMenu')}

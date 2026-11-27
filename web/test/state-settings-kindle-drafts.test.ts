@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings } from '../src/api';
 import type { SettingsDrafts } from '../src/state';
 import {
@@ -7,6 +7,10 @@ import {
 } from './support/state-fixture';
 
 type StoreSetter = import('solid-js').StoreSetter<SettingsDrafts>;
+
+vi.mock('../src/state/browserTimezone', () => ({
+  browserTimezone: () => 'Europe/Paris',
+}));
 
 const ctx = createStateTestContext();
 let drafts: SettingsDrafts;
@@ -50,21 +54,21 @@ const edit = (patch: Partial<SettingsDrafts>): void => {
 const kindleDirty = (): boolean => ctx.state.isSectionDirty('kindle', drafts);
 
 describe('kindle drafts from settings', () => {
-  it('defaults to UTC with scheduled sending off at 08:00 when Kindle is not configured', async () => {
+  it('defaults to the device time zone with scheduled sending off at 08:00 when Kindle is not configured', async () => {
     await load(makeKindleSettings({ kindle: undefined }));
 
     expect(drafts.kindleEmail).toBe('');
-    expect(drafts.timezone).toBe('UTC');
+    expect(drafts.timezone).toBe('Europe/Paris');
     expect(drafts.scheduleEnabled).toBe(false);
     expect(drafts.scheduleHour).toBe(8);
     expect(drafts.scheduleMinute).toBe(0);
     expect(kindleDirty()).toBe(false);
   });
 
-  it('loads a Kindle address without a schedule as disabled with the default time and UTC', async () => {
+  it('loads a Kindle address without a schedule as disabled with the default time and device time zone', async () => {
     await loadWithoutSchedule();
 
-    expect(drafts.timezone).toBe('UTC');
+    expect(drafts.timezone).toBe('Europe/Paris');
     expect(drafts.scheduleEnabled).toBe(false);
     expect(drafts.scheduleHour).toBe(8);
     expect(drafts.scheduleMinute).toBe(0);

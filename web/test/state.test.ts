@@ -33,7 +33,7 @@ describe('scope comparison', () => {
 });
 
 describe('library URLs', () => {
-  it('builds library URLs with an optional article and ?unread flag', () => {
+  it('builds library URLs with an optional article and ?all flag', () => {
     expect(state.buildLibraryUrl({ kind: 'later' })).toBe('/later');
     expect(state.buildLibraryUrl({ kind: 'folder', folderId: 'x' })).toBe(
       '/folder/x'
@@ -41,24 +41,24 @@ describe('library URLs', () => {
     expect(state.buildLibraryUrl({ kind: 'later' }, { articleId: 'p1' })).toBe(
       '/later/p1'
     );
-    expect(state.buildLibraryUrl({ kind: 'all' }, { unreadOnly: true })).toBe(
-      '/all?unread'
+    expect(state.buildLibraryUrl({ kind: 'all' }, { unreadOnly: false })).toBe(
+      '/all?all'
     );
     expect(
       state.buildLibraryUrl(
         { kind: 'all' },
-        { articleId: 'i1', unreadOnly: true }
+        { articleId: 'i1', unreadOnly: false }
       )
-    ).toBe('/all/i1?unread');
+    ).toBe('/all/i1?all');
     expect(
       state.buildLibraryUrl(
         { kind: 'feed', feedId: 'f 1' },
         { articleId: 'i2' }
       )
     ).toBe('/feed/f%201/i2');
-    expect(
-      state.buildLibraryUrl({ kind: 'later' }, { unreadOnly: false })
-    ).toBe('/later');
+    expect(state.buildLibraryUrl({ kind: 'later' }, { unreadOnly: true })).toBe(
+      '/later'
+    );
     expect(state.buildLibraryUrl({ kind: 'later' }, { articleId: '' })).toBe(
       '/later'
     );

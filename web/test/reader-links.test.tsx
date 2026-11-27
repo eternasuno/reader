@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Feed } from '../src/api';
-import { FeedOptionsDialog } from '../src/components/FeedOptionsDialog';
 import { openInNewTab } from '../src/components/openInNewTab';
 import { ReaderArticleHeader } from '../src/components/ReaderArticle';
 import * as state from '../src/state';
@@ -9,7 +7,6 @@ import { mount, setupInteractions } from './support/list-helpers';
 import { makeItem } from './support/state-fixture';
 
 const SCOPED_URL = 'http://[fe80::1%25eth0]/post';
-const SCOPED_FEED_URL = 'http://[fe80::1%25eth0]/feed.xml';
 
 setupInteractions();
 
@@ -63,28 +60,6 @@ describe('ReaderArticleHeader link fallback', () => {
     expect(links[0]?.textContent).toBe('Normal Post');
     expect(links[1]?.getAttribute('href')).toBe('https://example.com/post');
     expect(links[1]?.textContent).toBe('example.com');
-  });
-});
-
-describe('FeedOptionsDialog link fallback', () => {
-  it('renders a span instead of an anchor for scoped IPv6 feed URLs', () => {
-    const feed: Feed = {
-      id: 'f1',
-      url: SCOPED_FEED_URL,
-      title: 'Scoped Feed',
-      folderId: null,
-      failureCount: 0,
-      readerMode: 'default',
-      order: 'newest',
-    };
-
-    mount(() => (
-      <FeedOptionsDialog open={true} feed={feed} onClose={vi.fn()} />
-    ));
-
-    const dialog = document.querySelector('[role="dialog"]');
-    expect(dialog?.querySelectorAll('a')).toHaveLength(0);
-    expect(dialog?.textContent).toContain(SCOPED_FEED_URL);
   });
 });
 

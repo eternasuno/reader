@@ -1,6 +1,5 @@
 import type { JSX } from '@solidjs/web';
 import { Show } from 'solid-js';
-import type { Feed } from '../api';
 import { t } from '../i18n';
 import {
   adjacentArticleIds,
@@ -19,7 +18,6 @@ export interface ReaderToolbarProps {
   scrolled?: boolean;
   onSaveToLater: () => void;
   onDelete: () => void;
-  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 const readLabel = (article: LibraryArticle): string =>
@@ -42,12 +40,7 @@ export function ReaderToolbar(props: ReaderToolbarProps): JSX.Element {
         article={props.article}
         onSave={props.onSaveToLater}
       />
-      <ReaderMoreMenu
-        article={props.article}
-        nav={props.nav}
-        onDelete={props.onDelete}
-        onRequestFeedOptions={props.onRequestFeedOptions}
-      />
+      <ReaderMoreMenu article={props.article} onDelete={props.onDelete} />
     </div>
   );
 }

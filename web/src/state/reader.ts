@@ -24,7 +24,10 @@ import * as sidebar from './sidebar';
 const [openArticleId, setOpenArticleId] = createSignal<string | null>(null);
 const [articleMissing, setArticleMissing] = createSignal(false);
 const [loadingArticle, setLoadingArticle] = createSignal(false);
-const [displayMode, setDisplayMode] = createSignal<ReaderMode>('default');
+/** The current reader view: a stored starting mode or the temporary embedded webpage. */
+export type DisplayMode = ReaderMode | 'embedded';
+
+const [displayMode, setDisplayMode] = createSignal<DisplayMode>('default');
 const [extracting, setExtracting] = createSignal(false);
 
 export { saveFeedItemToLater } from './reader-save';

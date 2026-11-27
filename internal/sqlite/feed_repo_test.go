@@ -154,7 +154,7 @@ func TestFeedRepoMutations(t *testing.T) {
 	folder := createFolder(t, store, "News")
 	feed := createFeed(t, store, "Example", nil)
 
-	if err := store.Feeds().UpdateReaderMode(ctx, feed.ID, domain.ReaderModeEmbedded); err != nil {
+	if err := store.Feeds().UpdateReaderMode(ctx, feed.ID, domain.ReaderModeExtracted); err != nil {
 		t.Fatalf("update reader mode: %v", err)
 	}
 
@@ -171,7 +171,7 @@ func TestFeedRepoMutations(t *testing.T) {
 		t.Fatalf("get updated feed: %v", err)
 	}
 
-	if updated.ReaderMode != domain.ReaderModeEmbedded || updated.Order != domain.SortOrderOldest {
+	if updated.ReaderMode != domain.ReaderModeExtracted || updated.Order != domain.SortOrderOldest {
 		t.Fatalf("updated feed = %+v", updated)
 	}
 

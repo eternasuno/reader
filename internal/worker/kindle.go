@@ -372,10 +372,10 @@ func (s *KindleSender) feedItemArticle(ctx context.Context, feed *domain.Feed, i
 	}, true
 }
 
-// feedItemBody resolves the article HTML per KD-TEXT-1: extracted modes prefer
+// feedItemBody resolves the article HTML per KD-TEXT-1: the extracted mode prefers
 // cached or freshly extracted content, then fall back to the default content.
 func (s *KindleSender) feedItemBody(ctx context.Context, feed domain.Feed, item domain.FeedItem) string {
-	if feed.ReaderMode == domain.ReaderModeExtracted || feed.ReaderMode == domain.ReaderModeEmbedded {
+	if feed.ReaderMode == domain.ReaderModeExtracted {
 		if extracted := s.extractedFeedItemBody(ctx, item); extracted != "" {
 			return extracted
 		}

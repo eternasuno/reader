@@ -14,6 +14,7 @@ import {
   clearSecretDrafts,
   draftsFromSettings,
   errorText,
+  HOME_PATH,
   hasAnyUnsavedChanges,
   isSaving,
   isSectionDirty,
@@ -221,7 +222,7 @@ export function SettingsPage(): JSX.Element {
 
   return (
     <div class="flex min-h-dvh flex-col bg-base-100 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-      <SettingsHeader onLeave={() => navigate('/later')} />
+      <SettingsHeader onLeave={() => navigate(HOME_PATH)} />
       <div class="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-5 px-3 py-4 md:flex-row md:gap-10 md:p-6">
         <SettingsNav
           active={activeSection()}

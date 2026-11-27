@@ -3,13 +3,11 @@ import { Show } from 'solid-js';
 import {
   AddLinkDialog,
   ArticleListPane,
-  FeedOptionsDialog,
   FolderNameDialog,
   ReaderPane,
   Sidebar,
   SubscribeFeedDialog,
 } from '../components';
-import { deleteFeed } from '../components/articleListActions';
 import { t } from '../i18n';
 import {
   readerFullscreen,
@@ -111,7 +109,6 @@ function SidebarPanel(props: LibraryViewProps): JSX.Element {
         onRequestNewFolder={props.ctl.requestNewFolder}
         onRequestRenameFolder={props.ctl.requestRenameFolder}
         onMoveFeed={props.ctl.handleMoveFeed}
-        onRequestFeedOptions={props.ctl.requestFeedOptions}
         onRequestImportOpml={props.ctl.requestImportOpml}
         onRequestAddLink={props.ctl.requestAddLink}
       />
@@ -167,7 +164,6 @@ function ListPanel(props: LibraryViewProps): JSX.Element {
         onRequestAddFeed={props.ctl.requestAddFeed}
         onMoveFeed={props.ctl.handleMoveFeed}
         onRequestNewFolder={props.ctl.requestNewFolder}
-        onRequestFeedOptions={props.ctl.requestFeedOptions}
       />
     </PanelFrame>
   );
@@ -187,7 +183,6 @@ function ReaderPanel(props: LibraryViewProps): JSX.Element {
         scope={props.ctl.scope()}
         unreadOnly={props.ctl.unreadOnly()}
         onNavigate={props.ctl.onNavigate}
-        onRequestFeedOptions={props.ctl.requestFeedOptions}
       />
     </PanelFrame>
   );
@@ -216,42 +211,20 @@ function AddDialogs(props: LibraryViewProps): JSX.Element {
 
 function ManageDialogs(props: LibraryViewProps): JSX.Element {
   return (
-    <>
-      <Show when={props.ctl.folderDialog()} keyed>
-        {(dialog) => (
-          <FolderNameDialog
-            open={true}
-            mode={dialog.mode}
-            initialName={dialog.folder?.name}
-            folderId={dialog.folder?.id}
-            onClose={props.ctl.closeFolderDialog}
-            onSaved={(folder) =>
-              props.ctl.handleFolderSaved(folder, dialog.moveFeed)
-            }
-          />
-        )}
-      </Show>
-      <FeedOptionsDialog
-        open={props.ctl.optionsFeed() !== null}
-        feed={props.ctl.optionsFeed()}
-        onClose={props.ctl.closeFeedOptions}
-        onUnsubscribe={async (feed) => {
-          await deleteFeed(
-            {
-              unreadOnly: props.ctl.unreadOnly,
-              onNavigate: props.ctl.onNavigate,
-            },
-            feed
-          );
-          if (
-            props.ctl.optionsFeed()?.id === feed.id &&
-            !sidebarFeeds().some((entry) => entry.id === feed.id)
-          ) {
-            props.ctl.closeFeedOptions();
+    <Show when={props.ctl.folderDialog()} keyed>
+      {(dialog) => (
+        <FolderNameDialog
+          open={true}
+          mode={dialog.mode}
+          initialName={dialog.folder?.name}
+          folderId={dialog.folder?.id}
+          onClose={props.ctl.closeFolderDialog}
+          onSaved={(folder) =>
+            props.ctl.handleFolderSaved(folder, dialog.moveFeed)
           }
-        }}
-      />
-    </>
+        />
+      )}
+    </Show>
   );
 }
 

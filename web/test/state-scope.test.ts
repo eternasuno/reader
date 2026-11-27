@@ -6,17 +6,17 @@ describe('library route parsing: fixed scopes', () => {
     expect(state.parseLibraryLocation('/later', '')).toEqual({
       scope: { kind: 'later' },
       articleId: null,
-      unreadOnly: false,
-    });
-    expect(state.parseLibraryLocation('/later/p1', '?unread')).toEqual({
-      scope: { kind: 'later' },
-      articleId: 'p1',
       unreadOnly: true,
     });
-    expect(state.parseLibraryLocation('/all/i1/', '')).toEqual({
+    expect(state.parseLibraryLocation('/later/p1', '?all')).toEqual({
+      scope: { kind: 'later' },
+      articleId: 'p1',
+      unreadOnly: false,
+    });
+    expect(state.parseLibraryLocation('/all/i1/', '?unread')).toEqual({
       scope: { kind: 'all' },
       articleId: 'i1',
-      unreadOnly: false,
+      unreadOnly: true,
     });
   });
 });
@@ -26,19 +26,19 @@ describe('library route parsing: id scopes', () => {
     expect(state.parseLibraryLocation('/feed/f%201', '')).toEqual({
       scope: { kind: 'feed', feedId: 'f 1' },
       articleId: null,
-      unreadOnly: false,
+      unreadOnly: true,
     });
-    expect(state.parseLibraryLocation('/feed/f1/i1', '?unread')).toEqual({
+    expect(state.parseLibraryLocation('/feed/f1/i1', '?all')).toEqual({
       scope: { kind: 'feed', feedId: 'f1' },
       articleId: 'i1',
-      unreadOnly: true,
+      unreadOnly: false,
     });
     expect(state.parseLibraryLocation('/folder/d1', '')).toEqual({
       scope: { kind: 'folder', folderId: 'd1' },
       articleId: null,
-      unreadOnly: false,
+      unreadOnly: true,
     });
-    expect(state.parseLibraryLocation('/folder/d1/i1', '')).toEqual({
+    expect(state.parseLibraryLocation('/folder/d1/i1', '?all')).toEqual({
       scope: { kind: 'folder', folderId: 'd1' },
       articleId: 'i1',
       unreadOnly: false,
@@ -62,14 +62,14 @@ describe('next path sanitizing', () => {
       '/save?url=https%3A%2F%2Fexample.com'
     );
     expect(state.sanitizeNextPath(' /later ')).toBe('/later');
-    expect(state.sanitizeNextPath('//evil.example')).toBe('/later');
-    expect(state.sanitizeNextPath('https://evil.example')).toBe('/later');
-    expect(state.sanitizeNextPath('/\\evil.example')).toBe('/later');
-    expect(state.sanitizeNextPath('/later\u0000')).toBe('/later');
-    expect(state.sanitizeNextPath('/later\nsettings')).toBe('/later');
-    expect(state.sanitizeNextPath('')).toBe('/later');
-    expect(state.sanitizeNextPath(null)).toBe('/later');
-    expect(state.sanitizeNextPath(undefined)).toBe('/later');
+    expect(state.sanitizeNextPath('//evil.example')).toBe('/all');
+    expect(state.sanitizeNextPath('https://evil.example')).toBe('/all');
+    expect(state.sanitizeNextPath('/\\evil.example')).toBe('/all');
+    expect(state.sanitizeNextPath('/later\u0000')).toBe('/all');
+    expect(state.sanitizeNextPath('/later\nsettings')).toBe('/all');
+    expect(state.sanitizeNextPath('')).toBe('/all');
+    expect(state.sanitizeNextPath(null)).toBe('/all');
+    expect(state.sanitizeNextPath(undefined)).toBe('/all');
   });
 });
 

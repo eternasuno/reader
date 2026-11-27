@@ -141,7 +141,7 @@ describe('ArticleBody', () => {
   it('applies the default typography as CSS variables', () => {
     const style = bodyOf(mount(() => <ArticleBody html="<p>Body</p>" />)).style;
 
-    expect(style.getPropertyValue('--article-font-size')).toBe('16px');
+    expect(style.getPropertyValue('--article-font-size')).toBe('1rem');
     expect(style.getPropertyValue('--article-font-family')).toBe(
       FONT_FAMILIES.sans
     );

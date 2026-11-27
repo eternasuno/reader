@@ -127,22 +127,28 @@ describe('cold deep link: preserves manual mode', () => {
 });
 
 describe('saved and embedded modes', () => {
-  it('starts saved pages in default and honours embedded feed mode', async () => {
+  it('starts saved pages in default and honours the extracted feed mode', async () => {
     const { state, solid } = ctx;
     ctx.queue({ item: makePage({ id: 'p1', read: true }) });
     await state.openArticleByRoute({ kind: 'later' }, 'p1');
     solid.flush();
     expect(state.displayMode()).toBe('default');
 
+    const cached = makeItem({
+      id: 'i1',
+      feedId: 'f1',
+      read: true,
+      extractedContent: '<p>cached</p>',
+    });
     await ctx.queueLoadedLibrary({
       scope: { kind: 'feed', feedId: 'f1' },
-      items: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
-      feeds: [makeFeed({ id: 'f1', readerMode: 'embedded' })],
+      items: [cached],
+      feeds: [makeFeed({ id: 'f1', readerMode: 'extracted' })],
     });
-    ctx.queue({ item: makeItem({ id: 'i1', feedId: 'f1', read: true }) });
+    ctx.queue({ item: cached });
     await state.openArticleByRoute({ kind: 'feed', feedId: 'f1' }, 'i1');
     solid.flush();
-    expect(state.displayMode()).toBe('embedded');
+    expect(state.displayMode()).toBe('extracted');
   });
 });
 

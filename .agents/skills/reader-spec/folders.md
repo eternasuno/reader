@@ -9,13 +9,13 @@ Single-level folders for grouping feeds in the sidebar, reading combined lists, 
 - `FD-FOLDER-3`: Renaming to the current name is a no-op (`204`). Missing folder fails `404 FolderNotFound`; name conflict fails `409 FolderAlreadyExists`.
 - `FD-FOLDER-4`: **Deleting a folder** (`DELETE /api/folders/:id`) removes only the folder and moves any feeds inside it to the top level (`folderId = null`); **no feeds or articles are deleted**.
 - `FD-FOLDER-5`: Folders list by `(name ASC, id ASC)` in UTF-8 byte order; empty folders are kept and listed.
-- `FD-MOVE-1`: Moving a feed (`PATCH /api/feeds/:id`) sets `folderId` (`FolderId | null`). Moving to a missing folder fails `404 FolderNotFound`. Moving updates sidebar feeds and folder unread counts without issuing a list reload; if moving a feed out of the currently viewed `/folder/:folderId` scope, the client removes that feed's rows from the loaded list (and navigates to `/folder/:folderId` keeping `?unread` if the open article belonged to that feed).
+- `FD-MOVE-1`: Moving a feed (`PATCH /api/feeds/:id`) sets `folderId` (`FolderId | null`). Moving to a missing folder fails `404 FolderNotFound`. Moving updates sidebar feeds and folder unread counts without issuing a list reload; if moving a feed out of the currently viewed `/folder/:folderId` scope, the client removes that feed's rows from the loaded list (and navigates to `/folder/:folderId` keeping the unread filter if the open article belonged to that feed).
 
 ## Interface & Messages
 
 - **Sidebar**: folders appear first (ordered by name), with indented child feeds beneath each; top-level feeds follow. Folder collapse state persists in `localStorage` (`reader.collapsedFolders`). Selecting a feed inside a collapsed folder auto-expands it.
-- **Menus**: folder `⋯` menu offers `只显示未读`, `全部标记为已读`, `重命名目录`, and `删除目录`. Folder scope (`/folder/:folderId`) list menu offers `只显示未读` and `全部标记为已读`.
-- **Dialogs**: `新建目录` / `重命名目录` share one name dialog (`目录名称`); `移动到` is an in-menu sub-panel (back header `移动到`, one checkbox per folder showing the current folder as checked, a divider, and `新建目录` which opens the name dialog and moves the feed into the newly created folder); choosing an unchecked folder moves the feed there, choosing the checked folder moves it back to the top level; the menu stays open and the checkboxes update in place. Deleting a folder asks `window.confirm` and refreshes the sidebar; if `/folder/:folderId` or `/folder/:folderId/:itemId` was active, redirects to `/all` while preserving `?unread`.
+- **Menus**: folder `⋯` menu offers `全部标记为已读`, `重命名目录`, and `删除目录`. Folder scope (`/folder/:folderId`) list menu offers `全部标记为已读`.
+- **Dialogs**: `新建目录` / `重命名目录` share one name dialog (`目录名称`); `移动到` is an in-menu sub-panel (back header `移动到`, one checkbox per folder showing the current folder as checked, a divider, and `新建目录` which opens the name dialog and moves the feed into the newly created folder); choosing an unchecked folder moves the feed there, choosing the checked folder moves it back to the top level; the menu stays open and the checkboxes update in place. Deleting a folder asks `window.confirm` and refreshes the sidebar; if `/folder/:folderId` or `/folder/:folderId/:itemId` was active, redirects to `/all` while preserving the unread filter.
 
 | Code / Situation | Text |
 | --- | --- |

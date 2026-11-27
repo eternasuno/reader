@@ -12,15 +12,13 @@ import {
   triggerKindleSend,
 } from '../state';
 import { Menu, MenuCheckbox, MenuDivider, MenuItem } from '../ui';
+import { FeedReaderModeSubpanel } from './FeedReaderModeSubpanel';
 import { openInNewTab } from './openInNewTab';
 import { ReaderViewOptionsPanel } from './ReaderAppearanceMenu';
-import type { ReaderNav } from './readerNav';
 
 export interface ReaderMoreMenuProps {
   article: LibraryArticle;
-  nav: ReaderNav;
   onDelete: () => void;
-  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 const articleFeed = (article: LibraryArticle): Feed | null => {
@@ -33,7 +31,7 @@ const MoreMainPanel = (props: {
   article: LibraryArticle;
   onDelete: () => void;
   onOpenView: () => void;
-  onRequestFeedOptions: (feed: Feed) => void;
+  onOpenMode: () => void;
 }): JSX.Element => (
   <>
     <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
@@ -65,18 +63,11 @@ const MoreMainPanel = (props: {
         {t('reader.appearance')}
       </MenuItem>
     </Show>
-    <Show when={articleFeed(props.article)}>
-      {(feed) => (
-        <>
-          <MenuDivider />
-          <MenuItem
-            opensDialog
-            onSelect={() => props.onRequestFeedOptions(feed())}
-          >
-            {t('feeds.feedOptions')}
-          </MenuItem>
-        </>
-      )}
+    <Show when={articleFeed(props.article) !== null}>
+      <MenuDivider />
+      <MenuItem submenu onSelect={props.onOpenMode}>
+        {t('feeds.defaultDisplay')}
+      </MenuItem>
     </Show>
     <Show when={props.article.kind === 'later'}>
       <MenuDivider />
@@ -87,9 +78,9 @@ const MoreMainPanel = (props: {
   </>
 );
 
-/** `RD-WEBPAGE-1`: embedded view toggle, fullscreen toggle, view options sub-panel, feed options, original link, and saved-page delete. */
+/** `RD-WEBPAGE-1`: embedded view toggle, fullscreen toggle, view options sub-panel, feed default view sub-panel, original link, and saved-page delete. */
 export function ReaderMoreMenu(props: ReaderMoreMenuProps): JSX.Element {
-  const [panel, setPanel] = createSignal<'main' | 'view'>('main');
+  const [panel, setPanel] = createSignal<'main' | 'view' | 'mode'>('main');
 
   return (
     <Menu
@@ -102,18 +93,27 @@ export function ReaderMoreMenu(props: ReaderMoreMenuProps): JSX.Element {
       <Show
         when={panel() === 'view'}
         fallback={
-          <MoreMainPanel
-            article={props.article}
-            onDelete={props.onDelete}
-            onOpenView={() => setPanel('view')}
-            onRequestFeedOptions={props.onRequestFeedOptions}
-          />
+          <Show
+            when={panel() === 'mode' && articleFeed(props.article)}
+            fallback={
+              <MoreMainPanel
+                article={props.article}
+                onDelete={props.onDelete}
+                onOpenView={() => setPanel('view')}
+                onOpenMode={() => setPanel('mode')}
+              />
+            }
+          >
+            {(feed) => (
+              <FeedReaderModeSubpanel
+                feed={feed()}
+                onBack={() => setPanel('main')}
+              />
+            )}
+          </Show>
         }
       >
-        <ReaderViewOptionsPanel
-          onBack={() => setPanel('main')}
-          onOpenSettings={() => props.nav.onNavigate('/settings')}
-        />
+        <ReaderViewOptionsPanel onBack={() => setPanel('main')} />
       </Show>
     </Menu>
   );

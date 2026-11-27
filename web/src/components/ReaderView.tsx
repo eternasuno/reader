@@ -1,6 +1,5 @@
 import type { JSX } from '@solidjs/web';
 import { createEffect, createSignal, Show } from 'solid-js';
-import type { Feed } from '../api';
 import {
   displayMode,
   type LibraryArticle,
@@ -17,16 +16,12 @@ export interface ReaderViewProps {
   nav: ReaderNav;
   onSaveToLater: () => void;
   onDelete: () => void;
-  onRequestFeedOptions: (feed: Feed) => void;
 }
 
 const LINE_WIDTH_CLASSES: Record<ReaderLineWidth, string> = {
-  1: 'max-w-2xl px-7 sm:px-6',
-  2: 'max-w-3xl px-7 sm:px-6',
-  3: 'max-w-4xl px-7 sm:px-6',
-  4: 'max-w-5xl px-7 sm:px-6 lg:px-8',
-  5: 'max-w-6xl px-7 sm:px-6 lg:px-8',
-  6: 'max-w-none px-7 sm:px-6 lg:px-10',
+  narrow: 'max-w-3xl px-7 sm:px-6',
+  medium: 'max-w-5xl px-7 sm:px-6 lg:px-8',
+  wide: 'max-w-none px-7 sm:px-6 lg:px-10',
 };
 
 /** The open-article column: action bar above the scrollable article body. */
@@ -50,7 +45,6 @@ export function ReaderView(props: ReaderViewProps): JSX.Element {
         scrolled={scrolled()}
         onSaveToLater={props.onSaveToLater}
         onDelete={props.onDelete}
-        onRequestFeedOptions={props.onRequestFeedOptions}
       />
       <Show
         when={displayMode() === 'embedded'}

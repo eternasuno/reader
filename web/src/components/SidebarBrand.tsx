@@ -1,14 +1,9 @@
 import type { JSX } from '@solidjs/web';
 import { createSignal, Show } from 'solid-js';
 import { t, toggleLocale } from '../i18n';
-import {
-  type ReaderTheme,
-  readerTheme,
-  setReaderTheme,
-  signOut,
-  toggleSidebarCollapse,
-} from '../state';
-import { Button, Icon, Menu, MenuDivider, MenuItem, MenuRadio } from '../ui';
+import { signOut, toggleSidebarCollapse } from '../state';
+import { Button, Icon, Menu, MenuDivider, MenuItem } from '../ui';
+import { ReaderViewOptionsPanel } from './ReaderAppearanceMenu';
 
 const handleCollapseSidebar = (): void => {
   toggleSidebarCollapse();
@@ -19,7 +14,7 @@ const handleCollapseSidebar = (): void => {
 
 /**
  * `AC-AUTH-3`, `CM-I18N-1`, `LIB-VIEW-1`: the brand row hosts sidebar collapse and
- * the nav menu (settings, theme, locale switch, and sign-out with inline failure alert).
+ * the nav menu (settings, view options, locale switch, and sign-out with inline failure alert).
  */
 export function SidebarBrand(props: {
   onNavigate: (url: string) => void;
@@ -84,54 +79,8 @@ interface BrandMenuProps {
   onSignOut: () => void;
 }
 
-const THEME_LABEL_KEYS: Record<
-  ReaderTheme,
-  'reader.themeAuto' | 'reader.themeLight' | 'reader.themeDark'
-> = {
-  auto: 'reader.themeAuto',
-  light: 'reader.themeLight',
-  dark: 'reader.themeDark',
-};
-
-function BrandThemeSubpanel(props: { onBack: () => void }): JSX.Element {
-  return (
-    <>
-      <button
-        type="button"
-        role="menuitem"
-        data-keep-open="true"
-        class="mx-2 flex min-h-10 w-[calc(100%-1rem)] items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm leading-5 text-base-content transition-colors hover:bg-base-300/70 focus-visible:bg-base-300/70 focus-visible:outline-none"
-        onClick={props.onBack}
-      >
-        <span class="flex size-5 shrink-0 items-center justify-center">
-          <Icon name="arrow-left" size={18} />
-        </span>
-        <span>{t('reader.theme')}</span>
-      </button>
-      <MenuRadio
-        checked={readerTheme() === 'auto'}
-        onSelect={() => setReaderTheme('auto')}
-      >
-        {t('reader.themeAuto')}
-      </MenuRadio>
-      <MenuRadio
-        checked={readerTheme() === 'light'}
-        onSelect={() => setReaderTheme('light')}
-      >
-        {t('reader.themeLight')}
-      </MenuRadio>
-      <MenuRadio
-        checked={readerTheme() === 'dark'}
-        onSelect={() => setReaderTheme('dark')}
-      >
-        {t('reader.themeDark')}
-      </MenuRadio>
-    </>
-  );
-}
-
 function BrandMenu(props: BrandMenuProps): JSX.Element {
-  const [panel, setPanel] = createSignal<'main' | 'theme'>('main');
+  const [panel, setPanel] = createSignal<'main' | 'view'>('main');
 
   return (
     <Menu
@@ -143,17 +92,17 @@ function BrandMenu(props: BrandMenuProps): JSX.Element {
       }}
     >
       <Show
-        when={panel() === 'theme'}
+        when={panel() === 'view'}
         fallback={
           <BrandMainMenuItems
             signingOut={props.signingOut}
             onNavigate={props.onNavigate}
             onSignOut={props.onSignOut}
-            onOpenTheme={() => setPanel('theme')}
+            onOpenView={() => setPanel('view')}
           />
         }
       >
-        <BrandThemeSubpanel onBack={() => setPanel('main')} />
+        <ReaderViewOptionsPanel onBack={() => setPanel('main')} />
       </Show>
     </Menu>
   );
@@ -163,28 +112,16 @@ function BrandMainMenuItems(props: {
   signingOut: boolean;
   onNavigate: (url: string) => void;
   onSignOut: () => void;
-  onOpenTheme: () => void;
+  onOpenView: () => void;
 }): JSX.Element {
   return (
     <>
       <MenuItem icon="settings" onSelect={() => props.onNavigate('/settings')}>
         {t('library.settings')}
       </MenuItem>
-      <button
-        type="button"
-        role="menuitem"
-        data-keep-open="true"
-        class="mx-2 flex min-h-10 w-[calc(100%-1rem)] items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm leading-5 text-base-content transition-colors hover:bg-base-300/70 focus-visible:bg-base-300/70 focus-visible:outline-none"
-        onClick={props.onOpenTheme}
-      >
-        <span class="flex size-5 shrink-0 items-center justify-center opacity-70">
-          <Icon name="chevron-right" size={16} />
-        </span>
-        <span class="flex-1 truncate">{t('reader.theme')}</span>
-        <span class="text-sm text-base-content/60">
-          {t(THEME_LABEL_KEYS[readerTheme()])}
-        </span>
-      </button>
+      <MenuItem submenu icon="typography" onSelect={props.onOpenView}>
+        {t('reader.appearance')}
+      </MenuItem>
       <MenuItem icon="globe" onSelect={() => toggleLocale()}>
         {t('common.localeSwitchLabel')}
       </MenuItem>

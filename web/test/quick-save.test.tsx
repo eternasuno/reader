@@ -169,9 +169,9 @@ describe('quick save errors and cancel cleanup', () => {
     await settle();
     expect(history.get()).toBe('/save');
 
-    container.querySelector<HTMLAnchorElement>('a[href="/later"]')?.click();
+    container.querySelector<HTMLAnchorElement>('a[href="/all"]')?.click();
     await settle();
-    expect(history.get()).toBe('/later');
+    expect(history.get()).toBe('/all');
 
     history.set({ value: '/save' });
     await settle();
