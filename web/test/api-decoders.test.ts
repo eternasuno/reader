@@ -240,9 +240,10 @@ describe('Kindle record validation', () => {
 
 describe('Kindle settings validation', () => {
   it.each([
-    { kindleEmail: 'k@example.com' },
+    { kindleEmail: 'k@example.com', language: 'zh' },
     {
       kindleEmail: 'k@example.com',
+      language: 'zh',
       schedule: { hour: 8, minute: 30, timezone: 'Asia/Shanghai' },
       nextSendAt: '2026-11-25T00:30:00Z',
     },

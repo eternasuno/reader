@@ -210,6 +210,7 @@ func startKindleSendInTx(ctx context.Context, tx *sql.Tx, settings domain.Settin
 		Delivery: domain.KindleDelivery{
 			SMTP:        *settings.SMTP,
 			KindleEmail: settings.Kindle.KindleEmail,
+			Language:    settings.Kindle.Language,
 		},
 	}, nil
 }
@@ -433,11 +434,12 @@ func listUnreadSavedPageRefs(ctx context.Context, tx *sql.Tx) ([]domain.KindleAr
 func appendUnreadFeedItemRefs(ctx context.Context, tx *sql.Tx, refs []domain.KindleArticleRef) ([]domain.KindleArticleRef, error) {
 	rows, err := tx.QueryContext(
 		ctx,
-		`SELECT fi.id
+		`SELECT fi.id, fo.name
 		 FROM feed_item fi
 		 JOIN feed f ON f.id = fi.feed_id
+		 LEFT JOIN folder fo ON fo.id = f.folder_id
 		 WHERE fi.read = 0
-		 ORDER BY f.title ASC, f.id ASC,
+		 ORDER BY fo.id IS NULL ASC, fo.name ASC, fo.id ASC, f.title ASC, f.id ASC,
 		   CASE WHEN f.sort_order = ? THEN fi.id END ASC,
 		   CASE WHEN f.sort_order != ? THEN fi.id END DESC`,
 		string(domain.SortOrderOldest),
@@ -450,12 +452,15 @@ func appendUnreadFeedItemRefs(ctx context.Context, tx *sql.Tx, refs []domain.Kin
 	defer closeRows(rows)
 
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var (
+			id         string
+			folderName sql.NullString
+		)
+		if err := rows.Scan(&id, &folderName); err != nil {
 			return nil, err
 		}
 
-		refs = append(refs, domain.KindleArticleRef{ID: id})
+		refs = append(refs, domain.KindleArticleRef{ID: id, FolderName: optionalText(folderName)})
 	}
 
 	return refs, rows.Err()

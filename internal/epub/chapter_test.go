@@ -30,7 +30,7 @@ func TestBuildBooksSerializesChapterBodiesAsXML(t *testing.T) {
 		}, ""),
 	}}
 
-	books, err := NewBuilder(Config{}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -67,25 +67,31 @@ func TestChapterNavOpfUncompressedBytesMatchesRenderedDelta(t *testing.T) {
 	identity := newBookIdentity()
 	meta := archiveMeta{
 		title:    "Lantern 2026-03-15 (987654/987654)",
+		locale:   bookLocales[domain.KindleLanguageChinese],
 		identity: identity,
 	}
 
+	const fillerSection = "Filler"
+
 	testCases := []struct {
-		index  int
-		title  string
-		images []imageManifestItem
-		remote bool
+		index   int
+		title   string
+		section string
+		images  []imageManifestItem
+		remote  bool
 	}{
-		{index: 0, title: "Plain title"},
-		{index: 0, title: "Remote chapter", remote: true},
-		{index: 1, title: "Title & <escaped> > text", images: []imageManifestItem{{number: 1, fileName: "img-0001.jpg", mediaType: "image/jpeg"}}},
-		{index: 9998, title: "Four digits"},
-		{index: 9999, title: "Five digits", images: []imageManifestItem{{number: 10000, fileName: "img-10000.png", mediaType: "image/png"}}},
+		{index: 0, title: "Plain title", section: "Read Later"},
+		{index: 0, title: "Remote chapter", section: "Read Later", remote: true},
+		{index: 1, title: "Same section", section: fillerSection},
+		{index: 1, title: "Title & <escaped> > text", section: "Folder & <x>", images: []imageManifestItem{{number: 1, fileName: "img-0001.jpg", mediaType: "image/jpeg"}}},
+		{index: 9998, title: "Four digits", section: "订阅源"},
+		{index: 9999, title: "Five digits", section: "Next", images: []imageManifestItem{{number: 10000, fileName: "img-10000.png", mediaType: "image/png"}}},
+		{index: 9999, title: "Five digits same section", section: fillerSection},
 	}
 
 	renderNavOpfSize := func(m archiveMeta) int {
 		var buf bytes.Buffer
-		if err := writeNav(&buf, m.title, m.chapters); err != nil {
+		if err := writeNav(&buf, m); err != nil {
 			t.Fatalf("writeNav() error = %v", err)
 		}
 
@@ -104,19 +110,20 @@ func TestChapterNavOpfUncompressedBytesMatchesRenderedDelta(t *testing.T) {
 		meta.chapters = nil
 		meta.images = nil
 		for len(meta.chapters) < tc.index {
-			meta.chapters = append(meta.chapters, chapterMeta{title: "filler"})
+			meta.chapters = append(meta.chapters, chapterMeta{title: "filler", section: fillerSection})
 		}
 
 		before := renderNavOpfSize(meta)
-		ch := chapterMeta{title: tc.title, hasRemoteResources: tc.remote}
+		ch := chapterMeta{title: tc.title, section: tc.section, hasRemoteResources: tc.remote}
 		meta.chapters = append(meta.chapters, ch)
 		meta.images = append(meta.images, tc.images...)
 		after := renderNavOpfSize(meta)
 
-		got := chapterNavOpfUncompressedBytes(tc.index, ch, tc.images)
+		startsSection := tc.index == 0 || tc.section != fillerSection
+		got := chapterNavOpfUncompressedBytes(tc.index, ch, startsSection, tc.images)
 		want := int64(after - before)
 		if got != want {
-			t.Fatalf("index %d: chapterNavOpfUncompressedBytes() = %d, want %d", tc.index, got, want)
+			t.Fatalf("index %d %q: chapterNavOpfUncompressedBytes() = %d, want %d", tc.index, tc.title, got, want)
 		}
 	}
 }

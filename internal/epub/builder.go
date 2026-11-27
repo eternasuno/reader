@@ -25,6 +25,7 @@ type Config struct {
 	ImageConcurrency        int
 	ImagePrepTimeout        time.Duration
 	ImageDecodeMemoryBudget int64
+	CoverImage              []byte
 }
 
 type Builder struct {
@@ -36,9 +37,15 @@ type Builder struct {
 	imageConcurrency   int
 	imagePrepTimeout   time.Duration
 	decodeMemoryBudget int64
+	coverImage         []byte
 }
 
 func NewBuilder(cfg Config) *Builder {
+	coverImage := cfg.CoverImage
+	if len(coverImage) == 0 {
+		coverImage = coverJPEG
+	}
+
 	return &Builder{
 		imageFetcher:       cfg.ImageFetcher,
 		maxEPUBBytes:       cmp.Or(cfg.MaxEPUBBytes, domain.MaxKindleEPUBBytes),
@@ -48,13 +55,19 @@ func NewBuilder(cfg Config) *Builder {
 		imageConcurrency:   cmp.Or(cfg.ImageConcurrency, defaultImageConcurrency),
 		imagePrepTimeout:   cmp.Or(cfg.ImagePrepTimeout, defaultImagePrepTimeout),
 		decodeMemoryBudget: cmp.Or(cfg.ImageDecodeMemoryBudget, defaultDecodeMemoryBudget),
+		coverImage:         coverImage,
 	}
 }
 
-func (b *Builder) NewPacker(ctx context.Context, dateStr string) (domain.EPUBPacker, error) {
+func (b *Builder) NewPacker(ctx context.Context, dateStr string, language domain.KindleLanguage) (domain.EPUBPacker, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	return newPacker(b, dateStr), nil
+	locale, err := localeFor(language)
+	if err != nil {
+		return nil, err
+	}
+
+	return newPacker(b, dateStr, locale), nil
 }

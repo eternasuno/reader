@@ -20,7 +20,7 @@ const SETTINGS_OK = {
   jinaKeyConfigured: false,
   browserEndpointConfigured: false,
 };
-const KINDLE_OK = { kindleEmail: 'k@example.com' };
+const KINDLE_OK = { kindleEmail: 'k@example.com', language: 'zh' };
 const SCHEDULE_OK = { hour: 8, minute: 0, timezone: 'UTC' };
 const withKindle = (kindle: unknown) => ({ ...SETTINGS_OK, kindle });
 const OPML_FILE = new File(['<opml/>'], 'a.opml', { type: 'text/xml' });

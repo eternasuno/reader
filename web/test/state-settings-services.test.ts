@@ -216,7 +216,11 @@ describe('removeBrowserEndpoint', () => {
 
 describe('saveSmtp', () => {
   it('saves SMTP settings, preserves passwordConfigured and omits blank password', async () => {
-    await load(makeSettings({ kindle: { kindleEmail: 'kindle@example.com' } }));
+    await load(
+      makeSettings({
+        kindle: { kindleEmail: 'kindle@example.com', language: 'zh' },
+      })
+    );
     fillSmtpDrafts(' smtp-secret ');
 
     queueEmpty();
@@ -287,7 +291,7 @@ describe('removeSmtp', () => {
     await load(
       makeSettings({
         smtp: SMTP_VIEW,
-        kindle: { kindleEmail: 'kindle@example.com' },
+        kindle: { kindleEmail: 'kindle@example.com', language: 'zh' },
       })
     );
 

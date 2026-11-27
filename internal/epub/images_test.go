@@ -57,7 +57,7 @@ func TestBuildBooksEmbedsSupportedImagesAndStripsOthers(t *testing.T) {
 		},
 	}
 
-	books, err := NewBuilder(Config{ImageFetcher: fetcher, ImageConcurrency: 2}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{ImageFetcher: fetcher, ImageConcurrency: 2}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -132,7 +132,7 @@ func TestBuildBooksEmbedsSupportedImagesAndStripsOthers(t *testing.T) {
 	}
 
 	for _, name := range entries {
-		if !strings.HasPrefix(name, "OEBPS/images/") {
+		if !strings.HasPrefix(name, "OEBPS/images/img-") {
 			continue
 		}
 
@@ -154,7 +154,7 @@ func TestBuildBooksStripsImagesWithoutFetcher(t *testing.T) {
 		HTMLBody:    `<p>before</p><img src="https://example.com/a.png"><p>after</p>`,
 	}}
 
-	books, err := NewBuilder(Config{}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -192,7 +192,7 @@ func TestBuildBooksRetriesTextOnlyForOversizedImage(t *testing.T) {
 		HTMLBody:    `<p>before</p><img src="https://example.com/huge-1.png"><img src="https://example.com/huge-2.png"><p>after</p>`,
 	}}
 
-	books, err := NewBuilder(Config{ImageFetcher: fetcher, MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{ImageFetcher: fetcher, MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -216,7 +216,7 @@ func TestBuildBooksRetriesTextOnlyForOversizedImage(t *testing.T) {
 
 	reader := openArchive(t, book.Data)
 	for _, file := range reader.File {
-		if strings.HasPrefix(file.Name, "OEBPS/images/") {
+		if strings.HasPrefix(file.Name, "OEBPS/images/img-") {
 			t.Fatalf("text-only book still embeds %q", file.Name)
 		}
 	}
@@ -273,7 +273,7 @@ func TestBuildBooksFetchesFailedImageOnceAcrossSplits(t *testing.T) {
 		}
 	}
 
-	books, err := NewBuilder(Config{ImageFetcher: fetcher, MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{ImageFetcher: fetcher, MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -319,7 +319,7 @@ func TestBuildBooksRejectsOversizedSingleImageInFirstDraft(t *testing.T) {
 		},
 	}
 
-	books, err := NewBuilder(Config{ImageFetcher: fetcher, MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{ImageFetcher: fetcher, MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -353,7 +353,7 @@ func TestBuildBooksDownscalesAndCompressesLargeImages(t *testing.T) {
 		HTMLBody: `<p>正文</p><img src="https://example.com/photo.png">`,
 	}}
 
-	books, err := NewBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -406,7 +406,7 @@ func TestBuildBooksStripsMalformedAndOverDimensionImages(t *testing.T) {
 			}
 			valid := encodeTestPNG(t, 16, 16)
 			fetcher := newFakeImageFetcher(map[string]fakeImage{"https://example.com/bad": {data: tt.data, mediaType: tt.media}, "https://example.com/ok.png": {data: valid, mediaType: "image/png"}})
-			books, err := NewBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{{ID: "a-1", URL: "https://example.com/posts/1", Title: "校验图片", HTMLBody: `<img src="https://example.com/bad"><img src="https://example.com/ok.png">`}})
+			books, err := newTestBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{{ID: "a-1", URL: "https://example.com/posts/1", Title: "校验图片", HTMLBody: `<img src="https://example.com/bad"><img src="https://example.com/ok.png">`}})
 			if err != nil {
 				t.Fatalf("BuildBooks() error = %v", err)
 			}
@@ -442,7 +442,7 @@ func TestBuildBooksImagePrepDeadlineFallsBackWithoutFailingBook(t *testing.T) {
 		HTMLBody: `<p>正文</p><img src="https://example.com/fast.png"><img src="https://example.com/slow.png">`,
 	}}
 
-	books, err := NewBuilder(Config{
+	books, err := newTestBuilder(Config{
 		ImageFetcher:     fetcher,
 		ImagePrepTimeout: 30 * time.Millisecond,
 	}).BuildBooks(context.Background(), "2026-03-15", articles)
@@ -488,7 +488,7 @@ func TestBuildBooksValidatesAndBoundsGIFs(t *testing.T) {
 	}}
 
 	// 1 MiB decode budget admits validAnimatedGIF (~513 KiB) and rejects overBudgetGIF (~1.5 MiB).
-	books, err := NewBuilder(Config{
+	books, err := newTestBuilder(Config{
 		ImageFetcher:            fetcher,
 		ImageDecodeMemoryBudget: 1 << 20,
 	}).BuildBooks(context.Background(), "2026-03-15", articles)

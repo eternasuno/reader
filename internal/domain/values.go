@@ -173,7 +173,11 @@ func ValidateKindleSettings(k KindleSettings) (KindleSettings, error) {
 		return KindleSettings{}, NewError(ErrInvalidKindleSetting, nil)
 	}
 
-	settings := KindleSettings{KindleEmail: kindleEmail}
+	if err := ValidateKindleLanguage(k.Language); err != nil {
+		return KindleSettings{}, err
+	}
+
+	settings := KindleSettings{KindleEmail: kindleEmail, Language: k.Language}
 	if k.Schedule == nil {
 		return settings, nil
 	}
@@ -186,6 +190,15 @@ func ValidateKindleSettings(k KindleSettings) (KindleSettings, error) {
 	settings.Schedule = &schedule
 
 	return settings, nil
+}
+
+func ValidateKindleLanguage(language KindleLanguage) error {
+	switch language {
+	case KindleLanguageChinese, KindleLanguageEnglish, KindleLanguageJapanese:
+		return nil
+	}
+
+	return NewError(ErrInvalidKindleSetting, nil)
 }
 
 func ValidateKindleSchedule(s KindleSchedule) (KindleSchedule, error) {

@@ -293,8 +293,19 @@ type KindleSchedule struct {
 	Timezone string // IANA name
 }
 
+// KindleLanguage is the EPUB's primary language: its dc:language, every
+// document's lang, and the language of the book's fixed text.
+type KindleLanguage string
+
+const (
+	KindleLanguageChinese  KindleLanguage = "zh"
+	KindleLanguageEnglish  KindleLanguage = "en"
+	KindleLanguageJapanese KindleLanguage = "ja"
+)
+
 type KindleSettings struct {
 	KindleEmail string
+	Language    KindleLanguage
 	Schedule    *KindleSchedule // nil = scheduled sending off
 	NextSendAt  *time.Time      // read-only, from kindle_schedule; nil when Schedule is nil; ignored by UpdateKindle
 }
@@ -312,6 +323,7 @@ type Settings struct {
 type KindleDelivery struct {
 	SMTP        SMTPSettings
 	KindleEmail string
+	Language    KindleLanguage
 }
 
 // ClaimedKindleSend is the atomic result of claiming a manual or scheduled send.
@@ -340,12 +352,14 @@ type KindleSendRecord struct {
 type KindleArticleRef struct {
 	ID          string
 	IsSavedPage bool
+	FolderName  *string
 }
 
 type KindleArticle struct {
 	ID          string
 	IsSavedPage bool
 	SourceTitle string
+	Section     string
 	URL         string
 	Title       string
 	HTMLBody    string
@@ -472,7 +486,7 @@ type EPUBPacker interface {
 }
 
 type EPUBBuilder interface {
-	NewPacker(ctx context.Context, dateStr string) (EPUBPacker, error)
+	NewPacker(ctx context.Context, dateStr string, language KindleLanguage) (EPUBPacker, error)
 }
 
 type MailSender interface {

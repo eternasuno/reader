@@ -539,7 +539,7 @@ func TestRecoverStartupStateCleansSpoolAndRecoversRunningWork(t *testing.T) {
 	}
 
 	startedAt := time.Date(2026, 3, 15, 8, 0, 0, 0, time.UTC)
-	if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{KindleEmail: "reader@kindle.com"}, startedAt); err != nil {
+	if err := store.Settings().UpdateKindle(ctx, domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "reader@kindle.com"}, startedAt); err != nil {
 		t.Fatalf("UpdateKindle() error = %v", err)
 	}
 	if _, err := store.KindleSends().ClaimManualSend(ctx, domain.NewID(), startedAt); err != nil {

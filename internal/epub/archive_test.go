@@ -47,7 +47,7 @@ func TestOPFRemoteResourcesProperty(t *testing.T) {
 		},
 	}
 
-	books, err := NewBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -95,7 +95,7 @@ func TestArchiveEntriesUseZipReaderVersion20(t *testing.T) {
 		"https://example.com/a.png": {data: pngData, mediaType: "image/png"},
 	})
 
-	books, err := NewBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{
+	books, err := newTestBuilder(Config{ImageFetcher: fetcher}).BuildBooks(context.Background(), "2026-03-15", []domain.KindleArticle{
 		{
 			ID:       "a-1",
 			URL:      "https://example.com/posts/1",

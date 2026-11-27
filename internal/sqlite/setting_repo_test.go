@@ -253,6 +253,7 @@ func TestSettingRepoServices(t *testing.T) {
 	}
 
 	kindle := domain.KindleSettings{
+		Language:    domain.KindleLanguageChinese,
 		KindleEmail: "reader@kindle.com",
 		Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "UTC"},
 	}
@@ -287,6 +288,7 @@ func TestSettingRepoKindle(t *testing.T) {
 
 	now := time.Date(2024, 6, 1, 8, 0, 0, 0, time.UTC)
 	kindle := domain.KindleSettings{
+		Language:    domain.KindleLanguageChinese,
 		KindleEmail: "reader@kindle.com",
 		Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "Asia/Shanghai"},
 	}
@@ -339,7 +341,7 @@ func TestSettingRepoKindle(t *testing.T) {
 	// 08:30 Shanghai on 2024-06-01 is 00:30 UTC, already past at 08:00 UTC.
 	requireNextSendAt(t, store, ptrTime(time.Date(2024, 6, 2, 0, 30, 0, 0, time.UTC)))
 
-	manualOnly := domain.KindleSettings{KindleEmail: "reader@kindle.com"}
+	manualOnly := domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "reader@kindle.com"}
 	if err := repo.UpdateKindle(ctx, manualOnly, now.Add(time.Hour)); err != nil {
 		t.Fatalf("update kindle without schedule: %v", err)
 	}
@@ -407,6 +409,7 @@ func TestSettingRepoKindleNextSendAt(t *testing.T) {
 	for _, step := range steps {
 		t.Run(step.name, func(t *testing.T) {
 			kindle := domain.KindleSettings{
+				Language:    domain.KindleLanguageChinese,
 				KindleEmail: step.email,
 				Schedule:    step.schedule,
 				// Caller-supplied values are ignored: next_send_at is runtime state.
@@ -433,6 +436,7 @@ func TestSettingRepoKindleNextSendAtSkipsSpringForwardGap(t *testing.T) {
 
 	// 02:30 does not exist in America/New_York on 2024-03-10, when 02:00 jumps to 03:00.
 	kindle := domain.KindleSettings{
+		Language:    domain.KindleLanguageChinese,
 		KindleEmail: "reader@kindle.com",
 		Schedule:    &domain.KindleSchedule{Hour: 2, Minute: 30, Timezone: "America/New_York"},
 	}
@@ -454,7 +458,7 @@ func TestSettingRepoKindleRejectsOutOfRangeScheduleWithoutHoldingTheWriter(t *te
 		{Hour: 24, Minute: 0, Timezone: "UTC"},
 		{Hour: 8, Minute: 60, Timezone: "UTC"},
 	} {
-		kindle := domain.KindleSettings{KindleEmail: "reader@kindle.com", Schedule: &schedule}
+		kindle := domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "reader@kindle.com", Schedule: &schedule}
 		requireCode(t, store.Settings().UpdateKindle(context.Background(), kindle, now), domain.ErrInvalidKindleSetting)
 	}
 

@@ -17,6 +17,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	"reader/internal/domain"
+	"reader/internal/sqlite/migrations"
 )
 
 var (
@@ -259,6 +260,45 @@ func TestOpenFailsAndRollsBackWhenInitMigrationFails(t *testing.T) {
 	requireGooseVersions(t, checkDB, 0)
 }
 
+func TestKindleLanguageMigrationDefaultsExistingSettingsToChinese(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "v1.db")
+
+	v1, err := sql.Open("sqlite", sqliteDSN(dbPath, true))
+	if err != nil {
+		t.Fatalf("open v1 db: %v", err)
+	}
+
+	v1.SetMaxOpenConns(1)
+	if err := applyGoMigrations(ctx, v1, migrations.All()[0]); err != nil {
+		t.Fatalf("apply v1 migration: %v", err)
+	}
+
+	_, err = v1.ExecContext(ctx, `UPDATE setting SET sender_email = 'reader@example.com', smtp_host = 'smtp.example.com', smtp_port = 465, smtp_security = 'tls', kindle_email = 'reader@kindle.com' WHERE id = 1`)
+	if err != nil {
+		t.Fatalf("seed v1 settings: %v", err)
+	}
+
+	if err := v1.Close(); err != nil {
+		t.Fatalf("close v1 db: %v", err)
+	}
+
+	store, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	defer store.Close()
+
+	settings, err := store.Settings().Get(ctx)
+	if err != nil {
+		t.Fatalf("get migrated settings: %v", err)
+	}
+
+	if settings.Kindle == nil || settings.Kindle.KindleEmail != "reader@kindle.com" || settings.Kindle.Language != domain.KindleLanguageChinese {
+		t.Fatalf("migrated kindle settings = %+v, want reader@kindle.com in zh", settings.Kindle)
+	}
+}
+
 func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "fresh.db"))
@@ -267,7 +307,7 @@ func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 	}
 	defer store.Close()
 
-	requireGooseVersions(t, store.ReadDB(), 0, 1)
+	requireGooseVersions(t, store.ReadDB(), 0, 1, 2)
 
 	wantTables := []string{"feed", "feed_item", "feed_refresh", "feed_schedule", "folder", "kindle_schedule", "kindle_send", "saved_page", "setting"}
 	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_list WHERE schema = 'main' AND strict = 1 AND name NOT LIKE 'sqlite_%' ORDER BY name`); !slices.Equal(got, wantTables) {

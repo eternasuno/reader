@@ -33,6 +33,7 @@ func TestSettingsRedaction(t *testing.T) {
 			Password:    &smtpPassword,
 		}),
 		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{
+			Language:    domain.KindleLanguageChinese,
 			KindleEmail: "reader@kindle.com",
 			Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "Asia/Shanghai"},
 		}, h.clock.Now()),
@@ -68,6 +69,7 @@ func TestSettingsRedaction(t *testing.T) {
 		} `json:"smtp"`
 		Kindle struct {
 			KindleEmail string `json:"kindleEmail"`
+			Language    string `json:"language"`
 			Schedule    struct {
 				Hour     int    `json:"hour"`
 				Minute   int    `json:"minute"`
@@ -96,7 +98,7 @@ func TestSettingsRedaction(t *testing.T) {
 
 	// The schedule was saved at the harness clock (08:00 UTC), after that day's
 	// 08:30 Asia/Shanghai occurrence (00:30 UTC), so the stored next send is the following day's.
-	if payload.Kindle.KindleEmail != "reader@kindle.com" || payload.Kindle.Schedule.Timezone != "Asia/Shanghai" || payload.Kindle.Schedule.Hour != 8 || payload.Kindle.Schedule.Minute != 30 || payload.Kindle.NextSendAt != "2026-03-02T00:30:00Z" {
+	if payload.Kindle.KindleEmail != "reader@kindle.com" || payload.Kindle.Language != "zh" || payload.Kindle.Schedule.Timezone != "Asia/Shanghai" || payload.Kindle.Schedule.Hour != 8 || payload.Kindle.Schedule.Minute != 30 || payload.Kindle.NextSendAt != "2026-03-02T00:30:00Z" {
 		t.Fatalf("kindle = %+v", payload.Kindle)
 	}
 
@@ -108,7 +110,7 @@ func TestSettingsRedaction(t *testing.T) {
 			Port:        587,
 			Security:    domain.SMTPSecuritySTARTTLS,
 		}),
-		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{KindleEmail: "reader@kindle.com"}, h.clock.Now()),
+		h.db.Settings().UpdateKindle(ctx, domain.KindleSettings{Language: domain.KindleLanguageChinese, KindleEmail: "reader@kindle.com"}, h.clock.Now()),
 	} {
 		if err != nil {
 			t.Fatalf("update partial settings: %v", err)
@@ -315,6 +317,7 @@ func TestKindleSettingsUpdate(t *testing.T) {
 	h := newHarness(t)
 	body := map[string]any{
 		"kindleEmail": "reader@kindle.com",
+		"language":    "ja",
 		"schedule":    map[string]any{"hour": 9, "minute": 30, "timezone": "Asia/Shanghai"},
 	}
 
@@ -335,7 +338,7 @@ func TestKindleSettingsUpdate(t *testing.T) {
 		t.Fatal("kindle settings were not stored")
 	}
 
-	if stored.KindleEmail != "reader@kindle.com" {
+	if stored.KindleEmail != "reader@kindle.com" || stored.Language != domain.KindleLanguageJapanese {
 		t.Fatalf("stored kindle = %+v", stored)
 	}
 
@@ -358,10 +361,12 @@ func TestKindleSettingsUpdate(t *testing.T) {
 	}
 
 	for name, invalid := range map[string]map[string]any{
-		"email":            {"kindleEmail": "not-an-email"},
-		"timezone":         {"kindleEmail": "reader@kindle.com", "schedule": map[string]any{"hour": 9, "minute": 30, "timezone": "Mars/Olympus_Mons"}},
-		"missing timezone": {"kindleEmail": "reader@kindle.com", "schedule": map[string]any{"hour": 9, "minute": 30}},
-		"schedule":         {"kindleEmail": "reader@kindle.com", "schedule": map[string]any{"hour": 9, "minute": 7, "timezone": "UTC"}},
+		"email":            {"kindleEmail": "not-an-email", "language": "zh"},
+		"missing language": {"kindleEmail": "reader@kindle.com"},
+		"language":         {"kindleEmail": "reader@kindle.com", "language": "fr"},
+		"timezone":         {"kindleEmail": "reader@kindle.com", "language": "zh", "schedule": map[string]any{"hour": 9, "minute": 30, "timezone": "Mars/Olympus_Mons"}},
+		"missing timezone": {"kindleEmail": "reader@kindle.com", "language": "zh", "schedule": map[string]any{"hour": 9, "minute": 30}},
+		"schedule":         {"kindleEmail": "reader@kindle.com", "language": "zh", "schedule": map[string]any{"hour": 9, "minute": 7, "timezone": "UTC"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", invalid), http.StatusBadRequest, "InvalidKindleSetting")
@@ -389,7 +394,7 @@ func TestKindleSettingsUpdateRequiresScheduleHourAndMinute(t *testing.T) {
 		"null minute":    {"hour": 9, "minute": nil, "timezone": "UTC"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			body := map[string]any{"kindleEmail": "reader@kindle.com", "schedule": schedule}
+			body := map[string]any{"kindleEmail": "reader@kindle.com", "language": "zh", "schedule": schedule}
 			requireAPIError(t, h.authed(http.MethodPut, "/api/settings/kindle", body), http.StatusBadRequest, "InvalidKindleSetting")
 		})
 	}
@@ -400,6 +405,7 @@ func TestKindleSettingsUpdateRequiresScheduleHourAndMinute(t *testing.T) {
 
 	midnight := map[string]any{
 		"kindleEmail": "reader@kindle.com",
+		"language":    "zh",
 		"schedule":    map[string]any{"hour": 0, "minute": 0, "timezone": "UTC"},
 	}
 	requireStatus(t, h.authed(http.MethodPut, "/api/settings/kindle", midnight), http.StatusNoContent)
@@ -426,6 +432,7 @@ func seedKindleSchedule(t *testing.T, h *harness, now time.Time) {
 	}
 
 	kindle := domain.KindleSettings{
+		Language:    domain.KindleLanguageChinese,
 		KindleEmail: "reader@kindle.com",
 		Schedule:    &domain.KindleSchedule{Hour: 8, Minute: 30, Timezone: "Asia/Shanghai"},
 	}

@@ -5,6 +5,7 @@ import type {
   FeedPreview,
   FeedUnreadCount,
   Folder,
+  KindleLanguage,
   KindleSchedule,
   KindleSendRecord,
   KindleSends,
@@ -225,6 +226,9 @@ const isProvider = (value: unknown): value is ExtractorProvider =>
 const isSMTPSecurity = (value: unknown): value is SMTPSecurity =>
   value === 'tls' || value === 'starttls';
 
+const isKindleLanguage = (value: unknown): value is KindleLanguage =>
+  value === 'zh' || value === 'en' || value === 'ja';
+
 const isSmtpSettingsView: TypeGuard<SmtpSettingsView> = (
   value
 ): value is SmtpSettingsView =>
@@ -249,6 +253,7 @@ const isKindleSettingsView: TypeGuard<KindleSettingsView> = (
 ): value is KindleSettingsView =>
   isRecord(value) &&
   isString(value.kindleEmail) &&
+  isKindleLanguage(value.language) &&
   isOptionalObject(value.schedule, isKindleSchedule) &&
   isOptionalString(value.nextSendAt);
 

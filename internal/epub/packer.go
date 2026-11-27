@@ -88,6 +88,7 @@ func readRootDir(root *os.Root) ([]os.DirEntry, error) {
 type packer struct {
 	builder           *Builder
 	dateStr           string
+	locale            bookLocale
 	measureTitle      string
 	imageDeadline     time.Time
 	totalSpooledBytes int64
@@ -147,12 +148,13 @@ type candidatePlan struct {
 	navMetaBytes    int64
 }
 
-func newPacker(builder *Builder, dateStr string) *packer {
+func newPacker(builder *Builder, dateStr string, locale bookLocale) *packer {
 	measureTitle, _ := domain.FormatKindleBookMeta(dateStr, measureUpperBoundIndex, measureUpperBoundIndex)
 
 	return &packer{
 		builder:       builder,
 		dateStr:       dateStr,
+		locale:        locale,
 		measureTitle:  measureTitle,
 		failedImages:  make(map[string]struct{}),
 		removeFile:    os.Remove,
@@ -323,10 +325,12 @@ func (p *packer) measureCandidate(
 	}
 
 	meta := archiveMeta{
-		title:    p.measureTitle,
-		identity: book.identity,
-		chapters: append(append([]chapterMeta(nil), book.chapters...), plan.chapter),
-		images:   append(append([]imageManifestItem(nil), book.images...), plan.newImages...),
+		title:      p.measureTitle,
+		locale:     p.locale,
+		identity:   book.identity,
+		coverImage: p.builder.coverImage,
+		chapters:   append(append([]chapterMeta(nil), book.chapters...), plan.chapter),
+		images:     append(append([]imageManifestItem(nil), book.images...), plan.newImages...),
 	}
 
 	return measureArchiveSize(ctx, meta, book.entries, added, maxBytes)
@@ -356,9 +360,10 @@ func (p *packer) buildCandidatePlan(book *draftBook, cand *preparedCandidate, te
 	maxBytes := int64(p.builder.maxEPUBBytes)
 
 	chapterName := oebpsPrefix + chapterHref(len(book.chapters))
-	chapterDoc, hasRemoteResources := renderChapter(cand.chapter, rewrites)
+	chapterDoc, hasRemoteResources := renderChapter(cand.chapter, rewrites, p.locale)
 	chapterMetaItem := chapterMeta{
-		title:              chapterTitle(cand.chapter.article),
+		title:              chapterTitle(cand.chapter.article, p.locale),
+		section:            cand.chapter.article.Section,
 		hasRemoteResources: hasRemoteResources,
 	}
 
@@ -385,12 +390,16 @@ func (p *packer) buildCandidatePlan(book *draftBook, cand *preparedCandidate, te
 		})
 	}
 
-	return assembleCandidatePlan(len(book.chapters), chapterMetaItem, rewrites, manifest, addedImgBytes, entries), hadImages, nil
+	chapterIndex := len(book.chapters)
+	startsSection := chapterIndex == 0 || book.chapters[chapterIndex-1].section != chapterMetaItem.section
+	navMetaBytes := chapterNavOpfUncompressedBytes(chapterIndex, chapterMetaItem, startsSection, manifest)
+
+	return assembleCandidatePlan(chapterMetaItem, navMetaBytes, rewrites, manifest, addedImgBytes, entries), hadImages, nil
 }
 
 func assembleCandidatePlan(
-	chapterIndex int,
 	chapter chapterMeta,
+	navMetaBytes int64,
 	rewrites map[string]string,
 	manifest []imageManifestItem,
 	addedImgBytes int64,
@@ -408,7 +417,7 @@ func assembleCandidatePlan(
 		addedImgBytes:   addedImgBytes,
 		entries:         entries,
 		spooledZipBytes: spooledZipBytes,
-		navMetaBytes:    chapterNavOpfUncompressedBytes(chapterIndex, chapter, manifest),
+		navMetaBytes:    navMetaBytes,
 	}
 }
 
@@ -557,7 +566,7 @@ func (p *packer) ensureBookBaseSize(ctx context.Context, book *draftBook, maxByt
 
 	baseSize, err := measureArchiveSize(
 		ctx,
-		archiveMeta{title: p.measureTitle, identity: book.identity},
+		archiveMeta{title: p.measureTitle, locale: p.locale, identity: book.identity, coverImage: p.builder.coverImage},
 		nil,
 		nil,
 		maxBytes,
@@ -673,7 +682,14 @@ func (p *packer) ReadBook(ctx context.Context, index int) (domain.EPUBBook, erro
 	}
 
 	title, filename := domain.FormatKindleBookMeta(p.dateStr, index+1, len(p.finished))
-	meta := archiveMeta{title: title, identity: item.identity, chapters: item.chapters, images: item.images}
+	meta := archiveMeta{
+		title:      title,
+		locale:     p.locale,
+		identity:   item.identity,
+		coverImage: p.builder.coverImage,
+		chapters:   item.chapters,
+		images:     item.images,
+	}
 	data, err := writeFinalArchive(ctx, meta, item.spoolPath, item.entries, int64(p.builder.maxEPUBBytes))
 	removeErr := p.consumeFinishedBook(item)
 	if err != nil {

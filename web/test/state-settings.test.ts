@@ -81,6 +81,7 @@ const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
   },
   kindle: {
     kindleEmail: 'kindle@example.com',
+    language: 'zh',
     schedule: { hour: 8, minute: 0, timezone: 'Asia/Shanghai' },
     nextSendAt: '2026-11-20T00:00:00Z',
   },

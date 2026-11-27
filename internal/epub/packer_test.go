@@ -34,7 +34,7 @@ func TestBuildBooksSplitsOversizedLibrariesInOrder(t *testing.T) {
 		}
 	}
 
-	books, err := NewBuilder(Config{MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
+	books, err := newTestBuilder(Config{MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", articles)
 	if err != nil {
 		t.Fatalf("BuildBooks() error = %v", err)
 	}
@@ -142,7 +142,7 @@ func TestPackerPacks5000TinyArticlesWithSublinearMeasurements(t *testing.T) {
 	}
 
 	t.Run("single 20 MiB book skips intermediate measurements", func(t *testing.T) {
-		rawPacker, err := NewBuilder(Config{}).NewPacker(context.Background(), "2026-03-15")
+		rawPacker, err := newTestBuilder(Config{}).NewPacker(context.Background(), "2026-03-15", domain.KindleLanguageChinese)
 		if err != nil {
 			t.Fatalf("NewPacker() error = %v", err)
 		}
@@ -181,7 +181,7 @@ func TestPackerPacks5000TinyArticlesWithSublinearMeasurements(t *testing.T) {
 
 	t.Run("multi-book split runs O(n/books) measurements", func(t *testing.T) {
 		const maxBytes = 256 * 1024
-		rawPacker, err := NewBuilder(Config{MaxEPUBBytes: maxBytes}).NewPacker(context.Background(), "2026-03-15")
+		rawPacker, err := newTestBuilder(Config{MaxEPUBBytes: maxBytes}).NewPacker(context.Background(), "2026-03-15", domain.KindleLanguageChinese)
 		if err != nil {
 			t.Fatalf("NewPacker() error = %v", err)
 		}
@@ -233,6 +233,7 @@ func TestPackerBoundaryNearLimitNeverExceedsMaxBytes(t *testing.T) {
 	for i := range articles {
 		articles[i] = domain.KindleArticle{
 			ID:       fmt.Sprintf("b-%d", i+1),
+			Section:  fmt.Sprintf("Section <%d> &", i/3),
 			Title:    "Title &" + randomText(t, 40),
 			HTMLBody: "<p>" + randomText(t, 1800) + "</p>",
 		}
@@ -246,7 +247,7 @@ func TestPackerBoundaryNearLimitNeverExceedsMaxBytes(t *testing.T) {
 		}
 	}
 
-	unnumbered, err := NewBuilder(Config{}).BuildBooks(context.Background(), "2026-03-15", numberedArticles[:2])
+	unnumbered, err := newTestBuilder(Config{}).BuildBooks(context.Background(), "2026-03-15", numberedArticles[:2])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +264,7 @@ func TestPackerBoundaryNearLimitNeverExceedsMaxBytes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			maxBytes := tc.maxBytes
-			books, err := NewBuilder(Config{MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", tc.articles)
+			books, err := newTestBuilder(Config{MaxEPUBBytes: maxBytes}).BuildBooks(context.Background(), "2026-03-15", tc.articles)
 			if err != nil {
 				t.Fatalf("BuildBooks(maxBytes=%d) error = %v", maxBytes, err)
 			}
@@ -290,7 +291,7 @@ func TestPackerBoundaryNearLimitNeverExceedsMaxBytes(t *testing.T) {
 func TestPackerSharesBookIdentityBetweenMeasureAndFinalArchive(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	raw, err := NewBuilder(Config{MaxEPUBBytes: 64 * 1024}).NewPacker(ctx, "2026-03-15")
+	raw, err := newTestBuilder(Config{MaxEPUBBytes: 64 * 1024}).NewPacker(ctx, "2026-03-15", domain.KindleLanguageChinese)
 	if err != nil {
 		t.Fatal(err)
 	}

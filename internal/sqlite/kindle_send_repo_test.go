@@ -26,6 +26,7 @@ func TestKindleSendRepoCreateAndRecover(t *testing.T) {
 
 	// The schedule was set a day ago, so its stored next send (04-30 09:00 UTC) is overdue.
 	configureKindleDeliveryForTest(t, store, domain.KindleSettings{
+		Language:    domain.KindleLanguageChinese,
 		KindleEmail: "reader@kindle.com",
 		Schedule:    &domain.KindleSchedule{Hour: 9, Minute: 0, Timezone: "UTC"},
 	}, startedAt.Add(-24*time.Hour))
@@ -496,5 +497,47 @@ func TestKindleSendRepoListUnreadForKindle(t *testing.T) {
 	deletedPage, deletedFeed, deletedItem, err := store.KindleSends().GetKindleArticle(ctx, wantRefs[2])
 	if err != nil || deletedPage != nil || deletedFeed != nil || deletedItem != nil {
 		t.Fatalf("deleted feed article = (%+v, %+v, %+v, %v), want all nil", deletedPage, deletedFeed, deletedItem, err)
+	}
+}
+
+func TestKindleSendRepoListUnreadForKindleGroupsFoldersBeforeTopLevelFeeds(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	news := createFolder(t, store, "News")
+	blog := createFolder(t, store, "Blog")
+	topLevel := createFeed(t, store, "Aardvark", nil)
+	zulu := createFeed(t, store, "Zulu", &news.ID)
+	mike := createFeed(t, store, "Mike", &news.ID)
+	yankee := createFeed(t, store, "Yankee", &blog.ID)
+
+	topItems := addItems(t, store, topLevel, 1)
+	zuluItems := addItems(t, store, zulu, 1)
+	mikeItems := addItems(t, store, mike, 1)
+	yankeeItems := addItems(t, store, yankee, 1)
+
+	refs, err := store.KindleSends().ListUnreadForKindle(ctx)
+	if err != nil {
+		t.Fatalf("list unread for kindle: %v", err)
+	}
+
+	got := make([]string, len(refs))
+	for i, ref := range refs {
+		folderName := "<top>"
+		if ref.FolderName != nil {
+			folderName = *ref.FolderName
+		}
+
+		got[i] = ref.ID + "|" + folderName
+	}
+
+	want := []string{
+		yankeeItems[0].ID + "|Blog",
+		mikeItems[0].ID + "|News",
+		zuluItems[0].ID + "|News",
+		topItems[0].ID + "|<top>",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("unread refs = %v, want %v", got, want)
 	}
 }
