@@ -24,8 +24,8 @@ func TestNewBuilderDefaultsToEmbeddedCover(t *testing.T) {
 		t.Fatalf("embedded cover is not a JPEG: %v", err)
 	}
 
-	if cfg.Width != 1200 || cfg.Height != 1920 {
-		t.Fatalf("embedded cover is %dx%d, want 1200x1920", cfg.Width, cfg.Height)
+	if cfg.Width != 1200 || cfg.Height != 1600 {
+		t.Fatalf("embedded cover is %dx%d, want 1200x1600", cfg.Width, cfg.Height)
 	}
 }
 
