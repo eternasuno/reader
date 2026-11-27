@@ -1,21 +1,21 @@
 import { FETCH_TIMEOUT_MS } from './deadline';
 import {
+  decodeFeedItemOrder,
   decodeField,
+  decodeSavedPageOrder,
+  decodeSavedPages,
   decodeSavedPageUnreadCount,
   decodeWith,
   isArrayOf,
-  isFeedItem,
   isFolder,
   isNullable,
   isSavedPage,
   isSession,
 } from './decoders';
-import { item, listPage, request, requestNoContent } from './request';
+import { item, itemsByIds, request, requestNoContent } from './request';
 import type {
-  FeedItem,
   Folder,
-  ListParams,
-  Page,
+  OrderParams,
   RequestCallOptions,
   SavedPage,
   SavedPageUnreadCount,
@@ -39,11 +39,13 @@ export const authApi = {
 };
 
 export const savedPagesApi = {
-  list: (
-    params: ListParams = {},
-    options?: RequestCallOptions
-  ): Promise<Page<SavedPage>> =>
-    listPage('/api/saved-pages', isSavedPage, params, options),
+  order: (params: OrderParams = {}, options?: RequestCallOptions) =>
+    request('/api/saved-pages/order', decodeSavedPageOrder, {
+      ...options,
+      params,
+    }),
+  byIds: (ids: ReadonlyArray<string>, options?: RequestCallOptions) =>
+    itemsByIds('/api/saved-pages', decodeSavedPages, ids, options),
   unreadCount: (options?: RequestCallOptions): Promise<SavedPageUnreadCount> =>
     request(
       '/api/saved-pages/unread-count',
@@ -141,15 +143,17 @@ export const foldersApi = {
       method: 'POST',
       body: { before },
     }),
-  listItems: (
+  itemsOrder: (
     id: string,
-    params: ListParams = {},
+    params: OrderParams = {},
     options?: RequestCallOptions
-  ): Promise<Page<FeedItem>> =>
-    listPage(
-      `/api/folders/${encodeURIComponent(id)}/items`,
-      isFeedItem,
-      params,
-      options
+  ) =>
+    request(
+      `/api/folders/${encodeURIComponent(id)}/items/order`,
+      decodeFeedItemOrder,
+      {
+        ...options,
+        params,
+      }
     ),
 };

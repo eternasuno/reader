@@ -1,29 +1,14 @@
 import type { JSX } from '@solidjs/web';
 import type { Feed } from '../api';
 import { t } from '../i18n';
-import {
-  aggregateOrder,
-  changeFeedOrder,
-  toggleAggregateOrder,
-} from '../state';
+import { changeFeedOrder } from '../state';
 import { MenuCheckbox } from '../ui';
 
-/**
- * `FD-PREF-1`: `从旧到新` toggle. A feed row/list stores its own order; every other list shares one
- * locally persisted order.
- */
-export function ListOrderCheckbox(props: { feed: Feed | null }): JSX.Element {
-  const oldest = (): boolean =>
-    props.feed ? props.feed.order === 'oldest' : aggregateOrder() === 'oldest';
+/** `FD-PREF-1`: stores the list order for a single feed. */
+export function ListOrderCheckbox(props: { feed: Feed }): JSX.Element {
+  const oldest = (): boolean => props.feed.order === 'oldest';
   const toggle = (): void => {
-    const feed = props.feed;
-    if (feed) {
-      void changeFeedOrder(feed, feed.order === 'oldest' ? 'newest' : 'oldest');
-
-      return;
-    }
-
-    void toggleAggregateOrder();
+    void changeFeedOrder(props.feed, oldest() ? 'newest' : 'oldest');
   };
 
   return (

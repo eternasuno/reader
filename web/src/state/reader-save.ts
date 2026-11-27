@@ -2,6 +2,7 @@ import { ApiError, savedPagesApi } from '../api';
 import { t } from '../i18n';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
+import { insertSavedPageLocal } from './library';
 import * as sidebar from './sidebar';
 
 const savingToLaterIds = new Set<string>();
@@ -24,9 +25,10 @@ export const saveFeedItemToLater = async (articleId: string): Promise<void> => {
   const requestEpoch = saveEpoch;
   savingToLaterIds.add(articleId);
   try {
-    await savedPagesApi.saveFeedItem(articleId);
+    const page = await savedPagesApi.saveFeedItem(articleId);
     if (requestEpoch !== saveEpoch) return;
 
+    insertSavedPageLocal(page);
     showToast(t('later.savedFromFeedToast'), 'success');
     void sidebar.refreshSidebar();
   } catch (error) {

@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createStateTestContext,
   jsonResponse,
   makeItem,
   makePage,
   noContentResponse,
+  savedOrder,
+  uuid,
 } from './support/state-fixture';
 
 const BOUNDARY = '019363b8-0000-7000-8000-000000000000';
@@ -32,23 +34,56 @@ describe('empty route', () => {
   });
 });
 
+it('prepends a feed item saved after opening Read Later and counts it once', async () => {
+  const { state, solid } = ctx;
+  await ctx.queueLoadedLibrary({ scope: { kind: 'all' }, items: [] });
+  const save = ctx.pending();
+  const saving = state.saveFeedItemToLater(uuid(1007));
+  const existing = makePage({ id: uuid(1018) });
+  const saved = makePage({ id: uuid(1019) });
+  await ctx.queueLoadedLibrary({
+    scope: { kind: 'later' },
+    unreadOnly: true,
+    items: [existing],
+    feeds: [],
+    saved: 1,
+  });
+  expect(Array.from(state.rowIds())).toEqual([existing.id]);
+
+  const refresh = ctx.queueDeferredSidebar({ saved: 2 });
+  save.resolve(jsonResponse({ item: saved }, 201));
+  await saving;
+  solid.flush();
+
+  expect(Array.from(state.rowIds())).toEqual([saved.id, existing.id]);
+  expect(state.savedUnreadCount()).toBe(2);
+
+  refresh.resolve();
+  await state.refreshSidebar();
+  solid.flush();
+
+  expect(state.savedUnreadCount()).toBe(2);
+});
+
 describe('cached article', () => {
   it('renders a cached row immediately and then refreshes it from the server', async () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1', read: true, title: 'Cached' })],
+      items: [makePage({ id: uuid(1018), read: true, title: 'Cached' })],
     });
 
     const remote = ctx.pending();
-    const opening = state.openArticleByRoute({ kind: 'later' }, 'p1');
+    const opening = state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
     expect(state.openArticle()?.title).toBe('Cached');
     expect(state.loadingArticle()).toBe(true);
 
     remote.resolve(
-      jsonResponse({ item: makePage({ id: 'p1', read: true, title: 'Fresh' }) })
+      jsonResponse({
+        item: makePage({ id: uuid(1018), read: true, title: 'Fresh' }),
+      })
     );
     await opening;
     solid.flush();
@@ -63,14 +98,14 @@ describe('missing article', () => {
     const { state, solid, ui } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1', read: true })],
+      items: [makePage({ id: uuid(1018), read: true })],
     });
 
     ctx.queue({ item: null });
-    await state.openArticleByRoute({ kind: 'later' }, 'p1');
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
-    expect(state.openArticleId()).toBe('p1');
+    expect(state.openArticleId()).toBe(uuid(1018));
     expect(state.openArticle()).toBeNull();
     expect(state.loadingArticle()).toBe(false);
     expect(ui.currentToast()).toBeNull();
@@ -82,39 +117,46 @@ describe('latest navigation', () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
-      items: [makeItem({ id: 'i1', feedId: 'f1', read: true })],
+      items: [makeItem({ id: uuid(1007), feedId: uuid(1001), read: true })],
     });
 
     const slow = ctx.pending();
-    const openingA = state.openArticleByRoute({ kind: 'all' }, 'i1');
-    ctx.queue({ item: makeItem({ id: 'i2', feedId: 'f1', read: true }) });
-    await state.openArticleByRoute({ kind: 'all' }, 'i2');
+    const openingA = state.openArticleByRoute({ kind: 'all' }, uuid(1007));
+    ctx.queue({
+      item: makeItem({ id: uuid(1008), feedId: uuid(1001), read: true }),
+    });
+    await state.openArticleByRoute({ kind: 'all' }, uuid(1008));
     solid.flush();
 
     slow.resolve(
       jsonResponse({
-        item: makeItem({ id: 'i1', feedId: 'f1', read: true, title: 'Stale' }),
+        item: makeItem({
+          id: uuid(1007),
+          feedId: uuid(1001),
+          read: true,
+          title: 'Stale',
+        }),
       })
     );
     await openingA;
     solid.flush();
 
-    expect(state.openArticleId()).toBe('i2');
-    expect(state.openArticle()?.id).toBe('i2');
+    expect(state.openArticleId()).toBe(uuid(1008));
+    expect(state.openArticle()?.id).toBe(uuid(1008));
   });
 });
 
 describe('read on open', () => {
   it('marks an opened unread article read', async () => {
     const { state, solid } = ctx;
-    ctx.queue({ item: makePage({ id: 'p1' }) });
+    ctx.queue({ item: makePage({ id: uuid(1018) }) });
     ctx.queueEmpty();
 
-    await state.openArticleByRoute({ kind: 'later' }, 'p1');
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
     expect(state.openArticle()?.read).toBe(true);
-    expect(ctx.requestUrl(1)).toBe('/api/saved-pages/p1');
+    expect(ctx.requestUrl(1)).toBe(`/api/saved-pages/${uuid(1018)}`);
     expect(ctx.requestInit(1).method).toBe('PATCH');
   });
 });
@@ -122,34 +164,30 @@ describe('read on open', () => {
 describe('read on open before slow list snapshot', () => {
   it('keeps read-on-open when detail resolves and PATCHes before slow page 1 returns', async () => {
     const { state, solid } = ctx;
+    const items = [makePage({ id: uuid(1018) }), makePage({ id: uuid(1019) })];
+    ctx.queue(savedOrder(items, BOUNDARY));
     const page1 = ctx.pending();
     const detail = ctx.pending();
 
     const loadingList = state.loadScopeFirstPage({ kind: 'later' }, false);
-    const opening = state.openArticleByRoute({ kind: 'later' }, 'p1');
+    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(2));
+    const opening = state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
     ctx.queueEmpty();
-    detail.resolve(jsonResponse({ item: makePage({ id: 'p1', read: false }) }));
+    detail.resolve(
+      jsonResponse({ item: makePage({ id: uuid(1018), read: false }) })
+    );
     await opening;
     solid.flush();
 
     expect(state.openArticle()?.read).toBe(true);
 
-    page1.resolve(
-      jsonResponse({
-        items: [
-          makePage({ id: 'p1', read: false }),
-          makePage({ id: 'p2', read: false }),
-        ],
-        cursor: null,
-        boundary: BOUNDARY,
-      })
-    );
+    page1.resolve(jsonResponse({ items }));
     await loadingList;
     solid.flush();
 
-    expect(state.rows().find((row) => row.id === 'p1')?.read).toBe(true);
+    expect(state.rows().find((row) => row.id === uuid(1018))?.read).toBe(true);
     expect(state.openArticle()?.read).toBe(true);
   });
 });
@@ -157,34 +195,30 @@ describe('read on open before slow list snapshot', () => {
 describe('slow list snapshot before read on open', () => {
   it('marks read-on-open when page 1 returns before detail', async () => {
     const { state, solid } = ctx;
+    const items = [makePage({ id: uuid(1018) }), makePage({ id: uuid(1019) })];
+    ctx.queue(savedOrder(items, BOUNDARY));
     const page1 = ctx.pending();
     const detail = ctx.pending();
 
     const loadingList = state.loadScopeFirstPage({ kind: 'later' }, false);
-    const opening = state.openArticleByRoute({ kind: 'later' }, 'p1');
+    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(2));
+    const opening = state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
-    page1.resolve(
-      jsonResponse({
-        items: [
-          makePage({ id: 'p1', read: false }),
-          makePage({ id: 'p2', read: false }),
-        ],
-        cursor: null,
-        boundary: BOUNDARY,
-      })
-    );
+    page1.resolve(jsonResponse({ items }));
     await loadingList;
     solid.flush();
 
-    expect(state.rows().find((row) => row.id === 'p1')?.read).toBe(false);
+    expect(state.rows().find((row) => row.id === uuid(1018))?.read).toBe(false);
 
     ctx.queueEmpty();
-    detail.resolve(jsonResponse({ item: makePage({ id: 'p1', read: false }) }));
+    detail.resolve(
+      jsonResponse({ item: makePage({ id: uuid(1018), read: false }) })
+    );
     await opening;
     solid.flush();
 
-    expect(state.rows().find((row) => row.id === 'p1')?.read).toBe(true);
+    expect(state.rows().find((row) => row.id === uuid(1018))?.read).toBe(true);
     expect(state.openArticle()?.read).toBe(true);
   });
 });
@@ -192,30 +226,29 @@ describe('slow list snapshot before read on open', () => {
 describe('local toggle during detail load', () => {
   it('preserves a local read toggle made while detail fetch is still in flight', async () => {
     const { state, solid } = ctx;
+    const items = [makePage({ id: uuid(1018) })];
+    ctx.queue(savedOrder(items, BOUNDARY));
     const page1 = ctx.pending();
     const detail = ctx.pending();
 
     const loadingList = state.loadScopeFirstPage({ kind: 'later' }, false);
-    const opening = state.openArticleByRoute({ kind: 'later' }, 'p1');
+    await vi.waitFor(() => expect(ctx.fetchCount()).toBe(2));
+    const opening = state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     solid.flush();
 
-    page1.resolve(
-      jsonResponse({
-        items: [makePage({ id: 'p1', read: false })],
-        cursor: null,
-        boundary: BOUNDARY,
-      })
-    );
+    page1.resolve(jsonResponse({ items }));
     await loadingList;
 
     const patch = ctx.pending();
-    const toggling = state.toggleArticleRead('p1', true);
+    const toggling = state.toggleArticleRead(uuid(1018), true);
     patch.resolve(noContentResponse());
     await toggling;
     solid.flush();
 
     const beforeDetail = ctx.fetchCount();
-    detail.resolve(jsonResponse({ item: makePage({ id: 'p1', read: false }) }));
+    detail.resolve(
+      jsonResponse({ item: makePage({ id: uuid(1018), read: false }) })
+    );
     await opening;
     solid.flush();
 
@@ -231,12 +264,12 @@ describe('refreshOpenArticle on mark-all', () => {
     state.trackLibraryMount();
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1', read: false })],
+      items: [makePage({ id: uuid(1018), read: false })],
       feeds: [],
       saved: 1,
     });
-    ctx.queue({ item: makePage({ id: 'p1', read: true }) });
-    await state.openArticleByRoute({ kind: 'later' }, 'p1');
+    ctx.queue({ item: makePage({ id: uuid(1018), read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1018));
     state.toggleEmbeddedMode();
     ctx.queueEmpty();
     const opened = state.openArticle();
@@ -247,12 +280,10 @@ describe('refreshOpenArticle on mark-all', () => {
 
     const beforeMark = ctx.fetchCount();
     ctx.queueEmpty();
-    ctx.queue({
-      items: [makePage({ id: 'p1', read: true })],
-      cursor: null,
-      boundary: BOUNDARY,
-    });
-    ctx.queue({ item: makePage({ id: 'p1', read: true }) });
+    const items = [makePage({ id: uuid(1018), read: true })];
+    ctx.queue(savedOrder(items, BOUNDARY));
+    ctx.queue({ item: items[0] });
+    ctx.queue({ items });
 
     await state.markScopeAllRead({ kind: 'later' });
     solid.flush();
@@ -260,7 +291,7 @@ describe('refreshOpenArticle on mark-all', () => {
     const urls = ctx.fetchMock.mock.calls
       .slice(beforeMark)
       .map(([url]) => String(url));
-    expect(urls).toContain('/api/saved-pages/p1');
+    expect(urls).toContain(`/api/saved-pages/${uuid(1018)}`);
     expect(
       ctx.fetchMock.mock.calls
         .slice(beforeMark)
@@ -268,7 +299,7 @@ describe('refreshOpenArticle on mark-all', () => {
           ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'
         )
     ).toBe(false);
-    expect(state.openArticleId()).toBe('p1');
+    expect(state.openArticleId()).toBe(uuid(1018));
     expect(state.displayMode()).toBe('embedded');
     expect(state.openArticle()?.read).toBe(true);
   });
@@ -279,10 +310,10 @@ describe('refreshOpenArticle scope guard and stale drop', () => {
     const { state, solid } = ctx;
     await ctx.queueLoadedLibrary({
       scope: { kind: 'later' },
-      items: [makePage({ id: 'p1', read: true })],
+      items: [makePage({ id: uuid(1018), read: true })],
     });
-    ctx.queue({ item: makePage({ id: 'p1', read: true }) });
-    await state.openArticleByRoute({ kind: 'later' }, 'p1');
+    ctx.queue({ item: makePage({ id: uuid(1018), read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1018));
 
     const beforeOther = ctx.fetchCount();
     await state.refreshOpenArticle((row) => row.kind === 'feed');
@@ -290,13 +321,15 @@ describe('refreshOpenArticle scope guard and stale drop', () => {
 
     const slowRefresh = ctx.pending();
     const refreshing = state.refreshOpenArticle((row) => row.kind === 'later');
-    ctx.queue({ item: makePage({ id: 'p2', read: true }) });
-    await state.openArticleByRoute({ kind: 'later' }, 'p2');
+    ctx.queue({ item: makePage({ id: uuid(1019), read: true }) });
+    await state.openArticleByRoute({ kind: 'later' }, uuid(1019));
     slowRefresh.resolve(
-      jsonResponse({ item: makePage({ id: 'p1', read: true, title: 'Old' }) })
+      jsonResponse({
+        item: makePage({ id: uuid(1018), read: true, title: 'Old' }),
+      })
     );
     await refreshing;
     solid.flush();
-    expect(state.openArticleId()).toBe('p2');
+    expect(state.openArticleId()).toBe(uuid(1019));
   });
 });

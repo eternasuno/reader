@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 
@@ -208,7 +208,8 @@ func (s *server) routes() *http.ServeMux {
 }
 
 func (s *server) registerSavedPageRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/saved-pages", s.handleSavedPageList)
+	mux.HandleFunc("GET /api/saved-pages", s.handleSavedPageBatch)
+	mux.HandleFunc("GET /api/saved-pages/order", s.handleSavedPageSnapshot)
 	mux.HandleFunc("POST /api/saved-pages", s.handleSavedPageCreate)
 	mux.HandleFunc("GET /api/saved-pages/unread-count", s.handleSavedPageUnreadCount)
 	mux.HandleFunc("POST /api/saved-pages/read", handleMarkIDsRead(s.cfg.SavedPages))
@@ -223,7 +224,7 @@ func (s *server) registerFeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/feeds", s.handleFeedSubscribe)
 	mux.HandleFunc("POST /api/feeds/preview", s.handleFeedPreview)
 	mux.HandleFunc("GET /api/feeds/unread-counts", s.handleFeedUnreadCounts)
-	mux.HandleFunc("GET /api/feeds/{id}/items", s.handleFeedItems)
+	mux.HandleFunc("GET /api/feeds/{id}/items/order", s.handleFeedItemSnapshot)
 	mux.HandleFunc("POST /api/feeds/{id}/refresh", s.handleFeedRefresh)
 	mux.HandleFunc("PUT /api/feeds/{id}/reader-mode", s.handleFeedReaderMode)
 	mux.HandleFunc("PUT /api/feeds/{id}/order", s.handleFeedOrder)
@@ -231,7 +232,8 @@ func (s *server) registerFeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/feeds/{id}", s.handleFeedDelete)
 	mux.HandleFunc("POST /api/feeds/{id}/read-all", s.handleFeedMarkRead)
 
-	mux.HandleFunc("GET /api/feed-items", s.handleFeedItemList)
+	mux.HandleFunc("GET /api/feed-items", s.handleFeedItemBatch)
+	mux.HandleFunc("GET /api/feed-items/order", s.handleAllFeedItemSnapshot)
 	mux.HandleFunc("POST /api/feed-items/read", handleMarkIDsRead(s.cfg.FeedItems))
 	mux.HandleFunc("POST /api/feed-items/read-all", handleMarkAllRead(s.cfg.FeedItems))
 	mux.HandleFunc("GET /api/feed-items/{id}", s.handleFeedItemGet)
@@ -249,7 +251,7 @@ func (s *server) registerFolderAndSettingRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/folders/{id}", s.handleFolderRename)
 	mux.HandleFunc("DELETE /api/folders/{id}", s.handleFolderDelete)
 	mux.HandleFunc("POST /api/folders/{id}/read-all", s.handleFolderMarkRead)
-	mux.HandleFunc("GET /api/folders/{id}/items", s.handleFolderItems)
+	mux.HandleFunc("GET /api/folders/{id}/items/order", s.handleFolderItemSnapshot)
 
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings/retention", s.handleRetentionUpdate)
@@ -464,88 +466,19 @@ type itemResponse[T any] struct {
 	Item *T `json:"item"`
 }
 
-type pageResponse[T any] struct {
-	Items    []T     `json:"items"`
-	Cursor   *string `json:"cursor"`
-	Boundary string  `json:"boundary"`
-}
-
-type pageQuery struct {
-	limit    int
-	hasLimit bool
-	unread   bool
-	hasOrder bool
-	order    domain.SortOrder
-	cursor   *string
-	boundary *string
-}
-
-func parsePageQuery(r *http.Request) (pageQuery, error) {
+func parseStrictQuery(r *http.Request, allowedKeys ...string) (url.Values, error) {
 	values, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return pageQuery{}, domain.NewError(domain.ErrRequestFailed, err)
+		return nil, domain.NewError(domain.ErrRequestFailed, err)
 	}
 
-	if hasMultipleQueryValues(values, "limit", "unread", "order", "cursor", "boundary") {
-		return pageQuery{}, domain.NewError(domain.ErrRequestFailed, nil)
-	}
-
-	parsed := pageQuery{
-		cursor:   optionalQueryValue(values, "cursor"),
-		boundary: optionalQueryValue(values, "boundary"),
-	}
-	if err := parsePageLimit(values, &parsed); err != nil {
-		return pageQuery{}, err
-	}
-
-	unread, err := parseUnreadFlag(values)
-	if err != nil {
-		return pageQuery{}, err
-	}
-
-	parsed.unread = unread
-	if queryOrder := strings.TrimSpace(values.Get("order")); queryOrder != "" {
-		parsed.hasOrder = true
-		parsed.order = domain.SortOrder(strings.ToLower(queryOrder))
-	}
-
-	return parsed, nil
-}
-
-func parsePageLimit(values url.Values, parsed *pageQuery) error {
-	if !values.Has("limit") {
-		return nil
-	}
-
-	limit, err := strconv.Atoi(strings.TrimSpace(values.Get("limit")))
-	if err != nil {
-		return domain.NewError(domain.ErrRequestFailed, err)
-	}
-
-	parsed.limit = limit
-	parsed.hasLimit = true
-
-	return nil
-}
-
-func optionalQueryValue(values url.Values, key string) *string {
-	if !values.Has(key) {
-		return nil
-	}
-
-	value := values.Get(key)
-
-	return &value
-}
-
-func hasMultipleQueryValues(values url.Values, keys ...string) bool {
-	for _, key := range keys {
-		if len(values[key]) > 1 {
-			return true
+	for key, entries := range values {
+		if len(entries) != 1 || !slices.Contains(allowedKeys, key) {
+			return nil, domain.NewError(domain.ErrRequestFailed, nil)
 		}
 	}
 
-	return false
+	return values, nil
 }
 
 func parseUnreadFlag(values url.Values) (bool, error) {
@@ -563,13 +496,36 @@ func parseUnreadFlag(values url.Values) (bool, error) {
 	}
 }
 
-func parseDefaultPageParams(r *http.Request) (domain.PageParams, error) {
-	query, err := parsePageQuery(r)
+func parseSnapshotParams(r *http.Request) (domain.SnapshotParams, error) {
+	query, err := parseStrictQuery(r, "unread")
 	if err != nil {
-		return domain.PageParams{}, err
+		return domain.SnapshotParams{}, err
 	}
 
-	return query.params(query.orderOrDefault())
+	unread, err := parseUnreadFlag(query)
+	if err != nil {
+		return domain.SnapshotParams{}, err
+	}
+
+	return domain.NewSnapshotParams(unread), nil
+}
+
+func parseBatchIDs(r *http.Request) ([]string, error) {
+	query, err := parseStrictQuery(r, "ids")
+	if err != nil {
+		return nil, err
+	}
+
+	var ids []string
+	if query.Has("ids") {
+		ids = strings.SplitN(query.Get("ids"), ",", domain.MaxBatchIDs+1)
+	}
+
+	if err := domain.ValidateBatchIDs(ids); err != nil {
+		return nil, err
+	}
+
+	return ids, nil
 }
 
 func mapSlice[In, Out any](items []In, convert func(In) Out) []Out {
@@ -589,18 +545,6 @@ func toPtr[In, Out any](item *In, convert func(In) Out) *Out {
 	converted := convert(*item)
 
 	return &converted
-}
-
-func (q pageQuery) orderOrDefault() domain.SortOrder {
-	if q.hasOrder {
-		return q.order
-	}
-
-	return domain.SortOrderNewest
-}
-
-func (q pageQuery) params(order domain.SortOrder) (domain.PageParams, error) {
-	return domain.ValidatePageParams(q.limit, q.hasLimit, q.unread, order, q.cursor, q.boundary)
 }
 
 func isAPIPath(requestPath string) bool {
@@ -666,6 +610,8 @@ func statusForCode(code domain.ErrorCode) int {
 		domain.ErrInvalidBrowserlessSetting,
 		domain.ErrInvalidSMTPSetting,
 		domain.ErrInvalidKindleSetting,
+		domain.ErrSavedPageLimitExceeded,
+		domain.ErrFeedItemBudgetExceeded,
 		domain.ErrRequestFailed:
 		return http.StatusBadRequest
 	case domain.ErrUnauthorized, domain.ErrInvalidCredentials:

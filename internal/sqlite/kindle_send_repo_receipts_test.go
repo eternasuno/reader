@@ -336,6 +336,34 @@ func (f receiptFixture) requireCounters(t *testing.T, stage string, wantArticles
 	}
 }
 
+func TestKindleSendRepoRecordBookAcceptedAfterRetentionPrune(t *testing.T) {
+	f := newReceiptFixture(t)
+	ctx := context.Background()
+	feed := domain.Feed{ID: f.item.FeedID, Title: "Example"}
+	newer := addItems(t, f.store, feed, 1)[0]
+	if err := f.store.Settings().UpdateRetention(ctx, 1); err != nil {
+		t.Fatalf("lower retention during send: %v", err)
+	}
+
+	if pruned, err := f.store.FeedItems().GetByID(ctx, f.item.ID); err != nil || pruned != nil {
+		t.Fatalf("pruned feed item = (%+v, %v), want absent", pruned, err)
+	}
+
+	repo := f.store.KindleSends()
+	if err := repo.RecordBookAccepted(ctx, f.sendID, 0, []string{f.page.ID}, []string{f.item.ID, newer.ID}, 3); err != nil {
+		t.Fatalf("record book with pruned item: %v", err)
+	}
+
+	f.requireCounters(t, "accepted book with pruned item", 3, 1)
+	if page, err := f.store.SavedPages().GetByID(ctx, f.page.ID); err != nil || page == nil || !page.Read {
+		t.Fatalf("saved page after receipt = (%+v, %v), want read", page, err)
+	}
+
+	if item, err := f.store.FeedItems().GetByID(ctx, newer.ID); err != nil || item == nil || !item.Read {
+		t.Fatalf("retained item after receipt = (%+v, %v), want read", item, err)
+	}
+}
+
 func TestKindleSendRepoRecordBookAcceptedReplayKeepsUserUnreadMarks(t *testing.T) {
 	f := newReceiptFixture(t)
 	ctx := context.Background()

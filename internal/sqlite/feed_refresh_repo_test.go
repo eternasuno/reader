@@ -43,7 +43,7 @@ func recordFailure(t *testing.T, store *Store, feed domain.Feed, summary string,
 func recordSuccess(t *testing.T, store *Store, feed domain.Feed, finishedAt time.Time) {
 	t.Helper()
 
-	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: feed.Title}, nil, nil, finishedAt)
+	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: feed.Title}, nil, finishedAt)
 }
 
 func recordRefresh(t *testing.T, store *Store, feed domain.Feed, outcome refreshOutcome) {
@@ -249,7 +249,7 @@ func TestFeedRepoSucceedRefreshResetsFailuresAndSchedulesNext(t *testing.T) {
 
 	attemptID := startRefresh(t, store, feed, refreshAt(59))
 	nextAt := refreshAt(90)
-	err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, domain.FeedSyncMeta{Title: "Example"}, nil, nil, refreshAt(60), nextAt)
+	err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, domain.FeedSyncMeta{Title: "Example"}, nil, refreshAt(60), nextAt)
 	if err != nil {
 		t.Fatalf("succeed refresh: %v", err)
 	}
@@ -422,8 +422,8 @@ func TestFeedRepoFinishForDeletedFeedIsIgnored(t *testing.T) {
 		t.Fatalf("delete feed: %v", err)
 	}
 
-	items := []domain.FeedItem{{ID: domain.NewID(), URL: mustURL(t, "https://example.com/a"), Title: "A"}}
-	err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, domain.FeedSyncMeta{Title: "Gone"}, items, nil, refreshAt(2), refreshAt(32))
+	items := []domain.ParsedFeedEntry{{URL: mustURL(t, "https://example.com/a"), Title: "A"}}
+	err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, domain.FeedSyncMeta{Title: "Gone"}, items, refreshAt(2), refreshAt(32))
 	if err != nil {
 		t.Fatalf("succeed refresh for deleted feed: %v", err)
 	}
@@ -449,14 +449,18 @@ func TestFeedRepoFinishReplayHasNoSecondEffect(t *testing.T) {
 	claimed, attemptID := claimDue(t, store, refreshAt(1))
 	requireClaimed(t, claimed, feed)
 
-	first := []domain.FeedItem{{ID: domain.NewID(), URL: mustURL(t, "https://example.com/first"), Title: "First"}}
-	err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, domain.FeedSyncMeta{Title: "First sync"}, first, nil, refreshAt(2), refreshAt(32))
+	if err := store.Settings().UpdateRetention(ctx, 1); err != nil {
+		t.Fatalf("update retention: %v", err)
+	}
+
+	first := []domain.ParsedFeedEntry{{URL: mustURL(t, "https://example.com/first"), Title: "First"}}
+	err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, domain.FeedSyncMeta{Title: "First sync"}, first, refreshAt(2), refreshAt(32))
 	if err != nil {
 		t.Fatalf("succeed refresh: %v", err)
 	}
 
-	second := []domain.FeedItem{{ID: domain.NewID(), URL: mustURL(t, "https://example.com/second"), Title: "Second"}}
-	err = store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, domain.FeedSyncMeta{Title: "Second sync"}, second, []string{first[0].ID}, refreshAt(3), refreshAt(33))
+	second := []domain.ParsedFeedEntry{{URL: mustURL(t, "https://example.com/second"), Title: "Second"}}
+	err = store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, domain.FeedSyncMeta{Title: "Second sync"}, second, refreshAt(3), refreshAt(33))
 	if err != nil {
 		t.Fatalf("replay succeed refresh: %v", err)
 	}
@@ -514,6 +518,40 @@ func TestFeedRepoFinishRequiresTheRunningAttemptOfTheFeed(t *testing.T) {
 	}
 }
 
+func TestFeedRepoSucceedRefreshUsesRetentionAtCommit(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	feed := createFeed(t, store, "Example", nil)
+	other := createFeed(t, store, "Other", nil)
+	stored := addItems(t, store, feed, 3)
+	otherItems := addItems(t, store, other, 2)
+	attemptID := startRefresh(t, store, feed, refreshAt(1))
+
+	entries := []domain.ParsedFeedEntry{
+		{URL: mustURL(t, "https://example.com/new-top"), Title: "New top"},
+		{URL: stored[2].URL, Title: "Duplicate of stored top"},
+		{URL: stored[0].URL, Title: "Previously oldest"},
+	}
+
+	if err := store.Settings().UpdateRetention(ctx, 2); err != nil {
+		t.Fatalf("lower retention after parsing: %v", err)
+	}
+
+	meta := domain.FeedSyncMeta{Title: feed.Title}
+	if err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, meta, entries, refreshAt(2), refreshAt(32)); err != nil {
+		t.Fatalf("succeed refresh: %v", err)
+	}
+
+	urls := queryStrings(t, store.ReadDB(), `SELECT url FROM feed_item WHERE feed_id = ? ORDER BY id DESC`, feed.ID)
+	if want := []string{entries[0].URL.Raw(), entries[1].URL.Raw()}; !slices.Equal(urls, want) {
+		t.Fatalf("retained URLs = %v, want %v", urls, want)
+	}
+
+	if got := itemIDs(loadTestFeedItems(t, store, other.ID)); !slices.Equal(got, []string{otherItems[1].ID, otherItems[0].ID}) {
+		t.Fatalf("other feed items = %v, want both unchanged", got)
+	}
+}
+
 func TestFeedRepoSucceedRefreshIsAtomic(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -529,9 +567,9 @@ func TestFeedRepoSucceedRefreshIsAtomic(t *testing.T) {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	items := []domain.FeedItem{{ID: domain.NewID(), URL: mustURL(t, "https://example.com/a"), Title: "A"}}
+	items := []domain.ParsedFeedEntry{{URL: mustURL(t, "https://example.com/a"), Title: "A"}}
 	meta := domain.FeedSyncMeta{Title: "Synced", SiteURL: ptr("https://example.com/")}
-	err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, meta, items, nil, refreshAt(2), refreshAt(32))
+	err := store.Feeds().SucceedRefresh(ctx, attemptID, feed.ID, meta, items, refreshAt(2), refreshAt(32))
 	requireCode(t, err, domain.ErrFeedRepositoryError)
 
 	got, getErr := store.Feeds().GetByID(ctx, feed.ID)
@@ -631,7 +669,7 @@ func TestFeedRepoClaimDueRefreshWaitsForScheduledTimeAfterFinish(t *testing.T) {
 	claimed, attemptID := claimDue(t, store, refreshAt(1))
 	requireClaimed(t, claimed, feed)
 
-	err := store.Feeds().SucceedRefresh(context.Background(), attemptID, feed.ID, domain.FeedSyncMeta{Title: "Example"}, nil, nil, refreshAt(2), refreshAt(32))
+	err := store.Feeds().SucceedRefresh(context.Background(), attemptID, feed.ID, domain.FeedSyncMeta{Title: "Example"}, nil, refreshAt(2), refreshAt(32))
 	if err != nil {
 		t.Fatalf("succeed refresh: %v", err)
 	}

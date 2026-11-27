@@ -41,26 +41,49 @@ type idsRequest struct {
 	IDs []string `json:"ids"`
 }
 
-func (s *server) handleSavedPageList(w http.ResponseWriter, r *http.Request) {
-	params, err := parseDefaultPageParams(r)
+type savedPageSnapshotResponse struct {
+	Boundary string   `json:"boundary"`
+	IDs      []string `json:"ids"`
+}
+
+func (s *server) handleSavedPageSnapshot(w http.ResponseWriter, r *http.Request) {
+	params, err := parseSnapshotParams(r)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	result, err := s.cfg.SavedPages.List(r.Context(), params)
+	ids, err := s.cfg.SavedPages.Snapshot(r.Context(), params)
 	if err != nil {
 		writeError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pageResponse[savedPageJSON]{
-		Items:    mapSlice(result.Items, toSavedPageJSON),
-		Cursor:   result.Cursor,
-		Boundary: params.Boundary,
-	})
+	if ids == nil {
+		ids = []string{}
+	}
+
+	writeJSON(w, http.StatusOK, savedPageSnapshotResponse{Boundary: params.Boundary, IDs: ids})
+}
+
+func (s *server) handleSavedPageBatch(w http.ResponseWriter, r *http.Request) {
+	ids, err := parseBatchIDs(r)
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	items, err := s.cfg.SavedPages.GetByIDs(r.Context(), ids)
+	if err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, listResponse[savedPageJSON]{Items: mapSlice(items, toSavedPageJSON)})
 }
 
 func (s *server) handleSavedPageUnreadCount(w http.ResponseWriter, r *http.Request) {

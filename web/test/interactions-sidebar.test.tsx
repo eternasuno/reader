@@ -67,7 +67,7 @@ const seedTree = async (): Promise<void> => {
   flush();
 };
 
-it('keeps feed row menu open when toggling order and omits the unread filter', async () => {
+it('keeps feed row menu open when toggling order and omits order from the folder menu', async () => {
   await seedTree();
   fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
@@ -93,12 +93,23 @@ it('keeps feed row menu open when toggling order and omits the unread filter', a
     '只显示未读'
   );
 
-  moreButtons[2]?.click();
+  const folder = Array.from(container.querySelectorAll('button')).find(
+    (button) =>
+      button.textContent?.includes('Tech') &&
+      !button.hasAttribute('aria-controls')
+  );
+  const folderMore = folder?.parentElement?.querySelector<HTMLButtonElement>(
+    'button[aria-label="更多操作"]'
+  );
+  expect(folderMore).toBeTruthy();
+  folderMore?.click();
   flush();
-  clickButton(container, '从旧到新');
-  await Promise.resolve();
-  flush();
-  expect(container.querySelector('[role="menu"]')).not.toBeNull();
+  expect(container.querySelector('[role="menu"]')?.textContent).toContain(
+    '全部标记为已读'
+  );
+  expect(container.querySelector('[role="menu"]')?.textContent).not.toContain(
+    '从旧到新'
+  );
 });
 
 it('exposes folder collapse label with aria-controls, failure title, and OPML menu labels', async () => {
@@ -177,9 +188,7 @@ const stubSidebarMarkAll = () => {
       return Promise.resolve(Response.json({ count: 0, boundary }));
     if (url === '/api/feeds/unread-counts')
       return Promise.resolve(Response.json({ items: [], boundary }));
-    return Promise.resolve(
-      Response.json({ items: [], cursor: null, boundary })
-    );
+    return Promise.resolve(Response.json({ items: [], groups: [], boundary }));
   });
   return {
     hasReadAll: () => resolveReadAll !== undefined,

@@ -124,6 +124,8 @@ func All() []*goose.Migration {
 		goose.NewGoMigration(1, &goose.GoFunc{RunTx: initUp}, nil),
 		goose.NewGoMigration(2, &goose.GoFunc{RunTx: kindleLanguageUp}, nil),
 		goose.NewGoMigration(3, &goose.GoFunc{RunTx: browserlessUp}, nil),
+		goose.NewGoMigration(4, &goose.GoFunc{RunTx: snapshotLimitsUp}, nil),
+		goose.NewGoMigration(5, &goose.GoFunc{RunTx: feedItemBudgetUp}, nil),
 	}
 }
 

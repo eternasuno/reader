@@ -52,7 +52,7 @@ func TestOPMLImportRawXML(t *testing.T) {
 
 	h := newHarness(t)
 	existing := h.seedFeed("Go Blog", "https://go.example.com/rss", nil)
-	h.succeedRefresh(existing.ID, domain.FeedSyncMeta{Title: existing.Title}, nil, h.clock.Now())
+	h.succeedRefresh(existing.ID, domain.FeedSyncMeta{Title: existing.Title}, h.clock.Now())
 
 	document := `<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -122,6 +122,42 @@ func TestOPMLImportRawXML(t *testing.T) {
 		if feed.URL.RedactedString() == "https://go.example.com/rss" && feed.FolderID != nil {
 			t.Fatal("a skipped duplicate must not be moved into the imported folder")
 		}
+	}
+}
+
+func TestOPMLImportExceedingFeedItemBudget(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	existing := h.seedFeed("Existing", "https://existing.example.com/rss", nil)
+	h.succeedRefresh(existing.ID, domain.FeedSyncMeta{Title: existing.Title}, h.clock.Now())
+	requireStatus(t, h.authed(http.MethodPut, "/api/settings/retention", map[string]any{"retention": 5000}), http.StatusNoContent)
+
+	document := `<opml version="2.0"><body><outline text="New folder">
+		<outline type="rss" xmlUrl="https://first.example.com/rss"/>
+		<outline type="rss" xmlUrl="https://second.example.com/rss"/>
+	</outline></body></opml>`
+	req := httptest.NewRequest(http.MethodPost, "/api/opml", strings.NewReader(document))
+	req.Header.Set("Content-Type", "text/x-opml+xml")
+	req.Header.Set("Origin", testAppURL)
+	req.AddCookie(h.sessionCookie())
+
+	requireAPIError(t, h.do(req), http.StatusBadRequest, "FeedItemBudgetExceeded")
+
+	if feeds := h.allFeeds(); len(feeds) != 1 || feeds[0].ID != existing.ID {
+		t.Fatalf("feeds after rejected import = %+v, want only %s", feeds, existing.ID)
+	}
+
+	if folders := h.allFolders(); len(folders) != 0 {
+		t.Fatalf("folders after rejected import = %+v, want none", folders)
+	}
+
+	if wakes := h.refresher.wakeCount(); wakes != 0 {
+		t.Fatalf("refresher wakes after rejected import = %d, want 0", wakes)
+	}
+
+	if claimed := h.claimDueFeed(); claimed != nil {
+		t.Fatalf("claimed feed after rejected import = %+v, want none", claimed)
 	}
 }
 

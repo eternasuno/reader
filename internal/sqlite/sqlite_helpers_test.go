@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -180,21 +181,27 @@ func startRefresh(t *testing.T, store *Store, feed domain.Feed, startedAt time.T
 }
 
 // succeedRefresh runs one successful refresh attempt that finishes at finishedAt.
-func succeedRefresh(t *testing.T, store *Store, feed domain.Feed, meta domain.FeedSyncMeta, items []domain.FeedItem, deleteIDs []string, finishedAt time.Time) {
+func succeedRefresh(t *testing.T, store *Store, feed domain.Feed, meta domain.FeedSyncMeta, entries []domain.ParsedFeedEntry, finishedAt time.Time) {
 	t.Helper()
 
 	attemptID := startRefresh(t, store, feed, finishedAt.Add(-time.Second))
-	err := store.Feeds().SucceedRefresh(context.Background(), attemptID, feed.ID, meta, items, deleteIDs, finishedAt, finishedAt.Add(testRefreshInterval))
+	err := store.Feeds().SucceedRefresh(context.Background(), attemptID, feed.ID, meta, entries, finishedAt, finishedAt.Add(testRefreshInterval))
 	if err != nil {
 		t.Fatalf("succeed refresh of feed %q: %v", feed.Title, err)
 	}
 }
 
-// syncFeed stores items in the feed through one successful refresh attempt.
-func syncFeed(t *testing.T, store *Store, feed domain.Feed, items []domain.FeedItem, deleteIDs []string) {
+// seedFeedItems preserves explicit IDs and fields for repository fixtures.
+func seedFeedItems(t *testing.T, store *Store, feed domain.Feed, items []domain.FeedItem) {
 	t.Helper()
 
-	succeedRefresh(t, store, feed, domain.FeedSyncMeta{Title: feed.Title}, items, deleteIDs, time.Now().UTC())
+	ctx := context.Background()
+	err := withTx(ctx, store.WriteDB(), func(tx *sql.Tx) error {
+		return insertSyncItems(ctx, tx, feed.ID, items)
+	})
+	if err != nil {
+		t.Fatalf("seed feed items for %q: %v", feed.Title, err)
+	}
 }
 
 func addItems(t *testing.T, store *Store, feed domain.Feed, count int) []domain.FeedItem {
@@ -210,7 +217,7 @@ func addItems(t *testing.T, store *Store, feed domain.Feed, count int) []domain.
 		}
 	}
 
-	syncFeed(t, store, feed, items, nil)
+	seedFeedItems(t, store, feed, items)
 
 	return items
 }

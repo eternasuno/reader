@@ -1,11 +1,16 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
-	"reader/internal/domain"
+	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+
+	"reader/internal/domain"
 )
 
 func TestReadStateRequiresExplicitFlag(t *testing.T) {
@@ -36,243 +41,138 @@ func TestReadStateRequiresExplicitFlag(t *testing.T) {
 	}
 }
 
-func TestListEndpointsHonorOrder(t *testing.T) {
+func TestGroupedFeedItemSnapshots(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
 	folder := h.seedFolder("Tech")
-	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", &folder.ID)
-	firstItem := h.seedItem(feed.ID, "https://example.com/a", nil)
-	secondItem := h.seedItem(feed.ID, "https://example.com/b", nil)
-	thirdItem := h.seedItem(feed.ID, "https://example.com/c", nil)
-	firstPage := h.seedSavedPage("https://example.com/1", false)
-	secondPage := h.seedSavedPage("https://example.com/2", false)
+	oldest := h.seedFeed("Oldest", "https://feeds.example.com/oldest", &folder.ID)
+	newest := h.seedFeed("Newest", "https://feeds.example.com/newest", &folder.ID)
+	outside := h.seedFeed("Outside", "https://feeds.example.com/outside", nil)
+	requireStatus(t, h.authed(http.MethodPut, "/api/feeds/"+oldest.ID+"/order", map[string]any{"order": "oldest"}), http.StatusNoContent)
 
-	for _, target := range []string{"/api/feed-items", "/api/folders/" + folder.ID + "/items"} {
-		var page pageResponse[feedItemJSON]
-		recorder := h.authed(http.MethodGet, target+"?order=oldest&limit=2", nil)
-		requireStatus(t, recorder, http.StatusOK)
-		decodeBody(t, recorder, &page)
-		if len(page.Items) != 2 || page.Items[0].ID != firstItem.ID || page.Items[1].ID != secondItem.ID {
-			t.Fatalf("%s oldest page = %+v", target, page.Items)
-		}
+	oldestFirst := h.seedItem(oldest.ID, "https://example.com/oldest-first", nil)
+	oldestSecond := h.seedItem(oldest.ID, "https://example.com/oldest-second", nil)
+	newestFirst := h.seedItem(newest.ID, "https://example.com/newest-first", nil)
+	newestSecond := h.seedItem(newest.ID, "https://example.com/newest-second", nil)
+	oldestRead := h.seedItem(oldest.ID, "https://example.com/oldest-read", func(item *domain.FeedItem) { item.Read = true })
+	outsideItem := h.seedItem(outside.ID, "https://example.com/outside", nil)
 
-		if page.Cursor == nil || *page.Cursor != secondItem.ID || !domain.IsValidUUIDv7(page.Boundary) {
-			t.Fatalf("%s oldest cursor = %v boundary = %q", target, page.Cursor, page.Boundary)
-		}
-
-		firstBoundary := page.Boundary
-		recorder = h.authed(http.MethodGet, target+"?order=oldest&limit=2&cursor="+*page.Cursor+"&boundary="+firstBoundary, nil)
-		requireStatus(t, recorder, http.StatusOK)
-		decodeBody(t, recorder, &page)
-		if len(page.Items) != 1 || page.Items[0].ID != thirdItem.ID || page.Cursor != nil || page.Boundary != firstBoundary {
-			t.Fatalf("%s oldest continuation = %+v, want boundary %q", target, page, firstBoundary)
-		}
-
-		recorder = h.authed(http.MethodGet, target+"?order=newest", nil)
-		requireStatus(t, recorder, http.StatusOK)
-		decodeBody(t, recorder, &page)
-		if len(page.Items) != 3 || page.Items[0].ID != thirdItem.ID {
-			t.Fatalf("%s explicit newest = %+v", target, page.Items)
-		}
-
-		recorder = h.authed(http.MethodGet, target, nil)
-		requireStatus(t, recorder, http.StatusOK)
-		decodeBody(t, recorder, &page)
-		if len(page.Items) != 3 || page.Items[0].ID != thirdItem.ID {
-			t.Fatalf("%s default order = %+v", target, page.Items)
-		}
-
-		requireAPIError(t, h.authed(http.MethodGet, target+"?order=bogus", nil), http.StatusBadRequest, "RequestFailed")
+	wantFolder := []snapshotGroup{
+		{FeedID: oldest.ID, IDs: []string{oldestFirst.ID, oldestSecond.ID}},
+		{FeedID: newest.ID, IDs: []string{newestSecond.ID, newestFirst.ID}},
 	}
+	wantAll := append([]snapshotGroup{{FeedID: outside.ID, IDs: []string{outsideItem.ID}}}, wantFolder...)
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/feed-items/order?unread", nil), wantAll)
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/folders/"+folder.ID+"/items/order?unread=1", nil), wantFolder)
 
-	t.Run("feed-specific order", func(t *testing.T) {
+	wantAll[1].IDs = append(wantAll[1].IDs, oldestRead.ID)
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/feed-items/order?unread=false", nil), wantAll)
+}
 
-		h := newHarness(t)
-		oldestFeed := h.seedFeed("Oldest", "https://feeds.example.com/oldest", nil)
-		if err := h.db.Feeds().UpdateOrder(context.Background(), oldestFeed.ID, domain.SortOrderOldest); err != nil {
-			t.Fatalf("update feed order: %v", err)
-		}
-		h.seedFeed("Newest", "https://feeds.example.com/newest", nil)
+func TestSingleFeedSnapshotOrder(t *testing.T) {
+	t.Parallel()
 
-		first := h.seedItem(oldestFeed.ID, "https://example.com/first", nil)
-		second := h.seedItem(oldestFeed.ID, "https://example.com/second", nil)
+	h := newHarness(t)
+	feed := h.seedFeed("Oldest", "https://feeds.example.com/oldest", nil)
+	requireStatus(t, h.authed(http.MethodPut, "/api/feeds/"+feed.ID+"/order", map[string]any{"order": "oldest"}), http.StatusNoContent)
+	first := h.seedItem(feed.ID, "https://example.com/first", nil)
+	second := h.seedItem(feed.ID, "https://example.com/second", nil)
+	read := h.seedItem(feed.ID, "https://example.com/read", func(item *domain.FeedItem) { item.Read = true })
 
-		recorder := h.authed(http.MethodGet, "/api/feeds/"+oldestFeed.ID+"/items", nil)
-		requireStatus(t, recorder, http.StatusOK)
+	target := "/api/feeds/" + feed.ID + "/items/order"
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, target, nil), []snapshotGroup{{FeedID: feed.ID, IDs: []string{first.ID, second.ID, read.ID}}})
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, target+"?order=newest&unread=true", nil), []snapshotGroup{{FeedID: feed.ID, IDs: []string{second.ID, first.ID}}})
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, target+"?order=oldest", nil), []snapshotGroup{{FeedID: feed.ID, IDs: []string{first.ID, second.ID, read.ID}}})
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/feeds/"+domain.NewID()+"/items/order", nil), []snapshotGroup{})
+}
 
-		var page pageResponse[feedItemJSON]
-		decodeBody(t, recorder, &page)
-		if len(page.Items) != 2 || page.Items[0].ID != first.ID || page.Items[1].ID != second.ID {
-			t.Fatalf("stored oldest order ignored: %+v", page.Items)
-		}
+type snapshotGroup struct {
+	FeedID string   `json:"feedId"`
+	IDs    []string `json:"ids"`
+}
 
-		recorder = h.authed(http.MethodGet, "/api/feeds/"+oldestFeed.ID+"/items?order=newest", nil)
-		requireStatus(t, recorder, http.StatusOK)
-		decodeBody(t, recorder, &page)
-		if page.Items[0].ID != second.ID || page.Items[1].ID != first.ID {
-			t.Fatalf("explicit newest order ignored: %+v", page.Items)
-		}
+func requireFeedItemSnapshot(t *testing.T, recorder *httptest.ResponseRecorder, groups []snapshotGroup) string {
+	t.Helper()
 
-		requireAPIError(t, h.authed(http.MethodGet, "/api/feeds/"+oldestFeed.ID+"/items?order=bogus", nil), http.StatusBadRequest, "RequestFailed")
-
-		recorder = h.authed(http.MethodGet, "/api/feeds/"+oldestFeed.ID+"/items?limit=1", nil)
-		requireStatus(t, recorder, http.StatusOK)
-		decodeBody(t, recorder, &page)
-		if len(page.Items) != 1 || page.Cursor == nil || *page.Cursor != first.ID {
-			t.Fatalf("paged feed items = %+v cursor %v", page.Items, page.Cursor)
-		}
-
-		recorder = h.authed(http.MethodGet, "/api/feeds/"+domain.NewID()+"/items", nil)
-		requireStatus(t, recorder, http.StatusOK)
-		decodeBody(t, recorder, &page)
-		if page.Items == nil || len(page.Items) != 0 || page.Cursor != nil || !domain.IsValidUUIDv7(page.Boundary) {
-			t.Fatalf("unknown feed page = %+v", page)
-		}
-
-		if !strings.Contains(recorder.Body.String(), `"items":[]`) {
-			t.Fatalf("empty page items must serialize as []: %s", recorder.Body.String())
-		}
-	})
-
-	var saved pageResponse[savedPageJSON]
-	recorder := h.authed(http.MethodGet, "/api/saved-pages?order=oldest", nil)
+	var snapshot struct {
+		Boundary string          `json:"boundary"`
+		Groups   []snapshotGroup `json:"groups"`
+	}
 	requireStatus(t, recorder, http.StatusOK)
-	decodeBody(t, recorder, &saved)
-	if len(saved.Items) != 2 || saved.Items[0].ID != firstPage.ID || saved.Items[1].ID != secondPage.ID {
-		t.Fatalf("saved pages oldest = %+v", saved.Items)
+	decodeSnapshotBody(t, recorder, &snapshot)
+	if !reflect.DeepEqual(snapshot.Groups, groups) || !domain.IsValidUUIDv7(snapshot.Boundary) {
+		t.Fatalf("snapshot = %s, want groups %+v and a UUIDv7 boundary", recorder.Body.String(), groups)
 	}
 
-	requireAPIError(t, h.authed(http.MethodGet, "/api/saved-pages?order=bogus", nil), http.StatusBadRequest, "RequestFailed")
+	return snapshot.Boundary
 }
 
-func TestPagingQueryValidation(t *testing.T) {
+func decodeSnapshotBody(t *testing.T, recorder *httptest.ResponseRecorder, dst any) {
+	t.Helper()
+
+	decoder := json.NewDecoder(bytes.NewReader(recorder.Body.Bytes()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		t.Fatalf("decode snapshot: %v (body %s)", err, recorder.Body.String())
+	}
+}
+
+func TestSnapshotQueryValidation(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	folder := h.seedFolder("Tech")
-	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", &folder.ID)
-	item := h.seedItem(feed.ID, "https://example.com/1", nil)
-	h.seedSavedPage("https://example.com/page", false)
-
-	endpoints := []string{
-		"/api/saved-pages",
-		"/api/feed-items",
-		"/api/feeds/" + feed.ID + "/items",
-		"/api/folders/" + folder.ID + "/items",
+	feedItems := "/api/feeds/" + domain.NewID() + "/items"
+	folderItems := "/api/folders/" + domain.NewID() + "/items"
+	for _, endpoint := range []string{"/api/feed-items/order", "/api/saved-pages/order", feedItems + "/order", folderItems + "/order"} {
+		t.Run(endpoint, func(t *testing.T) {
+			for _, query := range []string{"limit=1", "cursor=" + domain.NewID(), "boundary=" + domain.NewID(), "ids=" + domain.NewID(), "unread=true&unread=false", "unread=maybe", "unread=%ZZ", "unread=true;other=false"} {
+				t.Run(query, func(t *testing.T) {
+					requireAPIError(t, h.authed(http.MethodGet, endpoint+"?"+query, nil), http.StatusBadRequest, "RequestFailed")
+				})
+			}
+		})
 	}
 
-	badQueries := []string{
-		"?cursor=%ZZ",
-		"?limit=10%ZZ",
-		"?cursor=",
-		"?cursor=%20" + item.ID,
-		"?cursor=" + item.ID,
-		"?boundary=",
-		"?boundary=" + item.ID,
-		"?cursor=" + item.ID + "&boundary=",
-		"?cursor=" + item.ID + "&boundary=not-a-uuid",
-		"?cursor=" + item.ID + "&boundary=00000000-0000-4000-8000-000000000000",
-		"?cursor=" + item.ID + "&boundary=" + strings.ToUpper(item.ID),
-		"?cursor=" + item.ID + "&boundary=%20" + item.ID,
-		"?cursor=" + item.ID + "&boundary=%ZZ",
-		"?cursor=" + item.ID + "&boundary=" + item.ID + "&boundary=" + item.ID,
-		"?limit=",
-		"?limit=abc",
-		"?limit=-1",
-		"?limit=0",
-		"?limit=201",
-		"?limit=10&limit=20",
-		"?cursor=" + item.ID + "&cursor=" + item.ID,
+	for _, endpoint := range []string{"/api/feed-items/order", "/api/saved-pages/order", folderItems + "/order"} {
+		requireAPIError(t, h.authed(http.MethodGet, endpoint+"?order=newest", nil), http.StatusBadRequest, "RequestFailed")
 	}
 
-	boundary := domain.NewID()
-	for _, endpoint := range endpoints {
-		for _, query := range badQueries {
-			requireAPIError(t, h.authed(http.MethodGet, endpoint+query, nil), http.StatusBadRequest, "RequestFailed")
-		}
+	for _, query := range []string{"order", "order=", "order=%20", "order=bogus", "order=NEWEST", "order=oldest&order=newest"} {
+		requireAPIError(t, h.authed(http.MethodGet, feedItems+"/order?"+query, nil), http.StatusBadRequest, "RequestFailed")
+	}
 
-		requireStatus(t, h.authed(http.MethodGet, endpoint+"?limit=1", nil), http.StatusOK)
-		requireStatus(t, h.authed(http.MethodGet, endpoint+"?limit=200", nil), http.StatusOK)
-
-		rec := h.authed(http.MethodGet, endpoint+"?cursor="+item.ID+"&boundary="+boundary, nil)
-		requireStatus(t, rec, http.StatusOK)
-		var cont pageResponse[map[string]any]
-		decodeBody(t, rec, &cont)
-		if cont.Boundary != boundary {
-			t.Fatalf("%s continuation boundary = %q, want %q", endpoint, cont.Boundary, boundary)
-		}
+	for _, endpoint := range []string{feedItems, folderItems} {
+		requireAPIError(t, h.authed(http.MethodGet, endpoint, nil), http.StatusNotFound, "RequestFailed")
 	}
 }
 
-func TestListContinuationBoundaryIsolation(t *testing.T) {
+func TestBatchQueryValidation(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	folder := h.seedFolder("Tech")
-	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", &folder.ID)
-	i1 := h.seedItem(feed.ID, "https://example.com/1", nil)
-	i2 := h.seedItem(feed.ID, "https://example.com/2", nil)
-	i3 := h.seedItem(feed.ID, "https://example.com/3", nil)
-	p1 := h.seedSavedPage("https://example.com/p1", false)
-	p2 := h.seedSavedPage("https://example.com/p2", false)
-	p3 := h.seedSavedPage("https://example.com/p3", false)
-
-	feedEndpoints := []string{
-		"/api/feed-items",
-		"/api/feeds/" + feed.ID + "/items",
-		"/api/folders/" + folder.ID + "/items",
+	ids := make([]string, domain.MaxBatchIDs+1)
+	for i := range ids {
+		ids[i] = domain.NewID()
 	}
 
-	// Capture page 1 for each feed endpoint before inserting post-boundary item.
-	type pageState struct {
-		endpoint string
-		cursor   string
-		boundary string
-	}
-	var states []pageState
-	for _, endpoint := range feedEndpoints {
-		rec := h.authed(http.MethodGet, endpoint+"?order=oldest&limit=2", nil)
-		requireStatus(t, rec, http.StatusOK)
-		var page pageResponse[feedItemJSON]
-		decodeBody(t, rec, &page)
-		if len(page.Items) != 2 || page.Items[0].ID != i1.ID || page.Items[1].ID != i2.ID || page.Cursor == nil || !domain.IsValidUUIDv7(page.Boundary) {
-			t.Fatalf("%s page1 = %+v", endpoint, page)
-		}
-		states = append(states, pageState{endpoint: endpoint, cursor: *page.Cursor, boundary: page.Boundary})
-	}
+	for _, endpoint := range []string{"/api/feed-items", "/api/saved-pages"} {
+		t.Run(endpoint, func(t *testing.T) {
+			for _, query := range []string{
+				"", "?ids=", "?ids=" + strings.Join(ids, ","), "?ids=" + ids[0] + "," + ids[0],
+				"?ids=invalid", "?ids=" + ids[0] + ",", "?ids=%ZZ", "?ids=" + ids[0] + "&ids=" + ids[1], "?ids=" + ids[0] + "&unread",
+			} {
+				requireAPIError(t, h.authed(http.MethodGet, endpoint+query, nil), http.StatusBadRequest, "RequestFailed")
+			}
 
-	savedRec := h.authed(http.MethodGet, "/api/saved-pages?order=oldest&limit=2", nil)
-	requireStatus(t, savedRec, http.StatusOK)
-	var savedPage1 pageResponse[savedPageJSON]
-	decodeBody(t, savedRec, &savedPage1)
-	if len(savedPage1.Items) != 2 || savedPage1.Items[0].ID != p1.ID || savedPage1.Items[1].ID != p2.ID || savedPage1.Cursor == nil || !domain.IsValidUUIDv7(savedPage1.Boundary) {
-		t.Fatalf("saved-pages page1 = %+v", savedPage1)
-	}
-
-	// Insert rows after the captured boundaries.
-	h.seedItem(feed.ID, "https://example.com/4", nil)
-	h.seedSavedPage("https://example.com/p4", false)
-
-	for _, st := range states {
-		rec := h.authed(http.MethodGet, st.endpoint+"?order=oldest&limit=2&cursor="+st.cursor+"&boundary="+st.boundary, nil)
-		requireStatus(t, rec, http.StatusOK)
-		var page pageResponse[feedItemJSON]
-		decodeBody(t, rec, &page)
-		if len(page.Items) != 1 || page.Items[0].ID != i3.ID || page.Cursor != nil || page.Boundary != st.boundary {
-			t.Fatalf("%s page2 = %+v, want [%s] boundary %q", st.endpoint, page, i3.ID, st.boundary)
-		}
-	}
-
-	savedRec = h.authed(http.MethodGet, "/api/saved-pages?order=oldest&limit=2&cursor="+*savedPage1.Cursor+"&boundary="+savedPage1.Boundary, nil)
-	requireStatus(t, savedRec, http.StatusOK)
-	var savedPage2 pageResponse[savedPageJSON]
-	decodeBody(t, savedRec, &savedPage2)
-	if len(savedPage2.Items) != 1 || savedPage2.Items[0].ID != p3.ID || savedPage2.Cursor != nil || savedPage2.Boundary != savedPage1.Boundary {
-		t.Fatalf("saved-pages page2 = %+v, want [%s] boundary %q", savedPage2, p3.ID, savedPage1.Boundary)
+			recorder := h.authed(http.MethodGet, endpoint+"?ids="+strings.Join(ids[:domain.MaxBatchIDs], ","), nil)
+			requireStatus(t, recorder, http.StatusOK)
+			if strings.TrimSpace(recorder.Body.String()) != `{"items":[]}` {
+				t.Fatalf("batch of missing IDs = %s, want empty items array", recorder.Body.String())
+			}
+		})
 	}
 }
-
 func TestBulkMarkReadRequiresIDsArray(t *testing.T) {
 	t.Parallel()
 
@@ -352,25 +252,18 @@ func TestFeedItemsBoundaryMintedBeforePreferenceLookup(t *testing.T) {
 		during = h.seedItem(feedID, "https://example.com/during", nil)
 	}
 
-	recorder := h.authed(http.MethodGet, "/api/feeds/"+feed.ID+"/items", nil)
-	requireStatus(t, recorder, http.StatusOK)
-
-	var page pageResponse[feedItemJSON]
-	decodeBody(t, recorder, &page)
+	recorder := h.authed(http.MethodGet, "/api/feeds/"+feed.ID+"/items/order", nil)
+	boundary := requireFeedItemSnapshot(t, recorder, []snapshotGroup{{FeedID: feed.ID, IDs: []string{first.ID, second.ID}}})
 	if spy.calls != 1 || during.ID == "" {
 		t.Fatalf("lookup calls = %d, in-lookup item = %q; want one lookup that stored an item", spy.calls, during.ID)
 	}
 
-	if !domain.IsValidUUIDv7(page.Boundary) || page.Boundary >= during.ID {
-		t.Fatalf("boundary %q must be minted before in-lookup item %q", page.Boundary, during.ID)
-	}
-
-	if len(page.Items) != 2 || page.Items[0].ID != first.ID || page.Items[1].ID != second.ID {
-		t.Fatalf("first page = %+v, want stored oldest order without the in-lookup item", page.Items)
+	if boundary >= during.ID {
+		t.Fatalf("boundary %q must be minted before in-lookup item %q", boundary, during.ID)
 	}
 }
 
-func TestFeedItemsPagingValidationPrecedesPreferenceLookup(t *testing.T) {
+func TestFeedItemSnapshotValidationPrecedesPreferenceLookup(t *testing.T) {
 	t.Parallel()
 
 	var spy *feedLookupSpy
@@ -380,12 +273,13 @@ func TestFeedItemsPagingValidationPrecedesPreferenceLookup(t *testing.T) {
 	})
 	feed := h.seedFeed("Go Blog", "https://feeds.example.com/rss", nil)
 
-	requireAPIError(t, h.authed(http.MethodGet, "/api/feeds/"+feed.ID+"/items?limit=0", nil), http.StatusBadRequest, "RequestFailed")
+	target := "/api/feeds/" + feed.ID + "/items/order"
+	spy.getErr = domain.NewError(domain.ErrFeedRepositoryError, nil)
+	requireAPIError(t, h.authed(http.MethodGet, target+"?limit=0", nil), http.StatusBadRequest, "RequestFailed")
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, target+"?order=oldest", nil), []snapshotGroup{})
 	if spy.calls != 0 {
-		t.Fatalf("invalid paging reached the preference lookup %d times", spy.calls)
+		t.Fatalf("invalid or explicit-order query reached the preference lookup %d times", spy.calls)
 	}
 
-	spy.getErr = domain.NewError(domain.ErrFeedRepositoryError, nil)
-	requireAPIError(t, h.authed(http.MethodGet, "/api/feeds/"+feed.ID+"/items", nil), http.StatusInternalServerError, "FeedRepositoryError")
-	requireAPIError(t, h.authed(http.MethodGet, "/api/feeds/"+feed.ID+"/items?limit=0", nil), http.StatusBadRequest, "RequestFailed")
+	requireAPIError(t, h.authed(http.MethodGet, target, nil), http.StatusInternalServerError, "FeedRepositoryError")
 }

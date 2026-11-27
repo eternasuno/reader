@@ -23,8 +23,6 @@ const (
 
 type RefreshConfig struct {
 	Feeds       domain.FeedRepository
-	FeedItems   domain.FeedItemRepository
-	Settings    domain.SettingRepository
 	Fetcher     domain.FeedFetcher
 	Parser      domain.FeedParser
 	Concurrency int
@@ -41,8 +39,6 @@ type RefreshConfig struct {
 // queue or dedupe state exists.
 type RefreshQueue struct {
 	feeds              domain.FeedRepository
-	feedItems          domain.FeedItemRepository
-	settings           domain.SettingRepository
 	fetcher            domain.FeedFetcher
 	parser             domain.FeedParser
 	concurrency        int
@@ -59,13 +55,6 @@ type RefreshQueue struct {
 
 	wake chan struct{}
 	wg   sync.WaitGroup
-}
-
-// feedSyncPlan is the planned database change for one successfully fetched feed.
-type feedSyncPlan struct {
-	meta      domain.FeedSyncMeta
-	newItems  []domain.FeedItem
-	deleteIDs []string
 }
 
 func NewRefreshQueue(cfg RefreshConfig) *RefreshQueue {
@@ -91,8 +80,6 @@ func NewRefreshQueue(cfg RefreshConfig) *RefreshQueue {
 
 	return &RefreshQueue{
 		feeds:              cfg.Feeds,
-		feedItems:          cfg.FeedItems,
-		settings:           cfg.Settings,
 		fetcher:            cfg.Fetcher,
 		parser:             cfg.Parser,
 		concurrency:        concurrency,
@@ -193,7 +180,7 @@ func (q *RefreshQueue) drain(ctx context.Context) {
 // due. On shutdown it writes nothing and startup recovery marks the attempt
 // interrupted. It reports whether the attempt was recorded.
 func (q *RefreshQueue) refresh(ctx context.Context, attemptID string, feed domain.Feed) bool {
-	plan, err := q.planSync(ctx, feed)
+	parsed, err := q.fetchAndParse(ctx, feed.URL)
 	if ctx.Err() != nil {
 		return false
 	}
@@ -201,10 +188,16 @@ func (q *RefreshQueue) refresh(ctx context.Context, attemptID string, feed domai
 	finishedAt := q.now().UTC()
 	nextRefreshAt := finishedAt.Add(q.interval)
 
-	switch {
-	case err == nil:
-		err = q.feeds.SucceedRefresh(ctx, attemptID, feed.ID, plan.meta, plan.newItems, plan.deleteIDs, finishedAt, nextRefreshAt)
-	case !isDatabaseError(err):
+	if err == nil {
+		meta := domain.FeedSyncMeta{
+			Title:   resolveFeedTitle(parsed.Title, feed),
+			SiteURL: parsed.SiteURL,
+			IconURL: parsed.IconURL,
+		}
+
+		// The repository plans item changes using the retention in its write transaction.
+		err = q.feeds.SucceedRefresh(ctx, attemptID, feed.ID, meta, parsed.Entries, finishedAt, nextRefreshAt)
+	} else {
 		logFailure(slog.LevelWarn, "feed refresh failed", err, "feed_id", feed.ID)
 
 		err = q.feeds.FailRefresh(ctx, attemptID, feed.ID, domain.SanitizeErrorText(err.Error()), finishedAt, nextRefreshAt)
@@ -224,43 +217,13 @@ func (q *RefreshQueue) refresh(ctx context.Context, attemptID string, feed domai
 	return false
 }
 
-// planSync fetches and parses the feed and plans its item changes. Settings and
-// stored refs reads fail with database errors; fetch and parse failures are
-// external.
-func (q *RefreshQueue) planSync(ctx context.Context, feed domain.Feed) (feedSyncPlan, error) {
-	// A settings read failure aborts the refresh: pruning with an unknown
-	// retention setting could delete items the user asked to keep.
-	settings, err := q.settings.Get(ctx)
+func (q *RefreshQueue) fetchAndParse(ctx context.Context, url domain.NormalizedURL) (domain.ParsedFeed, error) {
+	body, finalURL, err := q.fetcher.FetchFeed(ctx, url)
 	if err != nil {
-		return feedSyncPlan{}, err
+		return domain.ParsedFeed{}, err
 	}
 
-	body, finalURL, err := q.fetcher.FetchFeed(ctx, feed.URL)
-	if err != nil {
-		return feedSyncPlan{}, err
-	}
-
-	parsed, err := q.parseFeed(body, finalURL)
-	if err != nil {
-		return feedSyncPlan{}, err
-	}
-
-	storedRefs, err := q.feedItems.ListStoredRefsByFeed(ctx, feed.ID)
-	if err != nil {
-		return feedSyncPlan{}, err
-	}
-
-	newItems, deleteIDs := domain.PlanFeedSync(feed.ID, parsed.Entries, storedRefs, settings.Retention, domain.NewID)
-
-	return feedSyncPlan{
-		meta: domain.FeedSyncMeta{
-			Title:   resolveFeedTitle(parsed.Title, feed),
-			SiteURL: parsed.SiteURL,
-			IconURL: parsed.IconURL,
-		},
-		newItems:  newItems,
-		deleteIDs: deleteIDs,
-	}, nil
+	return q.parseFeed(body, finalURL)
 }
 
 // parseFeed turns a parser panic on untrusted feed bytes into an external

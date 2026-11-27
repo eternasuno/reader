@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	feedItemsByIDsQuery   = `SELECT ` + feedItemColumns + ` FROM feed_item JOIN (SELECT key, value FROM json_each(?)) AS requested ON feed_item.id = requested.value ORDER BY requested.key`
 	feedItemColumns       = `id, feed_id, url, title, description, content, extracted_content, published_at, read`
 	unreadCountsQuery     = `SELECT feed_id, COUNT(*) FROM feed_item WHERE read = 0 AND id <= ? GROUP BY feed_id`
 	markAllItemsReadQuery = `UPDATE feed_item SET read = 1 WHERE read = 0 AND id <= ?`
@@ -22,20 +23,102 @@ type FeedItemRepo struct {
 	write *sql.DB
 }
 
-func (r *FeedItemRepo) ListAll(ctx context.Context, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	return r.list(ctx, listAllQuery(params))
+func (r *FeedItemRepo) SnapshotAll(ctx context.Context, params domain.SnapshotParams) ([]domain.FeedItemGroup, error) {
+	query, args := groupedFeedItemSnapshotQuery(nil, params)
+
+	return r.snapshot(ctx, query, args...)
 }
 
-func (r *FeedItemRepo) ListByFeed(ctx context.Context, feedID string, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	return r.list(ctx, listByFeedQuery(feedID, params))
+func (r *FeedItemRepo) SnapshotByFolder(ctx context.Context, folderID string, params domain.SnapshotParams) ([]domain.FeedItemGroup, error) {
+	query, args := groupedFeedItemSnapshotQuery(&folderID, params)
+
+	return r.snapshot(ctx, query, args...)
 }
 
-func (r *FeedItemRepo) ListByFolder(ctx context.Context, folderID string, params domain.PageParams) (domain.PageResult[domain.FeedItem], error) {
-	return r.list(ctx, listByFolderQuery(folderID, params))
+func (r *FeedItemRepo) SnapshotByFeed(ctx context.Context, feedID string, order domain.SortOrder, params domain.SnapshotParams) ([]domain.FeedItemGroup, error) {
+	query := singleFeedItemSnapshotQuery(order, params.Unread)
+
+	return r.snapshot(ctx, query, feedID, params.Boundary, domain.ListSnapshotLimit+1)
 }
 
-func (r *FeedItemRepo) ListStoredRefsByFeed(ctx context.Context, feedID string) ([]domain.StoredRef, error) {
-	rows, err := r.read.QueryContext(ctx, `SELECT id, url FROM feed_item WHERE feed_id = ? ORDER BY id DESC`, feedID)
+func groupedFeedItemSnapshotQuery(folderID *string, params domain.SnapshotParams) (string, []any) {
+	query := `SELECT id, feed_id FROM (
+		SELECT fi.id, fi.feed_id, fi.read, f.sort_order, MAX(fi.id) OVER (PARTITION BY fi.feed_id) AS newest_id
+		FROM feed_item fi JOIN feed f ON f.id = fi.feed_id WHERE fi.id <= ?`
+	args := []any{params.Boundary}
+	if folderID != nil {
+		query += ` AND f.folder_id = ?`
+		args = append(args, *folderID)
+	}
+
+	query += `)`
+	if params.Unread {
+		query += ` WHERE read = 0`
+	}
+
+	query += ` ORDER BY newest_id DESC, CASE WHEN sort_order = ? THEN id END ASC, id DESC LIMIT ?`
+
+	return query, append(args, string(domain.SortOrderOldest), domain.ListSnapshotLimit+1)
+}
+
+func singleFeedItemSnapshotQuery(order domain.SortOrder, unread bool) string {
+	query := `SELECT id, feed_id FROM feed_item WHERE feed_id = ? AND id <= ?`
+	if unread {
+		query += ` AND read = 0`
+	}
+
+	direction := ` DESC`
+	if order == domain.SortOrderOldest {
+		direction = ` ASC`
+	}
+
+	return query + ` ORDER BY id` + direction + ` LIMIT ?`
+}
+
+func (r *FeedItemRepo) snapshot(ctx context.Context, query string, args ...any) ([]domain.FeedItemGroup, error) {
+	rows, err := r.read.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
+	}
+
+	defer closeRows(rows)
+
+	groups := []domain.FeedItemGroup{}
+	count := 0
+	for rows.Next() {
+		if count == domain.ListSnapshotLimit {
+			return nil, domain.NewError(domain.ErrFeedItemRepositoryError, errors.New("snapshot exceeds limit"))
+		}
+
+		var id, feedID string
+		if err := rows.Scan(&id, &feedID); err != nil {
+			return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
+		}
+
+		if len(groups) == 0 || groups[len(groups)-1].FeedID != feedID {
+			groups = append(groups, domain.FeedItemGroup{FeedID: feedID})
+		}
+
+		group := &groups[len(groups)-1]
+		group.IDs = append(group.IDs, id)
+		count++
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
+	}
+
+	return groups, nil
+}
+
+func (r *FeedItemRepo) GetByIDs(ctx context.Context, ids []string) ([]domain.FeedItem, error) {
+	return getByIDs(ctx, r.read, feedItemsByIDsQuery, ids, scanFeedItem, domain.ErrFeedItemRepositoryError)
+}
+
+const listStoredRefsByFeedQuery = `SELECT id, url FROM feed_item WHERE feed_id = ? ORDER BY id DESC`
+
+func listStoredRefsByFeed(ctx context.Context, querier rowsQuerier, feedID string) ([]domain.StoredRef, error) {
+	rows, err := querier.QueryContext(ctx, listStoredRefsByFeedQuery, feedID)
 	if err != nil {
 		return nil, domain.NewError(domain.ErrFeedItemRepositoryError, err)
 	}
@@ -191,12 +274,6 @@ func saveExtractedContentIfEmptyInTx(ctx context.Context, tx *sql.Tx, id string,
 	return updated, true, nil
 }
 
-type feedItemQuery struct {
-	query string
-	args  []any
-	limit int
-}
-
 func qualifyColumns(table string, columns string) string {
 	parts := strings.Split(columns, `, `)
 	for i, part := range parts {
@@ -204,62 +281,6 @@ func qualifyColumns(table string, columns string) string {
 	}
 
 	return strings.Join(parts, `, `)
-}
-
-func listAllQuery(params domain.PageParams) feedItemQuery {
-	where, tail, args := appendKeysetClauses(unqualifiedKeysetColumns, nil, nil, params)
-
-	return feedItemQuery{
-		query: `SELECT ` + feedItemColumns + ` FROM feed_item` + where + tail,
-		args:  args,
-		limit: params.Limit,
-	}
-}
-
-func listByFeedQuery(feedID string, params domain.PageParams) feedItemQuery {
-	where, tail, args := appendKeysetClauses(unqualifiedKeysetColumns, []string{`feed_id = ?`}, []any{feedID}, params)
-
-	return feedItemQuery{
-		query: `SELECT ` + feedItemColumns + ` FROM feed_item` + where + tail,
-		args:  args,
-		limit: params.Limit,
-	}
-}
-
-func listByFolderQuery(folderID string, params domain.PageParams) feedItemQuery {
-	columns := qualifyColumns(`feed_item`, feedItemColumns)
-	where, tail, args := appendKeysetClauses(feedItemKeysetColumns, []string{`feed.folder_id = ?`}, []any{folderID}, params)
-
-	return feedItemQuery{
-		query: `SELECT ` + columns + ` FROM feed_item JOIN feed ON feed_item.feed_id = feed.id` + where + tail,
-		args:  args,
-		limit: params.Limit,
-	}
-}
-
-func (r *FeedItemRepo) list(ctx context.Context, query feedItemQuery) (domain.PageResult[domain.FeedItem], error) {
-	rows, err := r.read.QueryContext(ctx, query.query, query.args...)
-	if err != nil {
-		return domain.PageResult[domain.FeedItem]{}, domain.NewError(domain.ErrFeedItemRepositoryError, err)
-	}
-
-	defer closeRows(rows)
-
-	items := []domain.FeedItem{}
-	for rows.Next() {
-		item, err := scanFeedItem(rows)
-		if err != nil {
-			return domain.PageResult[domain.FeedItem]{}, domain.NewError(domain.ErrFeedItemRepositoryError, err)
-		}
-
-		items = append(items, item)
-	}
-
-	if err := rows.Err(); err != nil {
-		return domain.PageResult[domain.FeedItem]{}, domain.NewError(domain.ErrFeedItemRepositoryError, err)
-	}
-
-	return finalizeKeysetPage(items, query.limit, func(item domain.FeedItem) string { return item.ID }), nil
 }
 
 type feedItemRow struct {

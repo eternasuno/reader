@@ -10,14 +10,12 @@ import { feedsApi } from '../api';
 import { t } from '../i18n';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
-import type { DroppedFeedRows } from './library-mutations';
+import { loadMore, resumeEmptyList } from './library';
 import { feedMoveTracker, LatestTokenMap } from './library-mutations';
 import {
   activeScope,
-  dropFeedRows,
   releaseFeedRows,
-  requestState,
-  restoreFeedRows,
+  updateFolderMembership,
 } from './library-store';
 import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
@@ -56,30 +54,28 @@ const currentFolderOfId = (feedId: string): string | null | undefined => {
   return stored !== undefined ? (stored.folderId ?? null) : undefined;
 };
 
-const maybeRestoreDropped = (
-  dropped: DroppedFeedRows | null,
-  targetFolderId: string | null
-): void => {
-  if (
-    dropped !== null &&
-    targetFolderId === dropped.folderId &&
-    requestState.generation === dropped.scopeGeneration
-  ) {
-    restoreFeedRows(dropped.ids, dropped.orderIds);
+const resumeFolderList = (restoredQueue: boolean): void => {
+  if (activeScope().kind !== 'folder') return;
+
+  // The virtual list may already have requested more at the current row count.
+  if (restoredQueue) {
+    void loadMore();
+  } else {
+    void resumeEmptyList();
   }
 };
 
 const reconcileFeedMove = (
   feedId: string,
-  targetFolderId: string | null,
-  dropped: DroppedFeedRows | null
+  targetFolderId: string | null
 ): void => {
   const current = currentFolderOfId(feedId);
   if (current !== undefined && current !== targetFolderId) {
     sidebar.updateFeedLocal(feedId, { folderId: targetFolderId });
   }
-  maybeRestoreDropped(dropped, targetFolderId);
+  const restoredQueue = updateFolderMembership(feedId, targetFolderId);
   flush();
+  resumeFolderList(restoredQueue);
 };
 
 const runFeedMove = async (
@@ -87,26 +83,17 @@ const runFeedMove = async (
   folderId: string | null
 ): Promise<boolean> => {
   const token = feedMoveTracker.begin(feed.id, currentFolderOf(feed), folderId);
-  const scope = activeScope();
-
-  if (scope.kind === 'folder' && scope.folderId !== folderId) {
-    const dropped = dropFeedRows(feed.id);
-    feedMoveTracker.recordDrop(feed.id, {
-      scopeGeneration: requestState.generation,
-      folderId: scope.folderId,
-      ids: dropped.ids,
-      orderIds: dropped.orderIds,
-    });
-  }
-
+  const restoredQueue = updateFolderMembership(feed.id, folderId);
   sidebar.updateFeedLocal(feed.id, { folderId });
   flush();
 
   try {
-    await feedsApi.moveToFolder(feed.id, folderId);
+    const moving = feedsApi.moveToFolder(feed.id, folderId);
+    resumeFolderList(restoredQueue);
+    await moving;
     const outcome = feedMoveTracker.succeed(feed.id, token, folderId);
     if (outcome !== null) {
-      reconcileFeedMove(feed.id, outcome.targetFolderId, outcome.dropped);
+      reconcileFeedMove(feed.id, outcome.targetFolderId);
       if (outcome.owns) {
         showToast(t('folders.movedToast'), 'success');
       }
@@ -116,7 +103,7 @@ const runFeedMove = async (
     const outcome = feedMoveTracker.fail(feed.id, token);
     if (outcome === null) return false;
 
-    reconcileFeedMove(feed.id, outcome.targetFolderId, outcome.dropped);
+    reconcileFeedMove(feed.id, outcome.targetFolderId);
     if (outcome.owns) {
       showToast(errorText(error), 'error');
     }

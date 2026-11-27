@@ -184,7 +184,7 @@ export const enDict: Dict = {
     retentionHeading: 'Retention',
     retentionLabel: 'Articles kept per feed',
     retentionHint:
-      'Takes effect on the next feed refresh; existing articles are not deleted immediately.',
+      "Lowering it immediately deletes each feed's oldest articles beyond the limit; feed count × articles kept cannot exceed 10,000.",
     saveArticles: 'Save article settings',
     opmlHeading: 'OPML import & export',
     opmlHint:

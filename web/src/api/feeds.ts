@@ -1,6 +1,9 @@
 import { FETCH_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './deadline';
 import {
+  decodeFeedItemOrder,
+  decodeFeedItems,
   decodeField,
+  decodeSingleFeedOrder,
   decodeUnreadCounts,
   decodeWith,
   isArrayOf,
@@ -11,15 +14,14 @@ import {
   isNullable,
   isOPMLImportResult,
 } from './decoders';
-import { item, listPage, request, requestNoContent } from './request';
+import { item, itemsByIds, request, requestNoContent } from './request';
 import type {
   Feed,
   FeedCreateInput,
   FeedItem,
   FeedPreview,
-  ListParams,
   OPMLImportResult,
-  Page,
+  OrderParams,
   RequestCallOptions,
   SortOrder,
   UnreadCounts,
@@ -97,16 +99,18 @@ export const feedsApi = {
       method: 'POST',
       body: { before },
     }),
-  listItems: (
+  itemsOrder: (
     id: string,
-    params: ListParams = {},
+    params: OrderParams & { order?: SortOrder } = {},
     options?: RequestCallOptions
-  ): Promise<Page<FeedItem>> =>
-    listPage(
-      `/api/feeds/${encodeURIComponent(id)}/items`,
-      isFeedItem,
-      params,
-      options
+  ) =>
+    request(
+      `/api/feeds/${encodeURIComponent(id)}/items/order`,
+      decodeSingleFeedOrder,
+      {
+        ...options,
+        params,
+      }
     ),
   importOpml: (
     file: File,
@@ -125,11 +129,13 @@ export const feedsApi = {
 };
 
 export const feedItemsApi = {
-  listAll: (
-    params: ListParams = {},
-    options?: RequestCallOptions
-  ): Promise<Page<FeedItem>> =>
-    listPage('/api/feed-items', isFeedItem, params, options),
+  order: (params: OrderParams = {}, options?: RequestCallOptions) =>
+    request('/api/feed-items/order', decodeFeedItemOrder, {
+      ...options,
+      params,
+    }),
+  byIds: (ids: ReadonlyArray<string>, options?: RequestCallOptions) =>
+    itemsByIds('/api/feed-items', decodeFeedItems, ids, options),
   getById: (
     id: string,
     options?: RequestCallOptions

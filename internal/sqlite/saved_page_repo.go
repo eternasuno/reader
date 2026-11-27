@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	savedPagesByIDsQuery       = `SELECT ` + savedPageColumns + ` FROM saved_page JOIN (SELECT key, value FROM json_each(?)) AS requested ON saved_page.id = requested.value ORDER BY requested.key`
 	savedPageColumns           = `id, url, title, description, content, published_at, read`
 	savedPageUnreadCountQuery  = `SELECT COUNT(*) FROM saved_page WHERE read = 0 AND id <= ?`
 	markAllSavedPagesReadQuery = `UPDATE saved_page SET read = 1 WHERE read = 0 AND id <= ?`
@@ -19,31 +20,46 @@ type SavedPageRepo struct {
 	write *sql.DB
 }
 
-func (r *SavedPageRepo) List(ctx context.Context, params domain.PageParams) (domain.PageResult[domain.SavedPage], error) {
-	query, args := listSavedPagesQuery(params)
-
-	rows, err := r.read.QueryContext(ctx, query, args...)
+func (r *SavedPageRepo) Snapshot(ctx context.Context, params domain.SnapshotParams) ([]string, error) {
+	rows, err := r.read.QueryContext(ctx, savedPageSnapshotQuery(params.Unread), params.Boundary, domain.ListSnapshotLimit+1)
 	if err != nil {
-		return domain.PageResult[domain.SavedPage]{}, domain.NewError(domain.ErrSavedPageRepositoryError, err)
+		return nil, domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 
 	defer closeRows(rows)
 
-	pages := []domain.SavedPage{}
+	ids := []string{}
 	for rows.Next() {
-		page, err := scanSavedPage(rows)
-		if err != nil {
-			return domain.PageResult[domain.SavedPage]{}, domain.NewError(domain.ErrSavedPageRepositoryError, err)
+		if len(ids) == domain.ListSnapshotLimit {
+			return nil, domain.NewError(domain.ErrSavedPageRepositoryError, errors.New("snapshot exceeds limit"))
 		}
 
-		pages = append(pages, page)
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, domain.NewError(domain.ErrSavedPageRepositoryError, err)
+		}
+
+		ids = append(ids, id)
 	}
 
 	if err := rows.Err(); err != nil {
-		return domain.PageResult[domain.SavedPage]{}, domain.NewError(domain.ErrSavedPageRepositoryError, err)
+		return nil, domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
 
-	return finalizeKeysetPage(pages, params.Limit, func(page domain.SavedPage) string { return page.ID }), nil
+	return ids, nil
+}
+
+func savedPageSnapshotQuery(unread bool) string {
+	query := `SELECT id FROM saved_page WHERE id <= ?`
+	if unread {
+		query += ` AND read = 0`
+	}
+
+	return query + ` ORDER BY id DESC LIMIT ?`
+}
+
+func (r *SavedPageRepo) GetByIDs(ctx context.Context, ids []string) ([]domain.SavedPage, error) {
+	return getByIDs(ctx, r.read, savedPagesByIDsQuery, ids, scanSavedPage, domain.ErrSavedPageRepositoryError)
 }
 
 func (r *SavedPageRepo) UnreadCount(ctx context.Context, boundary string) (int, error) {
@@ -99,7 +115,7 @@ func (r *SavedPageRepo) Create(ctx context.Context, page domain.SavedPage) (doma
 		if insertErr == nil {
 			created = row
 
-			return nil
+			return enforceSavedPageLimit(ctx, tx)
 		}
 
 		if !errors.Is(insertErr, sql.ErrNoRows) {
@@ -119,6 +135,19 @@ func (r *SavedPageRepo) Create(ctx context.Context, page domain.SavedPage) (doma
 	}
 
 	return created, nil
+}
+
+func enforceSavedPageLimit(ctx context.Context, tx *sql.Tx) error {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM saved_page`).Scan(&count); err != nil {
+		return err
+	}
+
+	if count > domain.SavedPageLimit {
+		return domain.NewError(domain.ErrSavedPageLimitExceeded, nil)
+	}
+
+	return nil
 }
 
 func (r *SavedPageRepo) SetRead(ctx context.Context, id string, read bool) error {
@@ -151,12 +180,6 @@ func (r *SavedPageRepo) Delete(ctx context.Context, id string) error {
 	}
 
 	return nil
-}
-
-func listSavedPagesQuery(params domain.PageParams) (string, []any) {
-	where, tail, args := appendKeysetClauses(unqualifiedKeysetColumns, nil, nil, params)
-
-	return `SELECT ` + savedPageColumns + ` FROM saved_page` + where + tail, args
 }
 
 func scanSavedPage(row interface{ Scan(...any) error }) (domain.SavedPage, error) {

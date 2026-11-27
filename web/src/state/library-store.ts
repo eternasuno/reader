@@ -1,21 +1,29 @@
 /**
  * Shared reactive record store for library articles (`LIB-LIST-1`): articles are stored once by
- * ID in a fine-grained store, the list holds ordered IDs + cursor, and the reader derives from its
+ * ID in a fine-grained store, the list holds loaded IDs, and the reader derives from its
  * selected ID. Writes go through store drafts so a field change (for example `read`) only re-runs
  * the bindings that read that field; server data is reconciled so record identity is preserved.
  * Deep-linked records are retained independently of list membership and evicted when neither view
  * needs them. Rows dropped by a pending feed move stay pinned until the move settles.
  */
 
-import { createSignal, createStore, flush, reconcile } from 'solid-js';
-import type { FeedItem, SavedPage, SortOrder } from '../api';
+import {
+  createMemo,
+  createSignal,
+  createStore,
+  flush,
+  reconcile,
+} from 'solid-js';
+import type { FeedItem, SavedPage } from '../api';
+import {
+  hasQueuedFeed,
+  resetQueue,
+  setFolderMembership,
+  snapshotPosition,
+} from './library-queue';
 import { mergeSnapshotRead } from './read-sync';
 import type { LibraryScope } from './scope';
 import { onSessionCleared } from './session';
-import { getItem, setItem } from './storage';
-
-/** `CM-PAGE-1` / `LIB-LIST-1`: 30 rows per page. */
-export const PAGE_SIZE = 30;
 
 export type LibraryArticle =
   | ({ kind: 'later' } & SavedPage)
@@ -48,23 +56,6 @@ const [activeScope, setActiveScope] = createSignal<LibraryScope>({
   kind: 'later',
 });
 const [activeUnreadOnly, setActiveUnreadOnly] = createSignal(false);
-const [activeOrder, setActiveOrder] = createSignal<SortOrder>('newest');
-
-/** `FD-PREF-1`: order shared by the all-feeds, folder, and read-later lists; persisted locally. */
-const LIST_ORDER_STORAGE_KEY = 'reader.listOrder';
-
-const readListOrder = (): SortOrder =>
-  getItem(LIST_ORDER_STORAGE_KEY) === 'oldest' ? 'oldest' : 'newest';
-
-const [aggregateOrder, setAggregateOrderSignal] = createSignal<SortOrder>(
-  readListOrder()
-);
-
-const setAggregateOrder = (next: SortOrder): void => {
-  setAggregateOrderSignal(next);
-  setItem(LIST_ORDER_STORAGE_KEY, next);
-};
-
 interface LibraryRecords {
   /** Article records by ID. */
   byId: Record<string, LibraryArticle>;
@@ -79,38 +70,60 @@ const [records, setRecords] = createStore<LibraryRecords>({
   ids: [],
   retainedId: null,
 });
-const [cursor, setCursor] = createSignal<string | null>(null);
 const [listBoundary, setListBoundary] = createSignal<string | null>(null);
 const [loadingInitial, setLoadingInitial] = createSignal(false);
 const [loadingMore, setLoadingMore] = createSignal(false);
 const [loadError, setLoadError] = createSignal<string | null>(null);
 
 export {
-  activeOrder,
   activeScope,
   activeUnreadOnly,
-  aggregateOrder,
-  cursor,
   listBoundary,
   loadError,
   loadingInitial,
   loadingMore,
-  setActiveOrder,
   setActiveScope,
   setActiveUnreadOnly,
-  setAggregateOrder,
-  setCursor,
   setListBoundary,
   setLoadError,
   setLoadingInitial,
   setLoadingMore,
 };
 
-/**
- * `LIB-RELOAD-1`: `generation` discards stale page responses from an earlier scope/filter/order;
- * `pageInFlight` keeps at most one next-page request alive (`LIB-LIST-1`).
- */
-export const requestState = { generation: 0, pageInFlight: false };
+/** A generation owns its snapshot and at most one in-flight batch. */
+export const requestState = { generation: 0, batchInFlight: false };
+
+/** Returns whether previously hidden queue entries became eligible. */
+export const updateFolderMembership = (
+  feedId: string,
+  folderId: string | null
+): boolean => {
+  const scope = activeScope();
+  if (scope.kind !== 'folder') return false;
+
+  const previous = setFolderMembership(feedId, folderId);
+  if (scope.folderId !== folderId) {
+    dropFeedRows(feedId);
+    return false;
+  }
+
+  restoreFeedRows(feedId);
+  return (
+    previous !== undefined && previous !== folderId && hasQueuedFeed(feedId)
+  );
+};
+
+export const groupStartIds = createMemo(() => {
+  const starts = new Set<string>();
+  const seen = new Set<string>();
+  for (const id of records.ids) {
+    const entry = snapshotPosition(id)?.entry;
+    if (entry?.feedId === undefined) continue;
+    if (entry.groupStart || !seen.has(entry.feedId)) starts.add(id);
+    seen.add(entry.feedId);
+  }
+  return starts;
+});
 
 /**
  * `activeScope()` outlives the library page, so background work checks whether a library page is
@@ -203,20 +216,6 @@ const mergeRecord = (
   }
 };
 
-const appendUnique = (
-  draft: LibraryRecords,
-  items: ReadonlyArray<LibraryArticle>,
-  snapshotSeq?: number
-): void => {
-  const seen = new Set(draft.ids);
-  for (const item of items) {
-    mergeRecord(draft, item, snapshotSeq);
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    draft.ids.push(item.id);
-  }
-};
-
 export const retainReaderArticle = (articleId: string | null): void => {
   setRecords((draft) => {
     if (draft.retainedId === articleId) return;
@@ -235,29 +234,30 @@ export const upsertArticle = (
 };
 
 export const clearRows = (): void => {
+  pinnedFeedRows.clear();
   setRecords((draft) => {
     draft.ids.length = 0;
     evictUnused(draft);
   });
 };
-
-export const replaceRows = (
-  items: ReadonlyArray<LibraryArticle>,
-  snapshotSeq?: number
-): void => {
-  setRecords((draft) => {
-    draft.ids.length = 0;
-    appendUnique(draft, items, snapshotSeq);
-    evictUnused(draft);
-  });
+const sortFolderRows = (draft: LibraryRecords): void => {
+  draft.ids.sort(
+    (a, b) =>
+      (snapshotPosition(a)?.index ?? 0) - (snapshotPosition(b)?.index ?? 0)
+  );
 };
 
+/** Appends records accepted from the deduplicated queue, which excludes local prepends. */
 export const appendRows = (
   items: ReadonlyArray<LibraryArticle>,
   snapshotSeq?: number
 ): void => {
   setRecords((draft) => {
-    appendUnique(draft, items, snapshotSeq);
+    for (const item of items) {
+      mergeRecord(draft, item, snapshotSeq);
+      draft.ids.push(item.id);
+    }
+    if (activeScope().kind === 'folder') sortFolderRows(draft);
   });
 };
 
@@ -266,14 +266,6 @@ export const prependRow = (article: LibraryArticle): void => {
     if (draft.ids.includes(article.id)) return;
     mergeRecord(draft, article);
     draft.ids.unshift(article.id);
-  });
-};
-
-export const appendRow = (article: LibraryArticle): void => {
-  setRecords((draft) => {
-    if (draft.ids.includes(article.id)) return;
-    mergeRecord(draft, article);
-    draft.ids.push(article.id);
   });
 };
 
@@ -290,27 +282,18 @@ export const removeRow = (articleId: string): void => {
  * Removes a feed's rows from the list and returns their IDs with the previous order, for a later
  * restore. The records stay pinned until `releaseFeedRows` runs for the feed.
  */
-export const dropFeedRows = (
-  feedId: string
-): {
-  ids: ReadonlyArray<string>;
-  orderIds: ReadonlyArray<string>;
-} => {
-  let orderIds: Array<string> = [];
-  const ids: Array<string> = [];
+const dropFeedRows = (feedId: string): void => {
   setRecords((draft) => {
-    orderIds = [...draft.ids];
-    draft.ids = draft.ids.filter((id) => {
-      const article = draft.byId[id];
-      if (article?.kind !== 'feed' || article.feedId !== feedId) return true;
-      ids.push(id);
-      return false;
-    });
-  });
-  if (ids.length > 0) {
+    const ids = draft.ids.filter(
+      (id) => snapshotPosition(id)?.entry.feedId === feedId
+    );
+    if (ids.length === 0) return;
+
     pinnedFeedRows.set(feedId, [...(pinnedFeedRows.get(feedId) ?? []), ...ids]);
-  }
-  return { ids, orderIds };
+    draft.ids = draft.ids.filter(
+      (id) => snapshotPosition(id)?.entry.feedId !== feedId
+    );
+  });
 };
 
 /**
@@ -328,24 +311,13 @@ export const releaseFeedRows = (feedId: string): void => {
  * Re-adds a failed move's dropped rows at their previous positions. Only membership and order
  * return: the pinned records are still in the store, so they are never re-merged from a copy.
  */
-export const restoreFeedRows = (
-  ids: ReadonlyArray<string>,
-  previousOrderIds: ReadonlyArray<string>
-): void => {
-  setRecords((draft) => {
-    const present = new Set(draft.ids);
-    const missing = ids.filter(
-      (id) => !present.has(id) && draft.byId[id] !== undefined
-    );
-    if (missing.length === 0) return;
+const restoreFeedRows = (feedId: string): void => {
+  const ids = pinnedFeedRows.get(feedId);
+  if (ids === undefined) return;
 
-    const positions = new Map(previousOrderIds.map((id, index) => [id, index]));
-    const position = (id: string): number =>
-      positions.get(id) ?? Number.MAX_SAFE_INTEGER;
-    for (const id of missing) {
-      const at = draft.ids.findIndex((other) => position(other) > position(id));
-      draft.ids.splice(at < 0 ? draft.ids.length : at, 0, id);
-    }
+  setRecords((draft) => {
+    draft.ids = [...new Set([...draft.ids, ...ids])];
+    sortFolderRows(draft);
   });
 };
 
@@ -365,7 +337,7 @@ export const patchArticle = (
 
 export const clearLibraryStoreState = (): void => {
   requestState.generation += 1;
-  requestState.pageInFlight = false;
+  requestState.batchInFlight = false;
   pinnedFeedRows.clear();
   setRecords((draft) => {
     draft.ids.length = 0;
@@ -374,8 +346,7 @@ export const clearLibraryStoreState = (): void => {
   });
   setActiveScope({ kind: 'later' });
   setActiveUnreadOnly(false);
-  setActiveOrder('newest');
-  setCursor(null);
+  resetQueue();
   setListBoundary(null);
   setLoadingInitial(false);
   setLoadingMore(false);

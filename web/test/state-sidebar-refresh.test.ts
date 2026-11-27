@@ -171,7 +171,7 @@ const setupDeferredSessionFetch = (fetchMock: ReturnType<typeof vi.fn>) => {
     if (url.includes('/api/feeds/unread-counts')) {
       return Promise.resolve(harnessJson({ items: [], boundary }));
     }
-    return Promise.resolve(harnessJson({ items: [], cursor: null, boundary }));
+    return Promise.resolve(harnessJson({ items: [], groups: [], boundary }));
   });
   return {
     resolveSession: (ok: boolean) =>

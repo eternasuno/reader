@@ -200,12 +200,10 @@ func buildAppDependencies(appCtx context.Context, cfg envConfig, store *sqlite.S
 		feedParser:       feedParser,
 		webpageExtractor: webpageExtractor,
 		refreshQueue: worker.NewRefreshQueue(worker.RefreshConfig{
-			Feeds:     store.Feeds(),
-			FeedItems: store.FeedItems(),
-			Settings:  settings,
-			Fetcher:   fetchClient,
-			Parser:    feedParser,
-			OnFatal:   onFatal,
+			Feeds:   store.Feeds(),
+			Fetcher: fetchClient,
+			Parser:  feedParser,
+			OnFatal: onFatal,
 		}),
 		kindleSender: worker.NewKindleSender(worker.KindleConfig{
 			BaseCtx:          appCtx,

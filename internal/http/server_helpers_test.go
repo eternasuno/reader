@@ -53,17 +53,35 @@ func (c *testClock) Advance(delta time.Duration) {
 
 type failingSavedPageRepo struct {
 	domain.SavedPageRepository
-	listErr       error
+	snapshotErr   error
+	batchErr      error
+	createErr     error
 	unreadErr     error
 	bypassGetByID bool
 }
 
-func (r *failingSavedPageRepo) List(ctx context.Context, params domain.PageParams) (domain.PageResult[domain.SavedPage], error) {
-	if r.listErr != nil {
-		return domain.PageResult[domain.SavedPage]{}, r.listErr
+func (r *failingSavedPageRepo) Snapshot(ctx context.Context, params domain.SnapshotParams) ([]string, error) {
+	if r.snapshotErr != nil {
+		return nil, r.snapshotErr
 	}
 
-	return r.SavedPageRepository.List(ctx, params)
+	return r.SavedPageRepository.Snapshot(ctx, params)
+}
+
+func (r *failingSavedPageRepo) GetByIDs(ctx context.Context, ids []string) ([]domain.SavedPage, error) {
+	if r.batchErr != nil {
+		return nil, r.batchErr
+	}
+
+	return r.SavedPageRepository.GetByIDs(ctx, ids)
+}
+
+func (r *failingSavedPageRepo) Create(ctx context.Context, page domain.SavedPage) (domain.SavedPage, error) {
+	if r.createErr != nil {
+		return domain.SavedPage{}, r.createErr
+	}
+
+	return r.SavedPageRepository.Create(ctx, page)
 }
 
 func (r *failingSavedPageRepo) UnreadCount(ctx context.Context, boundary string) (int, error) {
@@ -486,7 +504,7 @@ func (h *harness) claimDueFeed() *domain.Feed {
 
 // succeedRefresh runs one successful refresh attempt for the feed that finishes
 // at finishedAt and makes the feed due again testRefreshInterval later.
-func (h *harness) succeedRefresh(feedID string, meta domain.FeedSyncMeta, items []domain.FeedItem, finishedAt time.Time) {
+func (h *harness) succeedRefresh(feedID string, meta domain.FeedSyncMeta, finishedAt time.Time) {
 	h.t.Helper()
 
 	ctx := context.Background()
@@ -503,7 +521,7 @@ func (h *harness) succeedRefresh(feedID string, meta domain.FeedSyncMeta, items 
 		h.t.Fatalf("start refresh of feed %s: %v", feedID, err)
 	}
 
-	err = h.db.Feeds().SucceedRefresh(ctx, attemptID, feedID, meta, items, nil, finishedAt, finishedAt.Add(testRefreshInterval))
+	err = h.db.Feeds().SucceedRefresh(ctx, attemptID, feedID, meta, nil, finishedAt, finishedAt.Add(testRefreshInterval))
 	if err != nil {
 		h.t.Fatalf("succeed refresh of feed %s: %v", feedID, err)
 	}
@@ -522,18 +540,19 @@ func (h *harness) seedItem(feedID string, rawURL string, configure func(*domain.
 		configure(&item)
 	}
 
-	ctx := context.Background()
-	feed := h.feedByID(feedID)
-	if feed == nil {
-		h.t.Fatalf("seed item: unknown feed %s", feedID)
+	var publishedAt *int64
+	if item.PublishedAt != nil {
+		millis := item.PublishedAt.UnixMilli()
+		publishedAt = &millis
 	}
 
-	h.succeedRefresh(feedID, domain.FeedSyncMeta{Title: feed.Title}, []domain.FeedItem{item}, h.clock.Now())
-
-	if item.Read {
-		if err := h.db.FeedItems().SetRead(ctx, item.ID, true); err != nil {
-			h.t.Fatalf("seed item read %q: %v", rawURL, err)
-		}
+	_, err = h.db.WriteDB().ExecContext(context.Background(), `
+		INSERT INTO feed_item (id, feed_id, url, title, description, content, extracted_content, published_at, read)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		item.ID, item.FeedID, item.URL.Raw(), item.Title, item.Description, item.Content, item.ExtractedContent, publishedAt, item.Read,
+	)
+	if err != nil {
+		h.t.Fatalf("seed item %q: %v", rawURL, err)
 	}
 
 	return item
@@ -612,15 +631,15 @@ func (h *harness) savedByID(id string) *domain.SavedPage {
 	return page
 }
 
-func (h *harness) allSavedPages() []domain.SavedPage {
+func (h *harness) allSavedPageIDs() []string {
 	h.t.Helper()
 
-	res, err := h.db.SavedPages().List(context.Background(), domain.PageParams{Limit: 200, Boundary: domain.NewID()})
+	ids, err := h.db.SavedPages().Snapshot(context.Background(), domain.NewSnapshotParams(false))
 	if err != nil {
-		h.t.Fatalf("list saved pages: %v", err)
+		h.t.Fatalf("snapshot saved pages: %v", err)
 	}
 
-	return res.Items
+	return ids
 }
 
 func (h *harness) allFeeds() []domain.Feed {

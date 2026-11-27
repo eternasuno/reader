@@ -44,7 +44,7 @@ describe('SessionGuard offline navigation', () => {
         json({
           items: [],
           count: 0,
-          cursor: null,
+          ids: [],
           boundary: '019363b8-0000-7000-8000-000000000000',
           item: null,
         })

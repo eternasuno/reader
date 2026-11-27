@@ -174,7 +174,8 @@ export const zhDict = {
     sectionServices: '外部服务',
     retentionHeading: '文章保留',
     retentionLabel: '每个订阅源保留文章数',
-    retentionHint: '下次刷新订阅源时生效，不会立即删除现有文章。',
+    retentionHint:
+      '调低后立即删除每个订阅源超出的旧文章；订阅源数量与保留篇数的乘积不能超过 10000。',
     saveArticles: '保存文章设置',
     opmlHeading: 'OPML 导入与导出',
     opmlHint: '从其他阅读器迁移订阅，或备份当前的订阅列表。',

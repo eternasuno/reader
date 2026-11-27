@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -349,7 +350,7 @@ func TestBrowserlessMigrationDropsExtractorColumnsAndKeepsOtherSettings(t *testi
 	}
 	defer store.Close()
 
-	requireGooseVersions(t, store.ReadDB(), 0, 1, 2, 3)
+	requireGooseVersions(t, store.ReadDB(), 0, 1, 2, 3, 4, 5)
 	requireBrowserlessColumns(t, store.ReadDB())
 
 	settings, err := store.Settings().Get(ctx)
@@ -390,6 +391,156 @@ func requireMigratedV2Settings(t *testing.T, settings domain.Settings) {
 	}
 }
 
+func TestSnapshotLimitMigration(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		feedItems int
+		saved     int
+		overflow  string
+	}{
+		{name: "small database", feedItems: 2, saved: 3},
+		{name: "feed item overflow", feedItems: 10001, saved: 3, overflow: "feed_item"},
+		{name: "saved page overflow", feedItems: 2, saved: 10001, overflow: "saved_page"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "v3.db"), true))
+			if err != nil {
+				t.Fatalf("open v3 db: %v", err)
+			}
+			defer db.Close()
+
+			if err := applyGoMigrations(ctx, db, migrations.All()[:3]...); err != nil {
+				t.Fatalf("apply v1 through v3: %v", err)
+			}
+
+			if _, err := db.ExecContext(ctx, `INSERT INTO feed (id, url, title) VALUES ('feed', 'https://example.com/feed', 'Feed')`); err != nil {
+				t.Fatalf("seed feed: %v", err)
+			}
+
+			seedFeedItemRows(t, db, "feed", test.feedItems)
+			seedSavedPageRows(t, db, test.saved)
+
+			err = applyGoMigrations(ctx, db, migrations.All()[:4]...)
+			if test.overflow == "" {
+				if err != nil {
+					t.Fatalf("apply v4: %v", err)
+				}
+
+				requireGooseVersions(t, db, 0, 1, 2, 3, 4)
+			} else {
+				want := test.overflow + " has 10001 rows, exceeding the snapshot limit of 10000"
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("apply v4 = %v, want %q", err, want)
+				}
+
+				requireGooseVersions(t, db, 0, 1, 2, 3)
+			}
+
+			requireSnapshotRowCount(t, db, "feed_item", test.feedItems)
+			requireSnapshotRowCount(t, db, "saved_page", test.saved)
+		})
+	}
+}
+
+func TestFeedItemBudgetMigration(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		stored    []int
+		retention int
+		wantError string
+	}{
+		{name: "small database", stored: []int{1, 1}, retention: 2},
+		{name: "at capacity", stored: []int{1, 1}, retention: 5000},
+		{name: "budget exceeded", stored: []int{1, 1}, retention: 5001, wantError: "feeds may hold 10002 items with retention 5001, exceeding the feed item budget of 10000"},
+		{name: "excess stored items at capacity", stored: []int{9998, 0}, retention: 2},
+		{name: "excess stored items let other feeds overflow", stored: []int{9999, 0}, retention: 2, wantError: "feeds may hold 10001 items with retention 2, exceeding the feed item budget of 10000"},
+		{name: "retention exceeded", retention: 10001, wantError: "retention 10001 is outside 1..10000"},
+		{name: "zero retention", retention: 0, wantError: "retention 0 is outside 1..10000"},
+		{name: "negative retention", retention: -1, wantError: "retention -1 is outside 1..10000"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "v4.db"), true))
+			if err != nil {
+				t.Fatalf("open v4 db: %v", err)
+			}
+			defer db.Close()
+
+			if err := applyGoMigrations(ctx, db, migrations.All()[:4]...); err != nil {
+				t.Fatalf("apply v1 through v4: %v", err)
+			}
+
+			seedBudgetMigrationFeeds(ctx, t, db, test.stored)
+
+			if _, err := db.ExecContext(ctx, `UPDATE setting SET retention = ? WHERE id = 1`, test.retention); err != nil {
+				t.Fatalf("seed retention: %v", err)
+			}
+
+			err = applyGoMigrations(ctx, db, migrations.All()...)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("apply v5: %v", err)
+				}
+
+				requireGooseVersions(t, db, 0, 1, 2, 3, 4, 5)
+			} else {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("apply v5 = %v, want %q", err, test.wantError)
+				}
+
+				requireGooseVersions(t, db, 0, 1, 2, 3, 4)
+			}
+
+			total := 0
+			for _, n := range test.stored {
+				total += n
+			}
+
+			requireSnapshotRowCount(t, db, "feed", len(test.stored))
+			requireSnapshotRowCount(t, db, "feed_item", total)
+
+			var retention int
+			if err := db.QueryRowContext(ctx, `SELECT retention FROM setting WHERE id = 1`).Scan(&retention); err != nil || retention != test.retention {
+				t.Fatalf("retention after migration = %d, err %v, want %d", retention, err, test.retention)
+			}
+		})
+	}
+}
+
+func requireSnapshotRowCount(t *testing.T, db *sql.DB, table string, want int) {
+	t.Helper()
+
+	var count int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM `+table).Scan(&count); err != nil || count != want {
+		t.Fatalf("%s row count = %d, err %v, want %d", table, count, err, want)
+	}
+}
+
+func seedFeedItemRows(t *testing.T, db *sql.DB, feedID string, count int) {
+	t.Helper()
+
+	_, err := db.ExecContext(context.Background(), `
+		WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < ?)
+		INSERT INTO feed_item (id, feed_id, url, title)
+		SELECT printf('01950000-0000-7000-8000-%012x', n), ?, 'https://example.com/item/' || n, 'Item' FROM seq`, count, feedID)
+	if err != nil {
+		t.Fatalf("seed feed items: %v", err)
+	}
+}
+
+func seedSavedPageRows(t *testing.T, db *sql.DB, count int) {
+	t.Helper()
+
+	_, err := db.ExecContext(context.Background(), `
+		WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < ?)
+		INSERT INTO saved_page (id, url, title, content)
+		SELECT printf('01950000-0000-7000-8000-%012x', n), 'https://example.com/page/' || n, 'Page', 'Body' FROM seq`, count)
+	if err != nil {
+		t.Fatalf("seed saved pages: %v", err)
+	}
+}
+
 func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "fresh.db"))
@@ -398,7 +549,7 @@ func TestOpenFreshDatabaseRunsAllMigrations(t *testing.T) {
 	}
 	defer store.Close()
 
-	requireGooseVersions(t, store.ReadDB(), 0, 1, 2, 3)
+	requireGooseVersions(t, store.ReadDB(), 0, 1, 2, 3, 4, 5)
 
 	wantTables := []string{"feed", "feed_item", "feed_refresh", "feed_schedule", "folder", "kindle_schedule", "kindle_send", "saved_page", "setting"}
 	if got := queryStrings(t, store.ReadDB(), `SELECT name FROM pragma_table_list WHERE schema = 'main' AND strict = 1 AND name NOT LIKE 'sqlite_%' ORDER BY name`); !slices.Equal(got, wantTables) {
@@ -720,105 +871,8 @@ func TestPragmasApplyToEveryPooledConnection(t *testing.T) {
 
 func TestQueryPlansUseIndexes(t *testing.T) {
 	store := newTestStore(t)
-	cursor := fixedTestID(10)
 	boundary := fixedTestID(20)
-
-	tests := []struct {
-		name           string
-		query          string
-		args           []any
-		index          string
-		allowTempBTree bool
-	}{
-		{
-			name:  "list all newest",
-			query: listAllQuery(domain.PageParams{Limit: 30, Boundary: boundary}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Boundary: boundary}).args,
-		},
-		{
-			name:  "list all with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).args,
-		},
-		{
-			name:  "list all unread",
-			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).args,
-			index: "feed_item_read_id",
-		},
-		{
-			name:  "list all oldest with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).args,
-		},
-		{
-			name:  "list all unread with cursor",
-			query: listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
-			args:  listAllQuery(domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
-			index: "feed_item_read_id",
-		},
-		{
-			name:  "list feed newest",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Boundary: boundary}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Boundary: boundary}).args,
-			index: "feed_item_feed_id_url",
-		},
-		{
-			name:  "list feed oldest",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).args,
-			index: "feed_item_feed_id_url",
-		},
-		{
-			name:  "list feed newest with cursor",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Cursor: &cursor, Boundary: boundary}).args,
-			index: "feed_item_feed_id_url",
-		},
-		{
-			name:  "list feed oldest with cursor",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}).args,
-			index: "feed_item_feed_id_url",
-		},
-		{
-			name:  "list feed unread",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Boundary: boundary}).args,
-			index: "feed_item_feed_read_id",
-		},
-		{
-			name:  "list feed unread with cursor",
-			query: listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
-			args:  listByFeedQuery("feed", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
-			index: "feed_item_feed_read_id",
-		},
-		{
-			name:           "list folder",
-			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Boundary: boundary}).query,
-			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Boundary: boundary}).args,
-			index:          "feed_item_feed_id_url",
-			allowTempBTree: true,
-		},
-		{
-			name:           "list folder oldest",
-			query:          listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).query,
-			args:           listByFolderQuery("folder", domain.PageParams{Limit: 30, Order: domain.SortOrderOldest, Boundary: boundary}).args,
-			index:          "feed_item_feed_id_url",
-			allowTempBTree: true,
-		},
-		{
-			name:  "list folder unread with cursor",
-			query: listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).query,
-			args:  listByFolderQuery("folder", domain.PageParams{Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}).args,
-			index: "feed_item_read_id",
-		},
-	}
-
-	for _, test := range tests {
-		details := queryPlan(t, store, test.query, test.args...)
-		requireIndexedPlan(t, test.name, details, test.index, test.allowTempBTree)
-	}
+	checkSnapshotQueryPlans(t, store, boundary)
 
 	statementPlans := []struct {
 		name                string
@@ -860,12 +914,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		requireNoRefreshHistoryAccess(t, test.name, plan)
 	}
 
-	for _, params := range []domain.PageParams{{Limit: 30, Boundary: boundary}, {Limit: 30, Unread: true, Boundary: boundary}, {Limit: 30, Unread: true, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Order: domain.SortOrderOldest, Cursor: &cursor, Boundary: boundary}, {Limit: 30, Unread: true, Order: domain.SortOrderOldest, Boundary: boundary}} {
-		query, args := listSavedPagesQuery(params)
-		requireIndexedPlan(t, "list saved pages", queryPlan(t, store, query, args...), "", false)
-	}
-
-	storedRefsPlan := queryPlan(t, store, `SELECT id, url FROM feed_item WHERE feed_id = ? ORDER BY id DESC`, "feed")
+	storedRefsPlan := queryPlan(t, store, listStoredRefsByFeedQuery, "feed")
 	requireIndexedPlan(t, "list stored refs by feed", storedRefsPlan, "feed_item_feed_id_url", false)
 	if !slices.ContainsFunc(storedRefsPlan, func(detail string) bool {
 		return strings.Contains(detail, "USING COVERING INDEX feed_item_feed_id_url")
@@ -879,6 +928,63 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		return strings.Contains(detail, "SCAN folder")
 	}) {
 		t.Fatalf("opml folder lookup scans folder table:\n%s", strings.Join(opmlFolderPlan, "\n"))
+	}
+}
+
+func checkSnapshotQueryPlans(t *testing.T, store *Store, boundary string) {
+	t.Helper()
+
+	folder := "folder"
+	limit := domain.ListSnapshotLimit + 1
+	for _, unread := range []bool{false, true} {
+		params := domain.SnapshotParams{Boundary: boundary, Unread: unread}
+		query, args := groupedFeedItemSnapshotQuery(nil, params)
+		requireIndexedPlan(t, "snapshot all", queryPlan(t, store, query, args...), "", true)
+		query, args = groupedFeedItemSnapshotQuery(&folder, params)
+		requireIndexedPlan(t, "snapshot folder", queryPlan(t, store, query, args...), "feed_item_feed_id_url", true)
+
+		feedIndex, savedIndex := "feed_item_feed_id_url", "sqlite_autoindex_saved_page_1"
+		if unread {
+			feedIndex, savedIndex = "feed_item_feed_read_id", "saved_page_read_id"
+		}
+
+		for _, order := range []domain.SortOrder{domain.SortOrderNewest, domain.SortOrderOldest} {
+			plan := queryPlan(t, store, singleFeedItemSnapshotQuery(order, unread), "feed", boundary, limit)
+			requireIndexedPlan(t, "snapshot feed", plan, feedIndex, false)
+		}
+
+		savedPlan := queryPlan(t, store, savedPageSnapshotQuery(unread), boundary, limit)
+		requireIndexedPlan(t, "snapshot saved pages", savedPlan, savedIndex, false)
+	}
+
+	for _, test := range []struct{ table, query string }{
+		{table: "feed_item", query: feedItemsByIDsQuery},
+		{table: "saved_page", query: savedPagesByIDsQuery},
+	} {
+		plan := queryPlan(t, store, test.query, `["one","two"]`)
+		index := "sqlite_autoindex_" + test.table + "_1"
+		requireIndexedPlan(t, test.table+" by ids", plan, index, true)
+		if !slices.ContainsFunc(plan, func(detail string) bool {
+			return strings.HasPrefix(detail, "SEARCH "+test.table+" ") && planUsesIndex([]string{detail}, index)
+		}) {
+			t.Fatalf("%s batch plan does not look up rows by primary key: %v", test.table, plan)
+		}
+	}
+}
+
+func TestRetentionPruneUsesIndexes(t *testing.T) {
+	store := newTestStore(t)
+	plan := queryPlan(t, store, pruneFeedItemsQuery, 2)
+	if !slices.ContainsFunc(plan, func(detail string) bool {
+		return strings.HasPrefix(detail, "SCAN feed_item USING COVERING INDEX feed_item_feed_")
+	}) {
+		t.Fatalf("ranking does not scan a covering per-feed index:\n%s", strings.Join(plan, "\n"))
+	}
+
+	if !slices.ContainsFunc(plan, func(detail string) bool {
+		return strings.HasPrefix(detail, "SEARCH feed_item USING ") && strings.HasSuffix(detail, "(id=?)")
+	}) {
+		t.Fatalf("deletion does not use keyed item lookups:\n%s", strings.Join(plan, "\n"))
 	}
 }
 
@@ -896,5 +1002,34 @@ func TestPlanUsesIndexMatchesWholeIndexName(t *testing.T) {
 
 	if !planUsesIndex(covering, "feed_item_feed_id") {
 		t.Fatal("covering index line did not match its own name")
+	}
+}
+
+func seedBudgetMigrationFeeds(ctx context.Context, t *testing.T, db *sql.DB, stored []int) {
+	t.Helper()
+
+	next := uint64(1)
+	for _, n := range stored {
+		feedID := domain.NewID()
+		if _, err := db.ExecContext(ctx, `INSERT INTO feed (id, url, title) VALUES (?, ?, 'Feed')`, feedID, "https://example.com/"+feedID); err != nil {
+			t.Fatalf("seed feed: %v", err)
+		}
+
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("begin seed: %v", err)
+		}
+
+		for range n {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO feed_item (id, feed_id, url, title) VALUES (?, ?, ?, 'Item')`, fixedTestID(next), feedID, fmt.Sprintf("https://example.com/item/%d", next)); err != nil {
+				t.Fatalf("seed feed item: %v", err)
+			}
+
+			next++
+		}
+
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit seed: %v", err)
+		}
 	}
 }

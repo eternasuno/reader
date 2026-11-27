@@ -5,139 +5,58 @@ import (
 	"testing"
 )
 
-func TestPageParamsValidation(t *testing.T) {
+func TestSnapshotParamsMintBoundary(t *testing.T) {
 	t.Parallel()
 
-	t.Run("defaults", func(t *testing.T) {
-		t.Parallel()
+	params := NewSnapshotParams(true)
+	if !params.Unread || !IsValidUUIDv7(params.Boundary) {
+		t.Fatalf("unexpected params: %+v", params)
+	}
+}
 
-		params, err := ValidatePageParams(0, false, false, "", nil, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if params.Limit != 30 {
-			t.Fatalf("limit = %d, want 30", params.Limit)
-		}
-
-		if params.Order != SortOrderNewest {
-			t.Fatalf("order = %q, want newest", params.Order)
-		}
-
-		if params.Unread {
-			t.Fatalf("unread should default to false")
-		}
-
-		if params.Cursor != nil {
-			t.Fatalf("cursor should default to nil")
-		}
-
-		if !IsValidUUIDv7(params.Boundary) {
-			t.Fatalf("boundary = %q, want valid UUIDv7", params.Boundary)
-		}
-	})
+func TestBatchIDsValidation(t *testing.T) {
+	t.Parallel()
 
 	t.Run("accepts bounds", func(t *testing.T) {
 		t.Parallel()
 
-		for _, limit := range []int{1, 200} {
-			if _, err := ValidatePageParams(limit, true, true, SortOrderOldest, nil, nil); err != nil {
-				t.Fatalf("limit %d should be valid: %v", limit, err)
+		for _, n := range []int{1, MaxBatchIDs} {
+			ids := make([]string, n)
+			for i := range ids {
+				ids[i] = NewID()
+			}
+
+			if err := ValidateBatchIDs(ids); err != nil {
+				t.Fatalf("%d ids should be valid: %v", n, err)
 			}
 		}
 	})
 
-	t.Run("rejects out of range limits", func(t *testing.T) {
+	t.Run("rejects empty and oversized", func(t *testing.T) {
 		t.Parallel()
 
-		for _, limit := range []int{-1, 0, 201, 1000} {
-			_, err := ValidatePageParams(limit, true, false, SortOrderNewest, nil, nil)
-			requireDomainError(t, err, ErrRequestFailed)
+		requireDomainError(t, ValidateBatchIDs(nil), ErrRequestFailed)
+
+		ids := make([]string, MaxBatchIDs+1)
+		for i := range ids {
+			ids[i] = NewID()
 		}
+
+		requireDomainError(t, ValidateBatchIDs(ids), ErrRequestFailed)
 	})
 
-	t.Run("rejects invalid order", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := ValidatePageParams(30, true, false, SortOrder("random"), nil, nil)
-		requireDomainError(t, err, ErrRequestFailed)
-	})
-
-	t.Run("valid cursor and boundary", func(t *testing.T) {
-		t.Parallel()
-
-		cursor := NewID()
-		boundary := NewID()
-		params, err := ValidatePageParams(10, true, true, SortOrderOldest, &cursor, &boundary)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if params.Cursor == nil || *params.Cursor != cursor {
-			t.Fatalf("cursor = %v, want %q", params.Cursor, cursor)
-		}
-
-		if params.Boundary != boundary {
-			t.Fatalf("boundary = %q, want %q", params.Boundary, boundary)
-		}
-
-		if !params.Unread || params.Order != SortOrderOldest || params.Limit != 10 {
-			t.Fatalf("unexpected params: %+v", params)
-		}
-	})
-
-	t.Run("rejects boundary without cursor", func(t *testing.T) {
-		t.Parallel()
-
-		valid := NewID()
-		for _, boundary := range []string{valid, "", "   ", "not-a-uuid"} {
-			_, err := ValidatePageParams(30, true, false, SortOrderNewest, nil, &boundary)
-			requireDomainError(t, err, ErrRequestFailed)
-		}
-	})
-
-	t.Run("rejects cursor without boundary", func(t *testing.T) {
-		t.Parallel()
-
-		cursor := NewID()
-		_, err := ValidatePageParams(30, true, false, SortOrderNewest, &cursor, nil)
-		requireDomainError(t, err, ErrRequestFailed)
-	})
-
-	t.Run("rejects blank cursor", func(t *testing.T) {
-		t.Parallel()
-
-		boundary := NewID()
-		for _, blank := range []string{"", "   "} {
-			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &blank, &boundary)
-			requireDomainError(t, err, ErrRequestFailed)
-		}
-	})
-
-	t.Run("rejects invalid cursor", func(t *testing.T) {
+	t.Run("rejects duplicates", func(t *testing.T) {
 		t.Parallel()
 
 		id := NewID()
-		boundary := NewID()
-		for _, cursor := range []string{
-			"abc",
-			"00000000-0000-4000-8000-000000000000",
-			strings.ToUpper(id),
-			strings.ReplaceAll(id, "-", ""),
-			"urn:uuid:" + id,
-			" " + id,
-		} {
-			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &cursor, &boundary)
-			requireDomainError(t, err, ErrRequestFailed)
-		}
+		requireDomainError(t, ValidateBatchIDs([]string{id, NewID(), id}), ErrRequestFailed)
 	})
 
-	t.Run("rejects invalid boundary with cursor", func(t *testing.T) {
+	t.Run("rejects invalid ids", func(t *testing.T) {
 		t.Parallel()
 
-		cursor := NewID()
 		id := NewID()
-		for _, boundary := range []string{
+		for _, bad := range []string{
 			"",
 			"   ",
 			"abc",
@@ -147,8 +66,7 @@ func TestPageParamsValidation(t *testing.T) {
 			"urn:uuid:" + id,
 			" " + id,
 		} {
-			_, err := ValidatePageParams(30, true, false, SortOrderNewest, &cursor, &boundary)
-			requireDomainError(t, err, ErrRequestFailed)
+			requireDomainError(t, ValidateBatchIDs([]string{NewID(), bad}), ErrRequestFailed)
 		}
 	})
 }
@@ -203,6 +121,27 @@ func TestValueFolderName(t *testing.T) {
 	for _, raw := range []string{"", "   ", "\t\n"} {
 		_, err := ValidateFolderName(raw)
 		requireDomainError(t, err, ErrInvalidFolderName)
+	}
+}
+
+func TestExceedsFeedItemBudget(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		counts    []int
+		retention int
+		want      bool
+	}{
+		{counts: nil, retention: FeedItemBudget},
+		{counts: []int{0, 0}, retention: FeedItemBudget / 2},
+		{counts: []int{0, 0}, retention: FeedItemBudget/2 + 1, want: true},
+		{counts: []int{FeedItemBudget - 2, 0}, retention: 2},
+		{counts: []int{FeedItemBudget - 1, 0}, retention: 2, want: true},
+		{counts: []int{1, 1, 1}, retention: FeedItemBudget / 3},
+	} {
+		if got := ExceedsFeedItemBudget(test.counts, test.retention); got != test.want {
+			t.Fatalf("ExceedsFeedItemBudget(%v, %d) = %v, want %v", test.counts, test.retention, got, test.want)
+		}
 	}
 }
 

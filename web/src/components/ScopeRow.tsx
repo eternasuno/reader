@@ -1,4 +1,5 @@
 import type { JSX } from '@solidjs/web';
+import { Show } from 'solid-js';
 import type { Feed } from '../api';
 import { t } from '../i18n';
 import {
@@ -70,8 +71,14 @@ export function ScopeMenuItems(props: ScopeMenuItemsProps): JSX.Element {
       <MenuItem icon="book" onSelect={() => void triggerKindleSend()}>
         {t('reader.sendAsEbook')}
       </MenuItem>
-      <MenuDivider />
-      <ListOrderCheckbox feed={props.feed ?? null} />
+      <Show when={props.scope.kind === 'feed' && props.feed}>
+        {(feed) => (
+          <>
+            <MenuDivider />
+            <ListOrderCheckbox feed={feed()} />
+          </>
+        )}
+      </Show>
     </>
   );
 }

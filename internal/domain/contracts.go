@@ -22,6 +22,7 @@ const (
 	ErrInvalidPageUrl            ErrorCode = "InvalidPageUrl"
 	ErrSavedPageAlreadyExists    ErrorCode = "SavedPageAlreadyExists"
 	ErrSavedPageRepositoryError  ErrorCode = "SavedPageRepositoryError"
+	ErrSavedPageLimitExceeded    ErrorCode = "SavedPageLimitExceeded"
 	ErrFeedUrlInvalid            ErrorCode = "FeedUrlInvalid"
 	ErrFetchFeedError            ErrorCode = "FetchFeedError"
 	ErrFeedParserError           ErrorCode = "FeedParserError"
@@ -35,6 +36,7 @@ const (
 	ErrFolderNotFound            ErrorCode = "FolderNotFound"
 	ErrFolderRepositoryError     ErrorCode = "FolderRepositoryError"
 	ErrInvalidRetention          ErrorCode = "InvalidRetention"
+	ErrFeedItemBudgetExceeded    ErrorCode = "FeedItemBudgetExceeded"
 	ErrInvalidBrowserlessSetting ErrorCode = "InvalidBrowserlessSetting"
 	ErrInvalidSMTPSetting        ErrorCode = "InvalidSMTPSetting"
 	ErrSMTPNotConfigured         ErrorCode = "SMTPNotConfigured"
@@ -151,17 +153,25 @@ const (
 	FeedRefreshFailed    FeedRefreshStatus = "failed"
 )
 
-type PageParams struct {
-	Limit    int
+// ListSnapshotLimit bounds every ordered id snapshot; SavedPageLimit caps stored saved pages.
+const (
+	ListSnapshotLimit = 10000
+	SavedPageLimit    = 10000
+	MaxBatchIDs       = 200
+	// FeedItemBudget bounds feed count × retention so feed items never exceed ListSnapshotLimit.
+	FeedItemBudget = ListSnapshotLimit
+)
+
+// SnapshotParams selects the rows of an ordered id snapshot bound by an id-allocation boundary.
+type SnapshotParams struct {
 	Unread   bool
-	Order    SortOrder
-	Cursor   *string
 	Boundary string
 }
 
-type PageResult[T any] struct {
-	Items  []T
-	Cursor *string
+// FeedItemGroup is one feed's ids in display order within a feed item snapshot.
+type FeedItemGroup struct {
+	FeedID string
+	IDs    []string
 }
 
 type Folder struct {
@@ -388,7 +398,7 @@ type FeedRepository interface {
 	RequestRefresh(ctx context.Context, feedID string, now time.Time) error
 	RecoverRunningRefreshes(ctx context.Context, now time.Time) error
 	ClaimDueRefresh(ctx context.Context, attemptID string, now time.Time) (*Feed, error)
-	SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta FeedSyncMeta, newItems []FeedItem, deleteIDs []string, finishedAt, nextRefreshAt time.Time) error
+	SucceedRefresh(ctx context.Context, attemptID string, feedID string, meta FeedSyncMeta, entries []ParsedFeedEntry, finishedAt, nextRefreshAt time.Time) error
 	FailRefresh(ctx context.Context, attemptID string, feedID string, errSummary string, finishedAt, nextRefreshAt time.Time) error
 	ReleaseRefresh(ctx context.Context, attemptID string, feedID string) error
 	ImportOPML(ctx context.Context, doc OPMLDocument, now time.Time) (OPMLImportResult, error)
@@ -396,10 +406,10 @@ type FeedRepository interface {
 }
 
 type FeedItemRepository interface {
-	ListAll(ctx context.Context, params PageParams) (PageResult[FeedItem], error)
-	ListByFeed(ctx context.Context, feedID string, params PageParams) (PageResult[FeedItem], error)
-	ListByFolder(ctx context.Context, folderID string, params PageParams) (PageResult[FeedItem], error)
-	ListStoredRefsByFeed(ctx context.Context, feedID string) ([]StoredRef, error)
+	SnapshotAll(ctx context.Context, params SnapshotParams) ([]FeedItemGroup, error)
+	SnapshotByFolder(ctx context.Context, folderID string, params SnapshotParams) ([]FeedItemGroup, error)
+	SnapshotByFeed(ctx context.Context, feedID string, order SortOrder, params SnapshotParams) ([]FeedItemGroup, error)
+	GetByIDs(ctx context.Context, ids []string) ([]FeedItem, error)
 	GetByID(ctx context.Context, id string) (*FeedItem, error)
 	UnreadCounts(ctx context.Context, boundary string) ([]FeedUnreadCount, error)
 	SetRead(ctx context.Context, id string, read bool) error
@@ -411,7 +421,8 @@ type FeedItemRepository interface {
 }
 
 type SavedPageRepository interface {
-	List(ctx context.Context, params PageParams) (PageResult[SavedPage], error)
+	Snapshot(ctx context.Context, params SnapshotParams) ([]string, error)
+	GetByIDs(ctx context.Context, ids []string) ([]SavedPage, error)
 	UnreadCount(ctx context.Context, boundary string) (int, error)
 	GetByID(ctx context.Context, id string) (*SavedPage, error)
 	GetIDByURL(ctx context.Context, url NormalizedURL) (string, bool, error)

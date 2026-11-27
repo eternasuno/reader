@@ -83,19 +83,22 @@ export interface FeedPreview {
   titles: ReadonlyArray<string>;
 }
 
-export interface Page<T> {
-  items: Array<T>;
-  cursor: string | null;
-  boundary: string;
+export interface FeedItemGroup {
+  feedId: string;
+  ids: Array<string>;
 }
 
-export type ListParams = {
-  limit?: number;
-  unread?: boolean;
-  cursor?: string | null;
-  boundary?: string;
-  order?: SortOrder;
-};
+export interface FeedItemOrder {
+  boundary: string;
+  groups: Array<FeedItemGroup>;
+}
+
+export interface SavedPageOrder {
+  boundary: string;
+  ids: Array<string>;
+}
+
+export type OrderParams = { unread?: boolean };
 
 export interface FeedCreateInput {
   url: string;

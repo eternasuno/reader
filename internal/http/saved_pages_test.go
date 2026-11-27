@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"reader/internal/domain"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"reader/internal/domain"
 )
 
 func TestSavedPageCreateAndDuplicate(t *testing.T) {
@@ -99,6 +101,23 @@ func TestSavedPageCreateConflictAtInsertReturnsID(t *testing.T) {
 	}
 }
 
+func TestSavedPageLimitError(t *testing.T) {
+	t.Parallel()
+
+	h := newHarnessWith(t, func(cfg *Config) {
+		cfg.SavedPages = &failingSavedPageRepo{
+			SavedPageRepository: cfg.SavedPages,
+			createErr:           domain.NewError(domain.ErrSavedPageLimitExceeded, nil),
+		}
+	})
+	h.extractor.article = domain.ExtractedArticle{Title: "Saved", Content: "<p>saved</p>"}
+	feed := h.seedFeed("Feed", "https://feeds.example.com/rss", nil)
+	item := h.seedItem(feed.ID, "https://example.com/item", func(item *domain.FeedItem) { item.Content = strPtr("<p>item</p>") })
+
+	requireAPIError(t, h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://example.com/page"}), http.StatusBadRequest, "SavedPageLimitExceeded")
+	requireAPIError(t, h.authed(http.MethodPost, "/api/feed-items/"+item.ID+"/save", nil), http.StatusBadRequest, "SavedPageLimitExceeded")
+}
+
 func TestSavedPageRedactsURLCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -118,10 +137,12 @@ func TestSavedPageRedactsURLCredentials(t *testing.T) {
 		t.Fatalf("url = %q", created.Item.URL)
 	}
 
-	recorder = h.authed(http.MethodGet, "/api/saved-pages", nil)
+	recorder = h.authed(http.MethodGet, "/api/saved-pages?ids="+created.Item.ID, nil)
 	requireStatus(t, recorder, http.StatusOK)
-	if strings.Contains(recorder.Body.String(), "supersecret") {
-		t.Fatalf("list leaked url credentials: %s", recorder.Body.String())
+	var batch listResponse[savedPageJSON]
+	decodeBody(t, recorder, &batch)
+	if len(batch.Items) != 1 || batch.Items[0].ID != created.Item.ID || batch.Items[0].URL != "https://example.com/private" || strings.Contains(recorder.Body.String(), "supersecret") {
+		t.Fatalf("batch leaked or mismatched URL: %s", recorder.Body.String())
 	}
 }
 
@@ -175,7 +196,7 @@ func TestSavedPageValidationAndUpstreamFailures(t *testing.T) {
 				t.Fatalf("error response leaked the internal cause: %s", recorder.Body.String())
 			}
 
-			if pages := h.allSavedPages(); len(pages) != 0 {
+			if pages := h.allSavedPageIDs(); len(pages) != 0 {
 				t.Fatalf("failed create persisted %d pages", len(pages))
 			}
 		})
@@ -205,7 +226,65 @@ func TestSavedPageGet(t *testing.T) {
 	}
 }
 
-func TestSavedPagePagingAndReadState(t *testing.T) {
+func TestSavedPageSnapshot(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	recorder := h.authed(http.MethodGet, "/api/saved-pages/order", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	type response struct {
+		Boundary string   `json:"boundary"`
+		IDs      []string `json:"ids"`
+	}
+
+	var empty response
+	decodeSnapshotBody(t, recorder, &empty)
+	if empty.IDs == nil || len(empty.IDs) != 0 || !domain.IsValidUUIDv7(empty.Boundary) {
+		t.Fatalf("empty snapshot = %s", recorder.Body.String())
+	}
+
+	first := h.seedSavedPage("https://example.com/first", false)
+	second := h.seedSavedPage("https://example.com/second", true)
+	third := h.seedSavedPage("https://example.com/third", false)
+	for _, test := range []struct {
+		query string
+		ids   []string
+	}{
+		{query: "", ids: []string{third.ID, second.ID, first.ID}},
+		{query: "?unread=0", ids: []string{third.ID, second.ID, first.ID}},
+		{query: "?unread=%20TrUe%20", ids: []string{third.ID, first.ID}},
+	} {
+		recorder := h.authed(http.MethodGet, "/api/saved-pages/order"+test.query, nil)
+		requireStatus(t, recorder, http.StatusOK)
+		var snapshot response
+		decodeSnapshotBody(t, recorder, &snapshot)
+		if !reflect.DeepEqual(snapshot.IDs, test.ids) || !domain.IsValidUUIDv7(snapshot.Boundary) || snapshot.Boundary <= third.ID {
+			t.Fatalf("snapshot %q = %s, want IDs %v and boundary after %q", test.query, recorder.Body.String(), test.ids, third.ID)
+		}
+	}
+}
+
+func TestSavedPageBatchRequestOrderAndMissingIDs(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	first := h.seedSavedPage("https://example.com/first", true)
+	second := h.seedSavedPage("https://example.com/second", false)
+
+	recorder := h.authed(http.MethodGet, "/api/saved-pages?ids="+first.ID+","+domain.NewID()+","+second.ID, nil)
+	requireStatus(t, recorder, http.StatusOK)
+	var batch listResponse[savedPageJSON]
+	decodeBody(t, recorder, &batch)
+	if len(batch.Items) != 2 || batch.Items[0].ID != first.ID || batch.Items[1].ID != second.ID {
+		t.Fatalf("batch = %s, want first and second in request order", recorder.Body.String())
+	}
+
+	if batch.Items[0].Content != first.Content || !batch.Items[0].Read {
+		t.Fatalf("first page fields = %+v", batch.Items[0])
+	}
+}
+
+func TestSavedPageReadState(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
@@ -213,59 +292,11 @@ func TestSavedPagePagingAndReadState(t *testing.T) {
 	second := h.seedSavedPage("https://example.com/2", false)
 	third := h.seedSavedPage("https://example.com/3", false)
 
-	recorder := h.authed(http.MethodGet, "/api/saved-pages?limit=2", nil)
-	requireStatus(t, recorder, http.StatusOK)
-
-	var page pageResponse[savedPageJSON]
-	decodeBody(t, recorder, &page)
-	if len(page.Items) != 2 || page.Items[0].ID != third.ID || page.Items[1].ID != second.ID {
-		t.Fatalf("first page = %+v", page.Items)
-	}
-
-	if page.Cursor == nil || *page.Cursor != second.ID {
-		t.Fatalf("first page cursor = %v", page.Cursor)
-	}
-
-	if !domain.IsValidUUIDv7(page.Boundary) {
-		t.Fatalf("first page boundary = %q, want valid UUIDv7", page.Boundary)
-	}
-
-	firstBoundary := page.Boundary
-	recorder = h.authed(http.MethodGet, "/api/saved-pages?limit=2&cursor="+*page.Cursor+"&boundary="+firstBoundary, nil)
-	requireStatus(t, recorder, http.StatusOK)
-	decodeBody(t, recorder, &page)
-	if len(page.Items) != 1 || page.Items[0].ID != first.ID {
-		t.Fatalf("second page = %+v", page.Items)
-	}
-
-	if page.Cursor != nil || page.Boundary != firstBoundary {
-		t.Fatalf("last page cursor=%v boundary=%q, want nil and %q", page.Cursor, page.Boundary, firstBoundary)
-	}
-
 	if err := h.db.SavedPages().SetRead(context.Background(), second.ID, true); err != nil {
 		t.Fatalf("set saved page read: %v", err)
 	}
 
-	recorder = h.authed(http.MethodGet, "/api/saved-pages?unread", nil)
-	requireStatus(t, recorder, http.StatusOK)
-	decodeBody(t, recorder, &page)
-	if len(page.Items) != 2 {
-		t.Fatalf("unread filter returned %d items", len(page.Items))
-	}
-
-	recorder = h.authed(http.MethodGet, "/api/saved-pages?unread=false", nil)
-	requireStatus(t, recorder, http.StatusOK)
-	decodeBody(t, recorder, &page)
-	if len(page.Items) != 3 {
-		t.Fatalf("unread=false returned %d items", len(page.Items))
-	}
-
-	requireAPIError(t, h.authed(http.MethodGet, "/api/saved-pages?unread=maybe", nil), http.StatusBadRequest, "RequestFailed")
-	requireAPIError(t, h.authed(http.MethodGet, "/api/saved-pages?limit=0", nil), http.StatusBadRequest, "RequestFailed")
-	requireAPIError(t, h.authed(http.MethodGet, "/api/saved-pages?limit=201", nil), http.StatusBadRequest, "RequestFailed")
-	requireAPIError(t, h.authed(http.MethodGet, "/api/saved-pages?cursor=not-a-uuid", nil), http.StatusBadRequest, "RequestFailed")
-
-	recorder = h.authed(http.MethodGet, "/api/saved-pages/unread-count", nil)
+	recorder := h.authed(http.MethodGet, "/api/saved-pages/unread-count", nil)
 	requireStatus(t, recorder, http.StatusOK)
 
 	var count countResponse
@@ -291,9 +322,9 @@ func TestSavedPagePagingAndReadState(t *testing.T) {
 	}
 
 	requireStatus(t, h.authed(http.MethodPost, "/api/saved-pages/read-all", map[string]any{"before": domain.NewID()}), http.StatusNoContent)
-	for _, saved := range h.allSavedPages() {
-		if !saved.Read {
-			t.Fatalf("page %s still unread after read-all", saved.ID)
+	for _, id := range []string{first.ID, second.ID, third.ID, fourth.ID} {
+		if !h.savedByID(id).Read {
+			t.Fatalf("page %s still unread after read-all", id)
 		}
 	}
 
@@ -316,19 +347,19 @@ func TestSavedPageRepositoryErrorsAreSanitized(t *testing.T) {
 	h := newHarnessWith(t, func(cfg *Config) {
 		cfg.SavedPages = &failingSavedPageRepo{
 			SavedPageRepository: cfg.SavedPages,
-			listErr:             repoErr,
+			snapshotErr:         repoErr,
+			batchErr:            repoErr,
 			unreadErr:           repoErr,
 		}
 	})
 
-	recorder := h.authed(http.MethodGet, "/api/saved-pages", nil)
-	requireAPIError(t, recorder, http.StatusInternalServerError, "SavedPageRepositoryError")
-
-	if strings.Contains(recorder.Body.String(), "disk I/O error") {
-		t.Fatalf("response leaked the internal cause: %s", recorder.Body.String())
+	for _, target := range []string{"/api/saved-pages/order", "/api/saved-pages?ids=" + domain.NewID(), "/api/saved-pages/unread-count"} {
+		recorder := h.authed(http.MethodGet, target, nil)
+		requireAPIError(t, recorder, http.StatusInternalServerError, "SavedPageRepositoryError")
+		if strings.TrimSpace(recorder.Body.String()) != `{"error":"SavedPageRepositoryError"}` {
+			t.Fatalf("unexpected error payload: %s", recorder.Body.String())
+		}
 	}
-
-	requireAPIError(t, h.authed(http.MethodGet, "/api/saved-pages/unread-count", nil), http.StatusInternalServerError, "SavedPageRepositoryError")
 }
 
 type unreadCountSpySavedPageRepo struct {

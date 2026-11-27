@@ -27,8 +27,10 @@ const B = '019363b8-0000-7000-8000-000000000000';
 const COUNTS_OK = [{ feedId: 'f', count: 2 }];
 const COUNTS_RES = { items: COUNTS_OK, boundary: B };
 const SAVED_COUNT_RES = { count: 4, boundary: B };
-const SAVED_PAGE = { items: [PAGE_OK], cursor: null, boundary: B };
-const ITEM_PAGE = { items: [ITEM_OK], cursor: 'i', boundary: B };
+const SAVED_PAGE = { ids: [B], boundary: B };
+const FEED_ORDER = { groups: [{ feedId: B, ids: [B] }], boundary: B };
+const ITEM_BATCH = { items: [{ ...ITEM_OK, id: B, feedId: B }] };
+const SAVED_BATCH = { items: [{ ...PAGE_OK, id: B }] };
 const SETTINGS_OK = {
   retention: 100,
 };
@@ -57,7 +59,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const spList = () => savedPagesApi.list();
+const spList = () => savedPagesApi.order();
 const spUnread = () => savedPagesApi.unreadCount();
 const spAdd = () => savedPagesApi.create(PAGE);
 const fCounts = () => feedsApi.unreadCounts();
@@ -75,9 +77,16 @@ const UNWRAP_CASES: Array<UnwrapCase> = [
   ['feed prev', fPrev, { preview: PREVIEW_OK }, PREVIEW_OK],
   ['feed add', fAdd, { item: FEED_OK }, FEED_OK, 201],
   ['counts', fCounts, COUNTS_RES, COUNTS_RES],
-  ['feed items', () => feedsApi.listItems('f'), ITEM_PAGE, ITEM_PAGE],
-  ['folder items', () => foldersApi.listItems('f'), ITEM_PAGE, ITEM_PAGE],
-  ['items', () => feedItemsApi.listAll(), ITEM_PAGE, ITEM_PAGE],
+  ['feed order', () => feedsApi.itemsOrder('f'), FEED_ORDER, FEED_ORDER],
+  ['folder order', () => foldersApi.itemsOrder('f'), FEED_ORDER, FEED_ORDER],
+  ['all order', () => feedItemsApi.order(), FEED_ORDER, FEED_ORDER],
+  ['feed items by ID', () => feedItemsApi.byIds([B]), ITEM_BATCH, ITEM_BATCH],
+  [
+    'saved pages by ID',
+    () => savedPagesApi.byIds([B]),
+    SAVED_BATCH,
+    SAVED_BATCH,
+  ],
   ['extract', fExt, { item: EXTRACT_OK }, EXTRACT_OK],
   ['folders', () => foldersApi.list(), { items: [FOLDER_OK] }, [FOLDER_OK]],
   ['folder add', foAdd, { item: FOLDER_OK }, FOLDER_OK, 201],
