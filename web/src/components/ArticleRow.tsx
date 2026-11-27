@@ -9,6 +9,7 @@ import {
   type LibraryScope,
   toggleArticleRead,
 } from '../state';
+import { now } from '../state/clock';
 import { openInNewTab } from './openInNewTab';
 import { SiteIcon } from './SiteIcon';
 
@@ -137,7 +138,7 @@ function RowSourceMeta(props: {
         <Show when={props.row.publishedAt}>
           {(publishedAt) => (
             <time class="shrink-0 tabular-nums" datetime={publishedAt()}>
-              {formatRelativeTime(publishedAt(), locale())}
+              {formatRelativeTime(publishedAt(), locale(), now())}
             </time>
           )}
         </Show>

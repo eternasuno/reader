@@ -165,13 +165,12 @@ describe('formatting', () => {
   it.each(RELATIVE_TIME_CASES)(
     'formats %s relative to now',
     (_, offsetMs, targetLocale, expected) => {
-      vi.spyOn(Date, 'now').mockReturnValue(NOW);
       const iso = new Date(NOW + offsetMs).toISOString();
-      expect(formatRelativeTime(iso, targetLocale)).toBe(expected);
+      expect(formatRelativeTime(iso, targetLocale, NOW)).toBe(expected);
     }
   );
 
   it('ignores invalid dates', () => {
-    expect(formatRelativeTime('not-a-date')).toBe('');
+    expect(formatRelativeTime('not-a-date', 'en', NOW)).toBe('');
   });
 });

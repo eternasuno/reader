@@ -83,12 +83,13 @@ export const formatDateTime = (
 
 export const formatRelativeTime = (
   isoString: string,
-  currentLocale: Locale = locale()
+  currentLocale: Locale,
+  currentTime: number
 ): string => {
   const timestamp = Date.parse(isoString);
   if (Number.isNaN(timestamp)) return '';
 
-  const elapsed = Date.now() - timestamp;
+  const elapsed = currentTime - timestamp;
   const absElapsed = Math.abs(elapsed);
   if (absElapsed < 60_000) return dicts[currentLocale].common.justNow;
 
