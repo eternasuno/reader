@@ -4,6 +4,7 @@ import {
   makeFeed,
   makeItem,
   makePage,
+  requireArticle,
   uuid,
 } from './support/state-fixture';
 
@@ -47,7 +48,7 @@ describe('feed starting mode', () => {
         ? opened.extractedContent
         : undefined
     ).toBe('<p>x</p>');
-    const firstRow = state.rows()[0];
+    const firstRow = requireArticle(state, state.rowIds()[0]);
     expect(
       firstRow.kind === 'feed' ? firstRow.extractedContent : undefined
     ).toBe('<p>x</p>');

@@ -5,17 +5,27 @@ import { buildLibraryUrl, type LibraryScope, retryLoad } from '../state';
 import { Button, Icon } from '../ui';
 import type { EmptyCopy } from './articleListScope';
 
-/** Page-level load failure: the list keeps its last rows and offers a retry. */
-export function ArticleListError(): JSX.Element {
+export function ArticleListError(props: { compact?: boolean }): JSX.Element {
   return (
     <div
       role="alert"
-      class="mx-2 my-2 flex items-start gap-2 rounded-box border border-error/30 bg-error/10 px-3 py-2.5"
+      class={[
+        'mx-2 my-2 flex shrink-0 gap-2 rounded-box border border-error/30 bg-error/10 px-3',
+        props.compact ? 'items-center py-1' : 'items-start py-2.5',
+      ]}
     >
-      <Icon name="warning" size={16} class="mt-0.5 text-error" />
+      <Icon
+        name="warning"
+        size={16}
+        class={props.compact ? 'text-error' : 'mt-0.5 text-error'}
+      />
       <div class="flex min-w-0 flex-1 flex-col gap-0.5">
         <p class="text-sm font-medium">{t('library.loadErrorTitle')}</p>
-        <p class="text-xs text-base-content/60">{t('library.loadErrorHint')}</p>
+        <Show when={!props.compact}>
+          <p class="text-xs text-base-content/60">
+            {t('library.loadErrorHint')}
+          </p>
+        </Show>
       </div>
       <Button variant="secondary" size="sm" onClick={() => void retryLoad()}>
         {t('common.retry')}

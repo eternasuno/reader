@@ -4,12 +4,16 @@ import {
   createStateTestContext,
   feedOrder,
   jsonResponse,
+  loadWindowedScope,
   makeFeed,
   makeItem,
   makePage,
+  mountLibraryViewport,
+  mountTestWindow,
   noContentResponse,
   savedOrder,
   uuid,
+  waitForWindow,
 } from './support/state-fixture';
 
 const B1 = '019363b8-0000-7000-8000-000000000001';
@@ -63,7 +67,7 @@ beforeEach(async () => {
 it('is pessimistic and reloads the active feed scope after confirmation', async () => {
   const { state, solid } = ctx;
   const sidebarRefresh = await import('../src/state/sidebar-refresh');
-  const releaseLibrary = state.trackLibraryMount();
+  const releaseLibrary = mountLibraryViewport(state);
   const stopPolling = sidebarRefresh.mountSidebarRefresh();
   await ctx.queueLoadedLibrary({
     scope: { kind: 'feed', feedId: uuid(1001) },
@@ -84,7 +88,7 @@ it('is pessimistic and reloads the active feed scope after confirmation', async 
   solid.flush();
 
   expect(ctx.requestUrl(before)).toBe(`/api/feeds/${uuid(1001)}/read-all`);
-  expect(state.rows().find((row) => row.id === uuid(1007))?.read).toBe(false);
+  expect(state.articleById(uuid(1007))?.read).toBe(false);
   expect(state.feedUnreadCount(uuid(1001))).toBe(1);
   expect(state.feedUnreadCount(uuid(1002))).toBe(1);
   expect(state.isMarkingScope({ kind: 'feed', feedId: uuid(1001) })).toBe(true);
@@ -100,10 +104,11 @@ it('is pessimistic and reloads the active feed scope after confirmation', async 
   });
   markReq.resolve(noContentResponse());
   await marking;
+  await waitForWindow(state);
   await vi.waitFor(() => expect(state.feedUnreadCount(uuid(1001))).toBe(0));
   solid.flush();
 
-  expect(state.rows().find((row) => row.id === uuid(1007))?.read).toBe(true);
+  expect(state.articleById(uuid(1007))?.read).toBe(true);
   expect(state.feedUnreadCount(uuid(1002))).toBe(1);
   expect(state.isMarkingScope({ kind: 'feed', feedId: uuid(1001) })).toBe(
     false
@@ -117,11 +122,12 @@ describe('saved mark-all', () => {
     const { state, solid } = ctx;
     const sidebarRefresh = await import('../src/state/sidebar-refresh');
     const releaseLibrary = state.trackLibraryMount();
+    const unmountWindow = mountTestWindow(state);
     const stopPolling = sidebarRefresh.mountSidebarRefresh();
     const items = [makePage({ id: uuid(1018) })];
     ctx.queue(savedOrder(items, B1));
     ctx.queue({ items });
-    await state.loadScopeFirstPage({ kind: 'later' }, false);
+    await loadWindowedScope(state, { kind: 'later' }, false);
     ctx.queueSidebar({ saved: 1 });
     await state.refreshSidebar();
     solid.flush();
@@ -134,7 +140,7 @@ describe('saved mark-all', () => {
     expect(ctx.requestUrl(before)).toBe('/api/saved-pages/read-all');
     expect(ctx.requestBody(before)).toEqual({ before: B1 });
     expect(state.savedUnreadCount()).toBe(1);
-    expect(state.rows()[0].read).toBe(false);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(false);
 
     routeReads({
       saved: 0,
@@ -142,13 +148,15 @@ describe('saved mark-all', () => {
     });
     markReq.resolve(noContentResponse());
     await marking;
+    await waitForWindow(state);
     await vi.waitFor(() => expect(state.savedUnreadCount()).toBe(0));
     solid.flush();
     stopPolling();
+    unmountWindow();
     releaseLibrary();
 
     expect(state.savedUnreadCount()).toBe(0);
-    expect(state.rows()[0].read).toBe(true);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
   });
 });
 
@@ -168,7 +176,7 @@ describe('mark-all failure', () => {
     solid.flush();
 
     expect(ctx.fetchCount()).toBe(before + 1);
-    expect(state.rows()[0].read).toBe(false);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(false);
     expect(state.feedUnreadCount(uuid(1001))).toBe(1);
     expect(state.isMarkingScope({ kind: 'all' })).toBe(false);
     expect(ui.currentToast()?.message).toBe(
@@ -186,13 +194,13 @@ describe('stale scope rollback guard', () => {
     });
 
     const failure = ctx.pending();
-    state.markLoadedRead();
+    state.markReadAbove();
     solid.flush();
 
     const items = [makeItem({ id: uuid(1007), feedId: uuid(1001) })];
     ctx.queue(feedOrder(items, B1));
     ctx.queue({ items });
-    await state.loadScopeFirstPage({ kind: 'all' }, false);
+    await loadWindowedScope(state, { kind: 'all' }, false);
     solid.flush();
 
     ctx.queueSidebar({ saved: 1 });
@@ -200,8 +208,8 @@ describe('stale scope rollback guard', () => {
     await vi.waitFor(() => expect(ui.currentToast()).not.toBeNull());
     solid.flush();
 
-    expect(state.rows().map((row) => row.id)).toEqual([uuid(1007)]);
-    expect(state.rows()[0].read).toBe(false);
+    expect(state.rowIds()).toEqual([uuid(1007)]);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(false);
     expect(ui.currentToast()?.variant).toBe('error');
   });
 });
@@ -218,17 +226,20 @@ describe('bulk vs newer toggle: failure', () => {
     const before = ctx.fetchCount();
     const bulkReq = ctx.pending();
 
-    state.markLoadedRead();
+    state.markReadAbove();
     solid.flush();
     const toggling = state.toggleArticleRead(uuid(1018), false);
     solid.flush();
-    expect(state.rows().find((row) => row.id === uuid(1018))?.read).toBe(false);
+    expect(state.articleById(uuid(1018))?.read).toBe(false);
 
     bulkReq.resolve(jsonResponse({ error: 'SavedPageRepositoryError' }, 500));
     await expect(toggling).resolves.toBe(true);
     solid.flush();
 
-    expect(state.rows().map((row) => row.read)).toEqual([false, false]);
+    expect(state.rowIds().map((id) => state.articleById(id)?.read)).toEqual([
+      false,
+      false,
+    ]);
     expect(state.savedUnreadCount()).toBe(2);
     expect(ctx.fetchCount()).toBe(before + 1);
   });
@@ -276,20 +287,24 @@ const routeBulkToggle = () => {
 describe('bulk vs newer toggle: success', () => {
   it('sends a toggle made during markScopeAllRead after the barrier succeeds', async () => {
     const { state, solid } = ctx;
-    state.trackLibraryMount();
+    const releaseLibrary = state.trackLibraryMount();
+    const unmountWindow = mountTestWindow(state);
     ctx.queueSidebar({ saved: 2 });
     await state.refreshSidebar();
     const items = [makePage({ id: B1 }), makePage({ id: B3 })];
     ctx.queue(savedOrder(items, B2));
     ctx.queue({ items });
-    await state.loadScopeFirstPage({ kind: 'later' }, false);
+    await loadWindowedScope(state, { kind: 'later' }, false);
     solid.flush();
     const routed = routeBulkToggle();
 
     const marking = state.markScopeAllRead({ kind: 'later' });
     solid.flush();
     expect(state.savedUnreadCount()).toBe(2);
-    expect(state.rows().map((row) => row.read)).toEqual([false, false]);
+    expect(state.rowIds().map((id) => state.articleById(id)?.read)).toEqual([
+      false,
+      false,
+    ]);
 
     const markUnread = state.toggleArticleRead(B1, false);
     solid.flush();
@@ -305,6 +320,12 @@ describe('bulk vs newer toggle: success', () => {
     await expect(markUnread).resolves.toBe(true);
     solid.flush();
 
-    expect(state.rows().map((row) => row.read)).toEqual([false, true]);
+    await waitForWindow(state);
+    expect(state.rowIds().map((id) => state.articleById(id)?.read)).toEqual([
+      false,
+      true,
+    ]);
+    unmountWindow();
+    releaseLibrary();
   });
 });

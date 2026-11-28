@@ -42,7 +42,7 @@ describe('read sync: ambiguous failure outside the store', () => {
     ctx.queue({ items });
     await state.loadScopeFirstPage({ kind: 'later' }, false);
     solid.flush();
-    expect(state.rows().map((row) => row.id)).toEqual([uuid(1019)]);
+    expect(state.rowIds()).toEqual([uuid(1019)]);
 
     routed.rejectNext(`/api/saved-pages/${uuid(1018)}`);
     await expect(toggle).resolves.toBe(false);

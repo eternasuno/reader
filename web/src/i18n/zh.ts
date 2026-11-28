@@ -46,7 +46,7 @@ export const zhDict = {
     unreadEmptyTitle: '没有未读文章',
     unreadEmptyHint: '所有文章都已读过了。',
     viewAllArticles: '查看全部文章',
-    markLoadedRead: '将已加载文章标为已读',
+    markReadAbove: '将以上文章标为已读',
     unreadOnly: '只显示未读',
     readToggle: '已读',
     markAllRead: '全部标记为已读',

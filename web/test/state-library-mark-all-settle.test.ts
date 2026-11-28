@@ -6,10 +6,12 @@ import {
 import {
   createStateTestContext,
   jsonResponse,
+  loadWindowedScope,
   makeFeed,
   makeFolder,
   makeItem,
   makePage,
+  mountTestWindow,
   noContentResponse,
   savedOrder,
   uuid,
@@ -37,7 +39,7 @@ const loadLater = async (
 ): Promise<void> => {
   ctx.queue(savedOrder(items, boundary));
   if (items.length > 0) ctx.queue({ items });
-  await ctx.state.loadScopeFirstPage({ kind: 'later' }, false);
+  await loadWindowedScope(ctx.state, { kind: 'later' }, false);
   ctx.solid.flush();
 };
 
@@ -180,6 +182,7 @@ describe('mark-all folder membership', () => {
     const { state, solid } = ctx;
     const readSync = await import('../src/state/read-sync');
     const release = state.trackLibraryMount();
+    const unmountWindow = mountTestWindow(state);
     ctx.queueSidebar({
       feeds: [
         makeFeed({ id: uuid(1001), folderId: 'A' }),
@@ -189,7 +192,7 @@ describe('mark-all folder membership', () => {
     });
     await state.refreshSidebar();
     ctx.queue({ groups: [], boundary: B2 });
-    await state.loadScopeFirstPage({ kind: 'folder', folderId: 'A' }, false);
+    await loadWindowedScope(state, { kind: 'folder', folderId: 'A' }, false);
     solid.flush();
     ctx.fetchMock.mockImplementation((input: unknown, init?: RequestInit) => {
       const url = String(input);
@@ -209,6 +212,7 @@ describe('mark-all folder membership', () => {
     };
     expect(readSync.mergeSnapshotRead(f2Item, staleSnapshot.seq)).toBe(false);
     staleSnapshot.release();
+    unmountWindow();
     release();
   });
 });
@@ -223,11 +227,11 @@ describe('mark-all covered entries', () => {
     const olderSnapshot = readSync.beginRecordSnapshot();
     await state.toggleArticleRead(B1, false);
     solid.flush();
-    expect(state.rows()[0].read).toBe(false);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(false);
 
     await state.markScopeAllRead({ kind: 'later' });
     solid.flush();
-    expect(state.rows()[0].read).toBe(true);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
     olderSnapshot.release();
   });
 });
@@ -258,6 +262,7 @@ describe('mark-all detail refresh settlement', () => {
   it('keeps read:true when a detail GET dispatched before mark-all settles resolves afterwards', async () => {
     const { state, solid } = ctx;
     const release = state.trackLibraryMount();
+    const unmountWindow = mountTestWindow(state);
     await loadLater([makePage({ id: B1, read: false })]);
     routeReadAfterMarkAll([makePage({ id: B1, read: true })]);
     const staleDetail = ctx.pending();
@@ -265,7 +270,7 @@ describe('mark-all detail refresh settlement', () => {
 
     await state.markScopeAllRead({ kind: 'later' });
     solid.flush();
-    expect(state.rows()[0]?.read).toBe(true);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
 
     staleDetail.resolve(
       jsonResponse({ item: makePage({ id: B1, read: false }) })
@@ -273,15 +278,17 @@ describe('mark-all detail refresh settlement', () => {
     await opening;
     solid.flush();
 
-    expect(state.rows()[0]?.read).toBe(true);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
     expect(state.openArticle()?.read).toBe(true);
     expect(methodUrls('PATCH')).toEqual([]);
+    unmountWindow();
     release();
   });
 
   it('keeps read:true for a deep-linked article outside the store when its pre-barrier detail GET resolves late', async () => {
     const { state, solid } = ctx;
     const release = state.trackLibraryMount();
+    const unmountWindow = mountTestWindow(state);
     await loadLater([]);
     routeGetsOnly();
     const staleDetail = ctx.pending();
@@ -296,6 +303,7 @@ describe('mark-all detail refresh settlement', () => {
 
     expect(state.openArticle()?.read).toBe(true);
     expect(methodUrls('PATCH')).toEqual([]);
+    unmountWindow();
     release();
   });
 });

@@ -14,12 +14,10 @@ type ReadSyncMod = typeof import('../src/state/read-sync');
 
 const ctx = createStateTestContext();
 let readSync: ReadSyncMod;
-let sidebarRefresh: typeof import('../src/state/sidebar-refresh');
 
 beforeEach(async () => {
   await ctx.reset();
   readSync = await import('../src/state/read-sync');
-  sidebarRefresh = await import('../src/state/sidebar-refresh');
 });
 
 const loadPages = async (
@@ -76,7 +74,8 @@ describe('read sync: serialization', () => {
     solid.flush();
     expect(ctx.fetchCount()).toBe(before + 1);
     expect(ctx.requestBody(before)).toEqual({ read: true });
-    expect(state.rows()[0].read).toBe(false);
+    expect(state.rowIds()).toContain(uuid(1018));
+    expect(state.articleById(uuid(1018))?.read).toBe(false);
 
     first.resolve(noContentResponse());
     await waitRequests(before + 2);
@@ -111,7 +110,7 @@ describe('read sync: coalescing', () => {
     expect(await Promise.all(calls)).toEqual([false, true, false, true]);
     solid.flush();
     expect(ctx.fetchCount()).toBe(before + 2);
-    expect(state.rows()[0].read).toBe(false);
+    expect(state.articleById(uuid(1018))?.read).toBe(false);
     expect(state.savedUnreadCount()).toBe(1);
   });
 });
@@ -156,7 +155,7 @@ describe('read sync: definite and superseded failures', () => {
     expect(await Promise.all([markRead, markUnread])).toEqual([false, true]);
     solid.flush();
     expect(ctx.fetchCount()).toBe(before + 1);
-    expect(state.rows()[0].read).toBe(false);
+    expect(state.articleById(uuid(1018))?.read).toBe(false);
     expect(state.savedUnreadCount()).toBe(1);
     expect(ui.currentToast()).toBeNull();
   });
@@ -178,7 +177,7 @@ describe('read sync: definite and superseded failures', () => {
 
     routed.resolveNext(`/api/saved-pages/${uuid(1018)}`);
     expect(await Promise.all([markRead, markUnread])).toEqual([false, true]);
-    expect(state.rows()[0].read).toBe(false);
+    expect(state.articleById(uuid(1018))?.read).toBe(false);
   });
 });
 
@@ -199,35 +198,9 @@ describe('read sync: post-barrier rollback', () => {
     afterReq.resolve(failure());
     await expect(Promise.all([p1, p2])).resolves.toEqual([true, false]);
     solid.flush();
-    expect(state.rows()[0].read).toBe(true);
+    expect(state.articleById(uuid(1018))?.read).toBe(true);
     expect(state.savedUnreadCount()).toBe(0);
     expect(ui.currentToast()?.variant).toBe('error');
-  });
-});
-
-describe('read sync: ambiguous failure', () => {
-  it('re-fetches affected rows and refreshes sidebar counts once after drain', async () => {
-    const { state, solid, ui } = ctx;
-    const stopPolling = sidebarRefresh.mountSidebarRefresh();
-    const before = await loadPages([makePage({ id: uuid(1018), read: false })]);
-    ctx.fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
-    const detail = ctx.pending();
-    ctx.queueSidebar({ saved: 1 });
-
-    await expect(state.toggleArticleRead(uuid(1018), true)).resolves.toBe(
-      false
-    );
-    solid.flush();
-    expect(ui.currentToast()?.variant).toBe('error');
-    await waitRequests(before + 6);
-    expect(ctx.requestUrl(before + 1)).toBe(`/api/saved-pages/${uuid(1018)}`);
-
-    detail.resolve(
-      jsonResponse({ item: makePage({ id: uuid(1018), read: true }) })
-    );
-    await vi.waitFor(() => expect(state.rows()[0].read).toBe(true));
-    expect(state.savedUnreadCount()).toBe(1);
-    stopPolling();
   });
 });
 
@@ -256,7 +229,7 @@ describe('read sync: snapshot merge rule', () => {
   });
 });
 
-describe('read sync: mark-loaded-read', () => {
+describe('read sync: mark-read-above', () => {
   it('adjusts counts only for changed rows, chunks by 200, and avoids double-send', async () => {
     const { state, solid } = ctx;
     const before = await loadPages([
@@ -268,7 +241,7 @@ describe('read sync: mark-loaded-read', () => {
     const batch = ctx.pending();
 
     const p1Req = state.toggleArticleRead(uuid(1018), true);
-    state.markLoadedRead();
+    state.markReadAbove();
     solid.flush();
     expect(state.savedUnreadCount()).toBe(0);
     expect(ctx.fetchCount()).toBe(before + 1);
@@ -340,7 +313,7 @@ describe('read sync: telemetry and session clear', () => {
     expect(readSync.queueIdle()).toBe(true);
     expect(gate.started()).toBe(false);
     expect(ctx.fetchCount()).toBe(before + 1);
-    expect(state.rows()).toEqual([]);
+    expect(state.rowIds()).toEqual([]);
     expect(ui.currentToast()).toBeNull();
   });
 });

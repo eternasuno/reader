@@ -48,6 +48,10 @@ class FeedMoveTracker {
     return token;
   }
 
+  hasPendingMove(feedId: string): boolean {
+    return this.entries.has(feedId);
+  }
+
   pendingFolders(): Array<[string, string | null]> {
     const folders: Array<[string, string | null]> = [];
     for (const [feedId, entry] of this.entries) {

@@ -7,12 +7,15 @@ import {
   createStateTestContext,
   feedOrder,
   jsonResponse,
+  loadWindowedScope,
   makeFeed,
   makeItem,
   makePage,
+  mountTestWindow,
   noContentResponse,
   savedOrder,
   uuid,
+  waitForWindow,
 } from './support/state-fixture';
 
 const B1 = '019363b8-0000-7000-8000-000000000001';
@@ -32,7 +35,7 @@ const loadLater = async (
 ): Promise<void> => {
   ctx.queue(savedOrder(items, boundary));
   if (items.length > 0) ctx.queue({ items });
-  await ctx.state.loadScopeFirstPage({ kind: 'later' }, false);
+  await loadWindowedScope(ctx.state, { kind: 'later' }, false);
   ctx.solid.flush();
 };
 
@@ -84,7 +87,10 @@ describe('mark-all barrier ordering', () => {
       'POST /api/saved-pages/read-all',
       `PATCH /api/saved-pages/${B2}`,
     ]);
-    expect(state.rows().map((r) => r.read)).toEqual([true, false]);
+    expect(state.rowIds().map((id) => state.articleById(id)?.read)).toEqual([
+      true,
+      false,
+    ]);
   });
 });
 
@@ -170,6 +176,7 @@ describe('mark-all of a scope other than the open list', () => {
   it('reloads the open /all list from page one when a sidebar mark-all marks one feed', async () => {
     const { state, solid } = ctx;
     const release = state.trackLibraryMount();
+    const unmountWindow = mountTestWindow(state);
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
       items: [makeItem({ id: uuid(1007), feedId: uuid(1001) })],
@@ -185,13 +192,15 @@ describe('mark-all of a scope other than the open list', () => {
     await state.markScopeAllRead({ kind: 'feed', feedId: uuid(1001) });
     solid.flush();
 
+    await waitForWindow(state);
     expect(ctx.requestUrl(before)).toBe(`/api/feeds/${uuid(1001)}/read-all`);
     expect(ctx.requestBody(before)).toEqual({
       before: '019363b8-0000-7000-8000-000000000000',
     });
     expect(ctx.fetchCount()).toBe(before + 3);
     expect(ctx.requestUrl(before + 1)).toContain('/api/feed-items/order?');
-    expect(state.rows()[0].read).toBe(true);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
+    unmountWindow();
     release();
   });
 });
@@ -200,6 +209,7 @@ describe('mark-all ambiguous failure', () => {
   it('reloads and refreshes without a toast on ambiguous network failure', async () => {
     const { state, solid, ui } = ctx;
     const release = state.trackLibraryMount();
+    const unmountWindow = mountTestWindow(state);
     await ctx.queueLoadedLibrary({
       scope: { kind: 'all' },
       items: [makeItem({ id: uuid(1007), feedId: uuid(1001) })],
@@ -218,10 +228,12 @@ describe('mark-all ambiguous failure', () => {
     await state.markScopeAllRead({ kind: 'all' });
     solid.flush();
 
+    await waitForWindow(state);
     expect(ctx.requestUrl(before)).toBe('/api/feed-items/read-all');
     expect(ctx.requestUrl(before + 1)).toContain('/api/feed-items/order?');
-    expect(state.rows()[0].read).toBe(true);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
     expect(ui.currentToast()).toBeNull();
+    unmountWindow();
     release();
   });
 });

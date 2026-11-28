@@ -117,7 +117,7 @@ describe('ArticleListHeader mark-all indicator', () => {
 
     const busySel = '[role="status"][aria-busy="true"].loading-spinner';
     expect(c.querySelector(busySel)).not.toBeNull();
-    expect(ariaBtn(c, '将已加载文章标为已读')?.disabled).toBe(false);
+    expect(ariaBtn(c, '将以上文章标为已读')?.disabled).toBe(false);
 
     clickAria(c, '更多操作');
     const markBtn = Array.from(c.querySelectorAll('button')).find((b) =>

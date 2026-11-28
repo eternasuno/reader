@@ -1,9 +1,3 @@
-/**
- * Serial ordered read-state mutation queue (`LIB-READ-1`, `LIB-READ-2`). One module-level queue
- * processes segments of coalesced per-article read intents separated by opaque barriers (mark-all).
- * Solid optimistic APIs are not used (see `upstream-issues.md`).
- */
-
 import { flush } from 'solid-js';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
@@ -14,9 +8,9 @@ import type {
   BarrierItem,
   BarrierOutcome,
   EnqueueBarrierResult,
-  IntentItem,
   ReadBarrier,
   ReadTarget,
+  UnknownReadTarget,
 } from './read-sync-state';
 import {
   activeSnapshots,
@@ -31,10 +25,11 @@ import {
   queueState,
   resolveWaiters,
   setDisplay,
+  targetOf,
 } from './read-sync-state';
 import {
   isAmbiguousError,
-  refetchArticleSnapshot,
+  recoverReadSnapshots,
   sendMarkIdsRead,
   sendSetRead,
 } from './read-sync-transport';
@@ -47,6 +42,7 @@ export type {
   ReadBarrier,
   ReadTarget,
   RecordSnapshotToken,
+  UnknownReadTarget,
 } from './read-sync-state';
 export {
   beginRecordSnapshot,
@@ -56,14 +52,19 @@ export {
 
 const MARK_IDS_CHUNK_SIZE = 200;
 
-/**
- * Pops the leading intent segment and keeps the last intent per article. An intent is dropped only
- * when its article's confirmed value is known and already equal to it.
- */
+const MARK_IDS_CONCURRENCY = 2;
+
+type MarkReadChunk = {
+  kind: LibraryArticle['kind'];
+  ids: ReadonlyArray<string>;
+  single: boolean;
+};
+
+/** Keeps the last intent per article and skips values already confirmed. */
 const popCoalescedSegment = (): Map<string, boolean> => {
   const coalesced = new Map<string, boolean>();
-  while (queue[0]?.type === 'intent') {
-    const item = queue.shift() as IntentItem;
+  for (let item = queue[0]; item?.type === 'intent'; item = queue[0]) {
+    queue.shift();
     const entry = entries.get(item.id);
     if (entry !== undefined) entry.queuedCount -= 1;
     coalesced.set(item.id, item.read);
@@ -98,23 +99,48 @@ const runSegmentRequest = async (
   }
 };
 
-const queueMarkRead = (
+const markReadChunks = (
   kind: LibraryArticle['kind'],
-  ids: ReadonlyArray<string>,
-  sentEpoch: number,
-  onToast: (error: unknown) => void,
-  tasks: Array<Promise<void>>
-): void => {
-  const sendChunk =
-    ids.length === 1
-      ? (chunk: ReadonlyArray<string>) => sendSetRead(kind, chunk[0], true)
-      : (chunk: ReadonlyArray<string>) => sendMarkIdsRead(kind, chunk);
+  ids: ReadonlyArray<string>
+): Array<MarkReadChunk> => {
+  const chunks: Array<MarkReadChunk> = [];
   for (let i = 0; i < ids.length; i += MARK_IDS_CHUNK_SIZE) {
-    const chunk = ids.slice(i, i + MARK_IDS_CHUNK_SIZE);
-    tasks.push(
-      runSegmentRequest(chunk, true, () => sendChunk(chunk), sentEpoch, onToast)
-    );
+    chunks.push({
+      kind,
+      ids: ids.slice(i, i + MARK_IDS_CHUNK_SIZE),
+      single: ids.length === 1,
+    });
   }
+
+  return chunks;
+};
+
+const runMarkReadChunks = async (
+  chunks: ReadonlyArray<MarkReadChunk>,
+  sentEpoch: number,
+  onToast: (error: unknown) => void
+): Promise<void> => {
+  const pending = chunks.values();
+  const workers = Array.from(
+    { length: Math.min(MARK_IDS_CONCURRENCY, chunks.length) },
+    async () => {
+      for (const { kind, ids, single } of pending) {
+        if (sentEpoch !== queueState.epoch) return;
+
+        await runSegmentRequest(
+          ids,
+          true,
+          () =>
+            single
+              ? sendSetRead(kind, ids[0], true)
+              : sendMarkIdsRead(kind, ids),
+          sentEpoch,
+          onToast
+        );
+      }
+    }
+  );
+  await Promise.allSettled(workers);
 };
 
 const executeIntentSegment = async (sentEpoch: number): Promise<void> => {
@@ -139,9 +165,11 @@ const executeIntentSegment = async (sentEpoch: number): Promise<void> => {
     toasted = true;
     showToast(errorText(error), 'error');
   };
-  const tasks: Array<Promise<void>> = [];
-  queueMarkRead('later', laterReadIds, sentEpoch, onToast, tasks);
-  queueMarkRead('feed', feedReadIds, sentEpoch, onToast, tasks);
+  const chunks = [
+    ...markReadChunks('later', laterReadIds),
+    ...markReadChunks('feed', feedReadIds),
+  ];
+  const tasks = [runMarkReadChunks(chunks, sentEpoch, onToast)];
   for (const item of unreadTargets) {
     tasks.push(
       runSegmentRequest(
@@ -174,25 +202,9 @@ const executeBarrierStep = async (
   item.resolve(outcome);
 };
 
-/**
- * Re-fetches articles whose server value an ambiguous failure left unknown. Nothing re-fetches an
- * article outside the store, so its idle unknown entry is dropped instead.
- */
-const recoverAmbiguous = (): void => {
-  const ids = [...ambiguousIds];
-  ambiguousIds.clear();
-  for (const id of ids) {
-    const article = articleById(id);
-    const entry = entries.get(id);
-    if (article !== null)
-      void refetchArticleSnapshot(article, queueState.epoch);
-    else if (entry !== undefined && isEntryIdle(entry)) entries.delete(id);
-  }
-};
-
 const drainQueue = (): void => {
   queueState.dispatching = false;
-  recoverAmbiguous();
+  recoverReadSnapshots();
   for (const cb of [...drainListeners]) {
     try {
       cb();
@@ -222,11 +234,7 @@ const kickDispatcher = (): void => {
   void runDispatcher();
 };
 
-/**
- * Applies one read intent: shows it immediately, adjusts unread counts, and enqueues it. Resolves
- * with the confirmed value once the article has no queued or in-flight intent (`null` on clear or
- * when the confirmed value is unknown).
- */
+/** Applies a read intent and resolves with the confirmed value once the article is idle. */
 export const requestRead = (
   target: ReadTarget,
   read: boolean
@@ -255,13 +263,25 @@ export const requestRead = (
   return settled;
 };
 
-/** Marks `targets` read, adjusting counts only for rows whose display actually changes. */
-export const requestReadMany = (targets: ReadonlyArray<ReadTarget>): void => {
+const withCachedPrior = (target: ReadTarget | UnknownReadTarget) => {
+  if (target.read !== undefined) return target;
+
+  const article = articleById(target.id);
+  return article === null ? target : targetOf(article);
+};
+
+/** Marks `targets` read, adjusting counts only for rows with a known prior state. */
+export const requestReadMany = (
+  targets: ReadonlyArray<ReadTarget | UnknownReadTarget>
+): void => {
   let changed = false;
   for (const target of targets) {
-    const existing = entries.get(target.id);
-    if ((existing === undefined && target.read) || existing?.display) continue;
-    const entry = ensureEntry(target);
+    const current = withCachedPrior(target);
+    const existing = entries.get(current.id);
+    if (current.read !== undefined && (existing?.display ?? current.read))
+      continue;
+
+    const entry = ensureEntry(current);
     if (setDisplay(target.id, entry, true)) changed = true;
     entry.queuedCount += 1;
     queueState.mutationEpoch += 1;

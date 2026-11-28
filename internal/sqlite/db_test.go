@@ -937,11 +937,22 @@ func checkSnapshotQueryPlans(t *testing.T, store *Store, boundary string) {
 	folder := "folder"
 	limit := domain.ListSnapshotLimit + 1
 	for _, unread := range []bool{false, true} {
+		allItemIndex := "sqlite_autoindex_feed_item_1"
+		folderFeedIndex, folderItemIndex := "feed_folder", "feed_item_feed_id_url"
+		if unread {
+			allItemIndex = "feed_item_read_id"
+			folderFeedIndex, folderItemIndex = "sqlite_autoindex_feed_1", "feed_item_read_id"
+		}
+
 		params := domain.SnapshotParams{Boundary: boundary, Unread: unread}
 		query, args := groupedFeedItemSnapshotQuery(nil, params)
-		requireIndexedPlan(t, "snapshot all", queryPlan(t, store, query, args...), "", true)
+		allPlan := queryPlan(t, store, query, args...)
+		requireIndexedPlan(t, "snapshot all", allPlan, allItemIndex, true)
+		requireIndexedPlan(t, "snapshot all", allPlan, "sqlite_autoindex_feed_1", true)
 		query, args = groupedFeedItemSnapshotQuery(&folder, params)
-		requireIndexedPlan(t, "snapshot folder", queryPlan(t, store, query, args...), "feed_item_feed_id_url", true)
+		folderPlan := queryPlan(t, store, query, args...)
+		requireIndexedPlan(t, "snapshot folder", folderPlan, folderItemIndex, true)
+		requireIndexedPlan(t, "snapshot folder", folderPlan, folderFeedIndex, true)
 
 		feedIndex, savedIndex := "feed_item_feed_id_url", "sqlite_autoindex_saved_page_1"
 		if unread {

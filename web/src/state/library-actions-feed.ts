@@ -10,37 +10,13 @@ import { feedsApi } from '../api';
 import { t } from '../i18n';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
-import { loadMore, resumeEmptyList } from './library';
 import { feedMoveTracker, LatestTokenMap } from './library-mutations';
-import {
-  activeScope,
-  releaseFeedRows,
-  updateFolderMembership,
-} from './library-store';
+import { invalidateLiveSnapshot } from './library-snapshot';
+import { trimRecordCache, updateFolderMembership } from './library-store';
 import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
 
 const readerModeTokens = new LatestTokenMap();
-
-/** Feed moves in flight; a feed's dropped rows are released when its last move settles. */
-const movesInFlight = new Map<string, number>();
-let moveEpoch = 0;
-
-const beginFeedMove = (feedId: string): number => {
-  movesInFlight.set(feedId, (movesInFlight.get(feedId) ?? 0) + 1);
-  return moveEpoch;
-};
-
-const endFeedMove = (feedId: string, epoch: number): void => {
-  if (epoch !== moveEpoch) return;
-  const remaining = (movesInFlight.get(feedId) ?? 0) - 1;
-  if (remaining > 0) {
-    movesInFlight.set(feedId, remaining);
-    return;
-  }
-  movesInFlight.delete(feedId);
-  releaseFeedRows(feedId);
-};
 
 const currentFolderOf = (feed: Feed): string | null => {
   const stored = sidebar.feeds().find((entry) => entry.id === feed.id);
@@ -54,17 +30,6 @@ const currentFolderOfId = (feedId: string): string | null | undefined => {
   return stored !== undefined ? (stored.folderId ?? null) : undefined;
 };
 
-const resumeFolderList = (restoredQueue: boolean): void => {
-  if (activeScope().kind !== 'folder') return;
-
-  // The virtual list may already have requested more at the current row count.
-  if (restoredQueue) {
-    void loadMore();
-  } else {
-    void resumeEmptyList();
-  }
-};
-
 const reconcileFeedMove = (
   feedId: string,
   targetFolderId: string | null
@@ -73,9 +38,13 @@ const reconcileFeedMove = (
   if (current !== undefined && current !== targetFolderId) {
     sidebar.updateFeedLocal(feedId, { folderId: targetFolderId });
   }
-  const restoredQueue = updateFolderMembership(feedId, targetFolderId);
+
+  const membershipChanged = updateFolderMembership(feedId, targetFolderId);
+  if (!membershipChanged && !feedMoveTracker.hasPendingMove(feedId)) {
+    invalidateLiveSnapshot();
+  }
+
   flush();
-  resumeFolderList(restoredQueue);
 };
 
 const runFeedMove = async (
@@ -83,14 +52,12 @@ const runFeedMove = async (
   folderId: string | null
 ): Promise<boolean> => {
   const token = feedMoveTracker.begin(feed.id, currentFolderOf(feed), folderId);
-  const restoredQueue = updateFolderMembership(feed.id, folderId);
+  updateFolderMembership(feed.id, folderId);
   sidebar.updateFeedLocal(feed.id, { folderId });
   flush();
 
   try {
-    const moving = feedsApi.moveToFolder(feed.id, folderId);
-    resumeFolderList(restoredQueue);
-    await moving;
+    await feedsApi.moveToFolder(feed.id, folderId);
     const outcome = feedMoveTracker.succeed(feed.id, token, folderId);
     if (outcome !== null) {
       reconcileFeedMove(feed.id, outcome.targetFolderId);
@@ -119,11 +86,10 @@ export const moveFeedToFolder = async (
   feed: Feed,
   folderId: string | null
 ): Promise<boolean> => {
-  const epoch = beginFeedMove(feed.id);
   try {
     return await runFeedMove(feed, folderId);
   } finally {
-    endFeedMove(feed.id, epoch);
+    trimRecordCache();
   }
 };
 
@@ -151,6 +117,4 @@ export const changeFeedReaderMode = async (
 
 onSessionCleared(() => {
   readerModeTokens.reset();
-  movesInFlight.clear();
-  moveEpoch += 1;
 });

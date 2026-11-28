@@ -5,7 +5,7 @@ import { t } from '../i18n';
 import {
   isMarkingScope,
   type LibraryScope,
-  markLoadedRead,
+  markReadAbove,
   sidebarCollapsed,
   toggleSidebarCollapse,
 } from '../state';
@@ -136,9 +136,9 @@ export function ArticleListHeader(props: ArticleListHeaderProps): JSX.Element {
         variant="icon"
         size="sm"
         class="max-md:size-10"
-        aria-label={t('library.markLoadedRead')}
-        title={t('library.markLoadedRead')}
-        onClick={markLoadedRead}
+        aria-label={t('library.markReadAbove')}
+        title={t('library.markReadAbove')}
+        onClick={markReadAbove}
       >
         <Icon name="check-up" size={18} />
       </Button>

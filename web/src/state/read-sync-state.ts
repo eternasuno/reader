@@ -3,16 +3,12 @@
  */
 
 import type { LibraryArticle } from './library-store';
-import { patchArticle } from './library-store';
+import { articleById, patchArticle, trimRecordCache } from './library-store';
 import * as sidebar from './sidebar';
 
-/** Read-state context of one article as currently shown. */
-export interface ReadTarget {
-  id: string;
-  kind: LibraryArticle['kind'];
-  feedId: string | null;
-  read: boolean;
-}
+export type ReadTarget = BarrierTarget & { read: boolean };
+
+export type UnknownReadTarget = BarrierTarget & { read?: never };
 
 export interface BarrierTarget {
   id: string;
@@ -40,12 +36,14 @@ export interface RecordSnapshotToken {
 export interface ReadEntry {
   kind: LibraryArticle['kind'];
   feedId: string | null;
-  /** Last server-confirmed value; only trusted while `confirmedKnown`. */
-  confirmed: boolean;
-  /** False after an affecting ambiguous barrier until a write or fresh snapshot settles the value. */
+  /** Last server-confirmed value when one is available. */
+  confirmed: boolean | undefined;
+  /** False when the original state is unknown or a write may have changed it. */
   confirmedKnown: boolean;
-  /** Latest queued intent, else `confirmed`; always what the store displays. */
+  /** Latest queued intent, else the last display value. */
   display: boolean;
+  /** Unknown-prior intents leave count reconciliation to the post-drain refresh. */
+  adjustsUnread: boolean;
   inflight: boolean;
   queuedCount: number;
   /** Sequence stamp when the latest write or affecting barrier settled. */
@@ -79,6 +77,7 @@ interface BarrierStamp {
 }
 
 export const entries = new Map<string, ReadEntry>();
+
 export const queue: Array<QueueItem> = [];
 export const activeSnapshots = new Set<number>();
 export const barrierStamps: Array<BarrierStamp> = [];
@@ -105,7 +104,24 @@ const hasOlderActiveSnapshot = (settledSeq: number): boolean => {
   for (const tokenSeq of activeSnapshots) {
     if (tokenSeq < settledSeq) return true;
   }
+
   return false;
+};
+
+const pinsRecord = (entry: ReadEntry): boolean =>
+  !isEntryIdle(entry) ||
+  entry.confirmedKnown ||
+  hasOlderActiveSnapshot(entry.settledAt);
+
+export const hasActiveEntry = (id: string): boolean => {
+  const entry = entries.get(id);
+  return entry !== undefined && pinsRecord(entry);
+};
+
+export const dropIdleUnknownEntry = (id: string): void => {
+  const entry = entries.get(id);
+  if (entry !== undefined && !entry.confirmedKnown && isEntryIdle(entry))
+    entries.delete(id);
 };
 
 const isRetirable = (entry: ReadEntry): boolean =>
@@ -120,17 +136,28 @@ const retireBarrierStamps = (): void => {
   }
 };
 
-/** Drops entries and barrier stamps that no in-flight snapshot still needs. */
-const retireSettledState = (): void => {
+/** Retires settled state and reports whether a record lost its read pin. */
+const retireSettledState = (releasedSeq?: number): boolean => {
+  let lostPin = false;
   for (const [id, entry] of entries) {
-    if (isRetirable(entry)) entries.delete(id);
+    if (isRetirable(entry)) {
+      entries.delete(id);
+      lostPin = true;
+    } else if (articleById(id) === null) {
+      dropIdleUnknownEntry(id);
+    } else if (releasedSeq !== undefined && releasedSeq < entry.settledAt) {
+      lostPin ||= !pinsRecord(entry);
+    }
   }
+
   retireBarrierStamps();
+
+  return lostPin;
 };
 
 export const resolveWaiters = (id: string, entry: ReadEntry): void => {
   if (!isEntryIdle(entry)) return;
-  const value = entry.confirmedKnown ? entry.confirmed : null;
+  const value = entry.confirmedKnown ? (entry.confirmed ?? null) : null;
   for (const resolve of entry.waiters.splice(0)) resolve(value);
   if (isRetirable(entry)) entries.delete(id);
 };
@@ -142,8 +169,9 @@ export const beginRecordSnapshot = (): RecordSnapshotToken => {
   return {
     seq: tokenSeq,
     release: () => {
-      activeSnapshots.delete(tokenSeq);
-      retireSettledState();
+      if (!activeSnapshots.delete(tokenSeq)) return;
+
+      if (retireSettledState(tokenSeq)) trimRecordCache();
     },
   };
 };
@@ -185,15 +213,20 @@ export const mergeSnapshotRead = (
   return entry.display;
 };
 
-export const ensureEntry = (target: ReadTarget): ReadEntry => {
+export const ensureEntry = (
+  target: ReadTarget | UnknownReadTarget
+): ReadEntry => {
   const existing = entries.get(target.id);
   if (existing !== undefined) return existing;
+
+  const known = target.read !== undefined;
   const entry: ReadEntry = {
     kind: target.kind,
     feedId: target.feedId,
     confirmed: target.read,
-    confirmedKnown: true,
-    display: target.read,
+    confirmedKnown: known,
+    display: target.read ?? true,
+    adjustsUnread: known,
     inflight: false,
     queuedCount: 0,
     settledAt: 0,
@@ -215,9 +248,12 @@ export const setDisplay = (
   read: boolean
 ): boolean => {
   if (entry.display === read) return false;
+
   entry.display = read;
-  patchArticle(id, { read });
-  adjustUnread(entry, read);
+  if (entry.adjustsUnread || articleById(id) !== null)
+    patchArticle(id, { read });
+  if (entry.adjustsUnread) adjustUnread(entry, read);
+
   return true;
 };
 

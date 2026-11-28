@@ -262,7 +262,7 @@ describe('ok barrier settlement and unread badges', () => {
     });
     await expect(barrier).resolves.toBe('ok');
     solid.flush();
-    expect(state.rows()[0].read).toBe(true);
+    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
     expect(state.savedUnreadCount()).toBe(1);
     older.release();
   });

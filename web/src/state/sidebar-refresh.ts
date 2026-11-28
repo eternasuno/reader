@@ -50,10 +50,20 @@ let activeRefresh: ActiveRefresh | null = null;
 let deferredCountRefresh = false;
 let deferredDrainUnsub: (() => void) | null = null;
 
+type LibraryTickListener = (reason: 'periodic' | 'visible') => void;
+
+const libraryTickListeners = new Set<LibraryTickListener>();
 const activeMounts = new Set<symbol>();
 let pollingTimer: ReturnType<typeof setTimeout> | null = null;
 let stopDrainListener: (() => void) | null = null;
 let visibilityBound = false;
+
+export const onLibraryTick = (listener: LibraryTickListener): (() => void) => {
+  libraryTickListeners.add(listener);
+  return () => {
+    libraryTickListeners.delete(listener);
+  };
+};
 
 const isPollingMounted = (): boolean => activeMounts.size > 0;
 
@@ -83,6 +93,8 @@ function onPollingTick(): void {
   if (!isPollingMounted() || document.hidden) return;
   schedulePollingTimer();
   if (!queueIdle()) return;
+
+  for (const listener of libraryTickListeners) listener('periodic');
   void startOrJoinRefresh(false);
 }
 
@@ -93,6 +105,7 @@ const onVisibilityChange = (): void => {
     return;
   }
   schedulePollingTimer();
+  for (const listener of libraryTickListeners) listener('visible');
   void startOrJoinRefresh(false);
 };
 
@@ -209,6 +222,7 @@ const stopPolling = (): void => {
 
 export const clearSidebarRefresh = (): void => {
   activeMounts.clear();
+  libraryTickListeners.clear();
   stopPolling();
 };
 

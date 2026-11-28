@@ -58,11 +58,12 @@ func TestGroupedFeedItemSnapshots(t *testing.T) {
 	oldestRead := h.seedItem(oldest.ID, "https://example.com/oldest-read", func(item *domain.FeedItem) { item.Read = true })
 	outsideItem := h.seedItem(outside.ID, "https://example.com/outside", nil)
 
-	wantFolder := []snapshotGroup{
-		{FeedID: oldest.ID, IDs: []string{oldestFirst.ID, oldestSecond.ID}},
+	wantAll := []snapshotGroup{
 		{FeedID: newest.ID, IDs: []string{newestSecond.ID, newestFirst.ID}},
+		{FeedID: oldest.ID, IDs: []string{oldestFirst.ID, oldestSecond.ID}},
+		{FeedID: outside.ID, IDs: []string{outsideItem.ID}},
 	}
-	wantAll := append([]snapshotGroup{{FeedID: outside.ID, IDs: []string{outsideItem.ID}}}, wantFolder...)
+	wantFolder := wantAll[:2]
 	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/feed-items/order?unread", nil), wantAll)
 	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/folders/"+folder.ID+"/items/order?unread=1", nil), wantFolder)
 

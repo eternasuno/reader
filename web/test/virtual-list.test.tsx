@@ -2,6 +2,8 @@ import { render } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VirtualList } from '../src/ui';
+import type { VirtualListProps } from '../src/ui/VirtualList';
+import { installResizeObserver } from './support/virtual-helpers';
 
 let disposers: Array<() => void> = [];
 
@@ -10,53 +12,6 @@ interface ViewportMetrics {
   scrollHeight: number;
   scrollTop?: number;
 }
-
-const installResizeObserver = () => {
-  const callbacks = new Map<Element, ResizeObserverCallback>();
-
-  class MockResizeObserver {
-    private readonly callback: ResizeObserverCallback;
-
-    constructor(callback: ResizeObserverCallback) {
-      this.callback = callback;
-    }
-
-    observe(target: Element): void {
-      callbacks.set(target, this.callback);
-    }
-
-    unobserve(target: Element): void {
-      callbacks.delete(target);
-    }
-
-    disconnect(): void {
-      callbacks.clear();
-    }
-  }
-
-  vi.stubGlobal('ResizeObserver', MockResizeObserver);
-
-  return (target: Element, height: number) => {
-    const callback = callbacks.get(target);
-    if (callback === undefined) return;
-    callback(
-      [
-        {
-          target,
-          contentRect: { width: 320, height } as DOMRectReadOnly,
-          borderBoxSize: [
-            { inlineSize: 320, blockSize: height },
-          ] as unknown as ReadonlyArray<ResizeObserverSize>,
-          contentBoxSize: [
-            { inlineSize: 320, blockSize: height },
-          ] as unknown as ReadonlyArray<ResizeObserverSize>,
-          devicePixelContentBoxSize: [],
-        } as unknown as ResizeObserverEntry,
-      ],
-      {} as ResizeObserver
-    );
-  };
-};
 
 const applyViewportMetrics = (
   scroller: HTMLDivElement,
@@ -108,7 +63,7 @@ const mountList = (options: {
   metrics: ViewportMetrics;
   panelClass?: string;
   panelDisplay?: string;
-  onEndReached?: () => void;
+  onRangeChange?: VirtualListProps['onRangeChange'];
   activeKey?: () => string | null;
   activeIndex?: () => number;
 }) => {
@@ -126,7 +81,7 @@ const mountList = (options: {
         <VirtualList
           keys={options.items()}
           estimateSize={options.estimateSize ?? 136}
-          onEndReached={options.onEndReached}
+          onRangeChange={options.onRangeChange}
           activeKey={options.activeKey?.()}
           activeIndex={options.activeIndex?.()}
           renderItem={(key) => <div>{key}</div>}
@@ -154,7 +109,7 @@ const mountList = (options: {
   notifyResize(scroller, options.metrics.clientHeight);
   flush();
 
-  return { wrapper, scroller, scrollTo, ...controls };
+  return { wrapper, scroller, scrollTo, notifyResize, ...controls };
 };
 
 afterEach(() => {
@@ -195,54 +150,117 @@ describe('VirtualList visibility and virtualization', () => {
   });
 });
 
-describe('VirtualList hidden panel pagination guard', () => {
-  it('does not paginate when computed display is none', () => {
-    const onEndReached = vi.fn();
-    const [items] = createSignal(
-      Array.from({ length: 30 }, (_, index) => `Row ${index}`)
-    );
-    const { scroller, setScrollTop } = mountList({
-      items,
-      metrics: { clientHeight: 600, scrollHeight: 1000 },
-      panelClass: 'hidden lg:flex',
-      panelDisplay: 'none',
-      onEndReached,
-    });
-
-    setScrollTop(400);
-    scroller.dispatchEvent(new Event('scroll'));
-    flush();
-
-    expect(onEndReached).not.toHaveBeenCalled();
+it('reports null visibility for a hidden panel', () => {
+  const onRangeChange = vi.fn();
+  mountList({
+    items: () => ['row'],
+    metrics: { clientHeight: 600, scrollHeight: 1000 },
+    panelDisplay: 'none',
+    onRangeChange,
   });
+  expect(onRangeChange).toHaveBeenLastCalledWith({ start: 0, end: -1 }, null);
 });
 
-describe('VirtualList measured scroll geometry threshold', () => {
-  it('uses measured scrollHeight instead of count * estimate for the 600px threshold', () => {
-    const onEndReached = vi.fn();
-    const [items] = createSignal(
-      Array.from({ length: 30 }, (_, index) => `Row ${index}`)
-    );
-    const { scroller, setScrollTop } = mountList({
-      items,
-      estimateSize: 136,
-      metrics: { clientHeight: 600, scrollHeight: 1500 },
-      panelDisplay: 'flex',
-      onEndReached,
+it('reports strict viewport intersections even when overscan range stays the same', () => {
+  const onRangeChange = vi.fn();
+  const { scroller, setScrollTop } = mountList({
+    items: () => ['first', 'second', 'third'],
+    estimateSize: 100,
+    metrics: { clientHeight: 100, scrollHeight: 300 },
+    onRangeChange,
+  });
+  expect(onRangeChange).toHaveBeenLastCalledWith(
+    { start: 0, end: 2 },
+    { first: 0, last: 0 }
+  );
+  setScrollTop(2);
+  scroller.dispatchEvent(new Event('scroll'));
+  flush();
+  expect(onRangeChange).toHaveBeenLastCalledWith(
+    { start: 0, end: 2 },
+    { first: 0, last: 1 }
+  );
+  setScrollTop(100);
+  scroller.dispatchEvent(new Event('scroll'));
+  flush();
+  expect(onRangeChange).toHaveBeenLastCalledWith(
+    { start: 0, end: 2 },
+    { first: 1, last: 1 }
+  );
+});
+
+it('keeps measured heights and rebuilds positions on an equal-length reorder', async () => {
+  const [items, setItems] = createSignal(['short', 'tall']);
+  const { scroller, notifyResize } = mountList({
+    items,
+    estimateSize: 100,
+    metrics: { clientHeight: 320, scrollHeight: 320 },
+  });
+  await Promise.resolve();
+  const short = scroller.querySelector<HTMLElement>('[data-index="0"]');
+  const tall = scroller.querySelector<HTMLElement>('[data-index="1"]');
+  if (short === null || tall === null) throw new Error('missing rows');
+
+  notifyResize(short, 80);
+  notifyResize(tall, 240);
+  flush();
+  const spacer = short.parentElement;
+  expect(short.textContent).toBe('short');
+  expect(tall.textContent).toBe('tall');
+  expect(spacer?.style.height).toBe('320px');
+  expect(tall.style.transform).toBe('translateY(80px)');
+
+  setItems(['tall', 'short']);
+  flush();
+  expect(scroller.querySelector('[data-index="0"]')).toBe(tall);
+  expect(scroller.querySelector('[data-index="1"]')).toBe(short);
+  expect(spacer?.style.height).toBe('320px');
+  expect(tall.style.transform).toBe('translateY(0px)');
+  expect(short.style.transform).toBe('translateY(240px)');
+});
+
+it.each([
+  { row: 1, offset: 272, expected: 306, position: 'above the fold' },
+  { row: 2, offset: 280, expected: 280, position: 'spanning the fold' },
+  { row: 3, offset: 280, expected: 280, position: 'below the fold' },
+])(
+  'handles upward-scroll remeasurement $position',
+  async ({ row, offset, expected }) => {
+    const { scroller, setScrollTop, scrollTo, notifyResize } = mountList({
+      items: () => Array.from({ length: 15 }, (_, index) => `Row ${index}`),
+      metrics: { clientHeight: 272, scrollHeight: 2040 },
     });
+    const measured = scroller.querySelector<HTMLElement>(
+      `[data-index="${row}"]`
+    );
+    if (measured === null) throw new Error('missing row');
 
-    expect(onEndReached).not.toHaveBeenCalled();
+    // jsdom reports zero height unless each rendered row gets a layout size.
+    for (const element of scroller.querySelectorAll('[data-index]')) {
+      Object.defineProperty(element, 'offsetHeight', { value: 136 });
+    }
 
-    setScrollTop(300);
+    await Promise.resolve();
+    notifyResize(measured, 136);
+    setScrollTop(360);
     scroller.dispatchEvent(new Event('scroll'));
     flush();
+    setScrollTop(offset);
+    scroller.dispatchEvent(new Event('scroll'));
+    flush();
+    scrollTo.mockClear();
 
-    expect(onEndReached).toHaveBeenCalledTimes(1);
-  });
-});
+    notifyResize(measured, 170);
+    flush();
+
+    expect(scroller.scrollTop).toBe(expected);
+    expect(scrollTo).toHaveBeenCalledTimes(expected === offset ? 0 : 1);
+    expect(measured.parentElement?.style.height).toBe('2074px');
+  }
+);
 
 describe('VirtualList active row scroll stability', () => {
-  it('does not jump back to the open article when appending rows while scrolled away', () => {
+  it('does not jump back to the open article when appending rows while scrolled away', async () => {
     const [items, setItems] = createSignal(
       Array.from({ length: 30 }, (_, index) => `Row ${index}`)
     );
@@ -273,13 +291,14 @@ describe('VirtualList active row scroll stability', () => {
 
     setActiveId('Row 50');
     flush();
+    await Promise.resolve();
 
     expect(scrollTo).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('VirtualList deferred active index', () => {
-  it('scrolls once when active index first becomes available after list load', () => {
+  it('scrolls once when active index first becomes available after list load', async () => {
     const [items, setItems] = createSignal<Array<string>>([]);
     const [activeId] = createSignal<string | null>('Row 25');
 
@@ -299,6 +318,7 @@ describe('VirtualList deferred active index', () => {
 
     setItems(Array.from({ length: 30 }, (_, index) => `Row ${index}`));
     flush();
+    await Promise.resolve();
 
     expect(scrollTo).toHaveBeenCalledTimes(1);
 

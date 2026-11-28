@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"reader/internal/domain"
 )
@@ -32,27 +33,51 @@ func TestGroupedFeedItemSnapshots(t *testing.T) {
 	params := domain.SnapshotParams{Boundary: fixedTestID(7)}
 	all, err := repo.SnapshotAll(ctx, params)
 	requireFeedItemGroups(t, all, err,
+		domain.FeedItemGroup{FeedID: newest.ID, IDs: snapshotTestIDs(5, 2)},
 		domain.FeedItemGroup{FeedID: oldest.ID, IDs: snapshotTestIDs(1, 3, 7)},
 		domain.FeedItemGroup{FeedID: outside.ID, IDs: snapshotTestIDs(6, 4)},
-		domain.FeedItemGroup{FeedID: newest.ID, IDs: snapshotTestIDs(5, 2)},
 	)
 
 	params.Unread = true
 	folderGroups, err := repo.SnapshotByFolder(ctx, folder.ID, params)
 	requireFeedItemGroups(t, folderGroups, err,
-		domain.FeedItemGroup{FeedID: oldest.ID, IDs: snapshotTestIDs(1, 3)},
 		domain.FeedItemGroup{FeedID: newest.ID, IDs: snapshotTestIDs(5, 2)},
+		domain.FeedItemGroup{FeedID: oldest.ID, IDs: snapshotTestIDs(1, 3)},
 	)
 
 	unread, err := repo.SnapshotAll(ctx, params)
 	requireFeedItemGroups(t, unread, err,
+		domain.FeedItemGroup{FeedID: newest.ID, IDs: snapshotTestIDs(5, 2)},
 		domain.FeedItemGroup{FeedID: oldest.ID, IDs: snapshotTestIDs(1, 3)},
 		domain.FeedItemGroup{FeedID: outside.ID, IDs: snapshotTestIDs(6, 4)},
-		domain.FeedItemGroup{FeedID: newest.ID, IDs: snapshotTestIDs(5, 2)},
 	)
 
 	missing, err := repo.SnapshotByFolder(ctx, "missing", params)
 	requireFeedItemGroups(t, missing, err)
+}
+
+func TestGroupedFeedItemSnapshotsOrderByTitleAndFeedID(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	folder := createFolder(t, store, "News")
+	dueAt := time.Now().UTC()
+	lowercase := createFeedWithIDDueAt(t, store, fixedTestID(1), "alpha", &folder.ID, dueAt)
+	higherID := createFeedWithIDDueAt(t, store, fixedTestID(3), "Zulu", &folder.ID, dueAt)
+	lowerID := createFeedWithIDDueAt(t, store, fixedTestID(2), "Zulu", &folder.ID, dueAt)
+	addSnapshotItems(t, store, lowercase, 30)
+	addSnapshotItems(t, store, higherID, 20)
+	addSnapshotItems(t, store, lowerID, 10)
+
+	want := []domain.FeedItemGroup{
+		{FeedID: lowerID.ID, IDs: snapshotTestIDs(10)},
+		{FeedID: higherID.ID, IDs: snapshotTestIDs(20)},
+		{FeedID: lowercase.ID, IDs: snapshotTestIDs(30)},
+	}
+	params := domain.SnapshotParams{Boundary: fixedTestID(30)}
+	all, err := store.FeedItems().SnapshotAll(ctx, params)
+	requireFeedItemGroups(t, all, err, want...)
+	folderGroups, err := store.FeedItems().SnapshotByFolder(ctx, folder.ID, params)
+	requireFeedItemGroups(t, folderGroups, err, want...)
 }
 
 func TestSingleFeedItemSnapshot(t *testing.T) {

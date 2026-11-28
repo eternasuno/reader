@@ -1,250 +1,314 @@
 import type { VirtualItem, VirtualizerOptions } from '@tanstack/virtual-core';
 import {
   elementScroll,
+  measureElement,
   observeElementOffset,
   observeElementRect,
   Virtualizer,
 } from '@tanstack/virtual-core';
-import { createEffect, createMemo, createSignal, onSettled } from 'solid-js';
+import { createSignal, onCleanup, onSettled } from 'solid-js';
 import type { VirtualListProps } from './VirtualList';
 
-export const DEFAULT_ESTIMATE_SIZE = 96;
-export const DEFAULT_OVERSCAN = 6;
-export const DEFAULT_END_THRESHOLD = 600;
+const DEFAULT_ESTIMATE_SIZE = 96;
+const DEFAULT_OVERSCAN = 6;
 
 export type ScrollVirtualizer = Virtualizer<HTMLDivElement, HTMLDivElement>;
+export type SyncViewport = (
+  instance: ScrollVirtualizer,
+  offset?: number
+) => void;
+
 type ScrollOptions = VirtualizerOptions<HTMLDivElement, HTMLDivElement>;
 
-const hiddenByStyle = (el: HTMLElement): boolean =>
-  window.getComputedStyle(el).display === 'none';
-
-/** `LIB-VIEW-1`: only panels visible via computed style and measured client height may paginate. */
-const isVisible = (el: HTMLElement): boolean => {
-  if (el.clientHeight <= 0) return false;
-
-  let cur: HTMLElement | null = el;
-  while (cur !== null) {
-    if (hiddenByStyle(cur)) return false;
-    cur = cur.parentElement;
-  }
-
-  return true;
+type ListOptions = {
+  keys: ReadonlyArray<string>;
+  estimate: VirtualListProps['estimateSize'];
+  overscan: number | undefined;
+  element: HTMLDivElement;
 };
 
-/** End-of-list check using measured scroll geometry and computed panel visibility. */
-const isEndReached = (
-  el: HTMLDivElement | null,
-  count: number,
-  threshold: number
-): boolean => {
-  if (el === null || count === 0 || !isVisible(el)) return false;
-
-  const viewport = el.clientHeight;
-  const content = el.scrollHeight;
-  if (viewport <= 0 || content <= 0) return false;
-  if (content <= viewport) return true;
-
-  return content - (el.scrollTop + viewport) <= threshold;
-};
-
-/**
- * Mutable mirror of the virtualizer measurements. Solid 2 reads lag writes
- * inside one flush, so effects read these synchronous values instead.
- */
-class Mirrors {
-  element: HTMLDivElement | null = null;
-  estimate = DEFAULT_ESTIMATE_SIZE;
-  overscan = DEFAULT_OVERSCAN;
-  keys: ReadonlyArray<string> = [];
-  triggered = -1;
-
-  configure(
-    estimate: number,
-    overscan: number,
-    keys: ReadonlyArray<string>
-  ): void {
-    this.estimate = estimate;
-    this.overscan = overscan;
-    this.keys = keys;
-  }
-
-  setElement(el: HTMLDivElement | null): void {
-    this.element = el;
-  }
-
-  markTriggered(count: number): void {
-    this.triggered = count;
-  }
-}
-
-/** Reactive mirrors of the virtualizer measurements, updated on change. */
-const useMeasurements = () => {
-  const [rows, setRows] = createSignal<Array<VirtualItem>>([]);
-  const [totalSize, setTotalSize] = createSignal(0);
-  const [viewport, setViewport] = createSignal(0);
-  const [scrollTop, setScrollTop] = createSignal(0);
-
-  const sync = (instance: ScrollVirtualizer) => {
-    setRows(instance.getVirtualItems());
-    setTotalSize(instance.getTotalSize());
-    setViewport(instance.scrollRect?.height ?? 0);
-  };
-
-  return { rows, totalSize, viewport, scrollTop, setScrollTop, sync };
-};
-
-const optionsFor = (
-  count: number,
-  mirrors: Mirrors,
-  sync: (instance: ScrollVirtualizer) => void
+const makeOptions = (
+  getScrollElement: ScrollOptions['getScrollElement'],
+  estimateSize: ScrollOptions['estimateSize'],
+  sync: SyncViewport,
+  onScrollEnd: () => void,
+  scrollToFn: ScrollOptions['scrollToFn']
 ): ScrollOptions => ({
-  count,
-  getScrollElement: () => mirrors.element,
-  estimateSize: () => mirrors.estimate,
-  overscan: mirrors.overscan,
-  getItemKey: (index) => mirrors.keys[index] ?? index,
-  observeElementRect,
-  observeElementOffset,
-  scrollToFn: elementScroll,
-  onChange: sync,
+  count: 0,
+  getScrollElement,
+  estimateSize,
+  observeElementRect: (instance, notify) =>
+    observeElementRect(instance, (rect) => {
+      notify(rect);
+      sync(instance);
+    }),
+  observeElementOffset: (instance, notify) =>
+    observeElementOffset(instance, (offset, scrolling) => {
+      notify(offset, scrolling);
+      sync(instance, offset);
+      if (!scrolling) onScrollEnd();
+    }),
+  scrollToFn,
+  onChange: (instance) => sync(instance),
 });
 
-interface VirtualizerInput {
-  keys: () => ReadonlyArray<string>;
-  estimate: () => number;
-  overscan: () => number;
-  element: () => HTMLDivElement | null;
+const trackRowMeasurements = (estimateSize: ScrollOptions['estimateSize']) => {
+  let measuredAtEstimate = new WeakSet<HTMLDivElement>();
+
+  const shouldAdjustScrollPositionOnItemSizeChange: NonNullable<
+    ScrollVirtualizer['shouldAdjustScrollPositionOnItemSizeChange']
+  > = (item, _delta, instance) => {
+    const offset = instance.scrollOffset ?? 0;
+    const measuredSize = instance.itemSizeCache.get(item.key);
+    if (measuredSize !== undefined) return item.start + measuredSize <= offset;
+
+    const element = instance.elementsCache.get(item.key);
+    if (element !== undefined && measuredAtEstimate.has(element)) {
+      return item.end <= offset;
+    }
+
+    return item.start < offset;
+  };
+
+  const measure: NonNullable<ScrollOptions['measureElement']> = (
+    element,
+    entry,
+    instance
+  ) => {
+    const size = measureElement(element, entry, instance);
+    // TanStack leaves equal-to-estimate measurements out of its size cache.
+    if (size === estimateSize(instance.indexFromElement(element))) {
+      measuredAtEstimate.add(element);
+    }
+
+    return size;
+  };
+  const reset = () => {
+    measuredAtEstimate = new WeakSet();
+  };
+
+  return { measure, reset, shouldAdjustScrollPositionOnItemSizeChange };
+};
+
+type ViewportAnchor = {
+  keys: ReadonlyArray<string>;
+  first: number;
+  rows: ReadonlyArray<VirtualItem>;
+  offset: number;
+};
+
+const captureAnchor = (
+  virtualizer: ScrollVirtualizer,
+  keys: ReadonlyArray<string>
+): ViewportAnchor | undefined => {
+  const element = virtualizer.scrollElement;
+  const offset = virtualizer.scrollOffset ?? 0;
+  const height = virtualizer.scrollRect?.height ?? 0;
+  if (element === null || element.scrollTop <= 1 || height <= 0) return;
+
+  const first = virtualizer.getVirtualItemForOffset(offset);
+  if (first === undefined || first.end <= offset) return;
+
+  const rows = [];
+  for (let index = first.index; index < keys.length; index += 1) {
+    const row = virtualizer.measurementsCache[index];
+    if (row === undefined || row.start >= offset + height) break;
+    rows.push(row);
+  }
+
+  return { keys, first: first.index, rows, offset };
+};
+
+const resolveAnchor = (
+  instance: ScrollVirtualizer,
+  anchor: ViewportAnchor,
+  movement: number
+) => {
+  const { count, getItemKey } = instance.options;
+  const indexes = new Map(
+    Array.from({ length: count }, (_, index) => [getItemKey(index), index])
+  );
+  for (const row of anchor.rows) {
+    const index = indexes.get(row.key);
+    if (index !== undefined)
+      return { index, viewportOffset: row.start - anchor.offset - movement };
+  }
+
+  for (let index = anchor.first - 1; index >= 0; index -= 1) {
+    const key = anchor.keys[index];
+    const next = key === undefined ? undefined : indexes.get(key);
+    if (next !== undefined) return { index: next, viewportOffset: 0 };
+  }
+};
+
+const isIOS = (): boolean => {
+  const { userAgent, platform, maxTouchPoints } = navigator;
+  return (
+    /iP(hone|od|ad)/.test(userAgent) ||
+    (platform === 'MacIntel' && maxTouchPoints > 0)
+  );
+};
+
+type ScrollRequest = { index: number } | { anchor: ViewportAnchor };
+
+class ViewportScroll {
+  private pending: ScrollRequest | undefined;
+  private scheduled = false;
+  private smooth = false;
+  private deferred = false;
+
+  constructor(private readonly virtualizer: ScrollVirtualizer) {}
+
+  capture(keys: ReadonlyArray<string>): void {
+    if (this.pending !== undefined) return;
+
+    const anchor = captureAnchor(this.virtualizer, keys);
+    if (anchor !== undefined) this.pending = { anchor };
+  }
+
+  select(index: number): void {
+    this.pending = { index };
+  }
+
+  clear = (): void => {
+    this.pending = undefined;
+    this.deferred = false;
+  };
+
+  write: ScrollOptions['scrollToFn'] = (offset, options, instance) => {
+    this.smooth = options.behavior === 'smooth';
+    elementScroll(offset, options, instance);
+  };
+
+  onScrollEnd = (): void => {
+    this.smooth = false;
+    this.afterCommit();
+  };
+
+  afterCommit = (): void => {
+    if (this.pending === undefined || this.scheduled) return;
+
+    this.scheduled = true;
+    // Solid commits the virtual spacer after the options effect publishes its size.
+    queueMicrotask(this.apply);
+  };
+
+  private readonly apply = (): void => {
+    this.scheduled = false;
+    const request = this.pending;
+    if (request === undefined) return;
+
+    if ('index' in request) {
+      this.clear();
+      this.virtualizer.scrollToIndex(request.index, { align: 'auto' });
+      return;
+    }
+
+    if (this.smooth || (isIOS() && this.virtualizer.isScrolling)) {
+      this.deferred = true;
+      return;
+    }
+
+    const movement = this.deferred
+      ? (this.virtualizer.scrollOffset ?? 0) - request.anchor.offset
+      : 0;
+    this.clear();
+    this.restore(request.anchor, movement);
+  };
+
+  private restore(anchor: ViewportAnchor, movement: number): void {
+    const instance = this.virtualizer;
+    const target = resolveAnchor(instance, anchor, movement);
+    // Refresh positions before reading the target, which may be offscreen.
+    instance.getTotalSize();
+    const row =
+      target === undefined
+        ? undefined
+        : instance.measurementsCache[target.index];
+    const offset =
+      row !== undefined && target !== undefined
+        ? row.start - target.viewportOffset
+        : 0;
+    if (offset !== instance.scrollOffset)
+      instance.scrollToOffset(offset, { behavior: 'instant' });
+  }
 }
 
-/** Creates the `@tanstack/virtual-core` instance and re-applies its options. */
-const useVirtualizerCore = (
-  input: VirtualizerInput,
-  mirrors: Mirrors,
-  measurement: ReturnType<typeof useMeasurements>
-): ScrollVirtualizer => {
-  const { sync } = measurement;
-  const virtualizer: ScrollVirtualizer = new Virtualizer(
-    optionsFor(0, mirrors, sync)
-  );
+const sameKeys = (
+  a: ReadonlyArray<string>,
+  b: ReadonlyArray<string>
+): boolean =>
+  a.length === b.length && a.every((key, index) => key === b[index]);
 
+class ListVirtualizer {
+  private keys: ReadonlyArray<string> = [];
+  private estimate: ListOptions['estimate'];
+  private element: HTMLDivElement | null = null;
+  private readonly estimateSize = (index: number): number => {
+    if (typeof this.estimate === 'number') return this.estimate;
+
+    const key = this.keys[index];
+    return key === undefined
+      ? DEFAULT_ESTIMATE_SIZE
+      : (this.estimate?.(key) ?? DEFAULT_ESTIMATE_SIZE);
+  };
+
+  private readonly options = makeOptions(
+    () => this.element,
+    this.estimateSize,
+    (instance, offset) => this.sync(instance, offset),
+    () => this.scroll.onScrollEnd(),
+    (offset, options, instance) => this.scroll.write(offset, options, instance)
+  );
+  readonly virtualizer = new Virtualizer(this.options);
+  readonly scroll = new ViewportScroll(this.virtualizer);
+  private readonly measurements = trackRowMeasurements(this.estimateSize);
+
+  constructor(private readonly sync: SyncViewport) {
+    this.virtualizer.shouldAdjustScrollPositionOnItemSizeChange =
+      this.measurements.shouldAdjustScrollPositionOnItemSizeChange;
+  }
+
+  configure = (state: ListOptions, selection: number | undefined): void => {
+    const keysChanged = !sameKeys(this.keys, state.keys);
+    if (selection !== undefined) this.scroll.select(selection);
+    else if (keysChanged) this.scroll.capture(this.keys);
+
+    const estimateChanged = this.estimate !== state.estimate;
+    this.updateOptions(state, keysChanged || estimateChanged);
+    if (estimateChanged && typeof state.estimate !== 'function') {
+      this.measurements.reset();
+      this.virtualizer.measure();
+    }
+
+    this.virtualizer._willUpdate();
+    this.sync(this.virtualizer);
+    this.scroll.afterCommit();
+  };
+
+  private updateOptions(state: ListOptions, rebuildPositions: boolean): void {
+    this.keys = state.keys;
+    this.estimate = state.estimate;
+    this.element = state.element;
+    this.virtualizer.setOptions({
+      ...this.options,
+      count: this.keys.length,
+      // Invalidate positions while preserving measured sizes by key.
+      getItemKey: rebuildPositions
+        ? (index) => state.keys[index] ?? index
+        : this.virtualizer.options.getItemKey,
+      overscan: state.overscan ?? DEFAULT_OVERSCAN,
+      measureElement: this.measurements.measure,
+    });
+  }
+}
+
+export const useVirtualList = (sync: SyncViewport) => {
+  const [element, setElement] = createSignal<HTMLDivElement | null>(null, {
+    name: 'virtualListElement',
+  });
+  const { virtualizer, configure, scroll } = new ListVirtualizer(sync);
   onSettled(() => virtualizer._didMount());
-
-  createEffect(
-    () => ({
-      keys: [...input.keys()],
-      estimate: input.estimate(),
-      overscan: input.overscan(),
-      element: input.element(),
-    }),
-    (state) => {
-      if (state.element === null) return;
-      mirrors.setElement(state.element);
-      mirrors.configure(state.estimate, state.overscan, state.keys);
-      virtualizer.setOptions(optionsFor(state.keys.length, mirrors, sync));
-      virtualizer._willUpdate();
-      sync(virtualizer);
-    }
-  );
-
-  return virtualizer;
-};
-
-interface EndReachedInput {
-  mirrors: Mirrors;
-  count: () => number;
-  threshold: () => number;
-  /** Reactive sources that must re-run the end check. */
-  deps: () => unknown;
-  onEndReached: () => void;
-}
-
-const useEndReached = (input: EndReachedInput): (() => void) => {
-  const { mirrors } = input;
-  const reached = () =>
-    isEndReached(mirrors.element, input.count(), input.threshold());
-
-  const nearEnd = createMemo(() => {
-    input.deps();
-    return reached();
-  });
-
-  const trigger = (count: number): void => {
-    if (count === 0 || count === mirrors.triggered) return;
-    mirrors.markTriggered(count);
-    input.onEndReached();
-  };
-
-  createEffect(
-    () => ({ near: nearEnd(), count: input.count() }),
-    ({ near, count }) => {
-      if (count === 0) {
-        mirrors.markTriggered(-1);
-        return;
-      }
-      if (near) trigger(count);
-    }
-  );
-
-  return () => {
-    if (reached()) trigger(input.count());
-  };
-};
-
-const scrollHandler =
-  (measurement: ReturnType<typeof useMeasurements>, check: () => void) =>
-  (event: Event): void => {
-    const el = event.currentTarget;
-    if (!(el instanceof HTMLDivElement)) return;
-    measurement.setScrollTop(el.scrollTop);
-    check();
-  };
-
-export interface ListState {
-  virtualizer: ScrollVirtualizer;
-  rows: () => Array<VirtualItem>;
-  totalSize: () => number;
-  onScroll: (event: Event) => void;
-  setScrollElement: (el: HTMLDivElement) => void;
-}
-
-export const useVirtualList = (props: VirtualListProps): ListState => {
-  const mirrors = new Mirrors();
-  const measurement = useMeasurements();
-  const [element, setElement] = createSignal<HTMLDivElement | null>(null);
-  const count = () => props.keys.length;
-
-  const virtualizer = useVirtualizerCore(
-    {
-      keys: () => props.keys,
-      estimate: () => props.estimateSize ?? DEFAULT_ESTIMATE_SIZE,
-      overscan: () => props.overscan ?? DEFAULT_OVERSCAN,
-      element,
-    },
-    mirrors,
-    measurement
-  );
-
-  const check = useEndReached({
-    mirrors,
-    count,
-    threshold: () => props.endReachedThreshold ?? DEFAULT_END_THRESHOLD,
-    deps: () => [
-      element(),
-      measurement.totalSize(),
-      measurement.viewport(),
-      measurement.scrollTop(),
-    ],
-    onEndReached: () => props.onEndReached?.(),
-  });
-
-  return {
-    virtualizer,
-    rows: measurement.rows,
-    totalSize: measurement.totalSize,
-    onScroll: scrollHandler(measurement, check),
-    setScrollElement: (el) => {
-      mirrors.setElement(el);
-      setElement(el);
-    },
-  };
+  onCleanup(scroll.clear);
+  return { virtualizer, element, setElement, configure };
 };

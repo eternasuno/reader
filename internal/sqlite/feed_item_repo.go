@@ -42,21 +42,18 @@ func (r *FeedItemRepo) SnapshotByFeed(ctx context.Context, feedID string, order 
 }
 
 func groupedFeedItemSnapshotQuery(folderID *string, params domain.SnapshotParams) (string, []any) {
-	query := `SELECT id, feed_id FROM (
-		SELECT fi.id, fi.feed_id, fi.read, f.sort_order, MAX(fi.id) OVER (PARTITION BY fi.feed_id) AS newest_id
-		FROM feed_item fi JOIN feed f ON f.id = fi.feed_id WHERE fi.id <= ?`
+	query := `SELECT fi.id, fi.feed_id FROM feed_item fi JOIN feed f ON f.id = fi.feed_id WHERE fi.id <= ?`
 	args := []any{params.Boundary}
 	if folderID != nil {
 		query += ` AND f.folder_id = ?`
 		args = append(args, *folderID)
 	}
 
-	query += `)`
 	if params.Unread {
-		query += ` WHERE read = 0`
+		query += ` AND fi.read = 0`
 	}
 
-	query += ` ORDER BY newest_id DESC, CASE WHEN sort_order = ? THEN id END ASC, id DESC LIMIT ?`
+	query += ` ORDER BY f.title ASC, f.id ASC, CASE WHEN f.sort_order = ? THEN fi.id END ASC, fi.id DESC LIMIT ?`
 
 	return query, append(args, string(domain.SortOrderOldest), domain.ListSnapshotLimit+1)
 }

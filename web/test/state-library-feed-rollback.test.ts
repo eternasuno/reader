@@ -6,6 +6,7 @@ import {
   makeFeed,
   makeItem,
   noContentResponse,
+  requireArticle,
   uuid,
 } from './support/state-fixture';
 
@@ -54,7 +55,9 @@ describe('feed move rollback keeps a read toggle on a retained article', () => {
     await expect(moving).resolves.toBe(false);
     solid.flush();
 
-    expect(readStates(state.rows())).toEqual([
+    expect(
+      readStates(state.rowIds().map((id) => requireArticle(state, id)))
+    ).toEqual([
       [uuid(1007), true],
       [uuid(1008), false],
     ]);
@@ -83,7 +86,9 @@ describe('feed move rollback keeps a read toggle after the reader moves on', () 
     await expect(moving).resolves.toBe(false);
     solid.flush();
 
-    expect(readStates(state.rows())).toEqual([
+    expect(
+      readStates(state.rowIds().map((id) => requireArticle(state, id)))
+    ).toEqual([
       [uuid(1007), true],
       [uuid(1008), false],
     ]);
@@ -115,7 +120,9 @@ describe('feed move rollback with an overlapping move', () => {
     await expect(p1).resolves.toBe(false);
     solid.flush();
 
-    expect(readStates(state.rows())).toEqual([
+    expect(
+      readStates(state.rowIds().map((id) => requireArticle(state, id)))
+    ).toEqual([
       [uuid(1007), true],
       [uuid(1008), false],
     ]);
@@ -139,15 +146,11 @@ describe('feed move rollback membership and order', () => {
     await expect(state.moveFeedToFolder(target, null)).resolves.toBe(false);
     solid.flush();
 
-    expect(state.rows().map((row) => row.id)).toEqual([
-      uuid(1007),
-      uuid(1009),
-      uuid(1008),
-    ]);
+    expect(state.rowIds()).toEqual([uuid(1007), uuid(1009), uuid(1008)]);
   });
 });
 
-it('filters an incoming snapshot using moves made since dispatch and restores its queued IDs on rollback', async () => {
+it('filters a snapshot using moves made since dispatch and restores its IDs on rollback', async () => {
   const { state } = ctx;
   ctx.queueSidebar({ feeds: [target, sibling] });
   await state.refreshSidebar();
@@ -160,20 +163,20 @@ it('filters an incoming snapshot using moves made since dispatch and restores it
   const moving = state.moveFeedToFolder(target, null);
   const moved = makeItem({ id: uuid(60), feedId: target.id });
   const kept = makeItem({ id: uuid(61), feedId: sibling.id });
-  ctx.queue({ items: [kept] });
   snapshot.resolve(jsonResponse(feedOrder([moved, kept])));
   await loading;
-  expect(ctx.requestUrl(6)).toBe(`/api/feed-items?ids=${kept.id}`);
   expect(state.rowIds()).toEqual([kept.id]);
+  expect(state.feedIdOf(moved.id)).toBe(target.id);
+  const revision = state.listRevision();
 
-  ctx.queue({ items: [moved] });
-  move.resolve(jsonResponse({ error: 'FolderNotFound' }, 404));
+  move.resolve(failed());
   await moving;
-  await vi.waitFor(() => expect(state.rowIds()).toEqual([moved.id, kept.id]));
-  expect(ctx.requestUrl(7)).toBe(`/api/feed-items?ids=${moved.id}`);
+  expect(state.rowIds()).toEqual([moved.id, kept.id]);
+  expect(state.groupStartIds()).toEqual(new Set([moved.id, kept.id]));
+  expect(state.listRevision()).toBe(revision + 1);
 });
 
-it('skips a moved feed when an already dispatched batch settles', async () => {
+it('keeps a moved feed hidden when an already dispatched batch settles', async () => {
   const { state } = ctx;
   ctx.queueSidebar({ feeds: [target, sibling] });
   await state.refreshSidebar();
@@ -181,30 +184,13 @@ it('skips a moved feed when an already dispatched batch settles', async () => {
   const kept = makeItem({ id: uuid(61), feedId: sibling.id });
   ctx.queue(feedOrder([moved, kept]));
   const batch = ctx.pending();
-  const loading = state.loadScopeFirstPage(
-    { kind: 'folder', folderId: 'd1' },
-    false
-  );
-  await vi.waitFor(() => expect(ctx.requestUrl(5)).toContain(moved.id));
+  await state.loadScopeFirstPage({ kind: 'folder', folderId: 'd1' }, false);
+  state.requestWindow({ start: 0, end: 1 });
+  expect(ctx.requestUrl(5)).toContain(moved.id);
   ctx.queueEmpty();
   await state.moveFeedToFolder(target, null);
   batch.resolve(jsonResponse({ items: [moved, kept] }));
-  await loading;
-  await state.loadMore();
+  await vi.waitFor(() => expect(state.articleById(kept.id)).not.toBeNull());
   expect(state.rowIds()).toEqual([kept.id]);
   expect(ctx.fetchCount()).toBe(7);
-});
-
-describe('feed move success evicts dropped rows', () => {
-  it('evicts the dropped rows once the move succeeds', async () => {
-    const { state, solid } = ctx;
-    await loadFolder();
-
-    ctx.queueEmpty();
-    await expect(state.moveFeedToFolder(target, null)).resolves.toBe(true);
-    solid.flush();
-
-    expect(state.rows().map((row) => row.id)).toEqual([uuid(1008)]);
-    expect(state.articleById(uuid(1007))).toBeNull();
-  });
 });

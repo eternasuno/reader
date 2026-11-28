@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppHarness, json as harnessJson } from './support/app-harness';
-import { createStateTestContext, jsonResponse } from './support/state-fixture';
+import {
+  createStateTestContext,
+  jsonResponse,
+  uuid,
+} from './support/state-fixture';
 
 type ReadSyncMod = typeof import('../src/state/read-sync');
 type SidebarRefreshMod = typeof import('../src/state/sidebar-refresh');
@@ -45,6 +49,8 @@ describe('sidebar periodic 60 s polling', () => {
 
   it('polls every 60 s and skips ticks while the read queue is busy', async () => {
     stopPolling = sidebarRefresh.mountSidebarRefresh();
+    const onTick = vi.fn();
+    sidebarRefresh.onLibraryTick(onTick);
 
     await vi.advanceTimersByTimeAsync(59_999);
     expect(feedCalls()).toBe(0);
@@ -53,6 +59,7 @@ describe('sidebar periodic 60 s polling', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(feedCalls()).toBe(1);
     expect(ctx.state.savedUnreadCount()).toBe(2);
+    expect(onTick.mock.calls).toEqual([['periodic']]);
 
     let releaseBarrier!: (outcome: 'ok') => void;
     const barrier = readSync.enqueueBarrier({
@@ -69,6 +76,7 @@ describe('sidebar periodic 60 s polling', () => {
     releaseBarrier('ok');
     await barrier;
     await vi.waitFor(() => expect(feedCalls()).toBe(2));
+    expect(onTick.mock.calls).toEqual([['periodic']]);
   });
 });
 
@@ -78,6 +86,8 @@ describe('sidebar visibility polling pause and resume', () => {
 
   it('pauses timer while hidden and refreshes immediately when visible', async () => {
     stopPolling = sidebarRefresh.mountSidebarRefresh();
+    const onTick = vi.fn();
+    sidebarRefresh.onLibraryTick(onTick);
 
     await vi.advanceTimersByTimeAsync(30_000);
     setHidden(true);
@@ -92,6 +102,7 @@ describe('sidebar visibility polling pause and resume', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(ctx.state.savedUnreadCount()).toBe(3);
     expect(feedCalls()).toBe(1);
+    expect(onTick.mock.calls).toEqual([['visible']]);
 
     await vi.advanceTimersByTimeAsync(59_999);
     expect(feedCalls()).toBe(1);
@@ -138,6 +149,8 @@ describe('sidebar refresh session clear cleanup', () => {
 
   it('clears timers, listeners, and in-flight refresh owner on session clear', async () => {
     stopPolling = sidebarRefresh.mountSidebarRefresh();
+    const onTick = vi.fn();
+    sidebarRefresh.onLibraryTick(onTick);
     const stale = ctx.queueDeferredSidebar({ saved: 9 });
     const inflight = ctx.state.refreshSidebar();
 
@@ -152,30 +165,38 @@ describe('sidebar refresh session clear cleanup', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     await vi.advanceTimersByTimeAsync(120_000);
     expect(feedCalls()).toBe(1);
+
+    stopPolling = sidebarRefresh.mountSidebarRefresh();
+    queueDefaultSidebar();
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(feedCalls()).toBe(2);
+    expect(onTick).not.toHaveBeenCalled();
   });
 });
 
-const setupDeferredSessionFetch = (fetchMock: ReturnType<typeof vi.fn>) => {
-  let resolveSession!: (response: Response) => void;
-  const boundary = '019363b8-0000-7000-8000-000000000000';
-  fetchMock.mockImplementation((input: unknown) => {
-    const url = String(input);
-    if (url.includes('/api/auth/session')) {
-      return new Promise<Response>((res) => {
-        resolveSession = res;
-      });
-    }
-    if (url.includes('/api/saved-pages/unread-count')) {
-      return Promise.resolve(harnessJson({ count: 0, boundary }));
-    }
-    if (url.includes('/api/feeds/unread-counts')) {
-      return Promise.resolve(harnessJson({ items: [], boundary }));
-    }
-    return Promise.resolve(harnessJson({ items: [], groups: [], boundary }));
+const setupDeferredSessionFetch = (
+  harness: ReturnType<typeof createAppHarness>
+) => {
+  const session = Promise.withResolvers<Response>();
+  const initialBoundary = uuid(10);
+  const liveBoundary = uuid(11);
+  let listRequests = 0;
+  harness.respond((url) => {
+    if (url === '/api/auth/session') return session.promise;
+    if (!url.startsWith('/api/saved-pages/order')) return undefined;
+
+    listRequests += 1;
+    return harnessJson({
+      ids: [],
+      boundary: listRequests === 1 ? initialBoundary : liveBoundary,
+    });
   });
+
   return {
-    resolveSession: (ok: boolean) =>
-      resolveSession(harnessJson({ authenticated: ok })),
+    initialBoundary,
+    liveBoundary,
+    resolveSession: () => session.resolve(harnessJson({ authenticated: true })),
   };
 };
 
@@ -189,6 +210,83 @@ const SIDEBAR_URLS = new Set([
 const countSidebarCalls = (fetchMock: ReturnType<typeof vi.fn>): number =>
   fetchMock.mock.calls.filter(([url]) => SIDEBAR_URLS.has(String(url))).length;
 
+const libraryRequestCounts = (fetchMock: ReturnType<typeof vi.fn>) => ({
+  feeds: () =>
+    fetchMock.mock.calls.filter(([url]) => url === '/api/feeds').length,
+  orders: () =>
+    fetchMock.mock.calls.filter(([url]) =>
+      /^\/api\/(saved-pages|feed-items|(feeds|folders)\/[^/]+\/items)\/order(\?|$)/.test(
+        String(url)
+      )
+    ).length,
+});
+
+const expectSidebarTickWithoutLiveList = async (
+  harness: ReturnType<typeof createAppHarness>,
+  feeds: number,
+  orders: number
+): Promise<void> => {
+  const { mountSidebarRefresh } = await import('../src/state/sidebar-refresh');
+  // Enable the mount gate without registering another live-list listener.
+  const untrack = harness.modules.state.trackLibraryMount();
+  const stopPolling = mountSidebarRefresh();
+  try {
+    await vi.advanceTimersByTimeAsync(60_000);
+    const counts = libraryRequestCounts(harness.fetchMock);
+    expect(counts.feeds()).toBe(feeds + 1);
+    expect(counts.orders()).toBe(orders);
+  } finally {
+    stopPolling();
+    untrack();
+  }
+};
+
+const verifyLibraryPollingLifecycle = async (
+  harness: ReturnType<typeof createAppHarness>
+): Promise<void> => {
+  vi.useFakeTimers();
+  const session = setupDeferredSessionFetch(harness);
+  const { feeds, orders } = libraryRequestCounts(harness.fetchMock);
+  const { listBoundary } = harness.modules.state;
+  const { history } = harness.mountApp('/login');
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(feeds()).toBe(0);
+  expect(orders()).toBe(0);
+  expect(history.get()).toBe('/login');
+
+  history.set({ value: '/later' });
+  harness.modules.solid.flush();
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(feeds()).toBe(0);
+  expect(orders()).toBe(0);
+
+  session.resolveSession();
+  await vi.advanceTimersByTimeAsync(10);
+  harness.modules.solid.flush();
+  await vi.waitFor(() => expect(feeds()).toBeGreaterThanOrEqual(1));
+  await vi.waitFor(() => expect(orders()).toBeGreaterThanOrEqual(1));
+  await vi.waitFor(() => expect(listBoundary()).toBe(session.initialBoundary));
+  const initialFeeds = feeds();
+  const initialOrders = orders();
+
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(feeds()).toBe(initialFeeds + 1);
+  await vi.waitFor(() => expect(orders()).toBe(initialOrders + 1));
+  expect(listBoundary()).toBe(session.liveBoundary);
+
+  history.set({ value: '/settings' });
+  harness.modules.solid.flush();
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(history.get()).toBe('/settings');
+  expect(feeds()).toBe(initialFeeds + 1);
+  expect(orders()).toBe(initialOrders + 1);
+  await expectSidebarTickWithoutLiveList(
+    harness,
+    initialFeeds + 1,
+    initialOrders + 1
+  );
+};
+
 describe('library page polling lifecycle', () => {
   const harness = createAppHarness({ settleTimes: 3 });
   harness.installHarnessLifecycle();
@@ -197,37 +295,8 @@ describe('library page polling lifecycle', () => {
     vi.useRealTimers();
   });
 
-  it('starts polling only after SessionGuard verifies auth and stops on unmount', async () => {
-    vi.useFakeTimers();
-    const session = setupDeferredSessionFetch(harness.fetchMock);
-    const feedsCount = (): number =>
-      harness.fetchMock.mock.calls.filter(
-        ([url]) => String(url) === '/api/feeds'
-      ).length;
-
-    const loginApp = harness.mountApp('/login');
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(feedsCount()).toBe(0);
-    expect(loginApp.history.get()).toBe('/login');
-
-    const { history } = harness.mountApp('/later');
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(feedsCount()).toBe(0);
-
-    session.resolveSession(true);
-    await vi.advanceTimersByTimeAsync(10);
-    harness.modules.solid.flush();
-    await vi.waitFor(() => expect(feedsCount()).toBeGreaterThanOrEqual(1));
-    const initialFeeds = feedsCount();
-
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(feedsCount()).toBe(initialFeeds + 1);
-
-    history.set({ value: '/login' });
-    harness.modules.solid.flush();
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(feedsCount()).toBe(initialFeeds + 1);
-  });
+  it('starts polling only after SessionGuard verifies auth and stops on unmount', () =>
+    verifyLibraryPollingLifecycle(harness));
 });
 
 describe('polling stays off outside the library page', () => {

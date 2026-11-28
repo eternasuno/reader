@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createStateTestContext,
   feedOrder,
+  loadWindowedScope,
   makeFeed,
   makeItem,
   makePage,
+  requireArticle,
   uuid,
 } from './support/state-fixture';
 
@@ -28,15 +30,17 @@ describe('first page load', () => {
     });
 
     expect(ctx.requestUrl()).toBe('/api/saved-pages/order?unread=false');
-    expect(state.rows()).toHaveLength(2);
-    expect(state.rows()[0].kind).toBe('later');
-    expect(state.articleSource(state.rows()[0])).toEqual({
+    expect(state.rowIds()).toHaveLength(2);
+    expect(requireArticle(state, state.rowIds()[0]).kind).toBe('later');
+    expect(
+      state.articleSource(requireArticle(state, state.rowIds()[0]))
+    ).toEqual({
       title: 'example.com',
       iconSrcs: ['https://example.com/favicon.ico'],
     });
     expect(state.activeScope()).toEqual({ kind: 'later' });
-    expect(state.loadingInitial()).toBe(false);
-    expect(state.loadError()).toBeNull();
+    expect(state.snapshotLoading()).toBe(false);
+    expect(state.snapshotError()).toBeNull();
   });
 });
 
@@ -60,15 +64,15 @@ describe('scope endpoints', () => {
     const items = [makeItem({ id: uuid(1007), feedId: uuid(1001) })];
     ctx.queue(feedOrder(items, B));
     ctx.queue({ items });
-    await state.loadScopeFirstPage({ kind: 'folder', folderId: 'd1' }, false);
+    await loadWindowedScope(state, { kind: 'folder', folderId: 'd1' }, false);
     solid.flush();
     expect(ctx.requestUrl()).toBe('/api/folders/d1/items/order?unread=false');
-    expect(state.rows()[0].kind).toBe('feed');
+    expect(requireArticle(state, state.rowIds()[0]).kind).toBe('feed');
 
     ctx.queue(feedOrder([], B));
-    await state.loadScopeFirstPage({ kind: 'all' }, false);
+    await loadWindowedScope(state, { kind: 'all' }, false);
     expect(ctx.requestUrl(2)).toBe('/api/feed-items/order?unread=false');
-    expect(state.rows()).toHaveLength(0);
+    expect(state.rowIds()).toHaveLength(0);
   });
 });
 
@@ -98,15 +102,19 @@ describe('row labels', () => {
       ],
     });
 
-    expect(state.rows()[0].kind).toBe('feed');
-    expect(state.articleSource(state.rows()[0])).toEqual({
+    expect(requireArticle(state, state.rowIds()[0]).kind).toBe('feed');
+    expect(
+      state.articleSource(requireArticle(state, state.rowIds()[0]))
+    ).toEqual({
       title: 'Go Blog',
       iconSrcs: [
         'https://go.dev/images/go-logo.png',
         'https://go.dev/favicon.ico',
       ],
     });
-    expect(state.articleSource(state.rows()[1])).toEqual({
+    expect(
+      state.articleSource(requireArticle(state, state.rowIds()[1]))
+    ).toEqual({
       title: 'Plain',
       iconSrcs: ['https://plain.example/favicon.ico'],
     });
@@ -144,13 +152,15 @@ describe('feed icon source', () => {
       ],
     });
 
-    expect(state.articleSource(state.rows()[0]).iconSrcs).toEqual([
-      'https://twitter.example/favicon.ico',
-    ]);
-    expect(state.articleSource(state.rows()[1]).iconSrcs).toEqual([]);
-    expect(state.articleSource(state.rows()[2]).iconSrcs).toEqual([
-      'https://carol.example/icon.png',
-    ]);
+    expect(
+      state.articleSource(requireArticle(state, state.rowIds()[0])).iconSrcs
+    ).toEqual(['https://twitter.example/favicon.ico']);
+    expect(
+      state.articleSource(requireArticle(state, state.rowIds()[1])).iconSrcs
+    ).toEqual([]);
+    expect(
+      state.articleSource(requireArticle(state, state.rowIds()[2])).iconSrcs
+    ).toEqual(['https://carol.example/icon.png']);
   });
 });
 
@@ -174,11 +184,15 @@ describe('feed icon candidates', () => {
       ],
     });
 
-    expect(state.articleSource(state.rows()[0])).toEqual({
+    expect(
+      state.articleSource(requireArticle(state, state.rowIds()[0]))
+    ).toEqual({
       title: 'Favicon Feed',
       iconSrcs: ['https://fav.example/favicon.ico'],
     });
-    expect(state.articleSource(state.rows()[1])).toEqual({
+    expect(
+      state.articleSource(requireArticle(state, state.rowIds()[1]))
+    ).toEqual({
       title: '',
       iconSrcs: [],
     });

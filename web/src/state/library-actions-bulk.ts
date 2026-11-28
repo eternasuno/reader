@@ -1,5 +1,5 @@
 /**
- * Bulk library read actions (`LIB-READ-2`): mark-loaded-read and pessimistic barrier-serialized
+ * Bulk library read actions (`LIB-READ-2`): mark-read-above and pessimistic barrier-serialized
  * scope-wide mark-all.
  */
 
@@ -12,11 +12,19 @@ import { beginScopeMark, scopeMatcher } from './library-mark-all';
 import {
   activeScope,
   activeUnreadOnly,
+  articleById,
+  articleKindOf,
+  feedIdOf,
+  idsThroughVisibleEnd,
   isLibraryMounted,
   listBoundary,
-  rows,
 } from './library-store';
-import type { BarrierOutcome, EnqueueBarrierResult } from './read-sync';
+import type {
+  BarrierOutcome,
+  EnqueueBarrierResult,
+  ReadTarget,
+  UnknownReadTarget,
+} from './read-sync';
 import { enqueueBarrier, requestReadMany, targetOf } from './read-sync';
 import { isAmbiguousError } from './read-sync-transport';
 import { refreshOpenArticle } from './reader';
@@ -27,12 +35,19 @@ import * as sidebar from './sidebar';
 
 export { isMarkingScope } from './library-mark-all';
 
-/** `LIB-READ-2`: marks every loaded unread row read through the serial read-sync queue. */
-export const markLoadedRead = (): void => {
+/** `LIB-READ-2`: marks IDs from the list top through the last viewport row read. */
+export const markReadAbove = (): void => {
+  const ids = idsThroughVisibleEnd();
+  if (ids.length === 0) return;
+
+  const kind = articleKindOf(activeScope());
   requestReadMany(
-    rows()
-      .filter((row) => !row.read)
-      .map(targetOf)
+    ids.flatMap<ReadTarget | UnknownReadTarget>((id) => {
+      const row = articleById(id);
+      if (row !== null) return row.read ? [] : [targetOf(row)];
+
+      return [{ id, kind, feedId: kind === 'feed' ? feedIdOf(id) : null }];
+    })
   );
 };
 
