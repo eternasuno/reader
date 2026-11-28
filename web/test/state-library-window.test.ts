@@ -88,7 +88,7 @@ it('evicts an idle unknown off-window record and drops its entry after an older 
   const recovery = ctx.pending();
   await expect(state.toggleArticleRead(first, true)).resolves.toBe(false);
   await vi.waitFor(() => expect(queueIdle()).toBe(true));
-  expect(entries.get(first)?.confirmedKnown).toBe(false);
+  expect(entries.get(first)).toHaveProperty('confirmed', undefined);
   expect(state.articleById(first)).not.toBeNull();
 
   older.resolve(jsonResponse({ items: [items[1000]] }));

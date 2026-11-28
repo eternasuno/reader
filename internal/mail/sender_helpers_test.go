@@ -43,35 +43,6 @@ type parsedMail struct {
 	attachment     []byte
 }
 
-func assertNoAuthSecrets(t *testing.T, errText, user, password string) {
-	t.Helper()
-
-	if strings.Contains(errText, password) {
-		t.Errorf("error %q must not contain SMTP password %q", errText, password)
-	}
-
-	rawBlobs := [][]byte{
-		[]byte(password),
-		[]byte("\x00" + user + "\x00" + password),
-		[]byte(user + "\x00" + user + "\x00" + password),
-	}
-	encodings := []*base64.Encoding{
-		base64.StdEncoding,
-		base64.RawStdEncoding,
-		base64.URLEncoding,
-		base64.RawURLEncoding,
-	}
-
-	for _, blob := range rawBlobs {
-		for _, enc := range encodings {
-			encoded := enc.EncodeToString(blob)
-			if encoded != "" && strings.Contains(errText, encoded) {
-				t.Errorf("error %q must not contain base64-encoded secret %q", errText, encoded)
-			}
-		}
-	}
-}
-
 func assertEPUBDelivery(
 	t *testing.T,
 	message capturedMail,

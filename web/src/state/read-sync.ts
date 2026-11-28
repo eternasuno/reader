@@ -71,11 +71,8 @@ const popCoalescedSegment = (): Map<string, boolean> => {
   }
   for (const [id, read] of [...coalesced]) {
     const entry = entries.get(id);
-    if (
-      entry !== undefined &&
-      !(entry.confirmedKnown && entry.confirmed === read)
-    )
-      continue;
+    if (entry !== undefined && entry.confirmed !== read) continue;
+
     coalesced.delete(id);
     if (entry !== undefined) resolveWaiters(id, entry);
   }
@@ -240,16 +237,16 @@ export const requestRead = (
   read: boolean
 ): Promise<boolean | null> => {
   const existing = entries.get(target.id);
-  const currentConfirmed = existing?.confirmed ?? target.read;
-  const settledKnown =
-    existing === undefined ||
-    (isEntryIdle(existing) && existing.confirmedKnown);
+  const currentConfirmed =
+    existing === undefined ? target.read : existing.confirmed;
+  const idle = existing === undefined || isEntryIdle(existing);
   const hasBarrier =
     queueState.activeBarrier !== null ||
     queue.some((item) => item.type === 'barrier');
-  if (settledKnown && currentConfirmed === read && !hasBarrier) {
+  if (idle && currentConfirmed === read && !hasBarrier) {
     return Promise.resolve(currentConfirmed);
   }
+
   const entry = ensureEntry(target);
   const settled = new Promise<boolean | null>((resolve) =>
     entry.waiters.push(resolve)

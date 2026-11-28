@@ -36,10 +36,8 @@ export interface RecordSnapshotToken {
 export interface ReadEntry {
   kind: LibraryArticle['kind'];
   feedId: string | null;
-  /** Last server-confirmed value when one is available. */
+  /** Last server-confirmed value, or undefined if unknown or invalidated by an ambiguous write. */
   confirmed: boolean | undefined;
-  /** False when the original state is unknown or a write may have changed it. */
-  confirmedKnown: boolean;
   /** Latest queued intent, else the last display value. */
   display: boolean;
   /** Unknown-prior intents leave count reconciliation to the post-drain refresh. */
@@ -110,7 +108,7 @@ const hasOlderActiveSnapshot = (settledSeq: number): boolean => {
 
 const pinsRecord = (entry: ReadEntry): boolean =>
   !isEntryIdle(entry) ||
-  entry.confirmedKnown ||
+  entry.confirmed !== undefined ||
   hasOlderActiveSnapshot(entry.settledAt);
 
 export const hasActiveEntry = (id: string): boolean => {
@@ -120,13 +118,17 @@ export const hasActiveEntry = (id: string): boolean => {
 
 export const dropIdleUnknownEntry = (id: string): void => {
   const entry = entries.get(id);
-  if (entry !== undefined && !entry.confirmedKnown && isEntryIdle(entry))
+  if (
+    entry !== undefined &&
+    entry.confirmed === undefined &&
+    isEntryIdle(entry)
+  )
     entries.delete(id);
 };
 
 const isRetirable = (entry: ReadEntry): boolean =>
   isEntryIdle(entry) &&
-  entry.confirmedKnown &&
+  entry.confirmed !== undefined &&
   !hasOlderActiveSnapshot(entry.settledAt);
 
 const retireBarrierStamps = (): void => {
@@ -157,7 +159,8 @@ const retireSettledState = (releasedSeq?: number): boolean => {
 
 export const resolveWaiters = (id: string, entry: ReadEntry): void => {
   if (!isEntryIdle(entry)) return;
-  const value = entry.confirmedKnown ? (entry.confirmed ?? null) : null;
+
+  const value = entry.confirmed ?? null;
   for (const resolve of entry.waiters.splice(0)) resolve(value);
   if (isRetirable(entry)) entries.delete(id);
 };
@@ -192,24 +195,18 @@ const isBehindBarrier = (target: BarrierTarget, snapshotSeq: number): boolean =>
 /** Merges an incoming snapshot record's read flag using the snapshot's dispatch sequence stamp. */
 export const mergeSnapshotRead = (
   incoming: LibraryArticle,
-  snapshotSeq?: number
+  snapshotSeq: number
 ): boolean => {
   const entry = entries.get(incoming.id);
   if (entry === undefined) {
-    return snapshotSeq !== undefined &&
-      isBehindBarrier(targetOf(incoming), snapshotSeq)
-      ? true
-      : incoming.read;
+    return isBehindBarrier(targetOf(incoming), snapshotSeq) || incoming.read;
   }
-  if (
-    !entry.inflight &&
-    snapshotSeq !== undefined &&
-    snapshotSeq >= entry.settledAt
-  ) {
+
+  if (!entry.inflight && snapshotSeq >= entry.settledAt) {
     entry.confirmed = incoming.read;
-    entry.confirmedKnown = true;
     if (entry.queuedCount === 0) entry.display = incoming.read;
   }
+
   return entry.display;
 };
 
@@ -219,14 +216,12 @@ export const ensureEntry = (
   const existing = entries.get(target.id);
   if (existing !== undefined) return existing;
 
-  const known = target.read !== undefined;
   const entry: ReadEntry = {
     kind: target.kind,
     feedId: target.feedId,
     confirmed: target.read,
-    confirmedKnown: known,
     display: target.read ?? true,
-    adjustsUnread: known,
+    adjustsUnread: target.read !== undefined,
     inflight: false,
     queuedCount: 0,
     settledAt: 0,
@@ -265,11 +260,11 @@ const settleCoveredEntry = (
 ): void => {
   entry.settledAt = seq;
   if (outcome === 'ambiguous') {
-    entry.confirmedKnown = false;
+    entry.confirmed = undefined;
     return;
   }
+
   entry.confirmed = true;
-  entry.confirmedKnown = true;
   // Badges are left to the post-drain count refresh, which already excludes these rows.
   if (entry.queuedCount === 0 && !entry.display) {
     entry.display = true;

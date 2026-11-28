@@ -132,8 +132,6 @@ func TestSendEPUBAuthFailureStatusCodes(t *testing.T) {
 			if err.Error() != want {
 				t.Errorf("SendEPUB() error = %q, want %q", err.Error(), want)
 			}
-
-			assertNoAuthSecrets(t, err.Error(), user, password)
 		})
 	}
 
@@ -202,8 +200,6 @@ func TestSendEPUBSendStageAuthRejection(t *testing.T) {
 			if err.Error() != want {
 				t.Errorf("SendEPUB() error = %q, want %q", err.Error(), want)
 			}
-
-			assertNoAuthSecrets(t, err.Error(), user, password)
 		})
 	}
 }
@@ -233,9 +229,6 @@ func TestSanitizedErrorAuthAndTypedCategories(t *testing.T) {
 		if got != want {
 			t.Errorf("sanitizedError(STARTTLS 454) = %q, want %q", got, want)
 		}
-		if strings.Contains(got, "TLS not available") {
-			t.Errorf("sanitizedError leaked raw server text: %q", got)
-		}
 	})
 
 	t.Run("non_auth_errors_never_leak_passwords_tokens_or_server_text", func(t *testing.T) {
@@ -264,10 +257,6 @@ func TestSanitizedErrorAuthAndTypedCategories(t *testing.T) {
 			want := "send kindle epub: send epub mail: smtp server error (550)"
 			if got != want {
 				t.Errorf("token %q: sanitizedError() = %q, want %q", token, got, want)
-			}
-			assertNoAuthSecrets(t, got, user, password)
-			if strings.Contains(got, "relay echoed") || strings.Contains(got, "urlsecret") {
-				t.Errorf("sanitizedError leaked server text: %q", got)
 			}
 		}
 

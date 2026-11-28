@@ -35,7 +35,6 @@ type fakeKindleSendRepository struct {
 	listErr         error
 	getErr          error
 	claimErr        error
-	claimFailure    int
 	recordErr       error
 	recordFailure   int
 	completeErr     error
@@ -129,15 +128,6 @@ func (r *fakeKindleSendRepository) ClaimDueSend(ctx context.Context, sendID stri
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.claimFailure > 0 {
-		r.claimFailure--
-		if r.claimErr != nil {
-			return domain.ClaimedKindleSend{}, r.claimErr
-		}
-
-		return domain.ClaimedKindleSend{}, errors.New("claim failed")
-	}
-
 	if r.claimErr != nil {
 		return domain.ClaimedKindleSend{}, r.claimErr
 	}
@@ -152,13 +142,7 @@ func (r *fakeKindleSendRepository) ClaimDueSend(ctx context.Context, sendID stri
 		return domain.ClaimedKindleSend{}, nil
 	}
 
-	// Mirrors the sqlite repository: a stored schedule that fails validation is
-	// corrupt data, reported as a repository error.
 	schedule := *settings.Kindle.Schedule
-	if _, err := domain.ValidateKindleSchedule(schedule); err != nil {
-		return domain.ClaimedKindleSend{}, domain.NewError(domain.ErrSettingRepositoryError, err)
-	}
-
 	loc, err := domain.LoadKindleLocation(schedule.Timezone)
 	if err != nil {
 		return domain.ClaimedKindleSend{}, err
@@ -204,11 +188,10 @@ func (r *fakeKindleSendRepository) storeNextSendAtLocked(next time.Time) {
 	r.settingsRepo.settings.Kindle = &updated
 }
 
-func (r *fakeKindleSendRepository) setClaimFailure(count int, err error) {
+func (r *fakeKindleSendRepository) setClaimError(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.claimFailure = count
 	r.claimErr = err
 }
 

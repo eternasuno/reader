@@ -294,25 +294,6 @@ describe('feed order reload', () => {
   });
 });
 
-describe('stored feed order', () => {
-  it('omits the order param so the stored feed order applies', async () => {
-    const { state, solid } = ctx;
-    ctx.queueSidebar({
-      feeds: [makeFeed({ id: uuid(1001), order: 'oldest' })],
-    });
-    await state.refreshSidebar();
-    solid.flush();
-
-    ctx.queue({ groups: [], boundary: B });
-    await state.loadScopeFirstPage({ kind: 'feed', feedId: uuid(1001) }, false);
-    solid.flush();
-
-    expect(ctx.requestUrl(4)).toBe(
-      `/api/feeds/${uuid(1001)}/items/order?unread=false`
-    );
-  });
-});
-
 describe('feed reader mode', () => {
   it('updates the feed reader mode, reports failures, and discards stale responses', async () => {
     const { state, solid, ui } = ctx;

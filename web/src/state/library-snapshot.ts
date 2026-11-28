@@ -159,7 +159,7 @@ export const changesRows = (snapshot: ListSnapshot): boolean =>
   !sameIds(
     rowIds(),
     visibleIds(
-      snapshot.ids.filter((id) => !locallyRemoved.has(id)),
+      snapshot.ids,
       snapshot.feedIds,
       pendingOverrides(folderMembership())
     )
@@ -172,21 +172,18 @@ export const replaceSnapshot = (snapshot: ListSnapshot): void => {
   if (retiredOverrides) setFolderMembership(kept);
 
   const current = list();
-  const ids = snapshot.ids.filter((id) => !locallyRemoved.has(id));
-  if (sameIds(current.ids, ids)) {
+  if (sameIds(current.ids, snapshot.ids)) {
     setList({ ...current, boundary: snapshot.boundary });
     if (retiredOverrides) invalidateLiveSnapshot();
 
     return;
   }
 
-  const feedIds = new Map<string, string>();
-  for (const id of ids) {
-    const feedId = snapshot.feedIds.get(id);
-    if (feedId !== undefined) feedIds.set(id, feedId);
-  }
-
-  setList({ ids, feedIds, boundary: snapshot.boundary });
+  setList({
+    ids: snapshot.ids,
+    feedIds: snapshot.feedIds,
+    boundary: snapshot.boundary,
+  });
   invalidateLiveSnapshot();
 };
 

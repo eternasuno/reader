@@ -42,12 +42,8 @@ type opmlWalkState struct {
 }
 
 func ParseOPML(data []byte) (OPMLDocument, error) {
-	return parseOPMLWithLimit(data, maxOPMLOutlines)
-}
-
-func parseOPMLWithLimit(data []byte, maxOutlines int) (OPMLDocument, error) {
 	payload := bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
-	if err := validateOPMLPayload(payload, maxOutlines); err != nil {
+	if err := validateOPMLPayload(payload); err != nil {
 		return OPMLDocument{}, err
 	}
 
@@ -75,15 +71,14 @@ func parseOPMLWithLimit(data []byte, maxOutlines int) (OPMLDocument, error) {
 }
 
 type opmlTokenValidator struct {
-	maxOutlines int
-	outlines    int
-	depth       int
-	seenToken   bool
+	outlines  int
+	depth     int
+	seenToken bool
 }
 
-func validateOPMLPayload(payload []byte, maxOutlines int) error {
+func validateOPMLPayload(payload []byte) error {
 	decoder := xml.NewDecoder(bytes.NewReader(payload))
-	validator := opmlTokenValidator{maxOutlines: maxOutlines}
+	var validator opmlTokenValidator
 
 	for {
 		tok, err := decoder.Token()
@@ -133,7 +128,7 @@ func (v *opmlTokenValidator) handleStartElement(start xml.StartElement) error {
 
 	if strings.EqualFold(start.Name.Local, "outline") {
 		v.outlines++
-		if v.outlines > v.maxOutlines {
+		if v.outlines > maxOPMLOutlines {
 			return NewError(ErrInvalidOpml, errors.New("opml outline count exceeds limit"))
 		}
 	}

@@ -264,7 +264,7 @@ it('retires an idle unknown entry when the recovery window omits its record', as
   await expect(state.toggleArticleRead(page.id, true)).resolves.toBe(false);
   await waitRequests(before + 2);
   expect(ctx.requestUrl(before + 1)).toBe(`/api/saved-pages?ids=${page.id}`);
-  expect(entries.get(page.id)?.confirmedKnown).toBe(false);
+  expect(entries.get(page.id)).toHaveProperty('confirmed', undefined);
 
   recovery.resolve(jsonResponse({ items: [] }));
   await vi.waitFor(() => expect(state.articleById(page.id)).toBeNull());
