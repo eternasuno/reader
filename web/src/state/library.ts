@@ -99,7 +99,7 @@ const fetchFeedOrder = (
   }
 };
 
-const fetchSnapshot = async (
+export const fetchSnapshot = async (
   scope: LibraryScope,
   unread: boolean
 ): Promise<Parameters<typeof store.acceptSnapshot>[0]> => {
@@ -174,12 +174,25 @@ export const reloadAfterFirstRefresh = async (
 
 let firstRefreshWait: AbortController | null = null;
 
+export const isFirstRefreshWaiting = (): boolean => firstRefreshWait !== null;
+
+const settleFirstRefreshWait = async (
+  feedId: string,
+  controller: AbortController
+): Promise<void> => {
+  try {
+    await reloadAfterFirstRefresh(feedId, controller.signal);
+  } finally {
+    if (firstRefreshWait === controller) firstRefreshWait = null;
+  }
+};
+
 /** `FD-SUB-2`: starts waiting for a just-subscribed feed, replacing any earlier wait. */
 export const startFirstRefreshWait = (feedId: string): void => {
   firstRefreshWait?.abort();
   const controller = new AbortController();
   firstRefreshWait = controller;
-  void reloadAfterFirstRefresh(feedId, controller.signal);
+  void settleFirstRefreshWait(feedId, controller);
 };
 
 export const retryLoad = async (): Promise<void> => {

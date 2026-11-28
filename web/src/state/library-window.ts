@@ -18,6 +18,7 @@ const CONTENT_BATCH_SIZE = 200;
 let desiredRange: RenderedRange | null = null;
 let windowRequest: WindowRequest | null = null;
 let refreshVersion = 0;
+let awaitingLayout = false;
 
 const expandedWindow = (range: RenderedRange | null): RenderedRange | null => {
   const count = store.rowIds().length;
@@ -34,7 +35,8 @@ const applyWindowBatch = (
   items: ReadonlyArray<FeedItem | SavedPage>,
   kind: LibraryArticle['kind'],
   seq: number,
-  stale: boolean
+  stale: boolean,
+  boundary: string | null
 ): void => {
   const byId = new Map(items.map((item) => [item.id, item]));
   const currentIds = new Set(store.snapshotIds());
@@ -45,7 +47,11 @@ const applyWindowBatch = (
 
     const item = byId.get(id);
     if (item !== undefined) received.push(store.toLibraryArticle(kind, item));
-    else if (!store.hasNewerRecord(id, seq)) omitted.push(id);
+    else if (
+      boundary === store.listBoundary() &&
+      !store.hasNewerRecord(id, seq)
+    )
+      omitted.push(id);
   }
 
   store.removeListIds(omitted);
@@ -60,6 +66,7 @@ const loadWindowBatch = async (
   signal: AbortSignal
 ): Promise<void> => {
   const version = refreshVersion;
+  const boundary = store.listBoundary();
   const snapshot = beginRecordSnapshot();
   try {
     const { items } = await (scope.kind === 'later'
@@ -72,7 +79,8 @@ const loadWindowBatch = async (
       items,
       store.articleKindOf(scope),
       snapshot.seq,
-      version !== refreshVersion
+      version !== refreshVersion,
+      boundary
     );
   } finally {
     snapshot.release();
@@ -125,7 +133,7 @@ const runWindow = async (controller: AbortController): Promise<void> => {
   let range = desiredRange;
   let version = refreshVersion;
   try {
-    while (isCurrent(generation)) {
+    while (isCurrent(generation) && !awaitingLayout) {
       if (!isDesired(range, version)) {
         range = desiredRange;
         version = refreshVersion;
@@ -163,6 +171,7 @@ const runWindow = async (controller: AbortController): Promise<void> => {
 export const startWindow = (): void => {
   if (
     windowRequest !== null ||
+    awaitingLayout ||
     store.listBoundary() === null ||
     expandedWindow(desiredRange) === null
   )
@@ -189,7 +198,23 @@ export const refreshWindow = (): void => {
   startWindow();
 };
 
+export const refreshWindowAfterLayout = (): void => {
+  awaitingLayout = true;
+  refreshWindow();
+  const generation = store.requestState.generation;
+  // Scroll events from anchor restoration and their range reports run during rendering.
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      if (!isCurrent(generation)) return;
+
+      awaitingLayout = false;
+      startWindow();
+    }, 0);
+  });
+};
+
 export const resetWindow = (): void => {
+  awaitingLayout = false;
   desiredRange = null;
   windowRequest?.controller.abort();
 };

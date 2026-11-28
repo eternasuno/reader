@@ -45,8 +45,9 @@ describe('local saved pages: newest order', () => {
 
     state.removeSavedPageLocal(uuid(1015));
     solid.flush();
+    expect(state.rowIds()).toEqual([uuid(1018)]);
     expect(state.savedUnreadCount()).toBe(1);
-    expect(state.listRevision()).toBe(3);
+    expect(state.listRevision()).toBe(4);
   });
 });
 

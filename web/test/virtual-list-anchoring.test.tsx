@@ -1,6 +1,11 @@
 import { render } from '@solidjs/web';
 import { createSignal, flush } from 'solid-js';
 import { afterEach, expect, it, vi } from 'vitest';
+import {
+  acceptSnapshot,
+  replaceSnapshot,
+  rowIds,
+} from '../src/state/library-snapshot';
 import { VirtualList } from '../src/ui';
 import { installResizeObserver } from './support/virtual-helpers';
 
@@ -139,6 +144,34 @@ it.each([
     expect(row?.style.transform).toBe(`translateY(${scrollTop + offset}px)`);
   }
 );
+
+it('keeps the first visible article fixed when a live snapshot removes a row above it', async () => {
+  acceptSnapshot({
+    ids: ['a', 'b', 'c', 'd', 'e', 'f'],
+    feedIds: new Map(),
+    boundary: 'initial',
+  });
+  flush();
+  const { scroller } = mountList({ items: rowIds });
+  scroller.scrollTop = 225;
+  scroller.dispatchEvent(new Event('scroll'));
+  flush();
+
+  replaceSnapshot({
+    ids: ['a', 'c', 'd', 'e', 'f'],
+    feedIds: new Map(),
+    boundary: 'live',
+  });
+  flush();
+  await Promise.resolve();
+  expect(scroller.scrollTop).toBe(125);
+
+  scroller.dispatchEvent(new Event('scroll'));
+  flush();
+  const row = scroller.querySelector<HTMLElement>('[data-index="1"]');
+  expect(row?.textContent).toBe('c');
+  expect(row?.style.transform).toBe('translateY(100px)');
+});
 
 it('keeps the viewport at the top when rows are prepended within one pixel of the top', async () => {
   const [items, setItems] = createSignal(['a', 'b', 'c', 'd']);

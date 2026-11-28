@@ -11,6 +11,7 @@ import { t } from '../i18n';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
 import { feedMoveTracker, LatestTokenMap } from './library-mutations';
+import { invalidateLiveSnapshot } from './library-snapshot';
 import { trimRecordCache, updateFolderMembership } from './library-store';
 import { onSessionCleared } from './session';
 import * as sidebar from './sidebar';
@@ -37,7 +38,12 @@ const reconcileFeedMove = (
   if (current !== undefined && current !== targetFolderId) {
     sidebar.updateFeedLocal(feedId, { folderId: targetFolderId });
   }
-  updateFolderMembership(feedId, targetFolderId);
+
+  const membershipChanged = updateFolderMembership(feedId, targetFolderId);
+  if (!membershipChanged && !feedMoveTracker.hasPendingMove(feedId)) {
+    invalidateLiveSnapshot();
+  }
+
   flush();
 };
 

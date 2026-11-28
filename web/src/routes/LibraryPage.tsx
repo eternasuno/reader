@@ -2,6 +2,7 @@ import type { JSX } from '@solidjs/web';
 import { createEffect, onSettled } from 'solid-js';
 import { sidebarCollapsed, trackLibraryMount } from '../state';
 import { mountClock } from '../state/clock';
+import { mountLiveList } from '../state/library-live';
 import { mountSidebarRefresh } from '../state/sidebar-refresh';
 import type { PanelName } from './LibraryPanels';
 import { LibraryLayout } from './LibraryPanels';
@@ -33,6 +34,7 @@ export function LibraryPage(): JSX.Element {
 
   // `LIB-COUNT-2`: the 60 s count polling runs only while the library is mounted.
   onSettled(() => mountSidebarRefresh());
+  onSettled(() => mountLiveList());
   onSettled(() => mountClock());
 
   // `LIB-VIEW-1`: opening the narrow-screen drawer moves focus to the drawer panel itself.

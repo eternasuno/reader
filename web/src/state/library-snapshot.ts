@@ -1,4 +1,5 @@
 import { createMemo, createSignal } from 'solid-js';
+import { feedMoveTracker } from './library-mutations';
 import type { LibraryScope } from './scope';
 
 const [activeScope, setActiveScope] = createSignal<LibraryScope>({
@@ -51,6 +52,13 @@ export const listBoundary = (): string | null => list().boundary;
 export const feedIdOf = (id: string): string | null =>
   list().feedIds.get(id) ?? null;
 
+const sameIds = (
+  previous: ReadonlyArray<string>,
+  next: ReadonlyArray<string>
+): boolean =>
+  previous.length === next.length &&
+  previous.every((id, index) => id === next[index]);
+
 export const rowIds = createMemo(
   (): ReadonlyArray<string> => {
     const { ids, feedIds } = list();
@@ -68,9 +76,7 @@ export const rowIds = createMemo(
     });
   },
   {
-    equals: (previous, next) =>
-      previous.length === next.length &&
-      previous.every((id, index) => id === next[index]),
+    equals: sameIds,
   }
 );
 
@@ -100,6 +106,10 @@ export const groupStartIds = createMemo(() => {
   return starts;
 });
 
+export const invalidateLiveSnapshot = (): void => {
+  bumpListRevision((revision) => revision + 1);
+};
+
 export const acceptSnapshot = (snapshot: ListSnapshot): void => {
   const localIds = list().ids;
   const ids = new Set(localIds);
@@ -114,20 +124,49 @@ export const acceptSnapshot = (snapshot: ListSnapshot): void => {
 
   setList({ ids: [...ids], feedIds, boundary: snapshot.boundary });
   locallyRemoved.clear();
-  bumpListRevision((revision) => revision + 1);
+  invalidateLiveSnapshot();
+};
+
+export const replaceSnapshot = (snapshot: ListSnapshot): void => {
+  const overrides = folderMembership();
+  const pendingOverrides = new Map(
+    [...overrides].filter(([feedId]) => feedMoveTracker.hasPendingMove(feedId))
+  );
+  const retiredOverrides = pendingOverrides.size !== overrides.size;
+  if (retiredOverrides) setFolderMembership(pendingOverrides);
+
+  const current = list();
+  const ids = snapshot.ids.filter((id) => !locallyRemoved.has(id));
+  if (sameIds(current.ids, ids)) {
+    setList({ ...current, boundary: snapshot.boundary });
+    if (retiredOverrides) invalidateLiveSnapshot();
+
+    return;
+  }
+
+  const feedIds = new Map<string, string>();
+  for (const id of ids) {
+    const feedId = snapshot.feedIds.get(id);
+    if (feedId !== undefined) feedIds.set(id, feedId);
+  }
+
+  setList({ ids, feedIds, boundary: snapshot.boundary });
+  invalidateLiveSnapshot();
 };
 
 export const updateFolderMembership = (
   feedId: string,
   folderId: string | null
-): void => {
-  if (activeScope().kind !== 'folder') return;
+): boolean => {
+  if (activeScope().kind !== 'folder') return false;
 
   const overrides = folderMembership();
-  if (overrides.get(feedId) === folderId) return;
+  if (overrides.get(feedId) === folderId) return false;
 
   setFolderMembership(new Map(overrides).set(feedId, folderId));
-  bumpListRevision((revision) => revision + 1);
+  invalidateLiveSnapshot();
+
+  return true;
 };
 
 let libraryMounts = 0;
@@ -152,6 +191,7 @@ export const removeListIds = (ids: ReadonlyArray<string>): void => {
     for (const id of ids) locallyRemoved.add(id);
   }
 
+  invalidateLiveSnapshot();
   const removed = new Set(ids);
   const remaining = snapshot.ids.filter((id) => !removed.has(id));
   if (remaining.length === snapshot.ids.length) return;
@@ -159,7 +199,6 @@ export const removeListIds = (ids: ReadonlyArray<string>): void => {
   const feedIds = new Map(snapshot.feedIds);
   for (const id of removed) feedIds.delete(id);
   setList({ ...snapshot, ids: remaining, feedIds });
-  bumpListRevision((revision) => revision + 1);
 };
 
 export const clearList = (): void => {
@@ -178,5 +217,5 @@ export const prependListId = (id: string): void => {
     ...snapshot,
     ids: [id, ...snapshot.ids.filter((entry) => entry !== id)],
   });
-  bumpListRevision((revision) => revision + 1);
+  invalidateLiveSnapshot();
 };
