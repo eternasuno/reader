@@ -536,11 +536,7 @@ func parseBatchIDs(r *http.Request) ([]string, error) {
 		return nil, err
 	}
 
-	var ids []string
-	if query.Has("ids") {
-		ids = strings.SplitN(query.Get("ids"), ",", domain.MaxBatchIDs+1)
-	}
-
+	ids := strings.SplitN(query.Get("ids"), ",", domain.MaxBatchIDs+1)
 	if err := domain.ValidateBatchIDs(ids); err != nil {
 		return nil, err
 	}

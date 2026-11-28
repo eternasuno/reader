@@ -118,7 +118,6 @@ type draftBook struct {
 	imageBytesUsed     int64
 	savedPageIDs       []string
 	feedItemIDs        []string
-	articleCount       int
 }
 
 type finishedBook struct {
@@ -130,7 +129,6 @@ type finishedBook struct {
 	images       []imageManifestItem
 	savedPageIDs []string
 	feedItemIDs  []string
-	articleCount int
 }
 
 type preparedCandidate struct {
@@ -485,7 +483,6 @@ func (p *packer) commitCandidate(
 	}
 
 	book.imageBytesUsed += plan.addedImgBytes
-	book.articleCount++
 
 	if article.IsSavedPage {
 		book.savedPageIDs = append(book.savedPageIDs, article.ID)
@@ -607,7 +604,7 @@ func (p *packer) finalizeCurrentBook() error {
 		return err
 	}
 
-	if cur.articleCount == 0 {
+	if len(cur.chapters) == 0 {
 		if err := p.removeSpoolPath(cur.spoolPath); err != nil {
 			return err
 		}
@@ -627,7 +624,6 @@ func (p *packer) finalizeCurrentBook() error {
 		images:       cur.images,
 		savedPageIDs: cur.savedPageIDs,
 		feedItemIDs:  cur.feedItemIDs,
-		articleCount: cur.articleCount,
 	})
 
 	return nil
@@ -706,7 +702,7 @@ func (p *packer) ReadBook(ctx context.Context, index int) (domain.EPUBBook, erro
 		Data:         data,
 		SavedPageIDs: item.savedPageIDs,
 		FeedItemIDs:  item.feedItemIDs,
-		ArticleCount: item.articleCount,
+		ArticleCount: len(item.chapters),
 	}, nil
 }
 

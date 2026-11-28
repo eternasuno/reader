@@ -86,7 +86,7 @@ type LibraryRecords = {
   retainedId: string | null;
 };
 
-type RecordFreshness = { seq?: number; stale: boolean };
+type RecordFreshness = { seq: number; stale: boolean };
 
 const CACHE_BUDGET = 1000;
 const [records, setRecords] = createStore<LibraryRecords>({
@@ -158,11 +158,10 @@ export const trimRecordCache = (): void => {
 const mergeRecord = (
   draft: LibraryRecords,
   incoming: LibraryArticle,
-  snapshotSeq?: number,
+  snapshotSeq: number,
   stale = false
 ): void => {
-  if (snapshotSeq !== undefined && hasNewerRecord(incoming.id, snapshotSeq))
-    return;
+  if (hasNewerRecord(incoming.id, snapshotSeq)) return;
 
   freshness.set(incoming.id, { seq: snapshotSeq, stale });
   const existing = draft.byId[incoming.id];
@@ -206,7 +205,7 @@ export const retainReaderArticle = (articleId: string | null): void => {
 
 export const upsertArticle = (
   article: LibraryArticle,
-  snapshotSeq?: number
+  snapshotSeq: number
 ): void => {
   setRecords((draft) => {
     mergeRecord(draft, article, snapshotSeq);
@@ -248,8 +247,10 @@ export const prependRow = (article: LibraryArticle, seq: number): boolean => {
   return true;
 };
 
-export const hasNewerRecord = (id: string, seq: number): boolean =>
-  (freshness.get(id)?.seq ?? -1) > seq;
+export const hasNewerRecord = (id: string, seq: number): boolean => {
+  const record = freshness.get(id);
+  return record !== undefined && record.seq > seq;
+};
 
 export const removeListIds = (ids: ReadonlyArray<string>): void => {
   removeSnapshotIds(ids);

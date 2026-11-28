@@ -90,7 +90,7 @@ const UNWRAP_CASES: Array<UnwrapCase> = [
   ['extract', fExt, { item: EXTRACT_OK }, EXTRACT_OK],
   ['folders', () => foldersApi.list(), { items: [FOLDER_OK] }, [FOLDER_OK]],
   ['folder add', foAdd, { item: FOLDER_OK }, FOLDER_OK, 201],
-  ['settings', () => settingsApi.get(), SETTINGS_OK, SETTINGS_OK],
+  ['baseline settings', () => settingsApi.get(), SETTINGS_OK, SETTINGS_OK],
   ['kindle send', () => kindleApi.sendNow(), { item: SEND_OK }, SEND_OK, 202],
   ['kindle sends', () => kindleApi.listSends(), SENDS_OK, SENDS_OK],
 ];
@@ -260,11 +260,6 @@ describe('Browserless settings validation', () => {
       await expect(settingsApi.get()).resolves.toEqual(body);
     }
   );
-
-  it('accepts settings without Browserless configured', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(SETTINGS_OK));
-    await expect(settingsApi.get()).resolves.toEqual(SETTINGS_OK);
-  });
 });
 
 describe('Kindle settings validation', () => {

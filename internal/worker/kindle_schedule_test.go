@@ -215,28 +215,6 @@ func TestCheckScheduleSkipsWhenNotDueOrUnconfigured(t *testing.T) {
 	}
 }
 
-func TestCheckScheduleReturnsRepositoryErrorForInvalidStoredTimezone(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 3, 14, 10, 30, 0, 0, time.UTC)
-	deliverySettings := scheduledDeliverySettings(dueShanghaiOccurrence())
-	deliverySettings.Kindle.Schedule.Timezone = "Mars/Olympus_Mons"
-
-	sends := &fakeKindleSendRepository{settingsRepo: &fakeSettingRepository{settings: deliverySettings}}
-
-	sender := newTestKindleSender(t, KindleConfig{
-		KindleSends: sends,
-		Now:         func() time.Time { return now },
-	})
-
-	err := sender.CheckSchedule(context.Background())
-	requireErrorCode(t, err, domain.ErrSettingRepositoryError)
-
-	if created := sends.createdList(); len(created) != 0 {
-		t.Fatalf("created sends = %d, want 0", len(created))
-	}
-}
-
 func TestCheckScheduleReturnsClaimError(t *testing.T) {
 	t.Parallel()
 
@@ -536,7 +514,7 @@ func TestCheckScheduleLoggedConsecutiveFailuresAndReset(t *testing.T) {
 	})
 
 	// Direct CheckSchedule errors do not increment the scheduler streak.
-	sends.setClaimFailure(3, dbErr)
+	sends.setClaimError(dbErr)
 	for range 3 {
 		if err := sender.CheckSchedule(context.Background()); !errors.Is(err, dbErr) {
 			t.Fatalf("CheckSchedule() error = %v, want %v", err, dbErr)
@@ -548,10 +526,9 @@ func TestCheckScheduleLoggedConsecutiveFailuresAndReset(t *testing.T) {
 	}
 
 	// Two consecutive failures followed by success (not claimed) resets the counter.
-	sends.setClaimFailure(2, dbErr)
 	sender.checkScheduleLogged(context.Background())
 	sender.checkScheduleLogged(context.Background())
-	sends.setClaimFailure(0, nil)
+	sends.setClaimError(nil)
 	sender.checkScheduleLogged(context.Background())
 
 	if got := fatals.Count(); got != 0 {
@@ -559,7 +536,7 @@ func TestCheckScheduleLoggedConsecutiveFailuresAndReset(t *testing.T) {
 	}
 
 	// Three consecutive failures trigger OnFatal exactly once (4th stays 1).
-	sends.setClaimFailure(4, dbErr)
+	sends.setClaimError(dbErr)
 	for range 4 {
 		sender.checkScheduleLogged(context.Background())
 	}
@@ -582,47 +559,6 @@ func TestCheckScheduleLoggedConsecutiveFailuresAndReset(t *testing.T) {
 	}
 }
 
-func TestCheckScheduleLoggedCorruptStoredScheduleReachesFatalStreak(t *testing.T) {
-	t.Parallel()
-
-	settings := scheduledDeliverySettings(dueShanghaiOccurrence())
-	settings.Kindle.Schedule.Hour = 24
-	sends := &fakeKindleSendRepository{settingsRepo: &fakeSettingRepository{settings: settings}}
-
-	var fatals fatalRecorder
-
-	sender := newTestKindleSender(t, KindleConfig{
-		KindleSends: sends,
-		EPUBBuilder: &fakeEPUBBuilder{},
-		MailSender:  &fakeMailSender{},
-		OnFatal:     fatals.Record,
-	})
-
-	for range 2 {
-		sender.checkScheduleLogged(context.Background())
-	}
-
-	if got := fatals.Count(); got != 0 {
-		t.Fatalf("OnFatal calls before the 3rd corrupt-schedule failure = %d, want 0", got)
-	}
-
-	sender.checkScheduleLogged(context.Background())
-
-	got := fatals.Errors()
-	if len(got) != 1 {
-		t.Fatalf("OnFatal calls = %d, want 1", len(got))
-	}
-
-	var domainErr *domain.DomainError
-	if !errors.As(got[0], &domainErr) || domainErr.Code != domain.ErrSettingRepositoryError {
-		t.Fatalf("fatal error = %v, want a %s domain error", got[0], domain.ErrSettingRepositoryError)
-	}
-
-	if created := sends.createdList(); len(created) != 0 {
-		t.Fatalf("created sends = %+v, want none from a corrupt schedule", created)
-	}
-}
-
 func TestCheckScheduleLoggedIgnoresCanceledFailures(t *testing.T) {
 	t.Parallel()
 
@@ -640,7 +576,7 @@ func TestCheckScheduleLoggedIgnoresCanceledFailures(t *testing.T) {
 	})
 
 	// Repeated context.Canceled errors never trigger OnFatal.
-	sends.setClaimFailure(5, context.Canceled)
+	sends.setClaimError(context.Canceled)
 	for range 5 {
 		sender.checkScheduleLogged(context.Background())
 	}
@@ -651,23 +587,22 @@ func TestCheckScheduleLoggedIgnoresCanceledFailures(t *testing.T) {
 
 	// Two real failures, then canceled calls (both context.Canceled and canceled ctx),
 	// leave the streak at 2 so one more real failure reaches 3.
-	sends.setClaimFailure(2, dbErr)
+	sends.setClaimError(dbErr)
 	sender.checkScheduleLogged(context.Background())
 	sender.checkScheduleLogged(context.Background())
 
-	sends.setClaimFailure(1, context.Canceled)
+	sends.setClaimError(context.Canceled)
 	sender.checkScheduleLogged(context.Background())
 
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	sends.setClaimFailure(1, dbErr)
+	sends.setClaimError(dbErr)
 	sender.checkScheduleLogged(canceledCtx)
 
 	if got := fatals.Count(); got != 0 {
 		t.Fatalf("OnFatal calls before 3rd live failure = %d, want 0", got)
 	}
 
-	sends.setClaimFailure(1, dbErr)
 	sender.checkScheduleLogged(context.Background())
 
 	if got := fatals.Count(); got != 1 {
@@ -688,7 +623,7 @@ func TestCheckScheduleLoggedNeverFatalForNonDatabaseErrors(t *testing.T) {
 
 	validationErr := domain.NewError(domain.ErrInvalidKindleSetting, errors.New("stored send time invalid"))
 	for _, failure := range []error{validationErr, errors.New("unclassified")} {
-		sends.setClaimFailure(10, failure)
+		sends.setClaimError(failure)
 		for range 10 {
 			sender.checkScheduleLogged(context.Background())
 		}

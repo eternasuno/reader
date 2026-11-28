@@ -42,28 +42,21 @@ func (r *FeedItemRepo) SnapshotByFeed(ctx context.Context, feedID string, order 
 }
 
 func groupedFeedItemSnapshotQuery(folderID *string, params domain.SnapshotParams) (string, []any) {
-	query := `SELECT fi.id, fi.feed_id FROM feed_item fi JOIN feed f ON f.id = fi.feed_id WHERE fi.id <= ?`
+	query := `SELECT article.id, article.feed_id FROM feed_item AS article JOIN feed f ON f.id = article.feed_id WHERE article.id <= ?`
 	args := []any{params.Boundary}
 	if folderID != nil {
 		query += ` AND f.folder_id = ?`
 		args = append(args, *folderID)
 	}
 
-	switch {
-	case params.Unread && params.Keep != "":
-		query += ` AND (fi.read = 0 OR fi.id = ?)`
-		args = append(args, params.Keep)
-	case params.Unread:
-		query += ` AND fi.read = 0`
-	}
-
-	query += ` ORDER BY f.title ASC, f.id ASC, CASE WHEN f.sort_order = ? THEN fi.id END ASC, fi.id DESC LIMIT ?`
+	query, args = appendUnreadFilter(query, args, params)
+	query += ` ORDER BY f.title ASC, f.id ASC, CASE WHEN f.sort_order = ? THEN article.id END ASC, article.id DESC LIMIT ?`
 
 	return query, append(args, string(domain.SortOrderOldest), domain.ListSnapshotLimit+1)
 }
 
 func singleFeedItemSnapshotQuery(feedID string, order domain.SortOrder, params domain.SnapshotParams) (string, []any) {
-	query := `SELECT id, feed_id FROM feed_item WHERE feed_id = ? AND id <= ?`
+	query := `SELECT article.id, article.feed_id FROM feed_item AS article WHERE article.feed_id = ? AND article.id <= ?`
 	args := []any{feedID, params.Boundary}
 	query, args = appendUnreadFilter(query, args, params)
 
@@ -72,16 +65,15 @@ func singleFeedItemSnapshotQuery(feedID string, order domain.SortOrder, params d
 		direction = ` ASC`
 	}
 
-	return query + ` ORDER BY id` + direction + ` LIMIT ?`, append(args, domain.ListSnapshotLimit+1)
+	return query + ` ORDER BY article.id` + direction + ` LIMIT ?`, append(args, domain.ListSnapshotLimit+1)
 }
 
-// appendUnreadFilter adds the unread filter for single-table snapshots; `Keep` survives it.
 func appendUnreadFilter(query string, args []any, params domain.SnapshotParams) (string, []any) {
 	switch {
 	case params.Unread && params.Keep != "":
-		return query + ` AND (read = 0 OR id = ?)`, append(args, params.Keep)
+		return query + ` AND (article.read = 0 OR article.id = ?)`, append(args, params.Keep)
 	case params.Unread:
-		return query + ` AND read = 0`, args
+		return query + ` AND article.read = 0`, args
 	default:
 		return query, args
 	}

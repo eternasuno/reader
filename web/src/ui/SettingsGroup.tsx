@@ -6,21 +6,19 @@ import { Show } from 'solid-js';
  * divided rows, and an optional right-aligned footer for the group's actions.
  */
 export function SettingsGroup(props: {
-  title?: string;
+  title: string;
   aside?: JSX.Element;
   footer?: JSX.Element;
   children: JSX.Element;
 }): JSX.Element {
   return (
     <section class="flex flex-col gap-2">
-      <Show when={props.title !== undefined || props.aside !== undefined}>
-        <div class="flex min-h-6 items-center justify-between gap-2 px-1">
-          <h2 class="text-xs font-semibold tracking-wider text-base-content/50 uppercase">
-            {props.title}
-          </h2>
-          {props.aside}
-        </div>
-      </Show>
+      <div class="flex min-h-6 items-center justify-between gap-2 px-1">
+        <h2 class="text-xs font-semibold tracking-wider text-base-content/50 uppercase">
+          {props.title}
+        </h2>
+        {props.aside}
+      </div>
       <div class="overflow-hidden rounded-box border border-base-300 bg-base-200/50">
         <div class="divide-y divide-base-300">{props.children}</div>
         <Show when={props.footer}>

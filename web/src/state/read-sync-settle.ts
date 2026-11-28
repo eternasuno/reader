@@ -24,7 +24,6 @@ export const settleSuccess = (
     if (entry === undefined) continue;
     entry.inflight = false;
     entry.confirmed = sentRead;
-    entry.confirmedKnown = true;
     entry.settledAt = clock();
     resolveWaiters(id, entry);
   }
@@ -45,16 +44,18 @@ const settleFailedEntry = (
   if (ambiguous) ambiguousIds.add(id);
   let lost = false;
   if (entry.queuedCount === 0) {
-    if (entry.confirmedKnown && entry.confirmed !== undefined) {
+    if (entry.confirmed !== undefined) {
       lost = setDisplay(id, entry, entry.confirmed);
     } else {
       ambiguousIds.add(id);
       lost = true;
     }
   }
+
   // The write may have committed, so a queued intent must be sent even if it equals the old value.
-  if (ambiguous) entry.confirmedKnown = false;
+  if (ambiguous) entry.confirmed = undefined;
   resolveWaiters(id, entry);
+
   return lost;
 };
 

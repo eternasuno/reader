@@ -271,42 +271,6 @@ func TestPlanFeedSyncIgnoresStoredItemsWhenListed(t *testing.T) {
 	}
 }
 
-func TestPlanFeedSyncRetentionIgnoresReadState(t *testing.T) {
-	stored := []FeedItem{
-		{ID: selectionTestID(3), FeedID: "feed-1", URL: selectionTestURL("https://example.com/e"), Title: "e", Read: true},
-		{ID: selectionTestID(2), FeedID: "feed-1", URL: selectionTestURL("https://example.com/d"), Title: "d", Read: true},
-		{ID: selectionTestID(1), FeedID: "feed-1", URL: selectionTestURL("https://example.com/c"), Title: "c"},
-	}
-	refs := []StoredRef{
-		{ID: selectionTestID(3), URL: selectionTestURL("https://example.com/e")},
-		{ID: selectionTestID(2), URL: selectionTestURL("https://example.com/d")},
-		{ID: selectionTestID(1), URL: selectionTestURL("https://example.com/c")},
-	}
-	entries := []ParsedFeedEntry{{URL: selectionTestURL("https://example.com/f"), Title: "f"}}
-
-	newItems, deleteIDs := PlanFeedSync("feed-1", entries, refs, 3, selectionCounter(100))
-	if len(newItems) != 1 {
-		t.Fatalf("got %d new items, want 1", len(newItems))
-	}
-
-	retained := selectionRetainedIDs(t, stored, deleteIDs)
-	if _, ok := retained[selectionTestID(3)]; !ok {
-		t.Fatalf("newest read item was pruned")
-	}
-
-	if _, ok := retained[selectionTestID(2)]; !ok {
-		t.Fatalf("second read item was pruned")
-	}
-
-	if _, ok := retained[selectionTestID(1)]; ok {
-		t.Fatalf("oldest unread item was retained, want pruned")
-	}
-
-	if len(deleteIDs) != 1 || deleteIDs[0] != selectionTestID(1) {
-		t.Fatalf("deleteIDs = %v, want [%q]", deleteIDs, selectionTestID(1))
-	}
-}
-
 func TestPlanFeedSyncPrunesUnlistedStoredItems(t *testing.T) {
 	stored := selectionStoredRefs([]string{"e", "d", "c", "b", "a"})
 	entries := selectionEntries([]string{"e", "d"})

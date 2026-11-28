@@ -44,8 +44,8 @@ const isNonEmptyString = (value: unknown): value is string =>
 const isBoolean = (value: unknown): value is boolean =>
   typeof value === 'boolean';
 
-export const isFiniteNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value);
+const isFiniteNumber = (value: unknown): value is number =>
+  Number.isFinite(value);
 
 const UUID_V7 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

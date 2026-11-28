@@ -58,7 +58,7 @@ const needsReaderRecovery = (
     sentEpoch === queueState.epoch &&
     entry?.settledAt === settledAt &&
     isEntryIdle(entry) &&
-    !entry.confirmedKnown
+    entry.confirmed === undefined
   );
 };
 
@@ -93,6 +93,6 @@ export const recoverReadSnapshots = (): void => {
   if (!recoverReader) return;
 
   const entry = entries.get(article.id);
-  if (entry !== undefined && !entry.confirmedKnown)
+  if (entry !== undefined && entry.confirmed === undefined)
     void recoverOpenArticle(article.id, entry.settledAt, queueState.epoch);
 };

@@ -78,22 +78,23 @@ func TestSavedPageCreateAndDuplicate(t *testing.T) {
 func TestSavedPageCreateConflictAtInsertReturnsID(t *testing.T) {
 	t.Parallel()
 
-	var wrapped *failingSavedPageRepo
-	h := newHarnessWith(t, func(cfg *Config) {
-		wrapped = &failingSavedPageRepo{SavedPageRepository: cfg.SavedPages, bypassGetByID: true}
-		cfg.SavedPages = wrapped
-	})
-
-	existing := h.seedSavedPage("https://user:secret@example.com/race", false)
+	h := newHarness(t)
 	h.extractor.article = domain.ExtractedArticle{Title: "Hello", Content: "<p>hi</p>"}
+
+	var competingID string
+	h.extractor.beforeExtract = func(_ context.Context, target domain.NormalizedURL) error {
+		competingID = h.seedSavedPage(target.Raw(), false).ID
+
+		return nil
+	}
 
 	duplicate := h.authed(http.MethodPost, "/api/saved-pages", map[string]any{"url": "https://user:secret@example.com/race?utm_source=x"})
 	requireAPIError(t, duplicate, http.StatusConflict, "SavedPageAlreadyExists")
 
 	var conflict errorResponse
 	decodeBody(t, duplicate, &conflict)
-	if conflict.ID != existing.ID {
-		t.Fatalf("conflict id = %q, want %q", conflict.ID, existing.ID)
+	if competingID == "" || conflict.ID != competingID {
+		t.Fatalf("conflict id = %q, competing page id = %q", conflict.ID, competingID)
 	}
 
 	if conflict.URL != "https://example.com/race" || strings.Contains(duplicate.Body.String(), "secret") {

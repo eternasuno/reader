@@ -49,15 +49,14 @@ func (c *testClock) Advance(delta time.Duration) {
 	c.current = c.current.Add(delta)
 }
 
-// failingSavedPageRepo wraps a real repository for deliberate error/race injection.
+// failingSavedPageRepo wraps a real repository for deliberate error injection.
 
 type failingSavedPageRepo struct {
 	domain.SavedPageRepository
-	snapshotErr   error
-	batchErr      error
-	createErr     error
-	unreadErr     error
-	bypassGetByID bool
+	snapshotErr error
+	batchErr    error
+	createErr   error
+	unreadErr   error
 }
 
 func (r *failingSavedPageRepo) Snapshot(ctx context.Context, params domain.SnapshotParams) ([]string, error) {
@@ -90,14 +89,6 @@ func (r *failingSavedPageRepo) UnreadCount(ctx context.Context, boundary string)
 	}
 
 	return r.SavedPageRepository.UnreadCount(ctx, boundary)
-}
-
-func (r *failingSavedPageRepo) GetIDByURL(ctx context.Context, target domain.NormalizedURL) (string, bool, error) {
-	if r.bypassGetByID {
-		return "", false, nil
-	}
-
-	return r.SavedPageRepository.GetIDByURL(ctx, target)
 }
 
 // Adapter doubles used by the HTTP handlers for network, parsing, and worker observation.

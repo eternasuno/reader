@@ -51,9 +51,9 @@ func (r *SavedPageRepo) Snapshot(ctx context.Context, params domain.SnapshotPara
 }
 
 func savedPageSnapshotQuery(params domain.SnapshotParams) (string, []any) {
-	query, args := appendUnreadFilter(`SELECT id FROM saved_page WHERE id <= ?`, []any{params.Boundary}, params)
+	query, args := appendUnreadFilter(`SELECT article.id FROM saved_page AS article WHERE article.id <= ?`, []any{params.Boundary}, params)
 
-	return query + ` ORDER BY id DESC LIMIT ?`, append(args, domain.ListSnapshotLimit+1)
+	return query + ` ORDER BY article.id DESC LIMIT ?`, append(args, domain.ListSnapshotLimit+1)
 }
 
 func (r *SavedPageRepo) GetByIDs(ctx context.Context, ids []string) ([]domain.SavedPage, error) {
@@ -122,7 +122,7 @@ func (r *SavedPageRepo) Create(ctx context.Context, page domain.SavedPage) (doma
 
 		var existingID string
 		lookupErr := tx.QueryRowContext(ctx, `SELECT id FROM saved_page WHERE url = ?`, page.URL.Raw()).Scan(&existingID)
-		if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+		if lookupErr != nil {
 			return lookupErr
 		}
 

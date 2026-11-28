@@ -164,7 +164,7 @@ func assertSucceededRefresh(t *testing.T, got succeededRefresh, attemptID string
 		t.Fatalf("entries = %+v, want %+v in source order", got.entries, entries)
 	}
 
-	wantNext := finishedAt.Add(defaultRefreshInterval)
+	wantNext := finishedAt.Add(30 * time.Minute)
 	if !got.finishedAt.Equal(finishedAt) || !got.nextRefreshAt.Equal(wantNext) {
 		t.Fatalf("finished/next = %v/%v, want %v/%v", got.finishedAt, got.nextRefreshAt, finishedAt, wantNext)
 	}
@@ -242,10 +242,8 @@ func TestRefreshRecordsExternalFailures(t *testing.T) {
 			t.Parallel()
 
 			finishedAt := refreshTestNow.Add(3 * time.Second)
-			interval := 10 * time.Minute
 
 			fx := newRefreshFixture(testRefreshFeed(t, "feed-1"))
-			fx.cfg.Interval = interval
 			fx.cfg.Now = sequenceClock(refreshTestNow, finishedAt)
 			tc.setup(fx.fetcher, fx.parser)
 
@@ -266,7 +264,7 @@ func TestRefreshRecordsExternalFailures(t *testing.T) {
 				feedID:        "feed-1",
 				summary:       tc.summary,
 				finishedAt:    finishedAt,
-				nextRefreshAt: finishedAt.Add(interval),
+				nextRefreshAt: finishedAt.Add(30 * time.Minute),
 			}
 			if failed[0] != want {
 				t.Fatalf("FailRefresh = %+v, want %+v", failed[0], want)

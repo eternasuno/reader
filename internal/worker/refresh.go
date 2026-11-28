@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultRefreshConcurrency  = 5
-	defaultRefreshInterval     = 30 * time.Minute
+	refreshInterval            = 30 * time.Minute
 	defaultRefreshPollInterval = time.Minute
 	releaseMaxAttempts         = 3
 	defaultReleaseBaseBackoff  = 50 * time.Millisecond
@@ -26,8 +26,6 @@ type RefreshConfig struct {
 	Fetcher     domain.FeedFetcher
 	Parser      domain.FeedParser
 	Concurrency int
-	// Interval is the delay from a refresh finishing to the feed becoming due again.
-	Interval time.Duration
 	// PollInterval is how often idle workers look for due feeds without a Wake.
 	PollInterval time.Duration
 	Now          func() time.Time
@@ -42,7 +40,6 @@ type RefreshQueue struct {
 	fetcher            domain.FeedFetcher
 	parser             domain.FeedParser
 	concurrency        int
-	interval           time.Duration
 	pollInterval       time.Duration
 	releaseBaseBackoff time.Duration
 	now                func() time.Time
@@ -63,11 +60,6 @@ func NewRefreshQueue(cfg RefreshConfig) *RefreshQueue {
 		concurrency = defaultRefreshConcurrency
 	}
 
-	interval := cfg.Interval
-	if interval <= 0 {
-		interval = defaultRefreshInterval
-	}
-
 	pollInterval := cfg.PollInterval
 	if pollInterval <= 0 {
 		pollInterval = defaultRefreshPollInterval
@@ -83,7 +75,6 @@ func NewRefreshQueue(cfg RefreshConfig) *RefreshQueue {
 		fetcher:            cfg.Fetcher,
 		parser:             cfg.Parser,
 		concurrency:        concurrency,
-		interval:           interval,
 		pollInterval:       pollInterval,
 		releaseBaseBackoff: defaultReleaseBaseBackoff,
 		now:                now,
@@ -186,7 +177,7 @@ func (q *RefreshQueue) refresh(ctx context.Context, attemptID string, feed domai
 	}
 
 	finishedAt := q.now().UTC()
-	nextRefreshAt := finishedAt.Add(q.interval)
+	nextRefreshAt := finishedAt.Add(refreshInterval)
 
 	if err == nil {
 		meta := domain.FeedSyncMeta{

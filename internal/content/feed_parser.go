@@ -764,7 +764,7 @@ func decodeJSONFeedField(decoder *json.Decoder, state *jsonFeedDecodeState, key 
 
 		return nil
 	default:
-		return skipJSONValue(decoder)
+		return skipJSONValue(decoder, 0)
 	}
 }
 
@@ -850,9 +850,7 @@ func decodeJSONItem(decoder *json.Decoder, index int) (*gofeedjson.Item, error) 
 	return item, nil
 }
 
-func skipJSONValue(decoder *json.Decoder) error {
-	depth := 0
-
+func skipJSONValue(decoder *json.Decoder, depth int) error {
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -1152,22 +1150,8 @@ func decodeJSONFeedString(decoder *json.Decoder, target *string) error {
 			return err
 		}
 
-		return skipJSONContainer(decoder, depth)
+		return skipJSONValue(decoder, depth)
 	}
 
 	return nil
-}
-
-func skipJSONContainer(decoder *json.Decoder, depth int) error {
-	for {
-		tok, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-
-		done, err := advanceJSONSkipDepth(tok, &depth)
-		if err != nil || done {
-			return err
-		}
-	}
 }
