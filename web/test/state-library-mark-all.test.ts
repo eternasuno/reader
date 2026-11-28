@@ -199,7 +199,9 @@ describe('mark-all of a scope other than the open list', () => {
     });
     expect(ctx.fetchCount()).toBe(before + 3);
     expect(ctx.requestUrl(before + 1)).toContain('/api/feed-items/order?');
-    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
+    await vi.waitFor(() =>
+      expect(state.articleById(state.rowIds()[0])?.read).toBe(true)
+    );
     unmountWindow();
     release();
   });
@@ -231,7 +233,9 @@ describe('mark-all ambiguous failure', () => {
     await waitForWindow(state);
     expect(ctx.requestUrl(before)).toBe('/api/feed-items/read-all');
     expect(ctx.requestUrl(before + 1)).toContain('/api/feed-items/order?');
-    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
+    await vi.waitFor(() =>
+      expect(state.articleById(state.rowIds()[0])?.read).toBe(true)
+    );
     expect(ui.currentToast()).toBeNull();
     unmountWindow();
     release();

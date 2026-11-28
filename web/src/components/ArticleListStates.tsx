@@ -1,8 +1,9 @@
 import type { JSX } from '@solidjs/web';
-import { Show } from 'solid-js';
+import { For, Show } from 'solid-js';
 import { t } from '../i18n';
 import { buildLibraryUrl, type LibraryScope, retryLoad } from '../state';
 import { Button, Icon } from '../ui';
+import { ArticleRowSkeleton, SKELETON_HEIGHT } from './ArticleListBody';
 import type { EmptyCopy } from './articleListScope';
 
 export function ArticleListError(props: { compact?: boolean }): JSX.Element {
@@ -34,15 +35,28 @@ export function ArticleListError(props: { compact?: boolean }): JSX.Element {
   );
 }
 
-export function ArticleListLoading(): JSX.Element {
+/** Enough skeleton cards to fill the tallest list the window allows; the last one is clipped. */
+const loadingSkeletonRows = (): Array<number> =>
+  Array.from(
+    { length: Math.max(1, Math.ceil(window.innerHeight / SKELETON_HEIGHT)) },
+    (_, index) => index
+  );
+
+/** The initial snapshot load shows the same skeleton cards as uncached rows. */
+export function ArticleListLoading(props: {
+  grouped: boolean;
+  label: string;
+}): JSX.Element {
   return (
-    <p
-      class="flex items-center justify-center gap-2 px-3 py-8 text-sm text-base-content/60"
+    <div
       role="status"
+      aria-label={props.label}
+      class="min-h-0 flex-1 overflow-hidden"
     >
-      <span class="loading loading-spinner loading-sm" aria-hidden="true" />
-      {t('library.loading')}
-    </p>
+      <For each={loadingSkeletonRows()}>
+        {() => <ArticleRowSkeleton grouped={props.grouped} />}
+      </For>
+    </div>
   );
 }
 

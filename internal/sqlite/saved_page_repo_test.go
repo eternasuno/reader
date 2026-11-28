@@ -266,6 +266,14 @@ func TestSavedPageSnapshotAndReadBoundary(t *testing.T) {
 
 	assertSavedPageSnapshot(t, store.SavedPages(), domain.SnapshotParams{Boundary: boundary}, snapshotTestIDs(5, 4, 3, 2, 1))
 	assertSavedPageSnapshot(t, store.SavedPages(), domain.SnapshotParams{Boundary: boundary, Unread: true}, snapshotTestIDs(5, 4, 3, 1))
+	if err := store.SavedPages().SetRead(ctx, fixedTestID(4), true); err != nil {
+		t.Fatalf("mark page 4 read: %v", err)
+	}
+	assertSavedPageSnapshot(t, store.SavedPages(), domain.SnapshotParams{Boundary: boundary, Unread: true, Keep: fixedTestID(2)}, snapshotTestIDs(5, 3, 2, 1))
+	assertSavedPageSnapshot(t, store.SavedPages(), domain.SnapshotParams{Boundary: boundary, Unread: true, Keep: fixedTestID(7)}, snapshotTestIDs(5, 3, 1))
+	if err := store.SavedPages().SetRead(ctx, fixedTestID(4), false); err != nil {
+		t.Fatalf("mark page 4 unread: %v", err)
+	}
 
 	pages, err := store.SavedPages().GetByIDs(ctx, snapshotTestIDs(3, 8, 1, 5))
 	if err != nil || !slices.Equal(savedPageIDs(pages), snapshotTestIDs(3, 1, 5)) {

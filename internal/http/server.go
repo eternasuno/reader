@@ -497,17 +497,37 @@ func parseUnreadFlag(values url.Values) (bool, error) {
 }
 
 func parseSnapshotParams(r *http.Request) (domain.SnapshotParams, error) {
-	query, err := parseStrictQuery(r, "unread")
+	query, err := parseStrictQuery(r, "unread", "keep")
 	if err != nil {
 		return domain.SnapshotParams{}, err
 	}
 
+	unread, keep, err := parseSnapshotFilter(query)
+	if err != nil {
+		return domain.SnapshotParams{}, err
+	}
+
+	return domain.NewSnapshotParams(unread, keep), nil
+}
+
+// parseSnapshotFilter reads `unread` and `keep`, an id the unread filter must not drop; `keep`
+// is only valid together with `unread`.
+func parseSnapshotFilter(query url.Values) (bool, string, error) {
 	unread, err := parseUnreadFlag(query)
 	if err != nil {
-		return domain.SnapshotParams{}, err
+		return false, "", err
 	}
 
-	return domain.NewSnapshotParams(unread), nil
+	if !query.Has("keep") {
+		return unread, "", nil
+	}
+
+	keep := query.Get("keep")
+	if !unread || !domain.IsValidUUIDv7(keep) {
+		return false, "", domain.NewError(domain.ErrRequestFailed, nil)
+	}
+
+	return unread, keep, nil
 }
 
 func parseBatchIDs(r *http.Request) ([]string, error) {

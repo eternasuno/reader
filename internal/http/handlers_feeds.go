@@ -453,12 +453,12 @@ func (s *server) handleFeedItemSnapshot(w http.ResponseWriter, r *http.Request) 
 }
 
 func parseFeedItemSnapshotQuery(r *http.Request) (domain.SnapshotParams, domain.SortOrder, error) {
-	query, err := parseStrictQuery(r, "unread", "order")
+	query, err := parseStrictQuery(r, "unread", "keep", "order")
 	if err != nil {
 		return domain.SnapshotParams{}, "", err
 	}
 
-	unread, err := parseUnreadFlag(query)
+	unread, keep, err := parseSnapshotFilter(query)
 	if err != nil {
 		return domain.SnapshotParams{}, "", err
 	}
@@ -471,7 +471,7 @@ func parseFeedItemSnapshotQuery(r *http.Request) (domain.SnapshotParams, domain.
 	}
 
 	// Mint the boundary before the caller looks up the feed's stored order.
-	return domain.NewSnapshotParams(unread), order, nil
+	return domain.NewSnapshotParams(unread, keep), order, nil
 }
 
 // storedFeedOrder returns the feed's stored sort order, or newest when the feed is unknown.

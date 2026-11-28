@@ -64,7 +64,7 @@ describe('app entry', () => {
     expect((await mountApp('/does-not-exist')).history.get()).toBe('/all');
   });
 
-  it('shows only a spinner on /login until the session check resolves', async () => {
+  it('shows only a skeleton on /login until the session check resolves', async () => {
     let release: (response: Response) => void = () => undefined;
     const pending = new Promise<Response>((resolve) => {
       release = resolve;
@@ -78,7 +78,11 @@ describe('app entry', () => {
     const { container } = mount('/login');
     await settle(2);
     expect(container.querySelector('input[type="password"]')).toBeNull();
-    expect(container.querySelector('.loading')).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[role="status"][aria-label="正在确认登录状态…"] .skeleton'
+      )
+    ).not.toBeNull();
     expect(container.textContent).not.toContain('正在确认登录状态');
 
     release(json({ authenticated: false }));
@@ -218,7 +222,8 @@ describe('library layout', () => {
     ).not.toBeNull();
 
     const urls = requestUrls();
-    expect(listPages()).toHaveLength(1);
+    // A malformed article ID is never sent as `keep`, so the list still loads.
+    expect(listPages()).toEqual(['/api/feed-items/order?unread=true']);
     expect(urls.some((u) => u.startsWith('/api/feed-items/item-1'))).toBe(true);
     expect(urls).toContain('/api/feeds');
     expect(urls).toContain('/api/folders');

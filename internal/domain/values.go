@@ -7,8 +7,8 @@ import (
 )
 
 // NewSnapshotParams mints the snapshot boundary before any read.
-func NewSnapshotParams(unread bool) SnapshotParams {
-	return SnapshotParams{Unread: unread, Boundary: NewID()}
+func NewSnapshotParams(unread bool, keep string) SnapshotParams {
+	return SnapshotParams{Unread: unread, Keep: keep, Boundary: NewID()}
 }
 
 // ValidateBatchIDs accepts 1..MaxBatchIDs distinct canonical UUIDv7 ids.

@@ -3,18 +3,13 @@ import { Show } from 'solid-js';
 import { t } from '../i18n';
 import { loadingArticle } from '../state';
 import { Icon } from '../ui';
+import { ReaderSkeleton } from './ReaderView';
 
 /** Empty / loading halves of the reader pane when no article is open. */
 export function ReaderEmptyState(): JSX.Element {
   return (
     <Show when={loadingArticle()} fallback={<NoArticleOpen />}>
-      <div
-        role="status"
-        class="flex h-full items-center justify-center gap-2 text-sm text-base-content/60"
-      >
-        <span class="loading loading-spinner loading-sm" aria-hidden="true" />
-        {t('library.loading')}
-      </div>
+      <ReaderSkeleton label={t('library.loading')} />
     </Show>
   );
 }

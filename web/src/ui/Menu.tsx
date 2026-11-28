@@ -19,7 +19,7 @@ const ITEM_CLASSES =
  * keep them inside the viewport without JS coordinates.
  */
 const PANEL_CLASSES =
-  'inset-auto m-0 my-1 min-w-60 rounded-lg border border-base-300/80 bg-base-200 px-0 py-2 text-base-content shadow-2xl focus:outline-none [position-area:bottom_span-right] [position-try-fallbacks:flip-inline,flip-block,flip-block_flip-inline]';
+  'inset-auto m-0 my-1 min-w-60 rounded-lg border border-base-300/80 bg-base-200 px-0 py-2 text-base-content shadow-2xl animate-pop-in focus:outline-none [position-area:bottom_span-right] [position-try-fallbacks:flip-inline,flip-block,flip-block_flip-inline]';
 
 const TRIGGER_CLASSES = 'btn btn-ghost btn-sm btn-square';
 

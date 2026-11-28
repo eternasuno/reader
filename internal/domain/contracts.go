@@ -164,7 +164,9 @@ const (
 
 // SnapshotParams selects the rows of an ordered id snapshot bound by an id-allocation boundary.
 type SnapshotParams struct {
-	Unread   bool
+	Unread bool
+	// Keep is an id included despite the unread filter (the open article); empty means none.
+	Keep     string
 	Boundary string
 }
 

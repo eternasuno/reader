@@ -14,6 +14,7 @@ import {
   openArticleByRoute,
   parseLibraryLocation,
   refreshSidebar,
+  setRouteArticleId,
   feeds as sidebarFeeds,
   folders as sidebarFolders,
   startFirstRefreshWait,
@@ -176,6 +177,14 @@ const useDialogs = () => {
 const useLibraryEffects = (routeState: () => RouteState | null): void => {
   let loadedKey: string | null = null;
   let openedKey: string | null = null;
+
+  // `LIB-FILTER-1`: set before the queued snapshot loads below read it.
+  createEffect(
+    () => routeState()?.articleId ?? null,
+    (articleId) => {
+      setRouteArticleId(articleId);
+    }
+  );
 
   createEffect(
     () => routeState(),

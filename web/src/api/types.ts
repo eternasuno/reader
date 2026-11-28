@@ -98,7 +98,8 @@ export interface SavedPageOrder {
   ids: Array<string>;
 }
 
-export type OrderParams = { unread?: boolean };
+/** `keep`: an ID the unread filter must not drop (the open article, `LIB-FILTER-1`). */
+export type OrderParams = { unread?: boolean; keep?: string };
 
 export interface FeedCreateInput {
   url: string;

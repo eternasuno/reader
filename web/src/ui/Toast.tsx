@@ -89,7 +89,7 @@ export function ToastViewport(props: ToastViewportProps): JSX.Element {
             aria-live="polite"
             aria-atomic="true"
             class={[
-              'alert alert-soft w-full sm:max-w-sm rounded-box border border-current/20 text-sm shadow-xl',
+              'alert alert-soft w-full sm:max-w-sm animate-toast-in rounded-box border border-current/20 text-sm shadow-xl',
               VARIANT_CLASSES[toast().variant],
             ]}
           >

@@ -634,7 +634,7 @@ func (h *harness) savedByID(id string) *domain.SavedPage {
 func (h *harness) allSavedPageIDs() []string {
 	h.t.Helper()
 
-	ids, err := h.db.SavedPages().Snapshot(context.Background(), domain.NewSnapshotParams(false))
+	ids, err := h.db.SavedPages().Snapshot(context.Background(), domain.NewSnapshotParams(false, ""))
 	if err != nil {
 		h.t.Fatalf("snapshot saved pages: %v", err)
 	}

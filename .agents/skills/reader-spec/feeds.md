@@ -38,8 +38,8 @@ Feed subscriptions, feed-item scopes, OPML import/export, per-feed reading prefe
 | PUT | `/api/feeds/:id/order` | `{ order }` | `204` | `FeedRepositoryError` 500 |
 | GET | `/api/feeds/unread-counts` | — | `200 { items: [{ feedId, count }], boundary }` | `FeedItemRepositoryError` 500 |
 | POST | `/api/feeds/:id/read-all` | `id`, `{ before }` | `204` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
-| GET | `/api/feeds/:id/items/order` | `unread?`, `order?` | `200 { boundary, groups: [{ feedId, ids }] }` (at most one group) | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
-| GET | `/api/feed-items/order` | `unread?` | `200 { boundary, groups: [{ feedId, ids }] }` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
+| GET | `/api/feeds/:id/items/order` | `unread?`, `keep?`, `order?` | `200 { boundary, groups: [{ feedId, ids }] }` (at most one group) | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
+| GET | `/api/feed-items/order` | `unread?`, `keep?` | `200 { boundary, groups: [{ feedId, ids }] }` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
 | GET | `/api/feed-items` | `ids` (required, comma-separated) | `200 { items }` | `RequestFailed` 400, `FeedItemRepositoryError` 500 |
 | GET | `/api/feed-items/:id` | `id` | `200 { item \| null }` | `FeedItemRepositoryError` 500 |
 | PATCH | `/api/feed-items/:id` | `{ read }` | `204` | `FeedItemRepositoryError` 500 |

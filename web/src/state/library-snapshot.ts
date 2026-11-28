@@ -6,6 +6,15 @@ const [activeScope, setActiveScope] = createSignal<LibraryScope>({
   kind: 'later',
 });
 const [activeUnreadOnly, setActiveUnreadOnly] = createSignal(false);
+/**
+ * `LIB-FILTER-1`: the routed article stays in unread-only snapshots even once read. A plain value
+ * (not a signal) so a snapshot request reads the latest route synchronously.
+ */
+let routedArticle: string | null = null;
+const routeArticleId = (): string | null => routedArticle;
+const setRouteArticleId = (articleId: string | null): void => {
+  routedArticle = articleId;
+};
 type ListSnapshot = {
   ids: ReadonlyArray<string>;
   feedIds: ReadonlyMap<string, string>;
@@ -35,8 +44,10 @@ export {
   activeScope,
   activeUnreadOnly,
   listRevision,
+  routeArticleId,
   setActiveScope,
   setActiveUnreadOnly,
+  setRouteArticleId,
   setSnapshotError,
   setSnapshotLoading,
   setWindowError,
@@ -59,21 +70,37 @@ const sameIds = (
   previous.length === next.length &&
   previous.every((id, index) => id === next[index]);
 
+/** IDs shown in the active scope after folder membership overrides. */
+const visibleIds = (
+  ids: ReadonlyArray<string>,
+  feedIds: ReadonlyMap<string, string>,
+  overrides: ReadonlyMap<string, string | null>
+): ReadonlyArray<string> => {
+  const scope = activeScope();
+  if (scope.kind !== 'folder') return ids;
+
+  return ids.filter((id) => {
+    const feedId = feedIds.get(id);
+    return (
+      feedId === undefined ||
+      !overrides.has(feedId) ||
+      overrides.get(feedId) === scope.folderId
+    );
+  });
+};
+
+/** Overrides a snapshot replacement keeps: only those of feeds with a move still pending. */
+const pendingOverrides = (
+  overrides: ReadonlyMap<string, string | null>
+): Map<string, string | null> =>
+  new Map(
+    [...overrides].filter(([feedId]) => feedMoveTracker.hasPendingMove(feedId))
+  );
+
 export const rowIds = createMemo(
   (): ReadonlyArray<string> => {
     const { ids, feedIds } = list();
-    const scope = activeScope();
-    if (scope.kind !== 'folder') return ids;
-
-    const overrides = folderMembership();
-    return ids.filter((id) => {
-      const feedId = feedIds.get(id);
-      return (
-        feedId === undefined ||
-        !overrides.has(feedId) ||
-        overrides.get(feedId) === scope.folderId
-      );
-    });
+    return visibleIds(ids, feedIds, folderMembership());
   },
   {
     equals: sameIds,
@@ -127,13 +154,22 @@ export const acceptSnapshot = (snapshot: ListSnapshot): void => {
   invalidateLiveSnapshot();
 };
 
+/** Whether {@link replaceSnapshot} would change the visible rows, folder overrides included. */
+export const changesRows = (snapshot: ListSnapshot): boolean =>
+  !sameIds(
+    rowIds(),
+    visibleIds(
+      snapshot.ids.filter((id) => !locallyRemoved.has(id)),
+      snapshot.feedIds,
+      pendingOverrides(folderMembership())
+    )
+  );
+
 export const replaceSnapshot = (snapshot: ListSnapshot): void => {
   const overrides = folderMembership();
-  const pendingOverrides = new Map(
-    [...overrides].filter(([feedId]) => feedMoveTracker.hasPendingMove(feedId))
-  );
-  const retiredOverrides = pendingOverrides.size !== overrides.size;
-  if (retiredOverrides) setFolderMembership(pendingOverrides);
+  const kept = pendingOverrides(overrides);
+  const retiredOverrides = kept.size !== overrides.size;
+  if (retiredOverrides) setFolderMembership(kept);
 
   const current = list();
   const ids = snapshot.ids.filter((id) => !locallyRemoved.has(id));
@@ -152,6 +188,22 @@ export const replaceSnapshot = (snapshot: ListSnapshot): void => {
 
   setList({ ids, feedIds, boundary: snapshot.boundary });
   invalidateLiveSnapshot();
+};
+
+/** Whether moving `feedId` to `folderId` would show or hide its rows in the active folder list. */
+export const folderMoveChangesRows = (
+  feedId: string,
+  folderId: string | null
+): boolean => {
+  const scope = activeScope();
+  if (scope.kind !== 'folder') return false;
+
+  const overrides = folderMembership();
+  const shown =
+    !overrides.has(feedId) || overrides.get(feedId) === scope.folderId;
+  if (shown === (folderId === scope.folderId)) return false;
+
+  return [...list().feedIds.values()].includes(feedId);
 };
 
 export const updateFolderMembership = (

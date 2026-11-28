@@ -10,6 +10,8 @@ import {
   toggleArticleRead,
 } from '../state';
 import { now } from '../state/clock';
+import { isListTransitionUpdating } from '../ui';
+import { isGroupedScope } from './articleListScope';
 import { openInNewTab } from './openInNewTab';
 import { SiteIcon } from './SiteIcon';
 
@@ -55,7 +57,11 @@ export function ArticleRow(props: ArticleRowProps): JSX.Element {
 
   return (
     <div
-      class="group/row px-2 py-0.5 animate-fade-in"
+      class={[
+        'group/row px-2 py-0.5',
+        // Rows mounted by a list transition enter through the transition instead.
+        isListTransitionUpdating() ? '' : 'animate-fade-in',
+      ]}
       data-read={props.row.read ? '' : undefined}
     >
       <div
@@ -103,10 +109,6 @@ function RowSummary(props: { html: string | undefined }): JSX.Element {
       )}
     </Show>
   );
-}
-
-function isGroupedScope(scope: LibraryScope): boolean {
-  return scope.kind === 'all' || scope.kind === 'folder';
 }
 
 function hasSourceMeta(scope: LibraryScope, row: LibraryArticle): boolean {

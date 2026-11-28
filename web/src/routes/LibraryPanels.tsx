@@ -27,9 +27,9 @@ export interface LibraryViewProps {
 const GRID_BASE_CLASSES =
   'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)]';
 
-const GRID_CLASSES = `${GRID_BASE_CLASSES} transition-[grid-template-columns] duration-200 ease-out md:grid-cols-[15rem_minmax(0,1fr)] lg:grid-cols-[14rem_21rem_minmax(0,1fr)] xl:grid-cols-[16rem_24rem_minmax(0,1fr)]`;
+export const GRID_CLASSES = `${GRID_BASE_CLASSES} transition-[grid-template-columns] duration-200 ease-standard md:grid-cols-[15rem_minmax(0,1fr)] lg:grid-cols-[14rem_21rem_minmax(0,1fr)] xl:grid-cols-[16rem_24rem_minmax(0,1fr)]`;
 
-const COLLAPSED_GRID_CLASSES = `${GRID_BASE_CLASSES} transition-[grid-template-columns] duration-200 ease-out md:grid-cols-[0rem_minmax(0,1fr)] lg:grid-cols-[0rem_21rem_minmax(0,1fr)] xl:grid-cols-[0rem_24rem_minmax(0,1fr)]`;
+export const COLLAPSED_GRID_CLASSES = `${GRID_BASE_CLASSES} transition-[grid-template-columns] duration-200 ease-standard md:grid-cols-[0rem_minmax(0,1fr)] lg:grid-cols-[0rem_21rem_minmax(0,1fr)] xl:grid-cols-[0rem_24rem_minmax(0,1fr)]`;
 
 const FULLSCREEN_GRID_CLASSES = GRID_BASE_CLASSES;
 
@@ -43,10 +43,10 @@ const gridClasses = (props: LibraryViewProps): string => {
 };
 
 const DRAWER_CLASSES =
-  'flex max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-66 max-md:max-w-[85vw] max-md:rounded-r-2xl max-md:bg-base-100 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-xl max-md:transition-[transform,translate,visibility] max-md:duration-200 max-md:ease-out';
+  'flex max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-66 max-md:max-w-[85vw] max-md:rounded-r-2xl max-md:bg-base-100 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-xl max-md:transition-[transform,translate,visibility] max-md:duration-200 max-md:ease-standard';
 
 const BACKDROP_CLASSES =
-  'fixed inset-0 z-30 bg-black/60 transition-opacity duration-200 md:hidden';
+  'fixed inset-0 z-30 bg-black/60 transition-opacity duration-200 ease-standard md:hidden';
 
 const sidebarClasses = (fullscreen: boolean, drawerOpen: boolean): string => {
   if (fullscreen) return 'hidden';

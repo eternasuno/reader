@@ -24,7 +24,7 @@ Independent read-later pages added via URL, browser bookmarklet, or copied from 
 
 | Method | Path | Request | Success | Errors |
 | --- | --- | --- | --- | --- |
-| GET | `/api/saved-pages/order` | `unread?` | `200 { boundary, ids }` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
+| GET | `/api/saved-pages/order` | `unread?`, `keep?` | `200 { boundary, ids }` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages` | `ids` (required, comma-separated) | `200 { items }` | `RequestFailed` 400, `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/unread-count` | — | `200 { count, boundary }` | `SavedPageRepositoryError` 500 |
 | GET | `/api/saved-pages/:id` | `id` | `200 { item \| null }` | `SavedPageRepositoryError` 500 |

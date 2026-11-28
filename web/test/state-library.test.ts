@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createStateTestContext,
   feedOrder,
+  jsonResponse,
   loadWindowedScope,
   makeFeed,
   makeItem,
@@ -55,6 +56,57 @@ describe('first page params', () => {
     );
     expect(state.listBoundary()).toBe(B);
     expect(state.activeUnreadOnly()).toBe(true);
+  });
+
+  it('keeps the routed article in unread-only snapshots (LIB-FILTER-1)', async () => {
+    const { state } = ctx;
+    const open = uuid(1007);
+    state.setRouteArticleId(open);
+    try {
+      ctx.queue(feedOrder([], B));
+      await state.loadScopeFirstPage({ kind: 'all' }, true);
+      expect(ctx.requestUrl()).toBe(
+        `/api/feed-items/order?unread=true&keep=${open}`
+      );
+
+      ctx.queue({ boundary: B, ids: [] });
+      await state.loadScopeFirstPage({ kind: 'later' }, true);
+      expect(ctx.requestUrl(1)).toBe(
+        `/api/saved-pages/order?unread=true&keep=${open}`
+      );
+
+      ctx.queue(feedOrder([], B));
+      await state.loadScopeFirstPage({ kind: 'all' }, false);
+      expect(ctx.requestUrl(2)).toBe('/api/feed-items/order?unread=false');
+    } finally {
+      state.setRouteArticleId(null);
+    }
+  });
+});
+
+describe('routed article changes during a load', () => {
+  it('refetches with the new keep when the route moves to another article before the snapshot arrives', async () => {
+    const { state, solid } = ctx;
+    const [a, b] = [uuid(1007), uuid(1008)];
+    state.setRouteArticleId(a);
+    try {
+      const stale = ctx.pending();
+      const load = state.loadScopeFirstPage({ kind: 'all' }, true);
+      state.setRouteArticleId(b);
+      ctx.queue(
+        feedOrder([makeItem({ id: b, feedId: uuid(1001), read: true })], B)
+      );
+      stale.resolve(jsonResponse(feedOrder([], B)));
+      await load;
+      solid.flush();
+
+      expect(ctx.requestUrl(1)).toBe(
+        `/api/feed-items/order?unread=true&keep=${b}`
+      );
+      expect(state.rowIds()).toEqual([b]);
+    } finally {
+      state.setRouteArticleId(null);
+    }
   });
 });
 

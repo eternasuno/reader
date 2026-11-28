@@ -25,6 +25,7 @@ import {
   savedOrder,
   uuid,
 } from './support/state-fixture';
+import { deferViewTransitions } from './support/view-transition';
 
 it('replaces IDs in server order on a periodic tick and refetches the cached window once', async () => {
   await loadLater();
@@ -68,39 +69,45 @@ it('updates the boundary and refetches content when IDs are identical, preservin
   expect(windowCalls()).toHaveLength(2);
 });
 
-it('drops a locally read row under the unread filter while retaining the open article and disabling navigation', async () => {
-  await loadLater(true);
-  await readWindow([second, first]);
-  ctx.queue({ item: second });
-  ctx.queueEmpty();
-  ctx.queueSidebar();
-  await ctx.state.openArticleByRoute(later, second.id);
-  await settle();
-  expect(ctx.state.openArticle()?.read).toBe(true);
-  expect(ctx.state.rowIds()).toEqual([second.id, first.id]);
-  expect(ctx.state.adjacentArticleIds()).toEqual({
-    prevId: null,
-    nextId: first.id,
-  });
+it('keeps the routed read article under the unread filter and drops it once another article is routed (LIB-FILTER-1)', async () => {
+  ctx.state.setRouteArticleId(second.id);
+  try {
+    await loadLater(true);
+    await readWindow([second, first]);
+    ctx.queue({ item: second });
+    ctx.queueEmpty();
+    ctx.queueSidebar();
+    await ctx.state.openArticleByRoute(later, second.id);
+    await settle();
+    expect(ctx.state.openArticle()?.read).toBe(true);
 
-  const pending = startLiveRequest();
-  ctx.queue({ items: [first] });
-  pending.resolve(jsonResponse(savedOrder([first], liveBoundary)));
-  await settle();
+    const kept = startLiveRequest();
+    ctx.queue({ items: [second, first] });
+    kept.resolve(jsonResponse(savedOrder([second, first], liveBoundary)));
+    await settle();
 
-  expect(orderCalls()).toEqual(
-    Array(2).fill('/api/saved-pages/order?unread=true')
-  );
-  expect(ctx.state.rowIds()).toEqual([first.id]);
-  expect(ctx.state.openArticle()).toMatchObject({
-    id: second.id,
-    content: second.content,
-    read: true,
-  });
-  expect(ctx.state.adjacentArticleIds()).toEqual({
-    prevId: null,
-    nextId: null,
-  });
+    expect(orderCalls()).toEqual(
+      Array(2).fill(`/api/saved-pages/order?unread=true&keep=${second.id}`)
+    );
+    expect(ctx.state.rowIds()).toEqual([second.id, first.id]);
+    expect(ctx.state.adjacentArticleIds()).toEqual({
+      prevId: null,
+      nextId: first.id,
+    });
+
+    ctx.state.setRouteArticleId(first.id);
+    const dropped = startLiveRequest();
+    ctx.queue({ items: [first] });
+    dropped.resolve(jsonResponse(savedOrder([first], liveBoundary)));
+    await settle();
+
+    expect(orderCalls()[2]).toBe(
+      `/api/saved-pages/order?unread=true&keep=${first.id}`
+    );
+    expect(ctx.state.rowIds()).toEqual([first.id]);
+  } finally {
+    ctx.state.setRouteArticleId(null);
+  }
 });
 
 it('keeps a local read intent that arrives during the refreshed content request', async () => {
@@ -220,4 +227,72 @@ it('keeps a failed live snapshot silent and retries on the next tick', async () 
   retry.resolve(jsonResponse(savedOrder([third], liveBoundary)));
   await settle();
   expect(ctx.state.rowIds()).toEqual([third.id]);
+});
+
+const deferLiveTransitions = () =>
+  deferViewTransitions(ctx.ui, async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+
+it('commits a changed live snapshot inside a list transition', async () => {
+  await loadLater();
+  await readWindow([second, first]);
+  const { transition, restore } = deferLiveTransitions();
+  try {
+    const pending = startLiveRequest();
+    pending.resolve(jsonResponse(savedOrder([third, first], liveBoundary)));
+    await settle();
+    expect(ctx.state.rowIds()).toEqual([second.id, first.id]);
+
+    ctx.queue({ items: [third, first] });
+    await transition.runUpdate();
+    await settle();
+    expect(ctx.state.rowIds()).toEqual([third.id, first.id]);
+    expect(ctx.state.listBoundary()).toBe(liveBoundary);
+    await vi.waitFor(() => expect(windowCalls()).toHaveLength(2));
+  } finally {
+    restore();
+  }
+});
+
+it('discards a live snapshot whose guards change before the transition update runs', async () => {
+  await loadLater();
+  await readWindow([second, first]);
+  const { transition, restore } = deferLiveTransitions();
+  try {
+    const pending = startLiveRequest();
+    pending.resolve(jsonResponse(savedOrder([third, first], liveBoundary)));
+    await settle();
+    expect(transition.started).toBe(1);
+
+    snapshot.invalidateLiveSnapshot();
+    ctx.solid.flush();
+    await transition.runUpdate();
+    await settle();
+    expect(ctx.state.rowIds()).toEqual([second.id, first.id]);
+    expect(ctx.state.listBoundary()).toBe(initialBoundary);
+    expect(windowCalls()).toHaveLength(1);
+  } finally {
+    restore();
+  }
+});
+
+it('discards a live snapshot requested with the previous routed article (LIB-FILTER-1)', async () => {
+  ctx.state.setRouteArticleId(second.id);
+  try {
+    await loadLater(true);
+    await readWindow([second, first]);
+    const pending = startLiveRequest();
+    ctx.state.setRouteArticleId(first.id);
+    pending.resolve(jsonResponse(savedOrder([first], liveBoundary)));
+    await settle();
+
+    expect(orderCalls()[1]).toBe(
+      `/api/saved-pages/order?unread=true&keep=${second.id}`
+    );
+    expect(ctx.state.rowIds()).toEqual([second.id, first.id]);
+    expect(ctx.state.listBoundary()).toBe(initialBoundary);
+  } finally {
+    ctx.state.setRouteArticleId(null);
+  }
 });

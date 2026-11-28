@@ -36,9 +36,9 @@ func (r *FeedItemRepo) SnapshotByFolder(ctx context.Context, folderID string, pa
 }
 
 func (r *FeedItemRepo) SnapshotByFeed(ctx context.Context, feedID string, order domain.SortOrder, params domain.SnapshotParams) ([]domain.FeedItemGroup, error) {
-	query := singleFeedItemSnapshotQuery(order, params.Unread)
+	query, args := singleFeedItemSnapshotQuery(feedID, order, params)
 
-	return r.snapshot(ctx, query, feedID, params.Boundary, domain.ListSnapshotLimit+1)
+	return r.snapshot(ctx, query, args...)
 }
 
 func groupedFeedItemSnapshotQuery(folderID *string, params domain.SnapshotParams) (string, []any) {
@@ -49,7 +49,11 @@ func groupedFeedItemSnapshotQuery(folderID *string, params domain.SnapshotParams
 		args = append(args, *folderID)
 	}
 
-	if params.Unread {
+	switch {
+	case params.Unread && params.Keep != "":
+		query += ` AND (fi.read = 0 OR fi.id = ?)`
+		args = append(args, params.Keep)
+	case params.Unread:
 		query += ` AND fi.read = 0`
 	}
 
@@ -58,18 +62,29 @@ func groupedFeedItemSnapshotQuery(folderID *string, params domain.SnapshotParams
 	return query, append(args, string(domain.SortOrderOldest), domain.ListSnapshotLimit+1)
 }
 
-func singleFeedItemSnapshotQuery(order domain.SortOrder, unread bool) string {
+func singleFeedItemSnapshotQuery(feedID string, order domain.SortOrder, params domain.SnapshotParams) (string, []any) {
 	query := `SELECT id, feed_id FROM feed_item WHERE feed_id = ? AND id <= ?`
-	if unread {
-		query += ` AND read = 0`
-	}
+	args := []any{feedID, params.Boundary}
+	query, args = appendUnreadFilter(query, args, params)
 
 	direction := ` DESC`
 	if order == domain.SortOrderOldest {
 		direction = ` ASC`
 	}
 
-	return query + ` ORDER BY id` + direction + ` LIMIT ?`
+	return query + ` ORDER BY id` + direction + ` LIMIT ?`, append(args, domain.ListSnapshotLimit+1)
+}
+
+// appendUnreadFilter adds the unread filter for single-table snapshots; `Keep` survives it.
+func appendUnreadFilter(query string, args []any, params domain.SnapshotParams) (string, []any) {
+	switch {
+	case params.Unread && params.Keep != "":
+		return query + ` AND (read = 0 OR id = ?)`, append(args, params.Keep)
+	case params.Unread:
+		return query + ` AND read = 0`, args
+	default:
+		return query, args
+	}
 }
 
 func (r *FeedItemRepo) snapshot(ctx context.Context, query string, args ...any) ([]domain.FeedItemGroup, error) {

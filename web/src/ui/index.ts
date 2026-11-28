@@ -4,6 +4,11 @@ export type { IconName } from './Icon';
 export { Icon } from './Icon';
 export { Input, Select } from './Input';
 export {
+  isListTransitionUpdating,
+  registerListTransitionTarget,
+  runListTransition,
+} from './listTransition';
+export {
   Menu,
   MenuCheckbox,
   MenuDivider,
