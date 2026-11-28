@@ -21,7 +21,8 @@ type SavedPageRepo struct {
 }
 
 func (r *SavedPageRepo) Snapshot(ctx context.Context, params domain.SnapshotParams) ([]string, error) {
-	rows, err := r.read.QueryContext(ctx, savedPageSnapshotQuery(params.Unread), params.Boundary, domain.ListSnapshotLimit+1)
+	query, args := savedPageSnapshotQuery(params)
+	rows, err := r.read.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, domain.NewError(domain.ErrSavedPageRepositoryError, err)
 	}
@@ -49,13 +50,10 @@ func (r *SavedPageRepo) Snapshot(ctx context.Context, params domain.SnapshotPara
 	return ids, nil
 }
 
-func savedPageSnapshotQuery(unread bool) string {
-	query := `SELECT id FROM saved_page WHERE id <= ?`
-	if unread {
-		query += ` AND read = 0`
-	}
+func savedPageSnapshotQuery(params domain.SnapshotParams) (string, []any) {
+	query, args := appendUnreadFilter(`SELECT id FROM saved_page WHERE id <= ?`, []any{params.Boundary}, params)
 
-	return query + ` ORDER BY id DESC LIMIT ?`
+	return query + ` ORDER BY id DESC LIMIT ?`, append(args, domain.ListSnapshotLimit+1)
 }
 
 func (r *SavedPageRepo) GetByIDs(ctx context.Context, ids []string) ([]domain.SavedPage, error) {

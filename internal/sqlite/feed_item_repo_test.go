@@ -54,6 +54,40 @@ func TestGroupedFeedItemSnapshots(t *testing.T) {
 
 	missing, err := repo.SnapshotByFolder(ctx, "missing", params)
 	requireFeedItemGroups(t, missing, err)
+
+	params.Keep = fixedTestID(7)
+	kept, err := repo.SnapshotByFolder(ctx, folder.ID, params)
+	requireFeedItemGroups(t, kept, err,
+		domain.FeedItemGroup{FeedID: newest.ID, IDs: snapshotTestIDs(5, 2)},
+		domain.FeedItemGroup{FeedID: oldest.ID, IDs: snapshotTestIDs(1, 3, 7)},
+	)
+
+	params.Keep = fixedTestID(8)
+	beyondBoundary, err := repo.SnapshotAll(ctx, params)
+	requireFeedItemGroups(t, beyondBoundary, err, unread...)
+}
+
+func TestFeedItemSnapshotsKeepOnlyTheRequestedReadItem(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	repo := store.FeedItems()
+	folder := createFolder(t, store, "News")
+	feed := createFeed(t, store, "Example", &folder.ID)
+	addSnapshotItems(t, store, feed, 1, 2, 3, 4)
+	for _, seq := range []uint64{2, 3} {
+		if err := repo.SetRead(ctx, fixedTestID(seq), true); err != nil {
+			t.Fatalf("mark item %d read: %v", seq, err)
+		}
+	}
+
+	params := domain.SnapshotParams{Boundary: fixedTestID(4), Unread: true, Keep: fixedTestID(3)}
+	want := domain.FeedItemGroup{FeedID: feed.ID, IDs: snapshotTestIDs(4, 3, 1)}
+	all, err := repo.SnapshotAll(ctx, params)
+	requireFeedItemGroups(t, all, err, want)
+	byFolder, err := repo.SnapshotByFolder(ctx, folder.ID, params)
+	requireFeedItemGroups(t, byFolder, err, want)
+	byFeed, err := repo.SnapshotByFeed(ctx, feed.ID, domain.SortOrderNewest, params)
+	requireFeedItemGroups(t, byFeed, err, want)
 }
 
 func TestGroupedFeedItemSnapshotsOrderByTitleAndFeedID(t *testing.T) {
@@ -98,6 +132,9 @@ func TestSingleFeedItemSnapshot(t *testing.T) {
 	params.Unread = true
 	unread, err := repo.SnapshotByFeed(ctx, feed.ID, domain.SortOrderOldest, params)
 	requireFeedItemGroups(t, unread, err, domain.FeedItemGroup{FeedID: feed.ID, IDs: snapshotTestIDs(1, 3)})
+	params.Keep = fixedTestID(2)
+	kept, err := repo.SnapshotByFeed(ctx, feed.ID, domain.SortOrderOldest, params)
+	requireFeedItemGroups(t, kept, err, domain.FeedItemGroup{FeedID: feed.ID, IDs: snapshotTestIDs(1, 2, 3)})
 	missing, err := repo.SnapshotByFeed(ctx, "missing", domain.SortOrderNewest, params)
 	requireFeedItemGroups(t, missing, err)
 }

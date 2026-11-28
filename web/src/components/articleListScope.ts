@@ -12,6 +12,10 @@ import {
 } from '../state';
 import { hasRefreshFailures } from './feedFailure';
 
+/** All-feeds and folder lists group rows under feed separators (`LIB-GROUP-1`). */
+export const isGroupedScope = (scope: LibraryScope): boolean =>
+  scope.kind === 'all' || scope.kind === 'folder';
+
 export interface EmptyCopy {
   title: string;
   hint: string;

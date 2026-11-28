@@ -25,6 +25,8 @@ export interface VirtualListProps {
   activeIndex?: number;
   /** Identifier for the active row so changes to the list do not re-scroll to the same item. */
   activeKey?: string | null;
+  /** Per-row `view-transition-name`, applied only while a list transition runs (`index.css`). */
+  rowTransitionName?: (key: string) => string;
 }
 
 const isVisible = (el: HTMLElement): boolean => {
@@ -118,6 +120,7 @@ interface RowsProps {
   totalSize: number;
   count: number;
   render: (key: string) => JSX.Element;
+  transitionName?: (key: string) => string;
 }
 
 /** Positioned window of virtual rows; only these nodes exist in the DOM. */
@@ -135,7 +138,13 @@ const VirtualRows = (props: RowsProps): JSX.Element => (
               queueMicrotask(() => props.virtualizer.measureElement(el));
             }}
             class="absolute inset-x-0 top-0"
-            style={{ transform: `translateY(${item().start}px)` }}
+            data-row-transition={props.transitionName ? '' : undefined}
+            style={{
+              transform: `translateY(${item().start}px)`,
+              '--row-transition-name': props.transitionName?.(
+                String(item().key)
+              ),
+            }}
           >
             {untrack(() => props.render(String(item().key)))}
           </div>
@@ -216,6 +225,7 @@ export function VirtualList(props: VirtualListProps): JSX.Element {
         totalSize={totalSize()}
         count={props.keys.length}
         render={props.renderItem}
+        transitionName={props.rowTransitionName}
       />
       <Show when={props.footer}>{props.footer}</Show>
     </div>

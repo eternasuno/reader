@@ -1,6 +1,7 @@
 import type { JSX } from '@solidjs/web';
-import { Show } from 'solid-js';
+import { onSettled, Show } from 'solid-js';
 import type { Feed } from '../api';
+import { t } from '../i18n';
 import {
   buildLibraryUrl,
   type LibraryScope,
@@ -10,6 +11,7 @@ import {
   snapshotLoading,
   windowError,
 } from '../state';
+import { registerListTransitionTarget } from '../ui';
 import { ArticleListBody } from './ArticleListBody';
 import { ArticleListHeader } from './ArticleListHeader';
 import {
@@ -18,7 +20,7 @@ import {
   ArticleListLoading,
 } from './ArticleListStates';
 import { deleteFeed } from './articleListActions';
-import { emptyCopy, scopeTitle } from './articleListScope';
+import { emptyCopy, isGroupedScope, scopeTitle } from './articleListScope';
 
 export interface ArticleListPaneProps {
   scope: LibraryScope;
@@ -39,14 +41,27 @@ function ArticleListContent(props: ArticleListPaneProps): JSX.Element {
     emptyCopy(props.scope, props.onRequestAddLink, props.onRequestAddFeed);
   const isEmpty = () =>
     !snapshotLoading() && snapshotError() === null && rowIds().length === 0;
+  // The list area outlives emptying and refilling, so first rows and restored rows animate too.
+  let area: HTMLDivElement | undefined;
+  onSettled(() =>
+    area === undefined ? undefined : registerListTransitionTarget(area)
+  );
 
   return (
-    <>
+    <div
+      ref={(element) => {
+        area = element;
+      }}
+      class="flex min-h-0 flex-1 flex-col"
+    >
       <Show when={listBoundary() === null && snapshotError() !== null}>
         <ArticleListError />
       </Show>
       <Show when={snapshotLoading() && rowIds().length === 0}>
-        <ArticleListLoading />
+        <ArticleListLoading
+          grouped={isGroupedScope(props.scope)}
+          label={t('library.loading')}
+        />
       </Show>
       <Show when={isEmpty()}>
         <ArticleListEmpty
@@ -68,7 +83,7 @@ function ArticleListContent(props: ArticleListPaneProps): JSX.Element {
           onNavigate={props.onNavigate}
         />
       </Show>
-    </>
+    </div>
   );
 }
 

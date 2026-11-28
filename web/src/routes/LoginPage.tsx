@@ -10,7 +10,6 @@ import {
   sessionStatus,
 } from '../state';
 import { Button, Icon, Input } from '../ui';
-import { GuardChecking } from './SessionGuard';
 
 function LoginBrand(): JSX.Element {
   return (
@@ -158,10 +157,44 @@ export function LoginPage(): JSX.Element {
       when={
         sessionStatus() === 'unauthenticated' || sessionStatus() === 'error'
       }
-      fallback={<GuardChecking />}
+      fallback={<LoginSkeleton />}
     >
       <LoginCard login={login} />
     </Show>
+  );
+}
+
+/** Loading placeholder shaped like {@link LoginCard}, shown while the session is checked. */
+function LoginSkeleton(): JSX.Element {
+  return (
+    <div
+      role="status"
+      aria-label={t('common.checkingSession')}
+      class="flex min-h-dvh items-center justify-center bg-base-100 p-4"
+    >
+      <div
+        aria-hidden="true"
+        class="w-full max-w-sm rounded-box border border-base-300 bg-base-200/50 shadow-2xl"
+      >
+        <div class="flex flex-col gap-6 p-7">
+          <div class="flex items-center gap-3">
+            <div class="skeleton size-8 rounded-full" />
+            <div class="flex flex-col gap-1.5">
+              <div class="skeleton h-5 w-24" />
+              <div class="skeleton h-3 w-32" />
+            </div>
+          </div>
+          <div class="skeleton h-4 w-28" />
+          <div class="flex flex-col gap-4">
+            <div class="flex flex-col gap-2">
+              <div class="skeleton h-3.5 w-12" />
+              <div class="skeleton h-10 w-full rounded-field" />
+            </div>
+            <div class="skeleton h-10 w-full rounded-field" />
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

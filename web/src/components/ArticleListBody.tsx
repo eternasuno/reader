@@ -18,6 +18,7 @@ import {
 } from '../state';
 import { VirtualList } from '../ui';
 import { ArticleRow } from './ArticleRow';
+import { isGroupedScope } from './articleListScope';
 import { SiteIcon } from './SiteIcon';
 
 export interface ArticleListBodyProps {
@@ -29,7 +30,7 @@ export interface ArticleListBodyProps {
   onNavigate: (url: string) => void;
 }
 
-const SKELETON_HEIGHT = 136;
+export const SKELETON_HEIGHT = 136;
 const GROUP_LABEL_HEIGHT = 32;
 
 type SidebarFeed = ReturnType<typeof feeds>[number];
@@ -50,7 +51,7 @@ function FeedGroupLabel(props: { feed: SidebarFeed }): JSX.Element {
   );
 }
 
-function ArticleRowSkeleton(props: { grouped: boolean }): JSX.Element {
+export function ArticleRowSkeleton(props: { grouped: boolean }): JSX.Element {
   return (
     <div
       aria-busy="true"
@@ -93,8 +94,7 @@ const CachedArticleRow = (
     groupFeed: SidebarFeed | undefined;
   }
 ): JSX.Element => {
-  const grouped = () =>
-    props.scope.kind === 'all' || props.scope.kind === 'folder';
+  const grouped = () => isGroupedScope(props.scope);
 
   return (
     <>
@@ -199,6 +199,7 @@ export function ArticleListBody(props: ArticleListBodyProps): JSX.Element {
       activeKey={props.openArticleId}
       activeIndex={activeIndex()}
       onRangeChange={reportRange}
+      rowTransitionName={(id) => `row-${id}`}
       class="min-h-0 flex-1"
       renderItem={(id) => (
         <CachedArticleRow

@@ -69,6 +69,8 @@ func TestGroupedFeedItemSnapshots(t *testing.T) {
 
 	wantAll[1].IDs = append(wantAll[1].IDs, oldestRead.ID)
 	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/feed-items/order?unread=false", nil), wantAll)
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/feed-items/order?unread&keep="+oldestRead.ID, nil), wantAll)
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/folders/"+folder.ID+"/items/order?unread&keep="+oldestRead.ID, nil), wantFolder)
 }
 
 func TestSingleFeedSnapshotOrder(t *testing.T) {
@@ -85,6 +87,7 @@ func TestSingleFeedSnapshotOrder(t *testing.T) {
 	requireFeedItemSnapshot(t, h.authed(http.MethodGet, target, nil), []snapshotGroup{{FeedID: feed.ID, IDs: []string{first.ID, second.ID, read.ID}}})
 	requireFeedItemSnapshot(t, h.authed(http.MethodGet, target+"?order=newest&unread=true", nil), []snapshotGroup{{FeedID: feed.ID, IDs: []string{second.ID, first.ID}}})
 	requireFeedItemSnapshot(t, h.authed(http.MethodGet, target+"?order=oldest", nil), []snapshotGroup{{FeedID: feed.ID, IDs: []string{first.ID, second.ID, read.ID}}})
+	requireFeedItemSnapshot(t, h.authed(http.MethodGet, target+"?unread&keep="+read.ID, nil), []snapshotGroup{{FeedID: feed.ID, IDs: []string{first.ID, second.ID, read.ID}}})
 	requireFeedItemSnapshot(t, h.authed(http.MethodGet, "/api/feeds/"+domain.NewID()+"/items/order", nil), []snapshotGroup{})
 }
 
@@ -127,7 +130,10 @@ func TestSnapshotQueryValidation(t *testing.T) {
 	folderItems := "/api/folders/" + domain.NewID() + "/items"
 	for _, endpoint := range []string{"/api/feed-items/order", "/api/saved-pages/order", feedItems + "/order", folderItems + "/order"} {
 		t.Run(endpoint, func(t *testing.T) {
-			for _, query := range []string{"limit=1", "cursor=" + domain.NewID(), "boundary=" + domain.NewID(), "ids=" + domain.NewID(), "unread=true&unread=false", "unread=maybe", "unread=%ZZ", "unread=true;other=false"} {
+			for _, query := range []string{
+				"limit=1", "cursor=" + domain.NewID(), "boundary=" + domain.NewID(), "ids=" + domain.NewID(), "unread=true&unread=false", "unread=maybe", "unread=%ZZ", "unread=true;other=false",
+				"keep=" + domain.NewID(), "unread=false&keep=" + domain.NewID(), "unread&keep=", "unread&keep=invalid", "unread&keep=" + domain.NewID() + "&keep=" + domain.NewID(),
+			} {
 				t.Run(query, func(t *testing.T) {
 					requireAPIError(t, h.authed(http.MethodGet, endpoint+"?"+query, nil), http.StatusBadRequest, "RequestFailed")
 				})

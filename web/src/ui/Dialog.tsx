@@ -31,7 +31,7 @@ const FIELD_SELECTOR =
   'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])';
 
 const PANEL_CLASSES =
-  'relative z-10 flex max-h-[85dvh] w-full max-w-md flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 text-base-content shadow-2xl focus:outline-none max-sm:max-w-none max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)]';
+  'relative z-10 flex max-h-[85dvh] w-full max-w-md flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 text-base-content shadow-2xl focus:outline-none max-sm:max-w-none max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:animate-sheet-in sm:animate-dialog-in';
 
 const CLOSE_CLASSES =
   'ml-auto -mr-2 btn btn-ghost btn-sm btn-square focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
@@ -188,7 +188,7 @@ export function Dialog(props: DialogProps): JSX.Element {
       <Portal>
         <div class="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
           <div
-            class="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
+            class="absolute inset-0 animate-fade bg-black/60 backdrop-blur-[2px]"
             aria-hidden="true"
             onClick={requestClose}
           />

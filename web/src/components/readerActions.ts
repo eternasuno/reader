@@ -43,7 +43,8 @@ export const deleteOpenArticle = async (
     return;
   }
 
-  removeSavedPageLocal(article.id);
+  // The local unread adjustment lands before the refresh can publish the server count.
+  await removeSavedPageLocal(article.id);
   void refreshSidebar();
   if (isLibraryMounted() && openArticleId() === article.id) {
     nav.onNavigate(nav.laterUrl());

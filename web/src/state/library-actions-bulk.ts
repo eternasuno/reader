@@ -6,9 +6,9 @@
 import { feedItemsApi, feedsApi, foldersApi, savedPagesApi } from '../api';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
-import { loadScopeFirstPage } from './library';
 import type { ScopeMatcher } from './library-mark-all';
 import { beginScopeMark, scopeMatcher } from './library-mark-all';
+import { reloadScopeInPlace } from './library-motion';
 import {
   activeScope,
   activeUnreadOnly,
@@ -139,7 +139,7 @@ const applyMarkAllSuccess = async (
   const mounted = isLibraryMounted();
   const currentScope = activeScope();
   const reload = mounted
-    ? loadScopeFirstPage(currentScope, activeUnreadOnly())
+    ? reloadScopeInPlace(currentScope, activeUnreadOnly())
     : Promise.resolve();
   await Promise.all([reload, refreshOpenArticle(covers)]);
   if (mounted || sessionGeneration() !== startSession) return;

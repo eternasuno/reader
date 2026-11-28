@@ -5,12 +5,13 @@
  */
 
 import { flush } from 'solid-js';
-import type { Feed, SavedPage, SortOrder } from '../api';
+import type { Feed, OrderParams, SavedPage, SortOrder } from '../api';
 import {
   errorCodeOf,
   feedItemsApi,
   feedsApi,
   foldersApi,
+  isUuidV7,
   savedPagesApi,
 } from '../api';
 import { showToast } from '../ui';
@@ -19,6 +20,7 @@ import {
   isShowingEmptyFeed,
   waitForFirstRefresh,
 } from './library-first-refresh';
+import { changeRows } from './library-motion';
 import { feedMoveTracker, LatestTokenMap } from './library-mutations';
 import type { LibraryArticle } from './library-store';
 import * as store from './library-store';
@@ -51,6 +53,7 @@ export {
   patchArticle as patchArticleLocal,
   retainReaderArticle,
   rowIds,
+  setRouteArticleId,
   setVisibleRange,
   snapshotError,
   snapshotLoading,
@@ -87,34 +90,57 @@ export const articleSource = (article: LibraryArticle): ArticleSource => {
 
 const fetchFeedOrder = (
   scope: Exclude<LibraryScope, { kind: 'later' }>,
-  unread: boolean
+  params: OrderParams
 ) => {
   switch (scope.kind) {
     case 'all':
-      return feedItemsApi.order({ unread });
+      return feedItemsApi.order(params);
     case 'feed':
-      return feedsApi.itemsOrder(scope.feedId, { unread });
+      return feedsApi.itemsOrder(scope.feedId, params);
     case 'folder':
-      return foldersApi.itemsOrder(scope.folderId, { unread });
+      return foldersApi.itemsOrder(scope.folderId, params);
   }
 };
+
+/**
+ * `LIB-FILTER-1`: the ID an unread-only snapshot keeps even after it was read, the routed article.
+ * A malformed route ID is never sent, so it cannot fail the whole list.
+ */
+const keepFor = (unread: boolean): string | undefined => {
+  const routed = store.routeArticleId();
+  return unread && isUuidV7(routed) ? routed : undefined;
+};
+
+/** A fetched snapshot plus the `keep` ID it was requested with. */
+export type FetchedSnapshot = Parameters<typeof store.acceptSnapshot>[0] & {
+  keep: string | undefined;
+};
+
+/** Whether the snapshot was requested with the `keep` the current route would send. */
+export const keepsCurrentRoute = (
+  snapshot: FetchedSnapshot,
+  unread: boolean
+): boolean => snapshot.keep === keepFor(unread);
 
 export const fetchSnapshot = async (
   scope: LibraryScope,
   unread: boolean
-): Promise<Parameters<typeof store.acceptSnapshot>[0]> => {
+): Promise<FetchedSnapshot> => {
+  const keep = keepFor(unread);
+  const params: OrderParams =
+    keep === undefined ? { unread } : { unread, keep };
   if (scope.kind === 'later') {
-    const { boundary, ids } = await savedPagesApi.order({ unread });
-    return { boundary, ids, feedIds: new Map() };
+    const { boundary, ids } = await savedPagesApi.order(params);
+    return { boundary, ids, feedIds: new Map(), keep };
   }
 
-  const { boundary, groups } = await fetchFeedOrder(scope, unread);
+  const { boundary, groups } = await fetchFeedOrder(scope, params);
   const feedIds = new Map<string, string>();
   const ids = groups.flatMap((group) => {
     for (const id of group.ids) feedIds.set(id, group.feedId);
     return group.ids;
   });
-  return { boundary, ids, feedIds };
+  return { boundary, ids, feedIds, keep };
 };
 
 const isCurrent = (generation: number): boolean =>
@@ -143,7 +169,13 @@ export const loadScopeFirstPage = async (
 
   try {
     const snapshot = await fetchSnapshot(scope, unreadOnly);
-    if (isCurrent(generation)) store.acceptSnapshot(snapshot);
+    if (!isCurrent(generation)) return;
+    // The route moved to another article while loading: its kept row may be missing.
+    if (!keepsCurrentRoute(snapshot, unreadOnly)) {
+      await loadScopeFirstPage(scope, unreadOnly);
+      return;
+    }
+    store.acceptSnapshot(snapshot);
   } catch (error) {
     if (isCurrent(generation)) store.setSnapshotError(errorCodeOf(error));
   } finally {
@@ -219,16 +251,21 @@ export const insertSavedPageLocal = (page: SavedPage): void => {
   startWindow();
 };
 
-/** `SP-REMOVE-1`: removes a deleted saved page from `/later`. */
-export const removeSavedPageLocal = (pageId: string): void => {
-  if (store.activeScope().kind !== 'later') return;
+/** `SP-REMOVE-1`: removes a deleted saved page from `/later`; its row leaves in a list transition. */
+export const removeSavedPageLocal = (pageId: string): Promise<void> => {
+  if (store.activeScope().kind !== 'later') return Promise.resolve();
 
-  const target = store.articleById(pageId);
-  const existed = store.snapshotIds().includes(pageId);
-  store.removeListIds([pageId]);
-  if (existed && target?.read === false) sidebar.adjustSavedUnread(-1);
-  flush();
-  startWindow();
+  return changeRows(store.snapshotIds().includes(pageId), () => {
+    // The list may have switched scope before a deferred transition update runs.
+    if (store.activeScope().kind !== 'later') return;
+
+    const target = store.articleById(pageId);
+    const existed = store.snapshotIds().includes(pageId);
+    store.removeListIds([pageId]);
+    if (existed && target?.read === false) sidebar.adjustSavedUnread(-1);
+    flush();
+    startWindow();
+  });
 };
 
 /** `FD-PREF-1`: changing order on the active single-feed list reloads its snapshot. */

@@ -935,7 +935,6 @@ func checkSnapshotQueryPlans(t *testing.T, store *Store, boundary string) {
 	t.Helper()
 
 	folder := "folder"
-	limit := domain.ListSnapshotLimit + 1
 	for _, unread := range []bool{false, true} {
 		allItemIndex := "sqlite_autoindex_feed_item_1"
 		folderFeedIndex, folderItemIndex := "feed_folder", "feed_item_feed_id_url"
@@ -960,13 +959,17 @@ func checkSnapshotQueryPlans(t *testing.T, store *Store, boundary string) {
 		}
 
 		for _, order := range []domain.SortOrder{domain.SortOrderNewest, domain.SortOrderOldest} {
-			plan := queryPlan(t, store, singleFeedItemSnapshotQuery(order, unread), "feed", boundary, limit)
+			query, args := singleFeedItemSnapshotQuery("feed", order, params)
+			plan := queryPlan(t, store, query, args...)
 			requireIndexedPlan(t, "snapshot feed", plan, feedIndex, false)
 		}
 
-		savedPlan := queryPlan(t, store, savedPageSnapshotQuery(unread), boundary, limit)
+		query, args = savedPageSnapshotQuery(params)
+		savedPlan := queryPlan(t, store, query, args...)
 		requireIndexedPlan(t, "snapshot saved pages", savedPlan, savedIndex, false)
 	}
+
+	checkKeepSnapshotQueryPlans(t, store, boundary)
 
 	for _, test := range []struct{ table, query string }{
 		{table: "feed_item", query: feedItemsByIDsQuery},
@@ -981,6 +984,32 @@ func checkSnapshotQueryPlans(t *testing.T, store *Store, boundary string) {
 			t.Fatalf("%s batch plan does not look up rows by primary key: %v", test.table, plan)
 		}
 	}
+}
+
+// checkKeepSnapshotQueryPlans: `(read = 0 OR id = ?)` unions the unread index with a primary-key
+// lookup; a single feed stays on its per-feed index.
+func checkKeepSnapshotQueryPlans(t *testing.T, store *Store, boundary string) {
+	t.Helper()
+
+	folder := "folder"
+	params := domain.SnapshotParams{Boundary: boundary, Unread: true, Keep: domain.NewID()}
+	for name, query := range map[string]func() (string, []any){
+		"keep snapshot all":    func() (string, []any) { return groupedFeedItemSnapshotQuery(nil, params) },
+		"keep snapshot folder": func() (string, []any) { return groupedFeedItemSnapshotQuery(&folder, params) },
+	} {
+		sql, args := query()
+		plan := queryPlan(t, store, sql, args...)
+		requireIndexedPlan(t, name, plan, "feed_item_read_id", true)
+		requireIndexedPlan(t, name, plan, "sqlite_autoindex_feed_item_1", true)
+	}
+
+	sql, args := singleFeedItemSnapshotQuery("feed", domain.SortOrderNewest, params)
+	requireIndexedPlan(t, "keep snapshot feed", queryPlan(t, store, sql, args...), "feed_item_feed_id_url", false)
+
+	sql, args = savedPageSnapshotQuery(params)
+	savedPlan := queryPlan(t, store, sql, args...)
+	requireIndexedPlan(t, "keep snapshot saved pages", savedPlan, "saved_page_read_id", true)
+	requireIndexedPlan(t, "keep snapshot saved pages", savedPlan, "sqlite_autoindex_saved_page_1", true)
 }
 
 func TestRetentionPruneUsesIndexes(t *testing.T) {

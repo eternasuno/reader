@@ -5,17 +5,14 @@ import { feedsApi } from '../api';
 import { t } from '../i18n';
 import { showToast } from '../ui';
 import { errorText } from './errorText';
-import {
-  activeScope,
-  activeUnreadOnly,
-  isLibraryMounted,
-  loadScopeFirstPage,
-} from './library';
+import { activeScope, activeUnreadOnly, isLibraryMounted } from './library';
+import { reloadScopeInPlace } from './library-motion';
 import { removeFeedLocal } from './sidebar';
 
 /**
  * `FD-UNSUB-1`: removes the feed, shows `订阅源已删除`, and reloads an active aggregate
- * (`all` or `folder`) list from page 1 so in-flight pages are discarded and the cursor resets.
+ * (`all` or `folder`) list with a fresh snapshot, discarding in-flight list responses; the
+ * feed's rows leave in a list transition.
  */
 export const unsubscribeFeed = async (feed: Feed): Promise<boolean> => {
   try {
@@ -31,7 +28,7 @@ export const unsubscribeFeed = async (feed: Feed): Promise<boolean> => {
   const scope = activeScope();
   // `activeScope()` outlives the library page; don't reload a list the user already left.
   if (isLibraryMounted() && (scope.kind === 'all' || scope.kind === 'folder')) {
-    await loadScopeFirstPage(scope, activeUnreadOnly());
+    await reloadScopeInPlace(scope, activeUnreadOnly());
   }
 
   return true;

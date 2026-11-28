@@ -3,15 +3,60 @@
 
 @theme {
   --color-brand: #d5a15c;
-  --animate-fade-in: fade-in 180ms ease-out both;
+
+  /*
+   * Motion system: one easing curve everywhere. State feedback (hover, color, rotate)
+   * uses the 150ms default transition; anything that moves or appears takes 200ms.
+   */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: var(--ease-standard);
+
+  /* Content reveal: list rows, the reader article, expanded folder children. */
+  --animate-fade-in: fade-in 200ms var(--ease-standard) both;
+  /* Backdrops and overlays. */
+  --animate-fade: fade 200ms var(--ease-standard) both;
+  /* Popover menus (direction-agnostic: anchor fallbacks may flip them). */
+  --animate-pop-in: pop-in 150ms var(--ease-standard) both;
+  /* Centered dialogs. */
+  --animate-dialog-in: dialog-in 200ms var(--ease-standard) both;
+  /* Bottom sheets (dialogs on narrow screens). */
+  --animate-sheet-in: sheet-in 200ms var(--ease-standard) both;
+  /* Toasts rise from the bottom edge. */
+  --animate-toast-in: toast-in 200ms var(--ease-standard) both;
+
   @keyframes fade-in {
     from {
       opacity: 0;
       transform: translateY(4px);
     }
-    to {
-      opacity: 1;
-      transform: translateY(0);
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.97);
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      transform: translateY(100%);
+    }
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
     }
   }
   --font-sans:
@@ -19,6 +64,29 @@
     "Noto Sans", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
     "Noto Sans SC", "Source Han Sans SC", sans-serif, "Apple Color Emoji",
     "Segoe UI Emoji", "Noto Color Emoji";
+}
+
+/*
+ * List view transitions (`runListTransition`): the page root is never captured, only article rows
+ * of the transitioning list, and the overlay is clipped to that list so rows animate inside it.
+ */
+:root {
+  view-transition-name: none;
+}
+
+[data-list-transition] [data-row-transition] {
+  view-transition-name: var(--row-transition-name);
+}
+
+::view-transition {
+  clip-path: var(--list-transition-clip, none);
+}
+
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 200ms;
+  animation-timing-function: var(--ease-standard);
 }
 
 /* Touch devices scale every rem-based size (text, spacing, controls, icons) at once. */

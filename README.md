@@ -4,6 +4,7 @@ A lightweight, single-user, self-hosted RSS reader and read-later app with Send-
 
 - **Read later**: save a URL (or use the bookmarklet) and read a cleaned-up version of the article.
 - **Feeds**: RSS / Atom / RDF / JSON Feed, single-level folders, OPML import/export, per-feed sort order and default view, automatic pruning to the latest N articles per feed.
+- **Unread filter**: the open article stays in the list after you read it, even if you reload the page.
 - **Send to Kindle**: bundle unread articles into EPUB 3 (split at 20 MiB) and mail them over SMTP daily or on demand.
 - **Installable PWA**: the app shell works offline; API data is never cached.
 - **One container**: a single static Go binary with the web app embedded and SQLite storage.

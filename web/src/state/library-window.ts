@@ -213,6 +213,15 @@ export const refreshWindowAfterLayout = (): void => {
   });
 };
 
+/**
+ * Aborts the in-flight content request but keeps the desired range for the next request. Also
+ * ends a layout wait from the previous generation, whose frame callback no longer clears it.
+ */
+export const abortWindow = (): void => {
+  awaitingLayout = false;
+  windowRequest?.controller.abort();
+};
+
 export const resetWindow = (): void => {
   awaitingLayout = false;
   desiredRange = null;

@@ -8,7 +8,7 @@ import (
 func TestSnapshotParamsMintBoundary(t *testing.T) {
 	t.Parallel()
 
-	params := NewSnapshotParams(true)
+	params := NewSnapshotParams(true, "")
 	if !params.Unread || !IsValidUUIDv7(params.Boundary) {
 		t.Fatalf("unexpected params: %+v", params)
 	}

@@ -1,8 +1,14 @@
 import { flush } from 'solid-js';
-import { fetchSnapshot, isFirstRefreshWaiting } from './library';
+import {
+  fetchSnapshot,
+  isFirstRefreshWaiting,
+  keepsCurrentRoute,
+} from './library';
+import { changeRows } from './library-motion';
 import {
   activeScope,
   activeUnreadOnly,
+  changesRows,
   isLibraryMounted,
   listBoundary,
   listRevision,
@@ -49,16 +55,29 @@ const fetchLiveSnapshot = async (): Promise<void> => {
       return;
     }
 
-    const stillCurrent =
+    const canCommit = (): boolean =>
       request.valid &&
       generation === requestState.generation &&
       revision === listRevision() &&
-      epoch === queueEpoch();
-    if (!stillCurrent || !canApplyLiveSnapshot()) return;
+      epoch === queueEpoch() &&
+      // A route change to another article could make the kept row disappear.
+      keepsCurrentRoute(snapshot, activeUnreadOnly()) &&
+      canApplyLiveSnapshot();
+    if (!canCommit()) return;
 
     const previousRows = rowIds();
-    replaceSnapshot(snapshot);
-    flush();
+    let committed = false;
+    const commit = (): void => {
+      // The transition captures the old rows first, so the guards are rechecked here.
+      if (!canCommit()) return;
+
+      replaceSnapshot(snapshot);
+      flush();
+      committed = true;
+    };
+    await changeRows(changesRows(snapshot), commit);
+    if (!committed) return;
+
     if (rowIds() === previousRows) refreshWindow();
     else refreshWindowAfterLayout();
 

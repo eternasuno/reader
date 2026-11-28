@@ -104,11 +104,12 @@ it('is pessimistic and reloads the active feed scope after confirmation', async 
   });
   markReq.resolve(noContentResponse());
   await marking;
-  await waitForWindow(state);
   await vi.waitFor(() => expect(state.feedUnreadCount(uuid(1001))).toBe(0));
   solid.flush();
 
-  expect(state.articleById(uuid(1007))?.read).toBe(true);
+  await vi.waitFor(() =>
+    expect(state.articleById(uuid(1007))?.read).toBe(true)
+  );
   expect(state.feedUnreadCount(uuid(1002))).toBe(1);
   expect(state.isMarkingScope({ kind: 'feed', feedId: uuid(1001) })).toBe(
     false
@@ -156,7 +157,9 @@ describe('saved mark-all', () => {
     releaseLibrary();
 
     expect(state.savedUnreadCount()).toBe(0);
-    expect(state.articleById(state.rowIds()[0])?.read).toBe(true);
+    await vi.waitFor(() =>
+      expect(state.articleById(state.rowIds()[0])?.read).toBe(true)
+    );
   });
 });
 

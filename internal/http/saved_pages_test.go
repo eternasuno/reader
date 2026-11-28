@@ -253,6 +253,7 @@ func TestSavedPageSnapshot(t *testing.T) {
 		{query: "", ids: []string{third.ID, second.ID, first.ID}},
 		{query: "?unread=0", ids: []string{third.ID, second.ID, first.ID}},
 		{query: "?unread=%20TrUe%20", ids: []string{third.ID, first.ID}},
+		{query: "?unread&keep=" + second.ID, ids: []string{third.ID, second.ID, first.ID}},
 	} {
 		recorder := h.authed(http.MethodGet, "/api/saved-pages/order"+test.query, nil)
 		requireStatus(t, recorder, http.StatusOK)

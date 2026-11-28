@@ -11,12 +11,15 @@ import {
 import { t, translateErrorCode } from '../i18n';
 import {
   checkSession,
+  parseLibraryLocation,
   sanitizeNextPath,
   sessionErrorCode,
   sessionStatus,
+  sidebarCollapsed,
 } from '../state';
 import { consumeQuickSaveLocation } from '../state/saved-page-create';
 import { Button, Icon } from '../ui';
+import { AppSkeleton } from './AppSkeleton';
 
 export interface SessionGuardProps {
   children?: JSX.Element;
@@ -26,18 +29,18 @@ export interface RedirectProps {
   to: string;
 }
 
-export function GuardChecking(): JSX.Element {
+function GuardChecking(): JSX.Element {
+  const location = useLocation();
+  const articleOpen = (): boolean =>
+    (parseLibraryLocation(location.pathname, location.search)?.articleId ??
+      null) !== null;
+
   return (
-    <div
-      role="status"
-      aria-label={t('common.checkingSession')}
-      class="flex min-h-dvh items-center justify-center bg-base-100"
-    >
-      <span
-        class="loading loading-spinner loading-lg text-base-content/60"
-        aria-hidden="true"
-      />
-    </div>
+    <AppSkeleton
+      label={t('common.checkingSession')}
+      articleOpen={articleOpen()}
+      sidebarCollapsed={sidebarCollapsed()}
+    />
   );
 }
 
